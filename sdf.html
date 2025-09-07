@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SDF → B-rep-ish Hybrid (ES6, No React)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin:0; height:100%; background:#0b0d10; color:#cfd8e3; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    #ui {
+      position: fixed; top: 10px; left: 10px; right: 10px;
+      display:flex; gap:10px; align-items:center; padding:10px 12px;
+      background: #11151a; border:1px solid #222a33; border-radius:12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+    }
+    label { font-size: 12px; opacity: 0.9; }
+    select, input[type="range"] {
+      background:#0f1318; color:#cfd8e3; border:1px solid #222a33; border-radius:8px; padding:6px 8px;
+    }
+    button {
+      background:#1a2330; color:#e5efff; border:1px solid #2a3647; border-radius:10px; padding:8px 12px;
+      cursor:pointer;
+    }
+    button:hover { background:#223044; }
+    #legend {
+      position: fixed; bottom: 12px; left: 12px;
+      background:#11151a; border:1px solid #222a33; border-radius:12px; padding:8px 10px; font-size:12px;
+    }
+    .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:6px; }
+    canvas { display:block; }
+    /* compute mode pill */
+    #computeMode { margin-left:8px; padding:4px 8px; border-radius:9999px; border:1px solid #2a3647; font-size:12px; user-select:none; }
+    #computeMode.cpu { background:#221a14; color:#ffd8a6; border-color:#7a5230; }
+    #computeMode.gpu { background:#142025; color:#9ff3ff; border-color:#2b7c8a; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <label>Boolean:
+      <select id="boolOp">
+        <option value="union">Union (A ∪ B)</option>
+        <option value="intersection">Intersection (A ∩ B)</option>
+        <option value="difference">Difference (A − B)</option>
+        <option value="smoothUnion">Smooth Union</option>
+      </select>
+    </label>
+    <label>Grid Res:
+      <input id="gridRes" type="range" min="16" max="512" step="8" value="32" />
+      <span id="gridResVal">32</span>
+    </label>
+    <label>Iso (τ):
+      <input id="iso" type="range" min="-0.05" max="0.05" step="0.005" value="0" />
+      <span id="isoVal">0.000</span>
+    </label>
+    <label>Smooth k:
+      <input id="smoothK" type="range" min="0.0" max="0.4" step="0.02" value="0.20" />
+      <span id="smoothKVal">0.20</span>
+    </label>
+    <button id="rebuild">Rebuild</button>
+    <span id="computeMode" class="cpu" title="Compute path">CPU</span>
+    <span style="margin-left:auto; opacity:0.7;">SDF kernel → topology (faces & edges)</span>
+  </div>
+  <div id="legend"></div>
+  <canvas id="gl"></canvas>
+
+  <script type="module">
+    // Minimal Three.js via CDN (module). If you prefer not to fetch, replace with your own tiny WebGL renderer.
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+    // ---------- Math helpers ----------
+    const vec3 = (x=0,y=0,z=0)=>({x,y,z});
+    const add=(a,b)=>vec3(a.x+b.x,a.y+b.y,a.z+b.z);
+    const sub=(a,b)=>vec3(a.x-b.x,a.y-b.y,a.z-b.z);
+    const mul=(a,s)=>vec3(a.x*s,a.y*s,a.z*s);
+    const dot=(a,b)=>a.x*b.x+a.y*b.y+a.z*b.z;
+    const len=(a)=>Math.hypot(a.x,a.y,a.z);
+    const norm=(a)=>{const l=len(a)||1; return vec3(a.x/l,a.y/l,a.z/l);};
+
+    // ---------- SDF Core (each eval returns {sd, id}) ----------
+    let _ID = 1;
+    const NODE_REGISTRY = new Map();
+    class SDFNode {
+      constructor(){ this.id = _ID++; NODE_REGISTRY.set(this.id, this); }
+      // p: {x,y,z} → {sd, id}
+      eval(p){ return { sd: 1e9, id: this.id }; }
+      // numerical gradient for normal
+      normal(p, f, eps=1e-4) {
+        const ex=vec3(eps,0,0), ey=vec3(0,eps,0), ez=vec3(0,0,eps);
+        const dx=f(add(p,ex)).sd - f(sub(p,ex)).sd;
+        const dy=f(add(p,ey)).sd - f(sub(p,ey)).sd;
+        const dz=f(add(p,ez)).sd - f(sub(p,ez)).sd;
+        return norm(vec3(dx,dy,dz));
+      }
+      // Optional: sub-surface tag for topology grouping (default: single patch)
+      faceTagAt(p){ return 0; }
+    }
+    class Sphere extends SDFNode {
+      constructor(center, r){ super(); this.c=center; this.r=r; }
+      eval(p){ return { sd: len(sub(p,this.c)) - this.r, id: this.id }; }
+    }
+    class Box extends SDFNode {
+      constructor(center, half){ super(); this.c=center; this.h=half; }
+      eval(p){
+        const q = sub(p,this.c);
+        const d = vec3(Math.abs(q.x)-this.h.x, Math.abs(q.y)-this.h.y, Math.abs(q.z)-this.h.z);
+        const outside = vec3(Math.max(d.x,0),Math.max(d.y,0),Math.max(d.z,0));
+        const sd = Math.min(Math.max(d.x,Math.max(d.y,d.z)),0) + len(outside);
+        return { sd, id: this.id };
+      }
+      // 6 planar faces: 0:+X 1:-X 2:+Y 3:-Y 4:+Z 5:-Z
+      faceTagAt(p){
+        const cx = this.c.x, cy=this.c.y, cz=this.c.z;
+        const hx = this.h.x, hy=this.h.y, hz=this.h.z;
+        const dxp = Math.abs(p.x - (cx + hx));
+        const dxn = Math.abs(p.x - (cx - hx));
+        const dyp = Math.abs(p.y - (cy + hy));
+        const dyn = Math.abs(p.y - (cy - hy));
+        const dzp = Math.abs(p.z - (cz + hz));
+        const dzn = Math.abs(p.z - (cz - hz));
+        const arr = [dxp, dxn, dyp, dyn, dzp, dzn];
+        let best = 0;
+        for (let i=1;i<6;i++) if (arr[i] < arr[best]) best = i;
+        return best;
+      }
+    }
+    class CylinderZ extends SDFNode {
+      constructor(center, r, halfZ){ super(); this.c=center; this.r=r; this.hz=halfZ; }
+      eval(p){
+        const q = sub(p,this.c);
+        const dxz = Math.hypot(q.x, q.z) - this.r;
+        const dy = Math.abs(q.y) - this.hz;
+        const outside = vec3(Math.max(dxz,0), Math.max(dy,0), 0);
+        const sd = Math.min(Math.max(dxz, dy), 0) + len(outside);
+        return { sd, id: this.id };
+      }
+      // 3 faces: 0:side, 1:top(+Y), 2:bottom(-Y)
+      faceTagAt(p){
+        const q = sub(p,this.c);
+        const dSide = Math.abs(Math.hypot(q.x, q.z) - this.r);
+        const dTop = Math.abs(q.y - this.hz);
+        const dBot = Math.abs(q.y + this.hz);
+        if (dSide <= dTop && dSide <= dBot) return 0;
+        return (dTop < dBot) ? 1 : 2;
+      }
+    }
+
+    // CSG ops (hard + smooth). Return sd and propagate "winner" id (source tagging).
+    const union = (a,b) => (p)=>{
+      const ea=a.eval(p), eb=b.eval(p);
+      return (ea.sd<eb.sd) ? ea : eb;
+    };
+    const intersection=(a,b)=>(p)=>{
+      const ea=a.eval(p), eb=b.eval(p);
+      const sd = Math.max(ea.sd, eb.sd);
+      // winner is the one with larger sd contributor near surface; pick child with larger sd at p
+      return (ea.sd>eb.sd)? {sd, id: ea.id} : {sd, id: eb.id};
+    };
+    const difference=(a,b)=>(p)=>{
+      const ea=a.eval(p), eb=b.eval(p);
+      const sd = Math.max(ea.sd, -eb.sd);
+      return (ea.sd>-eb.sd)? {sd, id: ea.id} : {sd, id: b.id}; // tag A or B for edge detection
+    };
+    const smoothUnion=(a,b,k=0.2)=>(p)=>{
+      const ea=a.eval(p), eb=b.eval(p);
+      const h = Math.max(k - Math.abs(ea.sd - eb.sd), 0.0) / k;
+      const m = h*h*0.25;
+      const sd = Math.min(ea.sd, eb.sd) - m * k;
+      // pick id of nearer field
+      return (ea.sd<eb.sd) ? {sd, id: ea.id} : {sd, id: eb.id};
+    };
+
+    // ---------- Dual Contouring (DC) on a uniform grid ----------
+    // We compute sign-crossing edges, estimate zero-crossing with binary search, compute QEF (simplified) vertex.
+    // For brevity, this uses a stabilized midpoint zero and averaged normals; good enough for demo + sharp preservation by tagging.
+    function polygonizeDualContouring(f, bounds, res, iso=0) {
+      const {min, max} = bounds;
+      const nx=res, ny=res, nz=res;
+      const size = sub(max,min);
+      const step = vec3(size.x/(nx-1), size.y/(ny-1), size.z/(nz-1));
+
+      // Sample scalar + tag id per grid point
+      const S = new Array(nx*ny*nz);
+      const index = (i,j,k)=> i + nx*(j + ny*k);
+      if (f.__samples && f.__samples.nx===nx && f.__samples.ny===ny && f.__samples.nz===nz) {
+        const sdA = f.__samples.sd;
+        const idA = f.__samples.id;
+        for (let k=0;k<nz;k++) for (let j=0;j<ny;j++) for (let i=0;i<nx;i++) {
+          const idx = index(i,j,k);
+          S[idx] = { sd: sdA[idx] - iso, id: idA[idx] };
+        }
+      } else {
+        for (let k=0;k<nz;k++) for (let j=0;j<ny;j++) for (let i=0;i<nx;i++) {
+          const p = vec3(min.x + i*step.x, min.y + j*step.y, min.z + k*step.z);
+          const {sd,id} = f(p);
+          S[index(i,j,k)] = {sd: sd - iso, id};
+        }
+      }
+
+      // For each cell, create at most one DC vertex
+      const vIndex = new Map();
+      const vertices=[]; const vFaceId=[]; // faceId = dominant tag around the cell
+      const cellKey=(i,j,k)=> `${i},${j},${k}`;
+
+      function edgeCross(a,b){ return (a.sd<=0 && b.sd>0) || (a.sd>0 && b.sd<=0); }
+      function lerpZero(p0,p1, s0,s1){
+        // binary search to refine zero crossing (stable)
+        let t = s0/(s0 - s1);
+        t = Math.max(0, Math.min(1, t));
+        return vec3(
+          p0.x + (p1.x-p0.x)*t,
+          p0.y + (p1.y-p0.y)*t,
+          p0.z + (p1.z-p0.z)*t
+        );
+      }
+
+      const edges = [
+        [[0,0,0],[1,0,0]],
+        [[0,0,0],[0,1,0]],
+        [[0,0,0],[0,0,1]],
+        [[1,0,0],[1,1,0]],
+        [[1,0,0],[1,0,1]],
+        [[0,1,0],[1,1,0]],
+        [[0,1,0],[0,1,1]],
+        [[0,0,1],[1,0,1]],
+        [[0,0,1],[0,1,1]],
+        [[1,1,0],[1,1,1]],
+        [[1,0,1],[1,1,1]],
+        [[0,1,1],[1,1,1]],
+      ];
+
+      for (let k=0;k<nz-1;k++) for (let j=0;j<ny-1;j++) for (let i=0;i<nx-1;i++) {
+        // detect if the cell is intersected
+        const corners = [];
+        for (let dz of [0,1]) for (let dy of [0,1]) for (let dx of [0,1]) {
+          corners.push(S[index(i+dx,j+dy,k+dz)]);
+        }
+        const hasInside = corners.some(c=>c.sd<=0), hasOutside = corners.some(c=>c.sd>0);
+        if (!(hasInside && hasOutside)) continue;
+
+        // Collect zero crossings and normals
+        const ps = [];
+        const ns = [];
+        const ids = [];
+        for (const e of edges) {
+          const [a,b]=e;
+          const sa=S[index(i+a[0],j+a[1],k+a[2])];
+          const sb=S[index(i+b[0],j+b[1],k+b[2])];
+          if (!edgeCross(sa,sb)) continue;
+          const p0 = vec3(min.x+(i+a[0])*step.x, min.y+(j+a[1])*step.y, min.z+(k+a[2])*step.z);
+          const p1 = vec3(min.x+(i+b[0])*step.x, min.y+(j+b[1])*step.y, min.z+(k+b[2])*step.z);
+          const pz = lerpZero(p0,p1, sa.sd, sb.sd);
+          const n = f.__normal ? f.__normal(pz) : approxNormal(f, pz);
+          ps.push(pz);
+          ns.push(n);
+          // Determine face tag at the actual zero-cross point using winner primitive
+          const win = f(pz);
+          const node = NODE_REGISTRY.get(win.id);
+          const subFace = (node && typeof node.faceTagAt === 'function') ? node.faceTagAt(pz) : 0;
+          // Compose unique face key: primitive id (high bits) + sub-face (low bits)
+          const faceKey = (win.id << 3) | (subFace & 7);
+          ids.push(faceKey);
+        }
+        if (ps.length===0) continue;
+
+        // QEF solve: minimize sum_i (n_i · (x - p_i))^2
+        function qefSolve(ps, ns, cmin, cmax) {
+          // Build normal equations: (A^T A) x = A^T b where rows of A are n_i^T and b_i = n_i·p_i
+          let a00=0,a01=0,a02=0,a11=0,a12=0,a22=0; // symmetric
+          let b0=0,b1=0,b2=0;
+          for (let i=0;i<ns.length;i++) {
+            const n=ns[i], p=ps[i];
+            const nx=n.x, ny=n.y, nz=n.z;
+            const bi = nx*p.x + ny*p.y + nz*p.z;
+            a00 += nx*nx; a01 += nx*ny; a02 += nx*nz; a11 += ny*ny; a12 += ny*nz; a22 += nz*nz;
+            b0  += nx*bi; b1  += ny*bi; b2  += nz*bi;
+          }
+          // Regularization for stability
+          const lam = 1e-8;
+          a00 += lam; a11 += lam; a22 += lam;
+
+          // Solve symmetric 3x3 via explicit inverse
+          const det = a00*(a11*a22 - a12*a12) - a01*(a01*a22 - a02*a12) + a02*(a01*a12 - a02*a11);
+          if (!isFinite(det) || Math.abs(det) < 1e-12) {
+            // Fallback to average of points
+            const pAvg = ps.reduce((acc,p)=>add(acc,p), vec3(0,0,0));
+            const v = mul(pAvg, 1/ps.length);
+            return v;
+          }
+          const invDet = 1/det;
+          // Cofactors for inverse
+          const m00 = (a11*a22 - a12*a12) * invDet;
+          const m01 = (a02*a12 - a01*a22) * invDet;
+          const m02 = (a01*a12 - a02*a11) * invDet;
+          const m10 = m01; // symmetric inverse
+          const m11 = (a00*a22 - a02*a02) * invDet;
+          const m12 = (a02*a01 - a00*a12) * invDet;
+          const m20 = m02;
+          const m21 = m12;
+          const m22 = (a00*a11 - a01*a01) * invDet;
+
+          let x = m00*b0 + m01*b1 + m02*b2;
+          let y = m10*b0 + m11*b1 + m12*b2;
+          let z = m20*b0 + m21*b1 + m22*b2;
+
+          // Clamp to the cell to avoid fold-overs
+          const eps = 1e-6;
+          x = Math.max(cmin.x+eps, Math.min(cmax.x-eps, x));
+          y = Math.max(cmin.y+eps, Math.min(cmax.y-eps, y));
+          z = Math.max(cmin.z+eps, Math.min(cmax.z-eps, z));
+          return vec3(x,y,z);
+        }
+        const cellMin = vec3(min.x+i*step.x, min.y+j*step.y, min.z+k*step.z);
+        const cellMax = vec3(cellMin.x+step.x, cellMin.y+step.y, cellMin.z+step.z);
+        const v = qefSolve(ps, ns, cellMin, cellMax);
+
+        const key = cellKey(i,j,k);
+        vIndex.set(key, vertices.length);
+        vertices.push(v);
+
+        // Dominant face ID: mode of ids in this cell (used for face grouping)
+        const freq = {};
+        for (const id of ids) freq[id]=(freq[id]||0)+1;
+        const domId = Object.entries(freq).sort((a,b)=>b[1]-a[1])[0][0];
+        vFaceId.push(parseInt(domId,10));
+      }
+
+      // Build quads between cell vertices (Dual grid connectivity)
+      const quads=[];
+      const vIdx=(i,j,k)=> vIndex.get(cellKey(i,j,k));
+      function pushQuad(a,b,c,d){ if(a!=null&&b!=null&&c!=null&&d!=null) quads.push([a,b,c,d]); }
+
+      for (let k=0;k<nz-2;k++) for (let j=0;j<ny-2;j++) for (let i=0;i<nx-2;i++) {
+        // 3 planes of adjacency: x, y, z
+        let a,b,c,d;
+
+        // X adjacency (cells differ along i)
+        a=vIdx(i,j,k); b=vIdx(i+1,j,k); c=vIdx(i+1,j+1,k); d=vIdx(i,j+1,k); if(a!=null&&b!=null&&c!=null&&d!=null) pushQuad(a,b,c,d);
+        // Y adjacency
+        a=vIdx(i,j,k); b=vIdx(i,j+1,k); c=vIdx(i,j+1,k+1); d=vIdx(i,j,k+1); if(a!=null&&b!=null&&c!=null&&d!=null) pushQuad(a,b,c,d);
+        // Z adjacency
+        a=vIdx(i,j,k); b=vIdx(i+1,j,k); c=vIdx(i+1,j,k+1); d=vIdx(i,j,k+1); if(a!=null&&b!=null&&c!=null&&d!=null) pushQuad(a,b,c,d);
+      }
+
+      // Triangulate quads, compute per-tri face IDs (mode of vertex dom IDs), and feature edges
+      const positions=[]; const normals=[]; const triFaceIds=[];
+      // Collect triangle-adjacent face ids per edge; later keep edges where adjacent triangles disagree
+      const featureEdges = new Map(); // key "a,b" with a<b → Set(faceId)
+      function addEdge(a,b, triFaceId){
+        const key = a<b? `${a},${b}`:`${b},${a}`;
+        const set = featureEdges.get(key) || new Set();
+        set.add(triFaceId);
+        featureEdges.set(key, set);
+      }
+
+      // Recompute smooth normal via gradient at vertex
+      function approxNormal(f, p) {
+        const e=1e-4;
+        const dx = f(add(p,vec3(e,0,0))).sd - f(sub(p,vec3(e,0,0))).sd;
+        const dy = f(add(p,vec3(0,e,0))).sd - f(sub(p,vec3(0,e,0))).sd;
+        const dz = f(add(p,vec3(0,0,e))).sd - f(sub(p,vec3(0,0,e))).sd;
+        return norm(vec3(dx,dy,dz));
+      }
+      f.__normal = (p)=>approxNormal(f,p); // attach for reuse above
+
+      const V = vertices;
+      function tri(a,b,c) {
+        const pa=V[a], pb=V[b], pc=V[c];
+        const n = norm((()=>{
+          const u=sub(pb,pa), v=sub(pc,pa);
+          return vec3(
+            u.y*v.z - u.z*v.y,
+            u.z*v.x - u.x*v.z,
+            u.x*v.y - u.y*v.x
+          );
+        })());
+        positions.push(pa.x,pa.y,pa.z, pb.x,pb.y,pb.z, pc.x,pc.y,pc.z);
+        normals.push(n.x,n.y,n.z, n.x,n.y,n.z, n.x,n.y,n.z);
+        // face id via evaluating the SDF winner + face tag at the triangle centroid
+        const pcen = mul(add(add(pa,pb),pc), 1/3);
+        const win = f(pcen);
+        const node = NODE_REGISTRY.get(win.id);
+        const subFace = (node && typeof node.faceTagAt === 'function') ? node.faceTagAt(pcen) : 0;
+        const dom = (win.id << 3) | (subFace & 7);
+        triFaceIds.push(dom);
+        return dom;
+      }
+      function addTriEdges(a,b,c, triId){
+        addEdge(a,b,triId); addEdge(b,c,triId); addEdge(c,a,triId);
+      }
+
+      for (const [a,b,c,d] of quads) {
+        // Split by keeping more consistent face-id partition (try both)
+        const idAB = vFaceId[a], idBC = vFaceId[b], idCD = vFaceId[c], idDA = vFaceId[d];
+        const split1Cost = Number(idAB!==idCD);
+        const split2Cost = Number(idBC!==idDA);
+        if (split1Cost<=split2Cost) {
+          const t1 = tri(a,b,c); addTriEdges(a,b,c,t1);
+          const t2 = tri(a,c,d); addTriEdges(a,c,d,t2);
+        } else {
+          const t1 = tri(a,b,d); addTriEdges(a,b,d,t1);
+          const t2 = tri(b,c,d); addTriEdges(b,c,d,t2);
+        }
+      }
+
+      // Feature (“sharp”) edges: those shared by triangles with differing face IDs
+      const edgeList=[];
+      for (const [k,set] of featureEdges.entries()) {
+        if (set.size>=2) {
+          const [as,bs]=k.split(',').map(s=>parseInt(s,10));
+          edgeList.push([as,bs]);
+        }
+      }
+
+      return { positions, normals, triFaceIds, vertices:V, vFaceId, featureEdges:edgeList };
+    }
+
+    // ---------- B-rep-ish Topology Layer ----------
+    // Faces: groups of triangles sharing the same sourceId (SDF tag). Edges: graph along featureEdges.
+    function buildTopology({positions, triFaceIds, featureEdges}) {
+      const faces = new Map(); // id → {tris:[idx], color}
+      for (let t=0;t<triFaceIds.length;t++) {
+        const id = triFaceIds[t];
+        const f = faces.get(id) || { tris:[], color: idToColor(id) };
+        f.tris.push(t);
+        faces.set(id, f);
+      }
+      const edges = featureEdges; // pairs of vertex indices
+      return { faces, edges };
+    }
+    function idToColor(id) {
+      // deterministic pastel-ish but visible in dark mode
+      const rng = Math.sin(id*43758.5453)*43758.5453;
+      const h = (rng - Math.floor(rng)); // 0..1
+      // simple HSL to RGB
+      const s=0.6, l=0.55;
+      function h2rgb(p, q, t){ if(t<0) t+=1; if(t>1) t-=1; if(t<1/6) return p+(q-p)*6*t; if(t<1/2) return q; if(t<2/3) return p+(q-p)*(2/3 - t)*6; return p; }
+      const q = l < 0.5 ? l*(1+s) : l + s - l*s;
+      const p = 2*l - q;
+      const r = Math.round(h2rgb(p,q,h+1/3)*255);
+      const g = Math.round(h2rgb(p,q,h)*255);
+      const b = Math.round(h2rgb(p,q,h-1/3)*255);
+      return (r<<16) + (g<<8) + b;
+    }
+
+    // ---------- Scene / Render ----------
+    const canvas = document.getElementById('gl');
+    let renderer = null;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d10);
+
+    const camera = new THREE.PerspectiveCamera(45, 2, 0.01, 100);
+    camera.position.set(2.8, 1.8, 2.8);
+    let controls;
+
+    async function initRenderer(){
+      try {
+        renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+      } catch (err) {
+        renderer = null;
+      }
+      if (!renderer) {
+        try {
+          const { WebGPURenderer } = await import('three/webgpu');
+          renderer = new WebGPURenderer({ canvas, antialias:false, alpha:false });
+          await renderer.init();
+          console.info('Using Three.js WebGPURenderer');
+        } catch (e) {
+          console.error('Failed to create WebGL and WebGPU renderers');
+          throw e;
+        }
+      }
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+    }
+
+    const light = new THREE.DirectionalLight(0xffffff, 1.0);
+    light.position.set(4,6,8);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+    const rootGroup = new THREE.Group();
+    scene.add(rootGroup);
+
+    function makeMeshFromDC(dc, topology) {
+      // Build single BufferGeometry with per-triangle faceId attributes → then split into Mesh groups by face
+      const geom = new THREE.BufferGeometry();
+      const pos = new Float32Array(dc.positions);
+      const norm = new Float32Array(dc.normals);
+      geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geom.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
+
+      // Index is implicit (triangles sequential)
+      const triCount = dc.positions.length / 9;
+
+      // Build per-face groups by faceId
+      const groups = new Map(); // id -> [start,count]
+      for (let t=0;t<triCount;t++) {
+        const id = topology.triToFaceId ? topology.triToFaceId[t] : null;
+        const gid = (id==null)? 0 : id;
+        const g = groups.get(gid) || [];
+        g.push(t);
+        groups.set(gid, g);
+      }
+
+      // Material per group with different colors
+      const materials = [];
+      geom.clearGroups();
+      let idx = 0;
+      for (const [gid, tris] of groups.entries()) {
+        const start = idx*3; const count = tris.length*3;
+        geom.addGroup(start, count, materials.length);
+        idx += tris.length;
+        const color = gid===0 ? 0x7f8c9a : idToColor(gid);
+        const mat = new THREE.MeshStandardMaterial({
+          color, metalness:0.05, roughness:0.9, flatShading:true, wireframe:true , side:THREE.DoubleSide
+        });
+        materials.push(mat);
+      }
+
+      // Because we added groups sequentially, we must reorder triangles accordingly
+      const orderedPositions = new Float32Array(triCount*9);
+      const orderedNormals = new Float32Array(triCount*9);
+      let cursor = 0;
+      const triToFaceId = [];
+      for (const [gid, tris] of groups.entries()) {
+        for (const t of tris) {
+          orderedPositions.set(dc.positions.slice(t*9, t*9+9), cursor*9);
+          orderedNormals.set(dc.normals.slice(t*9, t*9+9), cursor*9);
+          triToFaceId[cursor] = gid;
+          cursor++;
+        }
+      }
+      geom.setAttribute('position', new THREE.BufferAttribute(orderedPositions, 3));
+      geom.setAttribute('normal', new THREE.BufferAttribute(orderedNormals, 3));
+
+      const mesh = new THREE.Mesh(geom, materials);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+
+      // Feature edges as line segments
+      const edgePts = [];
+      for (const [a,b] of topology.edges) {
+        const va = dc.vertices[a], vb = dc.vertices[b];
+        edgePts.push(va.x,va.y,va.z, vb.x,vb.y,vb.z);
+      }
+      const edgeGeom = new THREE.BufferGeometry();
+      edgeGeom.setAttribute('position', new THREE.Float32BufferAttribute(edgePts, 3));
+      const edgeLines = new THREE.LineSegments(edgeGeom, new THREE.LineBasicMaterial({ color:0xff3333, linewidth:1 }));
+
+      return { mesh, edges: edgeLines, triToFaceId };
+    }
+
+    // ---------- Example SDF Scene (A: box filleted by smooth, B: cylinder; then CSG) ----------
+    function buildSDFScene(boolOp='union', k=0.20) {
+      const A = new Box(vec3(-0.2,0,0), vec3(0.5,0.35,0.35));
+      const B = new CylinderZ(vec3(0.25,0,0), 0.35, 0.5);
+      let f;
+      switch (boolOp) {
+        case 'union': f = union(A,B); break;
+        case 'intersection': f = intersection(A,B); break;
+        case 'difference': f = difference(A,B); break;
+        case 'smoothUnion': f = smoothUnion(A,B,k); break;
+        default: f = union(A,B); break;
+      }
+      // Attach scene metadata for GPU use
+      f.__nodes = { boolOp, k, A, B };
+      return f;
+    }
+
+    // ---------- Pipeline: SDF → DC → Topology → Render ----------
+    async function rebuild() {
+      const boolOp = document.getElementById('boolOp').value;
+      const res = parseInt(document.getElementById('gridRes').value,10);
+      const iso = parseFloat(document.getElementById('iso').value);
+      const k = parseFloat(document.getElementById('smoothK').value);
+
+      // Build SDF (returns closure with .eval etc.)
+      const sdf = buildSDFScene(boolOp, k);
+      // Wrap to match expected signature
+      const f = (p)=> sdf(p);
+
+      // Bounds + DC
+      const bounds = { min: vec3(-1.0,-1.0,-1.0), max: vec3(1.0,1.0,1.0) };
+      // Pre-sample the lattice on the GPU if available
+      let usedGPU = false;
+      try {
+        // If rendering with WebGPU, avoid creating a second device for compute on some drivers.
+        if (!(renderer && renderer.isWebGPURenderer)) {
+          const samples = await gpuSampleLattice(bounds, res, sdf.__nodes);
+          if (samples) {
+            f.__samples = samples; // { sd, id, nx, ny, nz }
+            usedGPU = true;
+          }
+        }
+      } catch (e) {
+        console.warn('WebGPU sampling failed, falling back to CPU:', e);
+      }
+      if (typeof updateComputeMode === 'function') updateComputeMode(usedGPU);
+      // Attach a normal helper on the function (optional; DC will also compute if absent)
+      f.__normal = (p)=>{
+        const e=1e-3;
+        const dx = f(add(p,vec3(e,0,0))).sd - f(sub(p,vec3(e,0,0))).sd;
+        const dy = f(add(p,vec3(0,e,0))).sd - f(sub(p,vec3(0,e,0))).sd;
+        const dz = f(add(p,vec3(0,0,e))).sd - f(sub(p,vec3(0,0,e))).sd;
+        return norm(vec3(dx,dy,dz));
+      };
+      const dc = polygonizeDualContouring(f, bounds, res, iso);
+
+      const topology = buildTopology({
+        positions: dc.positions,
+        triFaceIds: dc.triFaceIds,
+        featureEdges: dc.featureEdges
+      });
+
+      // Render
+      rootGroup.clear();
+      const { mesh, edges, triToFaceId } = makeMeshFromDC(dc, { triToFaceId: dc.triFaceIds, edges: dc.featureEdges });
+      rootGroup.add(mesh);
+      rootGroup.add(edges);
+
+      // Legend (primitive × face)
+      const legend = document.getElementById('legend');
+      const faceNames = ['+X','-X','+Y','-Y','+Z','-Z'];
+      const items = Array.from(new Set(dc.triFaceIds)).map(fid=>{
+        const color = idToColor(fid);
+        const hex = '#' + color.toString(16).padStart(6,'0');
+        const nodeId = fid >> 3;
+        const subFace = fid & 7;
+        const face = faceNames[subFace] ?? '•';
+        return `<div><span class="swatch" style="background:${hex}"></span>Node ${nodeId} face ${face}</div>`;
+      }).join('');
+      legend.innerHTML = `<div style="opacity:0.8;margin-bottom:6px;">Face groups (primitive × face)</div>${items || '<div>(single group)</div>'}`;
+
+      // expose for console poking
+      window.__SDF = {dc, topology, triToFaceId};
+    }
+
+    // ---------- Resize / Animate ----------
+    function resizeRendererToDisplaySize(renderer) {
+      const canvas = renderer.domElement;
+      const pixelRatio = window.devicePixelRatio || 1;
+      const width = Math.floor(canvas.clientWidth * pixelRatio);
+      const height = Math.floor(canvas.clientHeight * pixelRatio);
+      const needResize = (canvas.width !== width) || (canvas.height !== height);
+      if (needResize) { renderer.setSize(width, height, false); }
+      return needResize;
+    }
+    function animate(time){
+      time *= 0.001;
+      if (resizeRendererToDisplaySize(renderer)) {
+        const canvas = renderer.domElement;
+        camera.aspect = canvas.clientWidth / canvas.clientHeight;
+        camera.updateProjectionMatrix();
+      }
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(animate);
+    }
+
+    // ---------- UI wiring ----------
+    const gridRes = document.getElementById('gridRes');
+    const gridResVal = document.getElementById('gridResVal');
+    const isoEl = document.getElementById('iso');
+    const isoVal = document.getElementById('isoVal');
+    const smoothK = document.getElementById('smoothK');
+    const smoothKVal = document.getElementById('smoothKVal');
+
+    function syncLabels(){
+      gridResVal.textContent = gridRes.value;
+      isoVal.textContent = parseFloat(isoEl.value).toFixed(3);
+      smoothKVal.textContent = parseFloat(smoothK.value).toFixed(2);
+    }
+    [gridRes, isoEl, smoothK].forEach(el=> el.addEventListener('input', ()=>{ syncLabels(); }));
+    document.getElementById('rebuild').addEventListener('click', rebuild);
+
+    // Compute mode badge updater
+    const computeModeEl = document.getElementById('computeMode');
+    function updateComputeMode(isGPU){
+      if (!computeModeEl) return;
+      computeModeEl.textContent = isGPU ? 'GPU' : 'CPU';
+      computeModeEl.classList.toggle('gpu', !!isGPU);
+      computeModeEl.classList.toggle('cpu', !isGPU);
+      computeModeEl.title = isGPU ? 'Compute: WebGPU active' : 'Compute: CPU fallback';
+    }
+
+    function layout(){
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const maxPR = (renderer && renderer.isWebGPURenderer) ? 1.5 : 2;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, maxPR));
+      renderer.setSize(w, h);
+    }
+    window.addEventListener('resize', layout);
+
+    // Boot (avoid top-level await for compatibility)
+    (async () => {
+      try { await initRenderer(); } catch (e) { console.error(e); }
+      layout(); syncLabels(); rebuild(); requestAnimationFrame(animate);
+    })();
+  </script>
+  <script>
+  // -------- WebGPU lattice sampler (WGSL compute) --------
+  async function gpuInit() {
+    try {
+      if (!('gpu' in navigator)) {
+        console.warn('WebGPU not found on navigator. Using CPU.');
+        return null;
+      }
+      if (window.__WGPU && window.__WGPU.device) return window.__WGPU;
+      const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+      if (!adapter) {
+        console.warn('WebGPU adapter unavailable. Site must be secure or browser must support WebGPU.');
+        return null;
+      }
+      const device = await adapter.requestDevice();
+      const wgpu = { adapter, device };
+      window.__WGPU = wgpu;
+      return wgpu;
+    } catch (err) {
+      console.warn('Failed to init WebGPU:', err);
+      return null;
+    }
+  }
+
+  function makeWGSL() {
+    return `
+struct Grid {
+  min   : vec4<f32>,
+  step  : vec4<f32>,
+  dims  : vec4<f32>, // nx, ny, nz, _ as floats
+};
+struct Scene {
+  boolOp   : f32,            // 0.0 union,1.0 inter,2.0 diff,3.0 smoothUnion
+  _pad0    : vec3<f32>,
+  a_id     : f32,            // pass ids as f32 and cast
+  b_id     : f32,
+  k        : f32,            // smooth k
+  _pad1    : f32,
+  a_center : vec4<f32>,
+  a_half   : vec4<f32>,
+  b_center : vec4<f32>,
+  b_r_hz   : vec4<f32>,      // x: r, y: hz
+};
+
+@group(0) @binding(0) var<uniform> grid  : Grid;
+@group(0) @binding(1) var<uniform> scene : Scene;
+@group(0) @binding(2) var<storage, read_write> outSd : array<f32>;
+@group(0) @binding(3) var<storage, read_write> outId : array<u32>;
+
+fn sdBox(p: vec3<f32>, c: vec3<f32>, h: vec3<f32>) -> f32 {
+  let q = p - c;
+  let d = vec3<f32>(abs(q.x), abs(q.y), abs(q.z)) - h;
+  let outside = max(d, vec3<f32>(0.0));
+  return min(max(d.x, max(d.y, d.z)), 0.0) + length(outside);
+}
+
+fn sdCylY(p: vec3<f32>, c: vec3<f32>, r: f32, hz: f32) -> f32 {
+  let q = p - c;
+  let dxz = length(vec2<f32>(q.x, q.z)) - r;
+  let dy  = abs(q.y) - hz;
+  let outside = vec2<f32>(max(dxz,0.0), max(dy,0.0));
+  return min(max(dxz, dy), 0.0) + length(outside);
+}
+
+fn opUnion(a: f32, b: f32) -> f32  { return min(a,b); }
+fn opInter(a: f32, b: f32) -> f32  { return max(a,b); }
+fn opDiff(a: f32, b: f32) -> f32   { return max(a, -b); }
+fn opSmoothUnion(a: f32, b: f32, k: f32) -> f32 {
+  let h = max(k - abs(a-b), 0.0) / k;
+  let m = h*h*0.25;
+  return min(a,b) - m*k;
+}
+
+@compute @workgroup_size(8,8,4)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let nx = u32(grid.dims.x); let ny = u32(grid.dims.y); let nz = u32(grid.dims.z);
+  if (gid.x >= nx || gid.y >= ny || gid.z >= nz) { return; }
+  let i = gid.x; let j = gid.y; let k = gid.z;
+  let p = vec3<f32>(grid.min.xyz + vec3<f32>(f32(i)*grid.step.x, f32(j)*grid.step.y, f32(k)*grid.step.z));
+
+  let a = sdBox(p, scene.a_center.xyz, scene.a_half.xyz);
+  let b = sdCylY(p, scene.b_center.xyz, scene.b_r_hz.x, scene.b_r_hz.y);
+
+  var sd  : f32;
+  var id  : u32;
+  let aId = u32(scene.a_id);
+  let bId = u32(scene.b_id);
+  let op  = u32(scene.boolOp);
+  if (op == 0u) { // union
+    if (a < b) { sd = a; id = aId; } else { sd = b; id = bId; }
+  } else if (op == 1u) { // intersection
+    sd = opInter(a,b);
+    if (a > b) { id = aId; } else { id = bId; }
+  } else if (op == 2u) { // difference A - B
+    let m = opDiff(a,b);
+    sd = m;
+    if (a > -b) { id = aId; } else { id = bId; }
+  } else { // 3: smooth union
+    sd = opSmoothUnion(a,b, scene.k);
+    if (a < b) { id = aId; } else { id = bId; }
+  }
+
+  let idx = i + nx*(j + ny*k);
+  outSd[idx] = sd;
+  outId[idx] = id;
+}
+`;
+  }
+
+  async function gpuSampleLattice(bounds, res, scene) {
+    const wgpu = await gpuInit();
+    if (!wgpu) return null;
+    const { device } = wgpu;
+
+    const nx = res, ny = res, nz = res;
+    const size = { x: bounds.max.x - bounds.min.x, y: bounds.max.y - bounds.min.y, z: bounds.max.z - bounds.min.z };
+    const step = { x: size.x/(nx-1), y: size.y/(ny-1), z: size.z/(nz-1) };
+
+    // Uniform buffers (observe std140-like alignment)
+    const gridU = new Float32Array([
+      bounds.min.x, bounds.min.y, bounds.min.z, 0.0,
+      step.x,        step.y,       step.z,       0.0,
+      nx,            ny,           nz,           0.0,
+    ]);
+
+    // Pull ids from the actual node instances to keep parity with CPU tagging
+    const A = scene.A, B = scene.B;
+    const boolMap = { union:0, intersection:1, difference:2, smoothUnion:3 };
+    const boolOpU = boolMap[scene.boolOp] ?? 0;
+
+    const sceneU = new Float32Array([
+      boolOpU, 0, 0, 0,                    // boolOp (as float) + padding
+      A.id,    B.id, scene.k, 0,
+      A.c.x, A.c.y, A.c.z, 0,
+      A.h.x, A.h.y, A.h.z, 0,
+      B.c.x, B.c.y, B.c.z, 0,
+      B.r,   B.hz,  0,     0,
+    ]);
+
+    // Create GPU buffers
+    function makeUniform(src) {
+      const buf = device.createBuffer({ size: src.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      device.queue.writeBuffer(buf, 0, src.buffer, src.byteOffset, src.byteLength);
+      return buf;
+    }
+    const gridBuf  = makeUniform(gridU);
+    const sceneBuf = makeUniform(sceneU);
+
+    const total = nx*ny*nz;
+    const outSdBuf = device.createBuffer({ size: total*4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    const outIdBuf = device.createBuffer({ size: total*4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+
+    // Pipeline
+    const module = device.createShaderModule({ code: makeWGSL() });
+    const pipeline = device.createComputePipeline({
+      layout: 'auto',
+      compute: { module, entryPoint: 'main' }
+    });
+    const bindGroup = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: gridBuf } },
+        { binding: 1, resource: { buffer: sceneBuf } },
+        { binding: 2, resource: { buffer: outSdBuf } },
+        { binding: 3, resource: { buffer: outIdBuf } },
+      ]
+    });
+
+    // Dispatch
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    const wgX = Math.ceil(nx/8);
+    const wgY = Math.ceil(ny/8);
+    const wgZ = Math.ceil(nz/4);
+    pass.dispatchWorkgroups(wgX, wgY, wgZ);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+
+    // Read back
+    async function readBuffer(buf, bytes) {
+      const read = device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      const enc = device.createCommandEncoder();
+      enc.copyBufferToBuffer(buf, 0, read, 0, bytes);
+      device.queue.submit([enc.finish()]);
+      await read.mapAsync(GPUMapMode.READ);
+      const arr = read.getMappedRange();
+      const out = new Uint8Array(arr.slice(0));
+      read.unmap();
+      return out;
+    }
+    const sdBytes = await readBuffer(outSdBuf, total*4);
+    const idBytes = await readBuffer(outIdBuf, total*4);
+    const sd = new Float32Array(sdBytes.buffer, sdBytes.byteOffset, total).slice();
+    const id = new Uint32Array(idBytes.buffer, idBytes.byteOffset, total).slice();
+
+    return { sd, id, nx, ny, nz };
+  }
+  </script>
+</body>
+</html>

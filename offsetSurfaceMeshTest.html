@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Offset Mesh — fixed overlap handling (Y-up)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark; }
+    html, body { height:100%; margin:0; background:#0b0d10; }
+    #hud{
+      position:fixed; left:12px; top:12px; padding:10px 12px;
+      background:rgba(20,24,28,0.85); color:#cfd8e3; font:12px/1.4 system-ui,sans-serif;
+      border:1px solid #1f2833; border-radius:12px; backdrop-filter:blur(6px); user-select:none;
+    }
+    #hud .row{ margin-top:6px; }
+    #hud .muted{ color:#8aa0b6; }
+    #hud kbd{ background:#11161b; border:1px solid #1c2530; padding:2px 6px; border-radius:6px; font-size:11px; }
+    #hud input[type="range"]{ width:180px; vertical-align:middle; }
+    canvas{ display:block; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div><strong>Offset Mesh — Terrain</strong></div>
+    <div class="muted">Blue = base, Red = offset (keeps upper triangles on overlaps)</div>
+    <div class="row">
+      <kbd>O</kbd> Toggle wire &nbsp; <kbd>R</kbd> Regenerate &nbsp; <kbd>±</kbd> Offset +/-
+    </div>
+    <div class="row">
+      Offset: <span id="distLbl">0.20</span> &nbsp;
+      <input id="dist" type="range" min="-0.30" max="0.60" step="0.01" value="0.20" />
+    </div>
+    <div class="row">
+      Roughness: <span id="roughLbl">0.65</span> &nbsp;
+      <input id="rough" type="range" min="0.05" max="1.00" step="0.05" value="0.65" />
+    </div>
+    <div class="row">
+      Octaves: <span id="octLbl">5</span> &nbsp;
+      <input id="oct" type="range" min="1" max="8" step="1" value="5" />
+    </div>
+    <div class="row muted">Keep segs modest (≈64–96). This is still geometric and heavy.</div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // offsetMesh(mesh, distance)
+    // Your algorithm + fixes:
+    //   • spatial hash broad-phase
+    //   • ignore adjacent pairs (shared edge/vertex)
+    //   • on intersection: keep the triangle with larger centroid·(+Y)
+    //   • no “max Y component only” pruning (that killed almost everything)
+    // ─────────────────────────────────────────────────────────────────────────────
+    function offsetMesh(threeMeshInput, offsetDistance) {
+      const geometry = threeMeshInput.geometry.clone();
+      const material = threeMeshInput.material.clone();
+      const posArr = geometry.attributes.position.array;
+
+      // ensure indexed
+      if (!geometry.index) {
+        const count = posArr.length / 3;
+        const idx = new (count > 65535 ? Uint32Array : Uint16Array)(count);
+        for (let i = 0; i < count; i++) idx[i] = i;
+        geometry.setIndex(new THREE.BufferAttribute(idx, 1));
+      }
+      let indices = geometry.index.array;
+
+      // 1) normals for offset direction
+      geometry.computeVertexNormals();
+      const nrmArr = geometry.attributes.normal.array;
+
+      // 2) offset vertices along normals
+      for (let i = 0; i < posArr.length; i += 3) {
+        posArr[i]     += nrmArr[i]     * offsetDistance;
+        posArr[i + 1] += nrmArr[i + 1] * offsetDistance;
+        posArr[i + 2] += nrmArr[i + 2] * offsetDistance;
+      }
+      geometry.attributes.position.needsUpdate = true;
+
+      // 3) drop degenerate tris
+      const newIdx = [];
+      const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3();
+      for (let i = 0; i < indices.length; i += 3) {
+        const a = indices[i]*3, b = indices[i+1]*3, c = indices[i+2]*3;
+        A.set(posArr[a], posArr[a+1], posArr[a+2]);
+        B.set(posArr[b], posArr[b+1], posArr[b+2]);
+        C.set(posArr[c], posArr[c+1], posArr[c+2]);
+        const area = B.clone().sub(A).cross(C.clone().sub(A)).length() * 0.5;
+        if (area > 1e-12) newIdx.push(indices[i], indices[i+1], indices[i+2]);
+      }
+      geometry.setIndex(newIdx);
+      indices = geometry.index.array;
+
+      // 4) build triangles + aabbs
+      const triCount = indices.length / 3;
+      const tris = new Array(triCount);
+      const bb = new THREE.Box3().makeEmpty();
+      for (let t = 0; t < triCount; t++) {
+        const ia = indices[t*3+0]*3, ib = indices[t*3+1]*3, ic = indices[t*3+2]*3;
+        const a = new THREE.Vector3(posArr[ia], posArr[ia+1], posArr[ia+2]);
+        const b = new THREE.Vector3(posArr[ib], posArr[ib+1], posArr[ib+2]);
+        const c = new THREE.Vector3(posArr[ic], posArr[ic+1], posArr[ic+2]);
+        const min = a.clone().min(b).min(c);
+        const max = a.clone().max(b).max(c);
+        const centroid = a.clone().add(b).add(c).multiplyScalar(1/3);
+        tris[t] = { a, b, c, min, max, centroid,
+          verts: [indices[t*3+0], indices[t*3+1], indices[t*3+2]]
+        };
+        bb.expandByPoint(min); bb.expandByPoint(max);
+      }
+
+      // 5) spatial hash (broad phase)
+      // cell ≈ mean edge * 2.5
+      let avgEdge = 0, cnt = 0, tmp = new THREE.Vector3();
+      for (const tr of tris) {
+        avgEdge += tmp.copy(tr.b).sub(tr.a).length();
+        avgEdge += tmp.copy(tr.c).sub(tr.b).length();
+        avgEdge += tmp.copy(tr.a).sub(tr.c).length();
+        cnt += 3;
+      }
+      const cell = Math.max(1e-3, (avgEdge / Math.max(1, cnt)) * 2.5);
+      const inv = 1 / cell;
+      const cellKey = (x,y,z)=>`${x},${y},${z}`;
+      const grid = new Map();
+      function insert(t){
+        const mx = tris[t].min, M = tris[t].max;
+        const x0=Math.floor((mx.x-bb.min.x)*inv), y0=Math.floor((mx.y-bb.min.y)*inv), z0=Math.floor((mx.z-bb.min.z)*inv);
+        const x1=Math.floor((M.x-bb.min.x)*inv),  y1=Math.floor((M.y-bb.min.y)*inv),  z1=Math.floor((M.z-bb.min.z)*inv);
+        for(let z=z0; z<=z1; z++) for(let y=y0; y<=y1; y++) for(let x=x0; x<=x1; x++){
+          const k = cellKey(x,y,z); if(!grid.has(k)) grid.set(k, []); grid.get(k).push(t);
+        }
+      }
+      for (let t=0; t<triCount; t++) insert(t);
+
+      // helpers
+      const dir = new THREE.Vector3(0,1,0); // +Y is "up"
+      const tested = new Set();
+      const keep = new Uint8Array(triCount); keep.fill(1);
+
+      const shareVertexOrEdge = (t1,t2)=>{
+        const v1 = tris[t1].verts, v2=tris[t2].verts;
+        let shared=0;
+        for (const a of v1) for (const b of v2) if (a===b) shared++;
+        return shared>=2; // share an edge (or the whole tri)
+      };
+      const aabbOverlap = (t1,t2)=>{
+        const A=tris[t1], B=tris[t2];
+        return !(A.max.x < B.min.x || B.max.x < A.min.x ||
+                 A.max.y < B.min.y || B.max.y < A.min.y ||
+                 A.max.z < B.min.z || B.max.z < A.min.z);
+      };
+      function segTri(p0,p1,v0,v1,v2){
+        const EPS=1e-7;
+        const dir = p1.clone().sub(p0);
+        const len = dir.length(); if (len<EPS) return false; dir.normalize();
+        const e1=v1.clone().sub(v0), e2=v2.clone().sub(v0);
+        const pvec = dir.clone().cross(e2);
+        const det = e1.dot(pvec); if (Math.abs(det)<EPS) return false;
+        const invDet=1/det, tvec=p0.clone().sub(v0);
+        const u=tvec.dot(pvec)*invDet; if (u<0 || u>1) return false;
+        const qvec=tvec.clone().cross(e1);
+        const v=dir.dot(qvec)*invDet; if (v<0 || u+v>1) return false;
+        const t=e2.dot(qvec)*invDet; return (t>EPS && t<len);
+      }
+      function coplanarOverlap(t1,t2){
+        // project to dominant plane of t1
+        const n = t1.b.clone().sub(t1.a).cross(t1.c.clone().sub(t1.a));
+        const ax=Math.abs(n.x), ay=Math.abs(n.y), az=Math.abs(n.z);
+        let X=0, Y=1; if (ax>=ay && ax>=az){ X=1; Y=2; } else if (ay>=az){ X=0; Y=2; }
+        const P=[t1.a,t1.b,t1.c].map(p=>{const a=p.toArray(); return {x:a[X],y:a[Y]};});
+        const Q=[t2.a,t2.b,t2.c].map(p=>{const a=p.toArray(); return {x:a[X],y:a[Y]};});
+        const inside=(p,a,b,c)=>{
+          const area=(b.y-a.y)*(c.x-b.x)-(b.x-a.x)*(c.y-b.y);
+          const u=((b.y-a.y)*(p.x-b.x)-(b.x-a.x)*(p.y-b.y))/area;
+          const v=((c.y-b.y)*(p.x-b.x)-(c.x-b.x)*(p.y-b.y))/area; const w=1-u-v;
+          return u>=0&&v>=0&&w>=0;
+        };
+        const segI=(a1,a2,b1,b2)=>{
+          const d=(a1.x-a2.x)*(b1.y-b2.y)-(a1.y-a2.y)*(b1.x-b2.x);
+          if (Math.abs(d)<1e-9) return false;
+          const t=((a1.x-b1.x)*(b1.y-b2.y)-(a1.y-b1.y)*(b1.x-b2.x))/d;
+          const u=((a1.x-b1.x)*(a1.y-a2.y)-(a1.y-b1.y)*(a1.x-a2.x))/d;
+          return t>=0&&t<=1&&u>=0&&u<=1;
+        };
+        if (inside(Q[0],P[0],P[1],P[2])||inside(Q[1],P[0],P[1],P[2])||inside(Q[2],P[0],P[1],P[2])||
+            inside(P[0],Q[0],Q[1],Q[2])||inside(P[1],Q[0],Q[1],Q[2])||inside(P[2],Q[0],Q[1],Q[2])) return true;
+        const EdgesP=[[P[0],P[1]],[P[1],P[2]],[P[2],P[0]]], EdgesQ=[[Q[0],Q[1]],[Q[1],Q[2]],[Q[2],Q[0]]];
+        for (const [a1,a2] of EdgesP) for (const [b1,b2] of EdgesQ) if (segI(a1,a2,b1,b2)) return true;
+        return false;
+      }
+      function triTriIntersect(T,U){
+        const EPS=1e-8;
+        const e1=T.b.clone().sub(T.a), e2=T.c.clone().sub(T.a);
+        const n1=e1.clone().cross(e2);
+        const d1 = U.a.clone().sub(T.a).dot(n1);
+        const d2 = U.b.clone().sub(T.a).dot(n1);
+        const d3 = U.c.clone().sub(T.a).dot(n1);
+        if ((d1>EPS && d2>EPS && d3>EPS) || (d1<-EPS && d2<-EPS && d3<-EPS)) return false;
+        const f1=U.b.clone().sub(U.a), f2=U.c.clone().sub(U.a);
+        const n2=f1.clone().cross(f2);
+        const e4= T.a.clone().sub(U.a).dot(n2);
+        const e5= T.b.clone().sub(U.a).dot(n2);
+        const e6= T.c.clone().sub(U.a).dot(n2);
+        if ((e4>EPS && e5>EPS && e6>EPS) || (e4<-EPS && e5<-EPS && e6<-EPS)) return false;
+
+        // coplanar?
+        if (Math.abs(d1)<EPS && Math.abs(d2)<EPS && Math.abs(d3)<EPS) {
+          return coplanarOverlap(T,U);
+        }
+        // edge/edge tests
+        if (segTri(T.a,T.b,U.a,U.b,U.c) || segTri(T.b,T.c,U.a,U.b,U.c) || segTri(T.c,T.a,U.a,U.b,U.c) ||
+            segTri(U.a,U.b,T.a,T.b,T.c) || segTri(U.b,U.c,T.a,T.b,T.c) || segTri(U.c,U.a,T.a,T.b,T.c)) return true;
+        return false;
+      }
+
+      // iterate pairs in neighboring cells
+      const collectCell = (t, cb)=>{
+        const mn=tris[t].min, mx=tris[t].max;
+        const x0=Math.floor((mn.x-bb.min.x)*inv)-1, y0=Math.floor((mn.y-bb.min.y)*inv)-1, z0=Math.floor((mn.z-bb.min.z)*inv)-1;
+        const x1=Math.floor((mx.x-bb.min.x)*inv)+1, y1=Math.floor((mx.y-bb.min.y)*inv)+1, z1=Math.floor((mx.z-bb.min.z)*inv)+1;
+        for(let z=z0; z<=z1; z++) for(let y=y0; y<=y1; y++) for(let x=x0; x<=x1; x++){
+          const arr = grid.get(cellKey(x,y,z)); if (!arr) continue;
+          for (const j of arr) cb(j);
+        }
+      };
+
+      for (let i=0;i<triCount;i++){
+        if (!keep[i]) continue;
+        collectCell(i, (j)=>{
+          if (j<=i || !keep[j]) return;
+          if (!aabbOverlap(i,j)) return;
+          if (shareVertexOrEdge(i,j)) return; // adjacent; ignore
+          const key = i<j ? (i<<20)|j : (j<<20)|i;
+          if (tested.has(key)) return;
+          tested.add(key);
+
+          if (triTriIntersect(tris[i], tris[j])) {
+            // keep the one with higher centroid along +Y
+            const hi = tris[i].centroid.y >= tris[j].centroid.y ? i : j;
+            const lo = hi===i ? j : i;
+            keep[lo] = 0; // drop only the lower one
+          }
+        });
+      }
+
+      const outIdx = [];
+      for (let t=0; t<triCount; t++) if (keep[t]) {
+        outIdx.push(indices[t*3+0], indices[t*3+1], indices[t*3+2]);
+      }
+      geometry.setIndex(outIdx);
+
+      // final tidy
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+      geometry.computeBoundingBox();
+
+      return new THREE.Mesh(geometry, material);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Viewer (dark, ortho)
+    // ─────────────────────────────────────────────────────────────────────────────
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d10);
+
+    const aspect = window.innerWidth / window.innerHeight;
+    const viewSize = 8;
+    const camera = new THREE.OrthographicCamera(
+      -viewSize*aspect*0.5, +viewSize*aspect*0.5, +viewSize*0.5, -viewSize*0.5, 0.01, 200
+    );
+    camera.position.set(6,6,6); camera.lookAt(0,0,0);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.HemisphereLight(0xaec6ff, 0x0a0b0c, 0.6));
+    const key = new THREE.DirectionalLight(0xffffff, 1.1);
+    key.position.set(2.5,4.0,2.0); scene.add(key);
+
+    const grid = new THREE.GridHelper(20,20,0x233142,0x1a2430);
+    grid.material.opacity = 0.25; grid.material.transparent = true; scene.add(grid);
+
+    const baseMat = new THREE.MeshStandardMaterial({ color:0x00a3ff, metalness:0.05, roughness:0.85, side:THREE.DoubleSide });
+    const offMat  = new THREE.MeshStandardMaterial({ color:0xff5d6c, metalness:0.05, roughness:0.8, transparent:true, opacity:0.78, side:THREE.DoubleSide });
+    const wireMat = new THREE.LineBasicMaterial({ color:0xe6edf3, transparent:true, opacity:0.28 });
+
+    // HUD refs
+    const distSlider = document.getElementById('dist');
+    const roughSlider = document.getElementById('rough');
+    const octSlider   = document.getElementById('oct');
+    const distLbl  = document.getElementById('distLbl');
+    const roughLbl = document.getElementById('roughLbl');
+    const octLbl   = document.getElementById('octLbl');
+
+    // State
+    let overlay = true;
+    let group = new THREE.Group(); scene.add(group);
+
+    let params = {
+      size: 4.0,
+      segs: 80,               // keep moderate; algo is geometric
+      amplitude: 0.6,
+      roughness: parseFloat(roughSlider.value),
+      octaves: parseInt(octSlider.value, 10),
+      seed: Math.random()*1e6|0,
+    };
+    let offsetDist = parseFloat(distSlider.value);
+
+    // Terrain (FBM value-noise)
+    function seededRandom(seed){ let s=seed>>>0; return () => ((s=(1664525*s+1013904223)>>>0)&0xffffffff)/0x100000000; }
+    function makeValueNoise2D(seed){
+      const rand=seededRandom(seed), N=256, mask=N-1, table=new Float32Array(N*N);
+      for(let i=0;i<table.length;i++) table[i]=rand()*2-1;
+      const smooth=t=>t*t*(3-2*t);
+      return (x,y)=>{
+        const xi=Math.floor(x), yi=Math.floor(y);
+        const xf=x-xi, yf=y-yi, x0=xi&mask, y0=yi&mask, x1=(xi+1)&mask, y1=(yi+1)&mask;
+        const v00=table[y0*N+x0], v10=table[y0*N+x1], v01=table[y1*N+x0], v11=table[y1*N+x1];
+        const u=smooth(xf), v=smooth(yf);
+        const a=v00+u*(v10-v00), b=v01+u*(v11-v01);
+        return a+v*(b-a);
+      };
+    }
+    function fbm(noise2D,x,y,oct,rough){ let amp=1,freq=1,sum=0,norm=0; for(let i=0;i<oct;i++){ sum+=amp*noise2D(x*freq,y*freq); norm+=amp; amp*=rough; freq*=2; } return sum/(norm||1); }
+    function generateTerrainMesh(p){
+      const geo = new THREE.PlaneGeometry(p.size, p.size, p.segs, p.segs); // indexed
+      geo.rotateX(-Math.PI/2); // Y-up
+      const pos = geo.getAttribute('position');
+      const noise2D = makeValueNoise2D(p.seed);
+      const scale = 1.2;
+      for (let i=0;i<pos.count;i++){
+        const x=pos.getX(i), z=pos.getZ(i);
+        const nx=(x/p.size)*scale+100.0, nz=(z/p.size)*scale+200.0;
+        const h=fbm(noise2D,nx,nz,p.octaves,p.roughness)*p.amplitude;
+        pos.setY(i,h);
+      }
+      geo.computeVertexNormals(); geo.computeBoundingSphere(); geo.computeBoundingBox();
+      return new THREE.Mesh(geo, baseMat.clone());
+    }
+
+    function disposeRec(root){ root.traverse(o=>{ if (o.geometry) o.geometry.dispose(); if (o.material?.dispose) o.material.dispose(); }); }
+
+    function buildScene(){
+      scene.remove(group); disposeRec(group);
+      group = new THREE.Group(); scene.add(group);
+
+      const base = generateTerrainMesh(params);
+      group.add(base);
+
+      const result = offsetMesh(base, offsetDist);
+      result.material = offMat.clone();
+      group.add(result);
+
+      // wires
+      const baseWire = new THREE.LineSegments(new THREE.WireframeGeometry(base.geometry), wireMat.clone());
+      const offWire  = new THREE.LineSegments(new THREE.WireframeGeometry(result.geometry), wireMat.clone());
+      base.add(baseWire); result.add(offWire);
+      baseWire.visible = overlay; offWire.visible = overlay;
+    }
+
+    function syncHUD(){
+      distLbl.textContent = offsetDist.toFixed(2);
+      roughLbl.textContent = params.roughness.toFixed(2);
+      octLbl.textContent   = params.octaves;
+    }
+
+    distSlider.addEventListener('input', () => { offsetDist = parseFloat(distSlider.value); syncHUD(); buildScene(); });
+    roughSlider.addEventListener('input', () => { params.roughness = parseFloat(roughSlider.value); syncHUD(); buildScene(); });
+    octSlider.addEventListener('input', () => { params.octaves = parseInt(octSlider.value,10); syncHUD(); buildScene(); });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase()==='o'){ overlay=!overlay; group.traverse(o=>{ if (o.type==='LineSegments') o.visible=overlay; }); }
+      if (e.key.toLowerCase()==='r'){ params.seed=Math.random()*1e6|0; buildScene(); }
+      if (e.key==='+' || e.key==='='){ offsetDist=Math.min(0.60,offsetDist+0.01); distSlider.value=offsetDist; syncHUD(); buildScene(); }
+      if (e.key==='-'){ offsetDist=Math.max(-0.30,offsetDist-0.01); distSlider.value=offsetDist; syncHUD(); buildScene(); }
+    });
+
+    syncHUD(); buildScene();
+
+    window.addEventListener('resize', () => {
+      const a=window.innerWidth/window.innerHeight;
+      camera.left=-viewSize*a*0.5; camera.right=viewSize*a*0.5;
+      camera.top=viewSize*0.5; camera.bottom=-viewSize*0.5;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    renderer.setAnimationLoop(()=>{ controls.update(); renderer.render(scene, camera); });
+  </script>
+</body>
+</html>

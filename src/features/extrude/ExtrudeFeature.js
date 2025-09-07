@@ -1,0 +1,53 @@
+import { extractDefaultValues } from "../../PartHistory.js";
+import { BREP } from "../../BREP/BREP.js";
+
+const inputParamsSchema = {
+  featureID: {
+    type: "string",
+    default_value: null,
+    hint: "unique identifier for the sweep feature",
+  },
+  profile: {
+    type: "reference_selection",
+    selectionFilter: ["SKETCH", "FACE"],
+    multiple: false,
+    default_value: null,
+    hint: "Select the profile to sweep",
+  },
+  distance: {
+    type: "number",
+    default_value: 1,
+    hint: "Extrude distance when no path is provided",
+  },
+};
+
+export class ExtrudeFeature {
+  static featureShortName = "E";
+  static featureName = "Extrude";
+  static inputParamsSchema = inputParamsSchema;
+
+  constructor() {
+    this.inputParams = extractDefaultValues(inputParamsSchema);
+    
+    this.persistentData = {};
+  }
+
+  async run(partHistory) {
+    // actual code to create the extrude feature.
+    const { profile, distance, twistAngle } = this.inputParams;
+
+    console.log(profile);
+
+    // Create the extrude using the sweep solid
+    const extrude = new BREP.Sweep({
+      face: partHistory.scene.getObjectByName(profile),
+      sweepPathEdges: [],
+      distance: distance * -1,
+      name: this.inputParams.featureID
+    });
+    extrude.visualize();
+
+
+    return [extrude];
+  }
+}

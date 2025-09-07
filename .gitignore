@@ -1,0 +1,17 @@
+node_modules/*
+dist/*
+*key*
+*aiCoder/llmConfig*
+*aiCoder/backups/*
+tests/results/*
+test-results/*
+.parcel-cache/*
+.vscode/*
+.aiCoder/prompts/customPrompts.json
+.aiCoder/prompts/default-plan-prompt.md
+.aiCoder/prompts/default-system-prompt.md
+.aiCoder/prompts/plan-edit-prompt.md
+.aiCoder/prompts/snippet-*
+.aiCoder/backups/*
+project.md
+trianglesTest.js/results
