@@ -70,6 +70,26 @@ await ph.runHistory();
 - `manifold-3d` creates a robust manifold and propagates face IDs through CSG, so original face labels remain usable after unions/differences/intersections.
 - Faces and edges are visualized via Three.js; face names remain accessible for downstream feature logic.
 
+## Topological Naming
+
+Topological naming is about keeping stable references to faces and edges as the model recomputes. This project uses per‑triangle face labels that propagate through CSG so features can reliably refer to geometry across edits.
+
+- Face labels: Triangles are authored with a string face name. Internally each name maps to a globally unique Manifold ID and is stored as `faceID` per triangle. After boolean ops, Manifold preserves these IDs so the original face names remain available on the result.
+- Edge identification: Edges are computed as polylines along boundaries between pairs of face labels. Each boundary chain is named `<faceA>|<faceB>[i]`, where `i` disambiguates multiple loops between the same two faces.
+- Selections: The UI stores object names in feature parameters. Because face/edge objects are rebuilt from the propagated labels, references stay stable so long as some triangles of that face survive.
+- Primitive conventions: Built‑in primitives assign semantic face names, e.g. `Cube_NX/PX/NY/PY/NZ/PZ`, `Cylinder_S` (side), `Cylinder_T/B` (top/bottom), `Torus_Side/Cap0/Cap1`. Imported meshes use `STL_FACE_<n>` groups derived by normal‑deflection clustering.
+- Feature‑generated names: Operations derive clear, persistent names. For example, Fillet uses `FILLET_<faceA>|<faceB>_ARC`, `_SIDE_A`, `_SIDE_B`, `_CAP0`, `_CAP1`; Chamfer uses `CHAMFER_<faceA>|<faceB>_BEVEL`, `_SIDE_A`, `_SIDE_B`, `_CAP0`, `_CAP1`.
+
+Guidelines and limitations
+- Stability: Names persist through booleans and simplification; a name disappears only if all its triangles are removed by subsequent features.
+- Splits/merges: A single face name can represent multiple disjoint islands after CSG. Edge loop indices `[i]` can change when topology changes; avoid hard‑coding the index when possible.
+- Semantics vs geometry: Faces are label‑based, not re‑fitted analytic surfaces. Prefer selecting faces by their semantic names (from primitives or earlier features) rather than by geometric predicates alone.
+- Authoring tips: When creating new solids or tools, choose descriptive face names and reuse source face names in derived outputs. This improves reference stability for downstream features.
+
+Roadmap
+- Optional GUIDs for selection sets to further reduce ambiguity when faces split.
+- Enhanced matching heuristics (geometric signatures) to map selections across parameter changes that substantially remesh surfaces.
+
 ## Key Libraries
 
 - Three.js (`three`): rendering and core geometry types.
