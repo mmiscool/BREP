@@ -1,6 +1,6 @@
 # BREP
 
-A feature-based modeling playground experimenting with BREP-style workflows on top of triangle meshes. It combines robust manifold CSG (via the Manifold library) with a simple face/edge representation, a history pipeline, and Three.js visualization. Import meshes (STL), repair and group them into faces, then perform boolean operations, fillets, chamfers, sweeps, lofts, and more.
+A feature-based modeling playground experimenting with BREP-style workflows on top of triangle meshes. It combines robust manifold CSG (via the [Manifold](https://github.com/elalish/manifold/) library) with a simple face/edge representation, a history pipeline, and Three.js visualization. Import meshes (STL), repair and group them into faces, then perform boolean operations, fillets, chamfers, sweeps, lofts, and more.
 
 This project is actively evolving; expect rough edges while APIs settle.
 
@@ -96,7 +96,7 @@ Roadmap
   - STL loader: `three/examples/jsm/loaders/STLLoader.js`
   - 3MF loader: `three/examples/jsm/loaders/3MFLoader.js`
   - Geometry utilities: `three/examples/jsm/utils/BufferGeometryUtils.js`
-- Manifold (`manifold-3d`): WASM CSG/mesh library used for manifold construction, boolean operations, and mesh queries.
+- Manifold (`manifold-3d`): WASM CSG/mesh library used for manifold construction, boolean operations, and mesh queries. Repo: https://github.com/elalish/manifold/
   - Loaded via `src/BREP/setupManifold.js` with `vite-plugin-wasm` in the browser.
 - Vite (`vite`): dev server and build tooling.
 - Nodemon (`nodemon`): convenient live testing for Node-based checks.
