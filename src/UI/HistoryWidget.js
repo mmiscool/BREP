@@ -410,6 +410,7 @@ export class HistoryWidget {
 
     _setItemOpen(entry, open, exclusive) {
         if (!entry) return;
+        const wasOpen = Boolean(entry.isOpen);
         entry.isOpen = Boolean(open);
         entry.headerBtn.setAttribute("aria-expanded", entry.isOpen ? "true" : "false");
         entry.root.classList.toggle("open", entry.isOpen);
@@ -425,6 +426,11 @@ export class HistoryWidget {
                     e.root.classList.remove("open");
                     e.content.hidden = true;
                 }
+            }
+
+            // Ensure a reference selection input activates only on transition closed->open
+            if (!wasOpen) {
+                try { entry.ui && typeof entry.ui.activateFirstReferenceSelection === 'function' && entry.ui.activateFirstReferenceSelection(); } catch (_) { }
             }
         }
     }
@@ -935,6 +941,15 @@ class genFeatureUI {
                     inputEl.type = 'number';
                     inputEl.id = id;
                     inputEl.className = 'input';
+                    // Optional numeric attributes from schema
+                    try {
+                        if (def && (typeof def.step === 'number' || (typeof def.step === 'string' && def.step.trim() !== '')))
+                            inputEl.step = String(def.step);
+                        if (def && (typeof def.min === 'number' || (typeof def.min === 'string' && def.min !== '')))
+                            inputEl.min = String(def.min);
+                        if (def && (typeof def.max === 'number' || (typeof def.max === 'string' && def.max !== '')))
+                            inputEl.max = String(def.max);
+                    } catch (_) { }
 
                     const numericPattern = /^-?\d*\.?\d*$/;
 
@@ -972,6 +987,15 @@ class genFeatureUI {
                         if (isNumericLike(inputEl.value)) {
                             //console.log("is numeric like on focus");
                             inputEl.type = "number";
+                            // Re-apply numeric attributes on type toggle
+                            try {
+                                if (def && (typeof def.step === 'number' || (typeof def.step === 'string' && def.step.trim() !== '')))
+                                    inputEl.step = String(def.step);
+                                if (def && (typeof def.min === 'number' || (typeof def.min === 'string' && def.min !== '')))
+                                    inputEl.min = String(def.min);
+                                if (def && (typeof def.max === 'number' || (typeof def.max === 'string' && def.max !== '')))
+                                    inputEl.max = String(def.max);
+                            } catch (_) { }
                         } else {
                             //console.log("is not numeric like on focus");
                             inputEl.type = "text";
@@ -1204,6 +1228,24 @@ class genFeatureUI {
             this._fieldsWrap.appendChild(row);
             this._inputs.set(key, inputEl);
         }
+    }
+
+    // Public: Activate the first reference_selection input in this form (if any)
+    activateFirstReferenceSelection() {
+        try {
+            for (const key in this.schema) {
+                if (!Object.prototype.hasOwnProperty.call(this.schema, key)) continue;
+                const def = this.schema[key];
+                if (def && def.type === 'reference_selection') {
+                    const inputEl = this._inputs.get(key);
+                    if (inputEl) {
+                        this._activateReferenceSelection(inputEl, def);
+                        return true;
+                    }
+                }
+            }
+        } catch (_) { }
+        return false;
     }
 
     _activateReferenceSelection(inputEl, def) {

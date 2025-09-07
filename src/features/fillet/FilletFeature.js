@@ -16,11 +16,13 @@ const inputParamsSchema = {
     },
     radius: {
         type: "number",
+        step: 0.125,
         default_value: 1,
         hint: "Fillet radius",
     },
     inflate: {
         type: "number",
+        step: 0.1,
         default_value: 0.1,
         hint: "Grow the cutting solid by this amount (units). Use small values like 0.0005 to avoid thin leftovers after subtraction.",
     },
