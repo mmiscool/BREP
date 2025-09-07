@@ -117,7 +117,7 @@ Roadmap
 - `pnpm test` — Run test suite.
 - `pnpm liveTesting` — Auto-runs tests on file changes.
 
-The project also includes a simple license report generator (`pnpm generateLicenses`) that writes `licenses.html`.
+The project also includes a simple license report generator (`pnpm generateLicenses`) that writes `about.html`.
 
 ## Status and Limitations
 

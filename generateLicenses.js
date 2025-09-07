@@ -1,7 +1,7 @@
 // generateLicenses.js (ES6, no deps, dark mode)
 // Usage: node generateLicenses.js
 // - Runs: pnpm licenses list --prod --long --json
-// - Produces: licenses.html (one <div> per license, with repo/homepage + author)
+// - Produces: about.html (one <div> per license, with repo/homepage + author)
 
 import { execSync } from "child_process";
 import { writeFileSync, readFileSync } from "fs";
@@ -45,6 +45,19 @@ html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 ui-sans-
 main{max-width:1100px;margin:0 auto;padding:28px}
 h1{margin:0 0 18px;font-size:22px;color:var(--accent);font-weight:700}
 .summary{color:var(--muted);margin-bottom:22px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;margin:0 0 18px}
+.readme{padding:0}
+.readme .header{padding:16px 18px;border-bottom:1px solid var(--border)}
+.readme .content{padding:18px}
+.prose h1{font-size:24px;margin:0 0 12px}
+.prose h2{font-size:18px;margin:18px 0 8px}
+.prose h3{font-size:16px;margin:14px 0 6px}
+.prose p{margin:0 0 10px}
+.prose ul{margin:0 0 10px 18px}
+.prose li{margin:4px 0}
+.prose code{background:#0d1520;border:1px solid var(--border);padding:1px 5px;border-radius:6px;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:12px}
+.prose pre{background:#0d1520;border:1px solid var(--border);padding:12px;border-radius:12px;overflow:auto}
+.prose a{color:var(--accent)}
 .license{
   background:var(--panel);border:1px solid var(--border);border-radius:14px;
   padding:16px 16px 8px;margin:0 0 18px;
@@ -71,6 +84,94 @@ const countPackages = licenseKeys.reduce((n, k) => n + (Array.isArray(data[k]) ?
 // read in the actual licence for this product located in LICENSE.md
 const licenseText = readFileSync("LICENSE.md", "utf-8");
 
+// read README and render markdown to HTML (lightweight renderer, no deps)
+const readmeText = readFileSync("README.md", "utf-8");
+
+const escape = (s = "") => String(s)
+  .replaceAll("&", "&amp;")
+  .replaceAll("<", "&lt;")
+  .replaceAll(">", "&gt;")
+  .replaceAll('"', "&quot;")
+  .replaceAll("'", "&#39;");
+
+function renderMarkdown(md) {
+  // Extract fenced code blocks first and replace with placeholders
+  const codeBlocks = [];
+  let tmp = md;
+  tmp = tmp.replace(/```([\s\S]*?)```/g, (_m, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(`<pre><code>${escape(code.trim())}</code></pre>`);
+    return `§§CODE${idx}§§`;
+  });
+
+  const lines = tmp.split(/\r?\n/);
+  let html = "";
+  let inList = false;
+  let para = [];
+
+  const flushPara = () => {
+    if (para.length) {
+      const line = para.join(" ").trim();
+      if (line) html += `<p>${inline(line)}</p>`;
+      para = [];
+    }
+  };
+
+  const inline = (s) => {
+    // escape first; we keep markdown specials (*_`[]()#) unescaped
+    let out = escape(s);
+    // links [text](url)
+    out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, t, u) => `<a href="${u}">${t}</a>`);
+    // code `x`
+    out = out.replace(/`([^`]+)`/g, (_m, t) => `<code>${t}</code>`);
+    // bold **x**
+    out = out.replace(/\*\*([^*]+)\*\*/g, (_m, t) => `<strong>${t}</strong>`);
+    // italic *x*
+    out = out.replace(/(^|\W)\*([^*]+)\*(?=\W|$)/g, (m, pre, t) => `${pre}<em>${t}</em>`);
+    return out;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const line = raw.trimEnd();
+    if (!line.trim()) {
+      if (inList) { html += `</ul>`; inList = false; }
+      flushPara();
+      continue;
+    }
+
+    // headings #..######
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      if (inList) { html += `</ul>`; inList = false; }
+      flushPara();
+      const level = h[1].length;
+      html += `<h${level}>${inline(h[2].trim())}</h${level}>`;
+      continue;
+    }
+
+    // bullet list items
+    const li = line.match(/^[-*]\s+(.*)$/);
+    if (li) {
+      flushPara();
+      if (!inList) { html += `<ul>`; inList = true; }
+      html += `<li>${inline(li[1].trim())}</li>`;
+      continue;
+    }
+
+    // normal paragraph line (accumulate)
+    para.push(line.trim());
+  }
+  if (inList) html += `</ul>`;
+  flushPara();
+
+  // restore fenced code blocks
+  html = html.replace(/§§CODE(\d+)§§/g, (_m, i) => codeBlocks[Number(i)] ?? "");
+  return html;
+}
+
+const readmeHTML = renderMarkdown(readmeText);
+
 
 
 
@@ -82,13 +183,21 @@ let html = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Licenses Report</title>
+<title>About BREP</title>
 <style>${css}</style>
 </head>
 <body>
 <main>
-<h1>This projects licence</h1>
-<div style="white-space: pre-wrap;">${licenseText}</div><br><br><br><hr>
+  <section class="card readme">
+    <div class="header"><h1>Project Overview</h1></div>
+    <div class="content prose">${readmeHTML}</div>
+  </section>
+
+  <section class="card">
+    <h1>This project's license</h1>
+    <div style="white-space: pre-wrap;">${escapeHTML(licenseText)}</div>
+  </section>
+
   <h1>Licenses Report of libraries used in this package</h1>
   <div class="summary">${countPackages} packages • ${licenseKeys.length} license types</div>
 `;
@@ -134,5 +243,5 @@ html += `
 </body>
 </html>`;
 
-writeFileSync("licenses.html", html, "utf-8");
-console.log("✔ licenses.html generated");
+writeFileSync("about.html", html, "utf-8");
+console.log("✔ about.html generated");

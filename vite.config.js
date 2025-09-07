@@ -19,7 +19,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(root, 'index.html'),
-        licenses: resolve(root, 'licenses.html'),
+        about: resolve(root, 'about.html'),
         randomTests: resolve(root, 'offsetSurfaceMeshTest.html'),
       },
     },
