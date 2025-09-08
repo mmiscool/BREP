@@ -14,7 +14,7 @@ import { PartHistory } from '../PartHistory.js';
 import { SelectionFilter } from './SelectionFilter.js';
 import './expressionsManager.js'
 import { expressionsManager } from './expressionsManager.js';
-import { SelectionFilterWidget } from './selectionFilterWidget.js';
+import { MainToolbar } from './MainToolbar.js';
 import { FileManagerWidget } from './fileManagerWidget.js';
 import './mobile.js';
 import { SketchMode3D } from './SketchMode3D.js';
@@ -190,6 +190,8 @@ export class Viewer {
         const fm = new FileManagerWidget(this);
         const fmSection = await this.accordion.addSection('File Manager');
         fmSection.uiElement.appendChild(fm.uiElement);
+        // Expose for toolbar Save button
+        this.fileManagerWidget = fm;
 
         // Setup historyWidget
         this.historyWidget = await new HistoryWidget(this);
@@ -226,7 +228,11 @@ export class Viewer {
 
 
 
-        this.selectionFilterWidget = new SelectionFilterWidget(this);
+        // Mount the main toolbar (includes inline Selection Filter on the left)
+        this.mainToolbar = new MainToolbar(this);
+
+        // Ensure toolbar sits above the canvas and doesn't block controls when not hovered
+        try { this.renderer.domElement.style.marginTop = '0px'; } catch {}
     }
 
     // ————————————————————————————————————————
@@ -303,6 +309,98 @@ export class Viewer {
     render() {
         this.renderer.render(this.scene, this.camera);
     }
+
+    // Zoom-to-fit using only ArcballControls operations (pan + zoom).
+    // Does not alter camera orientation or frustum parameters (left/right/top/bottom).
+    zoomToFit(margin = 1.1) {
+        try {
+            const c = this.controls;
+            if (!c) return;
+
+            // Build world-space bounds of all visible geometry
+            const box = new THREE.Box3();
+            box.makeEmpty();
+            this.scene.traverse((obj) => {
+                if (!obj || !obj.visible) return;
+                // Exclude Arcball gizmos/grid from fitting
+                if (this.controls) {
+                    const giz = this.controls._gizmos;
+                    const grid = this.controls._grid;
+                    let p = obj;
+                    while (p) {
+                        if (p === giz || p === grid) return;
+                        p = p.parent;
+                    }
+                }
+                // Skip empty groups without children
+                if (!obj.geometry && (!obj.children || obj.children.length === 0) && !obj.isLine && !obj.isMesh && !obj.isPoints) return;
+                try { box.expandByObject(obj); } catch { /* ignore */ }
+            });
+            if (box.isEmpty()) return;
+
+            // Ensure matrices are current
+            this.camera.updateMatrixWorld(true);
+
+            // Compute extents in camera space (preserve orientation)
+            const corners = [
+                new THREE.Vector3(box.min.x, box.min.y, box.min.z),
+                new THREE.Vector3(box.min.x, box.min.y, box.max.z),
+                new THREE.Vector3(box.min.x, box.max.y, box.min.z),
+                new THREE.Vector3(box.min.x, box.max.y, box.max.z),
+                new THREE.Vector3(box.max.x, box.min.y, box.min.z),
+                new THREE.Vector3(box.max.x, box.min.y, box.max.z),
+                new THREE.Vector3(box.max.x, box.max.y, box.min.z),
+                new THREE.Vector3(box.max.x, box.max.y, box.max.z),
+            ];
+            const inv = new THREE.Matrix4().copy(this.camera.matrixWorld).invert();
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const p of corners) {
+                p.applyMatrix4(inv);
+                if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+                if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+            }
+            const camWidth = Math.max(1e-6, (maxX - minX));
+            const camHeight = Math.max(1e-6, (maxY - minY));
+
+            // Compute target zoom for orthographic camera using current frustum and viewport aspect.
+            const { width, height } = this._getContainerSize();
+            const aspect = Math.max(1e-6, width / height);
+            const v = this.viewSize; // current half-height before zoom scaling
+            const halfW = camWidth / 2 * Math.max(1, margin);
+            const halfH = camHeight / 2 * Math.max(1, margin);
+            const maxZoomByHeight = v / halfH;
+            const maxZoomByWidth = (v * aspect) / halfW;
+            const targetZoom = Math.min(maxZoomByHeight, maxZoomByWidth);
+            const currentZoom = this.camera.zoom || 1;
+            const sizeFactor = Math.max(1e-6, targetZoom / currentZoom);
+
+            // Compute world center of the box
+            const center = box.getCenter(new THREE.Vector3());
+
+            // Perform pan+zoom via ArcballControls only
+            try { c.updateMatrixState && c.updateMatrixState(); } catch {}
+            c.focus(center, sizeFactor);
+
+            // Sync and render
+            try { c.update && c.update(); } catch {}
+            this.render();
+        } catch { /* noop */ }
+    }
+
+    // Wireframe toggle for all materials
+    setWireframe(enabled) {
+        this._wireframeEnabled = !!enabled;
+        try {
+            this.scene.traverse((obj) => {
+                const apply = (mat) => { if (mat && 'wireframe' in mat) mat.wireframe = !!enabled; };
+                if (obj.material) {
+                    if (Array.isArray(obj.material)) obj.material.forEach(apply); else apply(obj.material);
+                }
+            });
+        } catch { /* ignore */ }
+        this.render();
+    }
+    toggleWireframe() { this.setWireframe(!this._wireframeEnabled); }
 
     // ————————————————————————————————————————
     // Internal: Animation Loop

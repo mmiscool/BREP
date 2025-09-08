@@ -3,7 +3,9 @@ const DEBUG = false;
 
 
 export class SelectionFilterWidget {
-    constructor(viewer) {
+    // options: { inline?: boolean, mountEl?: HTMLElement }
+    constructor(viewer, options = {}) {
+        this.options = { inline: false, mountEl: null, ...options };
         this.uiElement = document.createElement("div");
         this.selectedEntities = new Set();
         this.viewer = viewer;
@@ -38,92 +40,156 @@ export class SelectionFilterWidget {
 
 
         style.textContent = `
+            :root {
+                --sfw-bg: #121519;
+                --sfw-border: #1c2128;
+                --sfw-shadow: rgba(0,0,0,0.35);
+                --sfw-text: #d6dde6;
+                --sfw-accent: #7aa2f7;
+                --sfw-muted: #8b98a5;
+            }
+
             .selection-filter-widget {
                 position: absolute;
-                bottom: 0px;
+                bottom: 10px;
                 right: 10px;
-                width: 350px;
-                height: 18px;
-                border-radius: 4px;
-                padding: 10px;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-                /* horizontal row */
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-
+                min-width: 280px;
+                max-width: 380px;
+                border-radius: 8px;
+                padding: 8px 10px;
+                box-shadow: 0 8px 22px var(--sfw-shadow);
+                background: linear-gradient(180deg, rgba(18,21,25,0.96), rgba(18,21,25,0.90));
+                border: 1px solid var(--sfw-border);
+                color: var(--sfw-text);
+                font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+                font-size: 12px;
+                backdrop-filter: blur(6px);
             }
-            .selection-filter-widget > * {
-                display: block;
-                margin-bottom: 5px;
-                /* vertically center elements */
+
+            /* Inline variant for embedding (e.g., main toolbar) */
+            .selection-filter-widget.inline {
+                position: static;
+                bottom: auto; right: auto;
+                min-width: 0; max-width: none;
+                padding: 2px 6px;
+                border-radius: 8px;
+                background: transparent;
+                border: none;
+                box-shadow: none;
+                backdrop-filter: none;
+            }
+
+            .sfw-row {
                 display: flex;
                 align-items: center;
+                gap: 8px;
+            }
+
+            .sfw-title {
+                font-weight: 600;
+                color: var(--sfw-muted);
+                letter-spacing: .3px;
+                margin-right: 8px;
+                user-select: none;
+            }
+
+            .sfw-select {
+                appearance: none;
+                -webkit-appearance: none;
+                background: #0e1116;
+                border: 1px solid var(--sfw-border);
+                color: var(--sfw-text);
+                border-radius: 6px;
+                padding: 6px 26px 6px 8px;
+                outline: none;
+                font-size: 12px;
+                line-height: 1;
+                cursor: pointer;
+                box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+            }
+
+            .sfw-select:focus {
+                border-color: var(--sfw-accent);
+                box-shadow: 0 0 0 2px rgba(122,162,247,0.25);
+            }
+
+            .sfw-spacer { flex: 1; }
+            .sfw-kbd {
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                background: #0e1116;
+                border: 1px solid var(--sfw-border);
+                color: var(--sfw-muted);
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-size: 11px;
+                user-select: none;
             }
         `;
         document.head.appendChild(style);
 
         // Create the main UI container
         this.uiElement.classList.add("selection-filter-widget");
-        document.body.appendChild(this.uiElement);
+        if (this.options.inline) this.uiElement.classList.add('inline');
+        const mount = this.options.mountEl || (this.options.inline ? null : document.body);
+        if (mount) mount.appendChild(this.uiElement);
 
         // Set the callback to update the UI when selection filter changes
         SelectionFilter.uiCallback = () => this.updateUI();
         this.updateUI();
 
 
-        // refresh the list of selected entites in the scene every 100ms
-        setInterval(() => {
-            this.selectedEntitiesBefore = [...this.selectedEntities];
-            this.selectedEntities = this.getSelectedEntities();
-            // check if selection has changed
-            if (this.selectedEntities.length !== this.selectedEntitiesBefore.length ||
-                this.selectedEntities.some(id => !this.selectedEntitiesBefore.includes(id)) ||
-                this.selectedEntitiesBefore.some(id => !this.selectedEntities.includes(id))) {
-                if (DEBUG) console.log("Selection changed:", this.selectedEntities);
+        // Event-driven selection updates (no polling)
+        const onSelectionChanged = () => {
+            const before = Array.isArray(this.selectedEntities) ? [...this.selectedEntities] : [];
+            const now = this.getSelectedEntities();
+            this.selectedEntities = now;
+            const changed = (now.length !== before.length) || now.some(id => !before.includes(id)) || before.some(id => !now.includes(id));
+            if (!changed) return;
+            if (DEBUG) console.log('Selection changed:', now);
 
+            const activeRefSelect = findActiveReferenceSelection();
+            if (DEBUG) console.log(activeRefSelect);
+            if (!activeRefSelect) return;
 
-
-                const activeRefSelect = findActiveReferenceSelection();
-                if (DEBUG) console.log(activeRefSelect);
-                if (activeRefSelect) {
-                    const isMulti = String(activeRefSelect.dataset?.multiple || '') === 'true';
-                    if (isMulti) {
-                        // Only push when non-empty to avoid wiping chips on reruns
-                        if ((this.selectedEntities || []).length > 0) {
-                            try {
-                                activeRefSelect.value = JSON.stringify(this.selectedEntities || []);
-                            } catch (_) {
-                                activeRefSelect.value = '[]';
-                            }
-                            activeRefSelect.dispatchEvent(new Event("change"));
-                        }
-                    } else {
-                        activeRefSelect.value = this.selectedEntities[0] || "";
-                        // remove active-reference-selection
-                        activeRefSelect.removeAttribute("active-reference-selection");
-                        activeRefSelect.style.filter = "none";
-                        activeRefSelect.dispatchEvent(new Event("change"));
+            const isMulti = String(activeRefSelect.dataset?.multiple || '') === 'true';
+            if (isMulti) {
+                // Only push when non-empty to avoid wiping chips on reruns
+                if ((now || []).length > 0) {
+                    try {
+                        activeRefSelect.value = JSON.stringify(now || []);
+                    } catch (_) {
+                        activeRefSelect.value = '[]';
                     }
+                    activeRefSelect.dispatchEvent(new Event('change'));
                 }
-
+            } else {
+                activeRefSelect.value = now[0] || '';
+                // remove active-reference-selection
+                activeRefSelect.removeAttribute('active-reference-selection');
+                activeRefSelect.style.filter = 'none';
+                activeRefSelect.dispatchEvent(new Event('change'));
             }
-        }, 100);
+        };
+        window.addEventListener('selection-changed', onSelectionChanged);
 
 
     }
 
 
     updateUI() { // Update the UI based on the current selection
-        this.uiElement.innerHTML = "<b>Selection Filter:</b>"; // Clear existing UI
+        this.uiElement.innerHTML = ""; // Clear existing UI
 
         // Build a single-select dropdown with only available types
         const wrap = document.createElement('div');
-        wrap.style.display = 'flex';
-        wrap.style.gap = '8px';
-        wrap.style.alignItems = 'center';
+        wrap.className = 'sfw-row';
+
+        const title = document.createElement('div');
+        title.className = 'sfw-title';
+        title.textContent = 'Selection';
+        wrap.appendChild(title);
 
         const select = document.createElement('select');
+        select.className = 'sfw-select';
         select.title = 'Selection Type';
         const types = SelectionFilter.getAvailableTypes();
 
@@ -152,6 +218,13 @@ export class SelectionFilterWidget {
         });
 
         wrap.appendChild(select);
+        const spacer = document.createElement('div');
+        spacer.className = 'sfw-spacer';
+        wrap.appendChild(spacer);
+        const hint = document.createElement('div');
+        hint.className = 'sfw-kbd';
+        hint.textContent = 'Esc: clear';
+        wrap.appendChild(hint);
         this.uiElement.appendChild(wrap);
     }
 

@@ -31,6 +31,8 @@ export class BrowserTesting {
     this.enabled = new Map(this.testNames.map(n => [n, true]));
     this.status = new Map(this.testNames.map(n => [n, ""]));   // "", "pass", "fail"
     this.errors = new Map(); // name -> { message, stack } captured on failure
+    // Per-test canvas snapshot
+    this.screenshots = new Map(); // name -> dataURL
 
     // Popup container for screenshots between tests (kept from previous behavior)
     this.popupDiv = document.createElement("div");
@@ -384,8 +386,27 @@ export class BrowserTesting {
     });
 
     const title = document.createElement("div");
-    title.textContent = `Error Log — ${name}`;
+    title.textContent = `Log — ${name}`;
     Object.assign(title.style, { fontWeight: "700", marginBottom: "8px" });
+
+    const screenshot = this.screenshots.get(name);
+    let shotWrap = null;
+    if (screenshot) {
+      shotWrap = document.createElement("div");
+      Object.assign(shotWrap.style, {
+        marginBottom: "8px",
+        display: "flex",
+        justifyContent: "center",
+      });
+      const img = document.createElement("img");
+      img.src = screenshot;
+      img.alt = `Canvas snapshot for ${name}`;
+      img.style.maxWidth = "100%";
+      img.style.height = "auto";
+      img.style.border = "1px solid #1e2030";
+      img.style.borderRadius = "8px";
+      shotWrap.appendChild(img);
+    }
 
     const pre = document.createElement("pre");
     pre.style.whiteSpace = "pre-wrap";
@@ -403,6 +424,7 @@ export class BrowserTesting {
     });
 
     modal.appendChild(title);
+    if (shotWrap) modal.appendChild(shotWrap);
     modal.appendChild(pre);
     modal.appendChild(close);
 
@@ -434,8 +456,20 @@ export class BrowserTesting {
         this.startLogging();
         this.env.partHistory.reset();
         await runSingleTest(functionToRun, this.env.partHistory);
-
-
+        // After the test completes, zoom-to-fit then capture a canvas snapshot for the log
+        try {
+          if (typeof this.env.zoomToFit === 'function') {
+            this.env.zoomToFit(1.2);
+          } else {
+            this.env.render();
+          }
+          // Wait a frame to ensure the camera/render settled
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          const dataURL = this.env.renderer?.domElement?.toDataURL?.("image/png");
+          if (dataURL && typeof dataURL === 'string' && dataURL.startsWith('data:image')) {
+            this.screenshots.set(name, dataURL);
+          }
+        } catch (_) { /* best-effort snapshot */ }
 
         this._setError(name, await this.endLogging());
       }

@@ -274,6 +274,7 @@ export class SelectionFilter {
                     });
                 }
             }
+            SelectionFilter._emitSelectionChanged();
         }
 
         return parentSelectedAction;
@@ -293,6 +294,7 @@ export class SelectionFilter {
             }
 
         });
+        SelectionFilter._emitSelectionChanged();
     }
 
     static selectItem(scene, itemName) {
@@ -311,6 +313,7 @@ export class SelectionFilter {
                 }
             }
         });
+        SelectionFilter._emitSelectionChanged();
     }
 
     static deselectItem(scene, itemName) {
@@ -340,8 +343,17 @@ export class SelectionFilter {
                 }
             }
         });
+        SelectionFilter._emitSelectionChanged();
     }
 
     static set uiCallback(callback) { SelectionFilter._uiCallback = callback; }
     static triggerUI() { if (SelectionFilter._uiCallback) SelectionFilter._uiCallback(); }
+
+    // Emit a global event so UI can react without polling
+    static _emitSelectionChanged() {
+        try {
+            const ev = new CustomEvent('selection-changed');
+            window.dispatchEvent(ev);
+        } catch (_) { /* noop */ }
+    }
 }
