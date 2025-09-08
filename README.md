@@ -12,6 +12,9 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Mesh repair pipeline: weld, T‑junction fix, overlap removal, hole fill, and consistent normals.
 - Importers for both STL (using Three.js loaders).
 - Primitive solids (cube, sphere, cylinder, cone, torus, pyramid) and typical CAD features (sketch/extrude, sweep, loft, revolve, fillet, chamfer, mirror, boolean ops).
+- Modular main toolbar with: Save, Zoom to Fit, Wireframe toggle, About, and STL export.
+- Selection Filter surfaced in the toolbar for quick access.
+- Browser test runner captures per-test canvas snapshots (with auto Zoom‑to‑Fit) and shows them in the log dialog.
 
 ## Features Status
 
@@ -43,6 +46,16 @@ Prereqs: Node.js 18+ and `pnpm` installed.
   - Open the printed URL (usually http://localhost:5173). Try `index.html`, `sdf.html`, or `offsetSurfaceMeshTest.html` for sandboxes.
 - Run tests: `pnpm test`
 - Live testing while editing (Node): `pnpm liveTesting`
+
+### UI overview (browser)
+
+- Top toolbar (fixed):
+  - Save: stores the current model to browser localStorage (integrates with File Manager).
+  - Zoom to Fit: pans and zooms using ArcballControls to frame all visible geometry without changing orientation.
+  - Wireframe: toggles mesh wireframe rendering for a quick inspection.
+  - About: opens the third‑party license report.
+  - Export STL: downloads an ASCII STL of the current part(s). If multiple solids are present, you can export each individually. If you have solids selected, only the selected ones are exported.
+- Selection Filter: now lives in the toolbar (right side) for quick changes; Esc clears selection.
 
 ## Importing Models (STL and 3MF)
 
@@ -118,6 +131,18 @@ Roadmap
 - `pnpm liveTesting` — Auto-runs tests on file changes.
 
 The project also includes a simple license report generator (`pnpm generateLicenses`) that writes `about.html`.
+
+## Browser Test Runner
+
+- A lightweight runner UI (mounted in the browser) lists all tests with controls to run individually or in sequence.
+- After each test completes, the runner performs Zoom‑to‑Fit and captures a canvas snapshot. Clicking “Show Log” displays the snapshot above any logged output for that test.
+- Between tests, an optional popup can show a running gallery of snapshots when auto‑progressing.
+
+## Camera Zoom‑to‑Fit
+
+- Zoom‑to‑Fit uses ArcballControls only (pan + orthographic zoom) to frame all visible geometry while preserving the current camera orientation.
+- It computes a bounding box of scene content (excluding Arcball gizmos), projects to camera space to consider the current view, and determines the required zoom so both width and height fit with a small margin.
+- No direct camera frustum or orientation changes are applied — this keeps controls and rendering in sync and avoids “jump” artifacts.
 
 ## Status and Limitations
 

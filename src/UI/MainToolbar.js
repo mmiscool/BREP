@@ -73,6 +73,7 @@ export class MainToolbar {
     left.appendChild(this._btn('Zoom to fit', 'Frame all geometry', () => this.viewer?.zoomToFit?.()));
     left.appendChild(this._btn('Wireframe', 'Toggle wireframe', () => this.viewer?.toggleWireframe?.()));
     left.appendChild(this._btn('About', 'Open About page', () => window.open('about.html', '_blank')));
+    left.appendChild(this._btn('Export STL', 'Export current part as STL', () => this._onExportSTL()));
 
     const right = document.createElement('div');
     right.className = 'mtb-right';
@@ -120,5 +121,65 @@ export class MainToolbar {
       const w = Math.ceil(sb?.getBoundingClientRect?.().width || sb?.offsetWidth || 0);
       this.root.style.left = `${w}px`;
     } catch { this.root.style.left = '0px'; }
+  }
+
+  _collectSolids() {
+    const scene = this.viewer?.partHistory?.scene || this.viewer?.scene;
+    if (!scene) return [];
+    const solids = [];
+    scene.traverse((o) => {
+      if (!o || !o.visible) return;
+      if (o.type === 'SOLID' && typeof o.toSTL === 'function') solids.push(o);
+    });
+    // Prefer selected solids if any are selected
+    const selected = solids.filter(o => o.selected === true);
+    return selected.length ? selected : solids;
+  }
+
+  _download(filename, data, mime = 'application/octet-stream') {
+    const blob = new Blob([data], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+  }
+
+  _safeName(raw, fallback = 'solid') {
+    const s = String(raw || '').trim();
+    return (s.length ? s : fallback).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80);
+  }
+
+  _onExportSTL() {
+    try {
+      const solids = this._collectSolids();
+      if (!solids.length) { alert('No solids to export.'); return; }
+
+      // If there is exactly one solid, name the file after it; otherwise zip-like multi export.
+      if (solids.length === 1) {
+        const s = solids[0];
+        const name = this._safeName(s.name || 'solid');
+        const stl = s.toSTL(name, 6);
+        this._download(`${name}.stl`, stl, 'model/stl');
+        return;
+      }
+
+      // Multiple solids → create a pseudo-archive by concatenation with separators,
+      // or prompt to export individually. Export individually for clarity.
+      const exportAll = confirm(`Export ${solids.length} solids individually?`);
+      if (!exportAll) return;
+      solids.forEach((s, idx) => {
+        try {
+          const name = this._safeName(s.name || `solid_${idx}`);
+          const stl = s.toSTL(name, 6);
+          this._download(`${name}.stl`, stl, 'model/stl');
+        } catch (e) { console.warn('STL export failed for a solid:', e); }
+      });
+    } catch (e) {
+      alert('Export failed. See console for details.');
+      console.error(e);
+    }
   }
 }
