@@ -28,7 +28,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Sweep: Work in progress 
 - Loft: Planned
 - Revolve: Planned
-- Mirror: Planned
+- Mirror: Implemented
 - Boolean: Implemented
 - Fillet: Implemented
 - Chamfer: Implemented

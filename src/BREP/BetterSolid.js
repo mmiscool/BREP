@@ -213,6 +213,66 @@ export class Solid extends THREE.Group {
         return this;
     }
 
+    /**
+     * Return a mirrored copy of this solid across a plane defined by a point and a normal.
+     * The copy preserves face IDs and name maps. Visualization can be rebuilt via visualize().
+     * @param {THREE.Vector3|[number,number,number]} point World-space point on the mirror plane.
+     * @param {THREE.Vector3|[number,number,number]} normal World-space plane normal (need not be normalized).
+     * @returns {Solid}
+     */
+    mirrorAcrossPlane(point, normal) {
+        const P0 = (point instanceof THREE.Vector3)
+            ? point.clone()
+            : new THREE.Vector3(point[0], point[1], point[2]);
+        const n = (normal instanceof THREE.Vector3)
+            ? normal.clone().normalize()
+            : new THREE.Vector3(normal[0], normal[1], normal[2]).normalize();
+
+        const mesh = this.getMesh();
+        const vp = mesh.vertProperties; // Float32Array
+        const tv = mesh.triVerts;       // Uint32Array
+        const faceIDs = mesh.faceID && mesh.faceID.length ? Array.from(mesh.faceID) : [];
+
+        const mirrored = new Solid();
+        mirrored._numProp = mesh.numProp || 3;
+
+        // Reflect vertices across plane
+        const outVP = new Array(vp.length);
+        const X = new THREE.Vector3();
+        for (let i = 0; i < vp.length; i += 3) {
+            X.set(vp[i + 0], vp[i + 1], vp[i + 2]);
+            const d = X.clone().sub(P0);
+            const t = 2 * d.dot(n);
+            const Xp = X.sub(n.clone().multiplyScalar(t));
+            outVP[i + 0] = Xp.x;
+            outVP[i + 1] = Xp.y;
+            outVP[i + 2] = Xp.z;
+        }
+        mirrored._vertProperties = outVP;
+
+        // Copy triangles and face IDs
+        mirrored._triVerts = Array.from(tv);
+        mirrored._triIDs = faceIDs.length ? faceIDs : new Array((tv.length / 3) | 0).fill(0);
+
+        // Restore face name maps
+        try {
+            mirrored._idToFaceName = new Map(this._idToFaceName);
+            mirrored._faceNameToID = new Map(this._faceNameToID);
+        } catch (_) {}
+
+        // Rebuild vertex key map for exact-key lookup consistency
+        mirrored._vertKeyToIndex = new Map();
+        for (let i = 0; i < mirrored._vertProperties.length; i += 3) {
+            const x = mirrored._vertProperties[i], y = mirrored._vertProperties[i + 1], z = mirrored._vertProperties[i + 2];
+            mirrored._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
+        }
+
+        mirrored._dirty = true;  // manifold must rebuild on demand
+        mirrored._faceIndex = null;
+        mirrored._manifold = null;
+        return mirrored;
+    }
+
 
     /**
      * Remove tiny triangles that lie along boundaries between faces by performing
