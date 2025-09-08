@@ -822,7 +822,7 @@ export class SketchMode3D {
       if (k === "g")
         this.#toggleSelection({ type: "geometry", id: parseInt(id) });
       if (k === "c") {
-        /* TODO: select/highlight constraint */
+        this.#toggleSelection({ type: "constraint", id: parseInt(id) });
       }
       this.#refreshContextBar();
     };
@@ -902,6 +902,18 @@ export class SketchMode3D {
       this._ctxBar.appendChild(mk("Parallel ∥", "∥"));
       this._ctxBar.appendChild(mk("Perpendicular ⟂", "⟂"));
       this._ctxBar.appendChild(mk("Angle ∠", "∠"));
+      // Also allow delete when any selection exists
+      if (items.length) {
+        const del = document.createElement("button");
+        del.textContent = "Delete";
+        del.style.color = "#ff8b8b";
+        del.style.background = "transparent";
+        del.style.border = "1px solid #5b2b2b";
+        del.style.borderRadius = "6px";
+        del.style.padding = "4px 8px";
+        del.onclick = () => this.#deleteSelection();
+        this._ctxBar.appendChild(del);
+      }
       return;
     }
 
@@ -916,6 +928,19 @@ export class SketchMode3D {
       this._ctxBar.appendChild(mk("Colinear ⋯", "⋯"));
       this._ctxBar.appendChild(mk("Angle ∠", "∠"));
     }
+
+    // Generic Delete: show if any selection (points, curves, constraints)
+    if (items.length) {
+      const del = document.createElement("button");
+      del.textContent = "Delete";
+      del.style.color = "#ff8b8b";
+      del.style.background = "transparent";
+      del.style.border = "1px solid #5b2b2b";
+      del.style.borderRadius = "6px";
+      del.style.padding = "4px 8px";
+      del.onclick = () => this.#deleteSelection();
+      this._ctxBar.appendChild(del);
+    }
   }
 
   // Remove selected items (geometries first, then points) and refresh
@@ -924,7 +949,12 @@ export class SketchMode3D {
       const s = this._solver;
       if (!s) return;
       const items = Array.from(this._selection || []);
-      // Delete geometries first to avoid dangling refs
+      // Delete constraints first
+      for (const it of items)
+        if (it?.type === "constraint") {
+          try { s.removeConstraintById?.(parseInt(it.id)); } catch { }
+        }
+      // Delete geometries next to avoid dangling refs
       for (const it of items)
         if (it?.type === "geometry") {
           try {

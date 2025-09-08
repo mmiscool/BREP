@@ -255,45 +255,9 @@ export class Sweep extends FacesSolid {
       }
     }
 
-    // Side faces: prioritize boundary loops if provided by the sketch feature; otherwise, use face.edges
-    const boundaryLoops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
-    if (boundaryLoops && boundaryLoops.length) {
-      for (const loop of boundaryLoops) {
-        const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
-        const isHole = !!(loop && loop.isHole);
-        const pA = pts.slice();
-        // ensure closed
-        if (pA.length >= 2) {
-          const first = pA[0];
-          const last = pA[pA.length - 1];
-          if (!(first[0] === last[0] && first[1] === last[1] && first[2] === last[2])) pA.push([first[0], first[1], first[2]]);
-        }
-        // remove consecutive duplicates if any
-        for (let i = pA.length - 2; i >= 0; i--) {
-          const a = pA[i], b = pA[i + 1];
-          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pA.splice(i + 1, 1);
-        }
-        // build side quads around the loop
-        for (let i = 0; i < pA.length - 1; i++) {
-          const a = pA[i];
-          const b = pA[i + 1];
-          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
-          const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
-          const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
-          const name = `${face.name || 'FACE'}_SW`;
-          if (isHole) {
-            // reverse winding for hole walls to maintain outward orientation
-            this.addTriangle(name, a, b2, b);
-            this.addTriangle(name, a, a2, b2);
-          } else {
-            this.addTriangle(name, a, b, b2);
-            this.addTriangle(name, a, b2, a2);
-          }
-        }
-      }
-    } else {
-      // Fallback: use edge polylines
-      const edges = Array.isArray(face.edges) ? face.edges : [];
+    // Side faces: build per sketch edge when available for distinct face labels
+    const edges = Array.isArray(face.edges) ? face.edges : [];
+    if (edges.length) {
       for (const edge of edges) {
         const name = `${edge.name || 'EDGE'}_SW`;
 
@@ -357,6 +321,44 @@ export class Sweep extends FacesSolid {
           // two triangles (a,b,b2) and (a,b2,a2)
           this.addTriangle(name, a, b, b2);
           this.addTriangle(name, a, b2, a2);
+        }
+      }
+    } else {
+      // Fallback: use boundary loops (no per-edge names available here)
+      const boundaryLoops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
+      if (boundaryLoops && boundaryLoops.length) {
+        for (const loop of boundaryLoops) {
+          const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
+          const isHole = !!(loop && loop.isHole);
+          const pA = pts.slice();
+          // ensure closed
+          if (pA.length >= 2) {
+            const first = pA[0];
+            const last = pA[pA.length - 1];
+            if (!(first[0] === last[0] && first[1] === last[1] && first[2] === last[2])) pA.push([first[0], first[1], first[2]]);
+          }
+          // remove consecutive duplicates if any
+          for (let i = pA.length - 2; i >= 0; i--) {
+            const a = pA[i], b = pA[i + 1];
+            if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pA.splice(i + 1, 1);
+          }
+          // build side quads around the loop
+          for (let i = 0; i < pA.length - 1; i++) {
+            const a = pA[i];
+            const b = pA[i + 1];
+            if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+            const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
+            const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
+            const name = `${face.name || 'FACE'}_SW`;
+            if (isHole) {
+              // reverse winding for hole walls to maintain outward orientation
+              this.addTriangle(name, a, b2, b);
+              this.addTriangle(name, a, a2, b2);
+            } else {
+              this.addTriangle(name, a, b, b2);
+              this.addTriangle(name, a, b2, a2);
+            }
+          }
         }
       }
     }

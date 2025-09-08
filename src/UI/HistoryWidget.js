@@ -262,9 +262,31 @@ export class HistoryWidget {
         titleText.textContent = this._composeTitle(feature, id);
         headerBtn.appendChild(titleText);
 
-        // Actions (delete)
+        // Actions (reorder, delete)
         const actions = document.createElement("div");
         actions.className = "acc-actions";
+
+        const upBtn = document.createElement("button");
+        upBtn.type = "button";
+        upBtn.className = "icon-btn";
+        upBtn.setAttribute("aria-label", "Move feature up");
+        upBtn.title = "Move up";
+        upBtn.textContent = "▲";
+        upBtn.addEventListener("click", async (ev) => {
+            ev.stopPropagation();
+            await this._handleMoveFeatureUp(String(id));
+        });
+
+        const downBtn = document.createElement("button");
+        downBtn.type = "button";
+        downBtn.className = "icon-btn";
+        downBtn.setAttribute("aria-label", "Move feature down");
+        downBtn.title = "Move down";
+        downBtn.textContent = "▼";
+        downBtn.addEventListener("click", async (ev) => {
+            ev.stopPropagation();
+            await this._handleMoveFeatureDown(String(id));
+        });
 
         const delBtn = document.createElement("button");
         delBtn.type = "button";
@@ -277,6 +299,8 @@ export class HistoryWidget {
             await this._handleDeleteFeature(String(id));
         });
 
+        actions.appendChild(upBtn);
+        actions.appendChild(downBtn);
         actions.appendChild(delBtn);
 
         headerRow.appendChild(headerBtn);
@@ -590,6 +614,48 @@ export class HistoryWidget {
         } catch (err) {
             // eslint-disable-next-line no-console
             console.warn("[HistoryWidget] remove feature failed:", err);
+        } finally {
+            this.scheduleSync();
+        }
+    }
+
+    async _handleMoveFeatureUp(featureID) {
+        const ph = this._getPartHistory();
+        if (!ph) return;
+        try {
+            const arr = this._safeFeatures(ph);
+            const idx = arr.findIndex(f => f && f.inputParams && f.inputParams.featureID === featureID);
+            if (idx <= 0) return; // already at top or not found
+            const [item] = ph.features.splice(idx, 1);
+            ph.features.splice(idx - 1, 0, item);
+            ph.currentHistoryStepId = featureID;
+            if (typeof ph.runHistory === "function") {
+                await ph.runHistory();
+            }
+        } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn("[HistoryWidget] move up failed:", err);
+        } finally {
+            this.scheduleSync();
+        }
+    }
+
+    async _handleMoveFeatureDown(featureID) {
+        const ph = this._getPartHistory();
+        if (!ph) return;
+        try {
+            const arr = this._safeFeatures(ph);
+            const idx = arr.findIndex(f => f && f.inputParams && f.inputParams.featureID === featureID);
+            if (idx < 0 || idx >= arr.length - 1) return; // not found or already at bottom
+            const [item] = ph.features.splice(idx, 1);
+            ph.features.splice(idx + 1, 0, item);
+            ph.currentHistoryStepId = featureID;
+            if (typeof ph.runHistory === "function") {
+                await ph.runHistory();
+            }
+        } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn("[HistoryWidget] move down failed:", err);
         } finally {
             this.scheduleSync();
         }
