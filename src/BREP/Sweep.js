@@ -153,7 +153,7 @@ export class FacesSolid extends Solid {
 export class Sweep extends FacesSolid {
   constructor({ face, sweepPathEdges = [], distance = 1, name = 'Sweep' } = {}) {
     super({ name });
-    this.params = { face, distance, sweepPathEdges,  name };
+    this.params = { face, distance, sweepPathEdges, name };
     this.generate();
   }
 
@@ -255,103 +255,151 @@ export class Sweep extends FacesSolid {
       }
     }
 
-    // Side faces: build per sketch edge when available for distinct face labels
-    const edges = Array.isArray(face.edges) ? face.edges : [];
-    if (edges.length) {
-      for (const edge of edges) {
-        const name = `${edge.name || 'EDGE'}_SW`;
-
-        // Helper: robustly extract world-space polyline points from Line, Line2, or cached polyline
-        const pA = [];
-        const wv = new THREE.Vector3();
-
-        // 1) Prefer cached polyline provided during visualize
-        const cached = edge?.userData?.polylineLocal;
-        const isWorld = !!(edge?.userData?.polylineWorld);
-        if (Array.isArray(cached) && cached.length >= 2) {
-          if (isWorld) {
-            for (let i = 0; i < cached.length; i++) {
-              const p = cached[i];
-              pA.push([p[0], p[1], p[2]]);
-            }
-          } else {
-            for (let i = 0; i < cached.length; i++) {
-              const p = cached[i];
-              wv.set(p[0], p[1], p[2]).applyMatrix4(edge.matrixWorld);
-              pA.push([wv.x, wv.y, wv.z]);
-            }
+    // Side faces: Prefer boundary loops to ensure vertex matching with caps.
+    // This avoids T-junctions and ensures a watertight manifold. If loops are
+    // unavailable (legacy faces), fall back to per-edge polylines.
+    const boundaryLoops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
+    if (boundaryLoops && boundaryLoops.length) {
+      // Build a quick lookup from boundary points to their originating sketch edge(s)
+      // so we can label side walls per curve while still using cap-matching vertices.
+      const key = (p) => `${p[0].toFixed(6)},${p[1].toFixed(6)},${p[2].toFixed(6)}`;
+      const edges = Array.isArray(face?.edges) ? face.edges : [];
+      const pointToEdgeNames = new Map(); // key -> Set(edgeName)
+      for (const e of edges) {
+        const name = `${e?.name || 'EDGE'}_SW`;
+        const poly = e?.userData?.polylineLocal;
+        const isWorld = !!(e?.userData?.polylineWorld);
+        if (Array.isArray(poly) && poly.length >= 2) {
+          for (const p of poly) {
+            const w = isWorld ? p : new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(e.matrixWorld),
+                  arr = Array.isArray(w) ? w : [w.x, w.y, w.z];
+            const k = key(arr);
+            let set = pointToEdgeNames.get(k);
+            if (!set) { set = new Set(); pointToEdgeNames.set(k, set); }
+            set.add(name);
           }
         } else {
-          // 2) Try Buffer/LineGeometry position attribute
-          const posAttr = edge?.geometry?.getAttribute?.('position');
-          if (posAttr && posAttr.itemSize === 3 && posAttr.count >= 2) {
-            for (let i = 0; i < posAttr.count; i++) {
-              wv.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(edge.matrixWorld);
-              pA.push([wv.x, wv.y, wv.z]);
-            }
-          } else {
-            // 3) Fallback for LineSegments-based fat lines
-            const aStart = edge?.geometry?.attributes?.instanceStart;
-            const aEnd = edge?.geometry?.attributes?.instanceEnd;
-            if (aStart && aEnd && aStart.itemSize === 3 && aEnd.itemSize === 3 && aStart.count === aEnd.count && aStart.count >= 1) {
-              wv.set(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(edge.matrixWorld);
-              pA.push([wv.x, wv.y, wv.z]);
-              for (let i = 0; i < aEnd.count; i++) {
-                wv.set(aEnd.getX(i), aEnd.getY(i), aEnd.getZ(i)).applyMatrix4(edge.matrixWorld);
-                pA.push([wv.x, wv.y, wv.z]);
-              }
+          // Fallback: positions attribute if present
+          const pos = e?.geometry?.getAttribute?.('position');
+          if (pos && pos.itemSize === 3) {
+            const v = new THREE.Vector3();
+            for (let i = 0; i < pos.count; i++) {
+              v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(e.matrixWorld);
+              const k = key([v.x, v.y, v.z]);
+              let set = pointToEdgeNames.get(k);
+              if (!set) { set = new Set(); pointToEdgeNames.set(k, set); }
+              set.add(name);
             }
           }
         }
+      }
 
-        // Remove exact duplicate consecutive points to avoid degenerate quads
+      for (const loop of boundaryLoops) {
+        const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
+        const isHole = !!(loop && loop.isHole);
+        const pA = pts.slice();
+        // ensure closed
+        if (pA.length >= 2) {
+          const first = pA[0];
+          const last = pA[pA.length - 1];
+          if (!(first[0] === last[0] && first[1] === last[1] && first[2] === last[2])) pA.push([first[0], first[1], first[2]]);
+        }
+        // remove consecutive duplicates if any
         for (let i = pA.length - 2; i >= 0; i--) {
           const a = pA[i], b = pA[i + 1];
           if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pA.splice(i + 1, 1);
         }
-
-        const n = pA.length;
-        if (n < 2) continue;
-        for (let i = 0; i < n - 1; i++) {
+        // build side quads around the loop using exact cap boundary vertices
+        for (let i = 0; i < pA.length - 1; i++) {
           const a = pA[i];
           const b = pA[i + 1];
-          if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue; // guard
+          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
           const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
           const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
-          // two triangles (a,b,b2) and (a,b2,a2)
-          this.addTriangle(name, a, b, b2);
-          this.addTriangle(name, a, b2, a2);
+          // Pick face label by matching endpoints to originating edge; fallback to face-level label
+          const setA = pointToEdgeNames.get(key(a));
+          const setB = pointToEdgeNames.get(key(b));
+          let name = `${face.name || 'FACE'}_SW`;
+          if (setA && setB) {
+            for (const n of setA) { if (setB.has(n)) { name = n; break; } }
+          }
+          if (isHole) {
+            // reverse winding for hole walls to maintain outward orientation
+            this.addTriangle(name, a, b2, b);
+            this.addTriangle(name, a, a2, b2);
+          } else {
+            this.addTriangle(name, a, b, b2);
+            this.addTriangle(name, a, b2, a2);
+          }
         }
       }
     } else {
-      // Fallback: use boundary loops (no per-edge names available here)
-      const boundaryLoops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
-      if (boundaryLoops && boundaryLoops.length) {
-        for (const loop of boundaryLoops) {
-          const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
-          const isHole = !!(loop && loop.isHole);
-          const pA = pts.slice();
-          // ensure closed
-          if (pA.length >= 2) {
-            const first = pA[0];
-            const last = pA[pA.length - 1];
-            if (!(first[0] === last[0] && first[1] === last[1] && first[2] === last[2])) pA.push([first[0], first[1], first[2]]);
+      // Fallback: build from per-edge polylines (may not match cap vertices exactly)
+      const edges = Array.isArray(face.edges) ? face.edges : [];
+      if (edges.length) {
+        for (const edge of edges) {
+          const name = `${edge.name || 'EDGE'}_SW`;
+
+          // Helper: robustly extract world-space polyline points from Line, Line2, or cached polyline
+          const pA = [];
+          const wv = new THREE.Vector3();
+
+          // 1) Prefer cached polyline provided during visualize
+          const cached = edge?.userData?.polylineLocal;
+          const isWorld = !!(edge?.userData?.polylineWorld);
+          if (Array.isArray(cached) && cached.length >= 2) {
+            if (isWorld) {
+              for (let i = 0; i < cached.length; i++) {
+                const p = cached[i];
+                pA.push([p[0], p[1], p[2]]);
+              }
+            } else {
+              for (let i = 0; i < cached.length; i++) {
+                const p = cached[i];
+                wv.set(p[0], p[1], p[2]).applyMatrix4(edge.matrixWorld);
+                pA.push([wv.x, wv.y, wv.z]);
+              }
+            }
+          } else {
+            // 2) Try Buffer/LineGeometry position attribute
+            const posAttr = edge?.geometry?.getAttribute?.('position');
+            if (posAttr && posAttr.itemSize === 3 && posAttr.count >= 2) {
+              for (let i = 0; i < posAttr.count; i++) {
+                wv.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(edge.matrixWorld);
+                pA.push([wv.x, wv.y, wv.z]);
+              }
+            } else {
+              // 3) Fallback for LineSegments-based fat lines
+              const aStart = edge?.geometry?.attributes?.instanceStart;
+              const aEnd = edge?.geometry?.attributes?.instanceEnd;
+              if (aStart && aEnd && aStart.itemSize === 3 && aEnd.itemSize === 3 && aStart.count === aEnd.count && aStart.count >= 1) {
+                wv.set(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(edge.matrixWorld);
+                pA.push([wv.x, wv.y, wv.z]);
+                for (let i = 0; i < aEnd.count; i++) {
+                  wv.set(aEnd.getX(i), aEnd.getY(i), aEnd.getZ(i)).applyMatrix4(edge.matrixWorld);
+                  pA.push([wv.x, wv.y, wv.z]);
+                }
+              }
+            }
           }
-          // remove consecutive duplicates if any
+
+          // Remove exact duplicate consecutive points to avoid degenerate quads
           for (let i = pA.length - 2; i >= 0; i--) {
             const a = pA[i], b = pA[i + 1];
             if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pA.splice(i + 1, 1);
           }
-          // build side quads around the loop
-          for (let i = 0; i < pA.length - 1; i++) {
+
+          const n = pA.length;
+          if (n < 2) continue;
+          const isHole = !!(edge && edge.userData && edge.userData.isHole);
+          for (let i = 0; i < n - 1; i++) {
             const a = pA[i];
             const b = pA[i + 1];
-            if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+            if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue; // guard
             const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
             const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
-            const name = `${face.name || 'FACE'}_SW`;
+            // two triangles; reverse winding for hole walls to maintain outward orientation
             if (isHole) {
-              // reverse winding for hole walls to maintain outward orientation
               this.addTriangle(name, a, b2, b);
               this.addTriangle(name, a, a2, b2);
             } else {
@@ -361,11 +409,11 @@ export class Sweep extends FacesSolid {
           }
         }
       }
-    }
 
-    // Weld seams by a tiny epsilon to ensure caps and sides share vertices exactly
-    this.setEpsilon(1e-6);
-    // Build the manifold now so callers get a ready solid
-    try { this.getMesh(); } catch (_) { /* leave for caller to inspect if invalid */ }
+      // Weld seams by a tiny epsilon to ensure caps and sides share vertices exactly
+      this.setEpsilon(1e-6);
+      // Build the manifold now so callers get a ready solid
+      try { this.getMesh(); } catch (_) { /* leave for caller to inspect if invalid */ }
+    }
   }
 }

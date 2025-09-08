@@ -346,12 +346,24 @@ export class SketchFeature {
                 // Earcut expects outer CW, holes CCW. Enforce CW for outer
                 if (signedArea([...contour, contour[0]]) > 0) contour = contour.slice().reverse();
                 // Record boundary edges for outer
-                for (const sid of (loopSegIDs[grp.outer] || [])) { const e = edgeBySegId.get(segs[sid]?.id); if (e) boundaryEdges.add(e); }
+                for (const sid of (loopSegIDs[grp.outer] || [])) {
+                    const e = edgeBySegId.get(segs[sid]?.id);
+                    if (e) {
+                        try { e.userData = e.userData || {}; e.userData.isHole = false; } catch {}
+                        boundaryEdges.add(e);
+                    }
+                }
                 const holes = grp.holes.map(idx=>{
                     let h = normalizedLoops[idx].slice(); h.pop();
                     // Ensure CCW for holes (outer is CW per earcut convention)
                     if (signedArea([...h, h[0]]) < 0) h = h.slice().reverse();
-                    for (const sid of (loopSegIDs[idx] || [])) { const e = edgeBySegId.get(segs[sid]?.id); if (e) boundaryEdges.add(e); }
+                    for (const sid of (loopSegIDs[idx] || [])) {
+                        const e = edgeBySegId.get(segs[sid]?.id);
+                        if (e) {
+                            try { e.userData = e.userData || {}; e.userData.isHole = true; } catch {}
+                            boundaryEdges.add(e);
+                        }
+                    }
                     return h;
                 });
 
