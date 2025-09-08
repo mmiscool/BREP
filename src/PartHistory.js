@@ -47,7 +47,7 @@ export class PartHistory {
 
     // sleep for a short duration to allow scene updates to complete
     //await new Promise(resolve => setTimeout(resolve, 1000));
-    console.log("PartHistory reset complete.");
+    // console.log("PartHistory reset complete.");
   }
 
   async runHistory() {
@@ -68,13 +68,13 @@ export class PartHistory {
 
 
       if (skipFeature || skipAllFeatures) {
-        console.log(`Skipping feature: ${feature.inputParams.featureID}`);
+        // console.log(`Skipping feature: ${feature.inputParams.featureID}`);
         continue;
       }
 
 
       if (whatStepToStopAt && feature.inputParams.featureID === whatStepToStopAt) {
-        console.log(`Stopping history at feature: ${whatStepToStopAt}`);
+        // console.log(`Stopping history at feature: ${whatStepToStopAt}`);
         skipAllFeatures = true;
       }
 
@@ -142,8 +142,7 @@ export class PartHistory {
 
         // MONKEY PATCH .onClick() event on to the artifact
         artifact.onClick = () => {
-          console.log("Artifact clicked:", artifact);
-          console.log(artifact.name);
+          // console.debug("Artifact clicked:", artifact?.name || artifact);
           SelectionFilter.toggleSelection(artifact);
         };
 
@@ -151,8 +150,7 @@ export class PartHistory {
         for (const child of artifact.children) {
           child.onClick = () => {
 
-            console.log("Child clicked:", child);
-            console.log(child.name);
+            // console.debug("Child clicked:", child?.name || child);
             if (!SelectionFilter.toggleSelection(child.parent)) SelectionFilter.toggleSelection(child);
           };
         }
@@ -164,13 +162,13 @@ export class PartHistory {
       // (some features may flag preexisting items during run)
       const flaggedAfter = this.scene.children.slice().filter(ch => ch?.remove === true);
       if (flaggedAfter.length) {
-        console.log(`[PartHistory] Post-add removal of ${flaggedAfter.length} flagged child(ren)`);
+        // console.debug(`[PartHistory] Post-add removal of ${flaggedAfter.length} flagged child(ren)`);
         for (const ch of flaggedAfter) { 
           try {
             this.scene.remove(ch);
           }
           catch (error) {
-            console.log(`[PartHistory] Failed to remove flagged child: ${error.message}`);
+            console.warn(`[PartHistory] Failed to remove flagged child: ${error.message}`);
           }
         }
       }
@@ -209,7 +207,7 @@ export class PartHistory {
       persistentData: {}
     };
     feature.inputParams.featureID = await this.generateId(featureType);
-    console.log("New feature created:", feature.inputParams.featureID);
+    // console.debug("New feature created:", feature.inputParams.featureID);
     this.features.push(feature);
     return feature;
   }
@@ -296,7 +294,6 @@ export function extractDefaultValues(schema) {
   }
   return result;
 }
-
 
 
 

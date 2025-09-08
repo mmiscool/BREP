@@ -17,7 +17,7 @@ const inputParamsSchema = {
     boolean: {
         type: "boolean_operation",
         // For the Boolean feature, the widget's targets represent the OTHER solids to combine with the targetSolid
-        default_value: { targets: [], opperation: 'UNION' },
+        default_value: { targets: [], operation: 'UNION', opperation: 'UNION' },
         hint: "Operation + other solids (as tools)",
     }
 };
@@ -39,8 +39,8 @@ export class BooleanFeature {
         const target = targetName ? await scene.getObjectByName(targetName) : null;
         if (!target) throw new Error(`Target solid not found: ${targetName}`);
 
-        const bool = this.inputParams.boolean || { targets: [], opperation: 'NONE' };
-        const op = String(bool.opperation || 'NONE').toUpperCase();
+        const bool = this.inputParams.boolean || { targets: [], operation: 'NONE', opperation: 'NONE' };
+        const op = String((bool.operation ?? bool.opperation ?? 'NONE')).toUpperCase();
         const toolNames = Array.isArray(bool.targets) ? bool.targets.filter(Boolean) : [];
         if (op === 'NONE' || toolNames.length === 0) {
             // No-op: leave scene unchanged
@@ -69,10 +69,10 @@ export class BooleanFeature {
             for (let i = 1; i < tools.length; i++) toolUnion = toolUnion.union(tools[i]);
             // Remove the original tools (the helper removes only the baseUnion and target)
             for (const t of tools) t.remove = true;
-            const param = { opperation: 'SUBTRACT', targets: [targetName] };
+            const param = { operation: 'SUBTRACT', opperation: 'SUBTRACT', targets: [targetName] };
             outputs = await applyBooleanOperation(partHistory, toolUnion, param, this.inputParams.featureID);
         } else {
-            const param = { opperation: op, targets: toolNames };
+            const param = { operation: op, opperation: op, targets: toolNames };
             outputs = await applyBooleanOperation(partHistory, target, param, this.inputParams.featureID);
             // Ensure original target is removed to avoid duplication
             try { target.remove = true; } catch (_) { }
