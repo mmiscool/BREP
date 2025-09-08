@@ -102,8 +102,8 @@ export class SceneListing {
     // Internal -----------------------------------------------------------------
 
     #isSolid(obj) {
-        // Avoid importing types; rely on .type set by Solid
-        return obj && obj.isObject3D && obj.type === "SOLID";
+        // Treat SOLID and SKETCH groups as top-level items in the tree
+        return obj && obj.isObject3D && (obj.type === "SOLID" || obj.type === "SKETCH");
     }
     #isFace(obj) { return obj && obj.type === "FACE"; }
     #isEdge(obj) { return obj && obj.type === "EDGE"; }

@@ -42,11 +42,17 @@ export class ExtrudeFeature {
     // actual code to create the extrude feature.
     const { profile, distance, twistAngle } = this.inputParams;
 
-    console.log(profile);
+    // Resolve profile: accept FACE name or a SKETCH group name
+    const obj = partHistory.scene.getObjectByName(profile);
+    let faceObj = obj;
+    if (obj && obj.type === 'SKETCH') {
+      // Find child FACE named PROFILE (or any FACE child)
+      faceObj = obj.children.find(ch => ch.type === 'FACE') || obj.children.find(ch => ch.userData?.faceName);
+    }
 
     // Create the extrude using the sweep solid
     const extrude = new BREP.Sweep({
-      face: partHistory.scene.getObjectByName(profile),
+      face: faceObj,
       sweepPathEdges: [],
       distance: distance * -1,
       name: this.inputParams.featureID

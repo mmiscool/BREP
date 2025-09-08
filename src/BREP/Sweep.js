@@ -188,111 +188,181 @@ export class Sweep extends FacesSolid {
       dir = new THREE.Vector3(0, 1, 0);
     }
 
-    // Prepare cap triangles using the input face geometry (apply world transform)
-    const baseGeom = face.geometry;
-    const posAttr = baseGeom.getAttribute('position');
-    if (!posAttr) return;
-    const idxAttr = baseGeom.getIndex();
-    const hasIndex = !!idxAttr;
-
-    // Build world-space vertex array for the face once
-    const faceWorld = new Array(posAttr.count);
-    const v = new THREE.Vector3();
-    for (let i = 0; i < posAttr.count; i++) {
-      v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(face.matrixWorld);
-      faceWorld[i] = [v.x, v.y, v.z];
-    }
-
     const startName = `${face.name || 'Face'}_START`;
     const endName = `${face.name || 'Face'}_END`;
 
-    const addCapTris = (i0, i1, i2) => {
-      // Start cap: reversed
-      const p0 = faceWorld[i0], p1 = faceWorld[i1], p2 = faceWorld[i2];
-      this.addTriangle(startName, p0, p2, p1);
-      // End cap: translated by dir
-      const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
-      const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
-      const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
-      this.addTriangle(endName, q0, q1, q2);
-    };
-
-    if (hasIndex) {
-      for (let t = 0; t < idxAttr.count; t += 3) {
-        const i0 = idxAttr.getX(t + 0) >>> 0;
-        const i1 = idxAttr.getX(t + 1) >>> 0;
-        const i2 = idxAttr.getX(t + 2) >>> 0;
-        addCapTris(i0, i1, i2);
+    // Prefer rebuilding caps using 2D profile groups from the sketch to ensure
+    // identical boundary vertices with side walls.
+    const groups = Array.isArray(face?.userData?.profileGroups) ? face.userData.profileGroups : null;
+    if (groups && groups.length) {
+      for (const g of groups) {
+        const contour2D = g.contour2D || [];
+        const holes2D = g.holes2D || [];
+        const contourW = g.contourW || [];
+        const holesW = g.holesW || [];
+        if (contour2D.length < 3 || contourW.length !== contour2D.length) continue;
+        // triangulate using 2D; index into world array built as contourW + holesW
+        const contourV2 = contour2D.map(p => new THREE.Vector2(p[0], p[1]));
+        const holesV2 = holes2D.map(h => h.map(p => new THREE.Vector2(p[0], p[1])));
+        const tris = THREE.ShapeUtils.triangulateShape(contourV2, holesV2);
+        const allW = contourW.concat(...holesW);
+        for (const t of tris) {
+          const p0 = allW[t[0]], p1 = allW[t[1]], p2 = allW[t[2]];
+          // Start cap reversed
+          this.addTriangle(startName, p0, p2, p1);
+          // End cap translated
+          const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
+          const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
+          const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
+          this.addTriangle(endName, q0, q1, q2);
+        }
       }
     } else {
-      // Unindexed: assume triangles laid out sequentially
-      const triCount = (posAttr.count / 3) >>> 0;
-      for (let t = 0; t < triCount; t++) {
-        const i0 = 3 * t + 0, i1 = 3 * t + 1, i2 = 3 * t + 2;
-        addCapTris(i0, i1, i2);
+      // Fallback: use face geometry
+      const baseGeom = face.geometry;
+      const posAttr = baseGeom.getAttribute('position');
+      if (!posAttr) return;
+      const idxAttr = baseGeom.getIndex();
+      const hasIndex = !!idxAttr;
+      // Build world-space vertex array for the face once
+      const faceWorld = new Array(posAttr.count);
+      const v = new THREE.Vector3();
+      for (let i = 0; i < posAttr.count; i++) {
+        v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(face.matrixWorld);
+        faceWorld[i] = [v.x, v.y, v.z];
+      }
+      const addCapTris = (i0, i1, i2) => {
+        const p0 = faceWorld[i0], p1 = faceWorld[i1], p2 = faceWorld[i2];
+        this.addTriangle(startName, p0, p2, p1);
+        const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
+        const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
+        const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
+        this.addTriangle(endName, q0, q1, q2);
+      };
+      if (hasIndex) {
+        for (let t = 0; t < idxAttr.count; t += 3) {
+          const i0 = idxAttr.getX(t + 0) >>> 0;
+          const i1 = idxAttr.getX(t + 1) >>> 0;
+          const i2 = idxAttr.getX(t + 2) >>> 0;
+          addCapTris(i0, i1, i2);
+        }
+      } else {
+        const triCount = (posAttr.count / 3) >>> 0;
+        for (let t = 0; t < triCount; t++) {
+          const i0 = 3 * t + 0, i1 = 3 * t + 1, i2 = 3 * t + 2;
+          addCapTris(i0, i1, i2);
+        }
       }
     }
 
-    // Side faces: one strip per edge polyline
-    const edges = Array.isArray(face.edges) ? face.edges : [];
-    for (const edge of edges) {
-      const name = `${edge.name || 'EDGE'}_SW`;
-
-      // Helper: robustly extract world-space polyline points from Line, Line2, or cached polyline
-      const pA = [];
-      const wv = new THREE.Vector3();
-
-      // 1) Prefer cached polyline provided during visualize (local coords)
-      const cached = edge?.userData?.polylineLocal;
-      if (Array.isArray(cached) && cached.length >= 2) {
-        for (let i = 0; i < cached.length; i++) {
-          const p = cached[i];
-          wv.set(p[0], p[1], p[2]).applyMatrix4(edge.matrixWorld);
-          pA.push([wv.x, wv.y, wv.z]);
+    // Side faces: prioritize boundary loops if provided by the sketch feature; otherwise, use face.edges
+    const boundaryLoops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
+    if (boundaryLoops && boundaryLoops.length) {
+      for (const loop of boundaryLoops) {
+        const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
+        const isHole = !!(loop && loop.isHole);
+        const pA = pts.slice();
+        // ensure closed
+        if (pA.length >= 2) {
+          const first = pA[0];
+          const last = pA[pA.length - 1];
+          if (!(first[0] === last[0] && first[1] === last[1] && first[2] === last[2])) pA.push([first[0], first[1], first[2]]);
         }
-      } else {
-        // 2) Try Buffer/LineGeometry position attribute
-        const posAttr = edge?.geometry?.getAttribute?.('position');
-        if (posAttr && posAttr.itemSize === 3 && posAttr.count >= 2) {
-          for (let i = 0; i < posAttr.count; i++) {
-            wv.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(edge.matrixWorld);
-            pA.push([wv.x, wv.y, wv.z]);
+        // remove consecutive duplicates if any
+        for (let i = pA.length - 2; i >= 0; i--) {
+          const a = pA[i], b = pA[i + 1];
+          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pA.splice(i + 1, 1);
+        }
+        // build side quads around the loop
+        for (let i = 0; i < pA.length - 1; i++) {
+          const a = pA[i];
+          const b = pA[i + 1];
+          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+          const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
+          const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
+          const name = `${face.name || 'FACE'}_SW`;
+          if (isHole) {
+            // reverse winding for hole walls to maintain outward orientation
+            this.addTriangle(name, a, b2, b);
+            this.addTriangle(name, a, a2, b2);
+          } else {
+            this.addTriangle(name, a, b, b2);
+            this.addTriangle(name, a, b2, a2);
           }
-        } else {
-          // 3) Fallback for LineSegments-based fat lines
-          const aStart = edge?.geometry?.attributes?.instanceStart;
-          const aEnd = edge?.geometry?.attributes?.instanceEnd;
-          if (aStart && aEnd && aStart.itemSize === 3 && aEnd.itemSize === 3 && aStart.count === aEnd.count && aStart.count >= 1) {
-            wv.set(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(edge.matrixWorld);
-            pA.push([wv.x, wv.y, wv.z]);
-            for (let i = 0; i < aEnd.count; i++) {
-              wv.set(aEnd.getX(i), aEnd.getY(i), aEnd.getZ(i)).applyMatrix4(edge.matrixWorld);
+        }
+      }
+    } else {
+      // Fallback: use edge polylines
+      const edges = Array.isArray(face.edges) ? face.edges : [];
+      for (const edge of edges) {
+        const name = `${edge.name || 'EDGE'}_SW`;
+
+        // Helper: robustly extract world-space polyline points from Line, Line2, or cached polyline
+        const pA = [];
+        const wv = new THREE.Vector3();
+
+        // 1) Prefer cached polyline provided during visualize
+        const cached = edge?.userData?.polylineLocal;
+        const isWorld = !!(edge?.userData?.polylineWorld);
+        if (Array.isArray(cached) && cached.length >= 2) {
+          if (isWorld) {
+            for (let i = 0; i < cached.length; i++) {
+              const p = cached[i];
+              pA.push([p[0], p[1], p[2]]);
+            }
+          } else {
+            for (let i = 0; i < cached.length; i++) {
+              const p = cached[i];
+              wv.set(p[0], p[1], p[2]).applyMatrix4(edge.matrixWorld);
               pA.push([wv.x, wv.y, wv.z]);
             }
           }
+        } else {
+          // 2) Try Buffer/LineGeometry position attribute
+          const posAttr = edge?.geometry?.getAttribute?.('position');
+          if (posAttr && posAttr.itemSize === 3 && posAttr.count >= 2) {
+            for (let i = 0; i < posAttr.count; i++) {
+              wv.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(edge.matrixWorld);
+              pA.push([wv.x, wv.y, wv.z]);
+            }
+          } else {
+            // 3) Fallback for LineSegments-based fat lines
+            const aStart = edge?.geometry?.attributes?.instanceStart;
+            const aEnd = edge?.geometry?.attributes?.instanceEnd;
+            if (aStart && aEnd && aStart.itemSize === 3 && aEnd.itemSize === 3 && aStart.count === aEnd.count && aStart.count >= 1) {
+              wv.set(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(edge.matrixWorld);
+              pA.push([wv.x, wv.y, wv.z]);
+              for (let i = 0; i < aEnd.count; i++) {
+                wv.set(aEnd.getX(i), aEnd.getY(i), aEnd.getZ(i)).applyMatrix4(edge.matrixWorld);
+                pA.push([wv.x, wv.y, wv.z]);
+              }
+            }
+          }
         }
-      }
 
-      // Remove exact duplicate consecutive points to avoid degenerate quads
-      for (let i = pA.length - 2; i >= 0; i--) {
-        const a = pA[i], b = pA[i + 1];
-        if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pA.splice(i + 1, 1);
-      }
+        // Remove exact duplicate consecutive points to avoid degenerate quads
+        for (let i = pA.length - 2; i >= 0; i--) {
+          const a = pA[i], b = pA[i + 1];
+          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pA.splice(i + 1, 1);
+        }
 
-      const n = pA.length;
-      if (n < 2) continue;
-      for (let i = 0; i < n - 1; i++) {
-        const a = pA[i];
-        const b = pA[i + 1];
-        if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue; // guard
-        const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
-        const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
-        // two triangles (a,b,b2) and (a,b2,a2)
-        this.addTriangle(name, a, b, b2);
-        this.addTriangle(name, a, b2, a2);
+        const n = pA.length;
+        if (n < 2) continue;
+        for (let i = 0; i < n - 1; i++) {
+          const a = pA[i];
+          const b = pA[i + 1];
+          if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue; // guard
+          const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
+          const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
+          // two triangles (a,b,b2) and (a,b2,a2)
+          this.addTriangle(name, a, b, b2);
+          this.addTriangle(name, a, b2, a2);
+        }
       }
     }
 
+    // Weld seams by a tiny epsilon to ensure caps and sides share vertices exactly
+    this.setEpsilon(1e-6);
     // Build the manifold now so callers get a ready solid
     try { this.getMesh(); } catch (_) { /* leave for caller to inspect if invalid */ }
   }

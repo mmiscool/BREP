@@ -54,11 +54,16 @@ export class SweepFeature {
     // actual code to create the sweep feature.
     const { profile, path, distance, twistAngle } = this.inputParams;
 
-    console.log(profile);
+    // Resolve profile: accept FACE or SKETCH group name
+    const obj = partHistory.scene.getObjectByName(profile);
+    let faceObj = obj;
+    if (obj && obj.type === 'SKETCH') {
+      faceObj = obj.children.find(ch => ch.type === 'FACE') || obj.children.find(ch => ch.userData?.faceName);
+    }
 
     // Create the sweep solid
     const sweep = new BREP.Sweep({
-      face: partHistory.scene.getObjectByName(profile),
+      face: faceObj,
       sweepPathEdges: path ? [partHistory.scene.getObjectByName(path)] : [],
       distance,
       name: this.inputParams.featureID
