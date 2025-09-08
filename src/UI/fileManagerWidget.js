@@ -110,13 +110,25 @@ export class FileManagerWidget {
     const style = document.createElement('style');
     style.id = 'file-manager-widget-styles';
     style.textContent = `
-      .fm-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid white; }
-      .fm-row.header { border-bottom: 1px solid #1f2937; padding-bottom: 8px; margin-bottom: 4px; }
+      /* Layout */
+      .fm-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid #1f2937; background: transparent; transition: background-color .12s ease; }
+      .fm-row:hover { background: #0f172a; }
+      .fm-row.header { background: #111827; border-bottom: 1px solid #1f2937; padding-bottom: 8px; margin-bottom: 4px; }
+      .fm-row:last-child { border-bottom: 0; }
       .fm-grow { flex: 1 1 auto; overflow: hidden; }
-      .fm-input { width: 100%; box-sizing: border-box; padding: 6px 8px; background: #111827; color: #e5e7eb; border: 1px solid #374151; border-radius: 6px; }
-      .fm-btn { background: #1f2937; color: #f9fafb; border: 1px solid #374151; padding: 2px 6px; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 12px; line-height: 1; min-width: 26px; height: 24px; display: inline-flex; align-items: center; justify-content: center; }
-      .fm-btn:hover { background: #0f172a; }
+
+      /* Inputs (keep text size and padding) */
+      .fm-input { width: 100%; box-sizing: border-box; padding: 6px 8px; background: #0b0e14; color: #e5e7eb; border: 1px solid #374151; border-radius: 8px; outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
+      .fm-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+
+      /* Buttons (keep text size and padding) */
+      .fm-btn { background: rgba(255,255,255,.03); color: #f9fafb; border: 1px solid #374151; padding: 2px 6px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 12px; line-height: 1; min-width: 26px; height: 24px; display: inline-flex; align-items: center; justify-content: center; transition: border-color .15s ease, background-color .15s ease, transform .05s ease; }
+      .fm-btn:hover { border-color: #3b82f6; background: rgba(59,130,246,.12); }
+      .fm-btn:active { transform: translateY(1px); }
       .fm-btn.danger { border-color: #7f1d1d; color: #fecaca; }
+      .fm-btn.danger:hover { border-color: #ef4444; background: rgba(239,68,68,.15); color: #fff; }
+
+      /* List + text (keep sizes) */
       .fm-list { padding: 4px 0; }
       .fm-left { display: flex; flex-direction: column; min-width: 0; }
       .fm-name { font-weight: 600; color: #e5e7eb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
