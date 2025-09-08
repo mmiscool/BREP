@@ -57,6 +57,7 @@ export class Viewer {
         // Renderer
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true, });
         this.renderer.setClearColor(new THREE.Color(clearColor), 1);
+        this.pixelRatio = pixelRatio; // persist for future resizes
         this.renderer.setPixelRatio(pixelRatio);
         this.renderer.domElement.style.display = 'block';
         this.renderer.domElement.style.outline = 'none';
@@ -113,10 +114,11 @@ export class Viewer {
                     this.sidebar.style.opacity = .9;
                 }
 
-                // recompute .computeBoundingSphere(); for all items in scene
+                // recompute bounding spheres for all geometries (Mesh, Line/Line2, Points)
                 this.scene.traverse((object) => {
-                    if (object.isMesh) {
-                        object.geometry.computeBoundingSphere();
+                    const g = object && object.geometry;
+                    if (g && typeof g.computeBoundingSphere === 'function') {
+                        try { g.computeBoundingSphere(); } catch(_) { /* noop */ }
                     }
                 });
             }
@@ -143,17 +145,25 @@ export class Viewer {
         this._onPointerUp = this._onPointerUp.bind(this);
         this._onContextMenu = this._onContextMenu.bind(this);
         this._onResize = this._onResize.bind(this);
+        this._onControlsChange = this._onControlsChange.bind(this);
         this._loop = this._loop.bind(this);
 
         // Events
         const el = this.renderer.domElement;
         el.addEventListener('pointermove', this._onPointerMove, { passive: true });
-        el.addEventListener('pointerleave', () => { try { SelectionFilter.clearHover(); } catch (_) {} }, { passive: true });
+        el.addEventListener('pointerleave', () => {
+            try { SelectionFilter.clearHover(); } catch (_) {}
+            // When pointer leaves the canvas, forget the last pointer event
+            this._lastPointerEvent = null;
+        }, { passive: true });
+        el.addEventListener('pointerenter', (ev) => { this._lastPointerEvent = ev; }, { passive: true });
         el.addEventListener('pointerdown', this._onPointerDown, { passive: false });
         // Use capture on pointerup to ensure we end interactions even if pointerup fires off-element
         window.addEventListener('pointerup', this._onPointerUp, { passive: false, capture: true });
         el.addEventListener('contextmenu', this._onContextMenu);
         window.addEventListener('resize', this._onResize);
+        // Keep hover picking in sync while the camera moves
+        this.controls.addEventListener('change', this._onControlsChange);
 
         this.SelectionFilter = SelectionFilter;
 
@@ -525,10 +535,15 @@ export class Viewer {
     _onPointerMove(event) {
         if (this._disposed) return;
 
+        // Remember the last known pointer event so we can recompute hover while the camera moves
+        this._lastPointerEvent = event;
+
         // Hover highlighting (respect selection filter)
         try {
-            // Only update hover when not dragging; consider only clickable (selectable) owners
-            if (!this._pointerDown && !this._dragging) {
+            // Update hover when not dragging an interactive object. While navigating the camera
+            // (pointer down with no active object), still update hover so results track the view.
+            const navigatingCamera = this._pointerDown && !this._active;
+            if (!this._dragging && (!this._pointerDown || navigatingCamera)) {
                 const hit = this._intersect(event, (o) => typeof this._getHandler(o, 'onClick') === 'function');
                 if (hit && hit.hit) {
                     const leaf = hit.hit.object;
@@ -766,5 +781,14 @@ export class Viewer {
             this._resizeRendererToDisplaySize();
             this.render();
         });
+    }
+
+    // Re-evaluate hover while the camera animates/moves (e.g., orbiting)
+    _onControlsChange() {
+        if (this._disposed) return;
+        if (this._dragging) return; // do not interfere with object drags
+        if (!this._lastPointerEvent) return; // nothing to test against
+        // Reuse the same logic as pointer move to refresh hover under the cursor
+        this._onPointerMove(this._lastPointerEvent);
     }
 }
