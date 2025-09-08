@@ -25,6 +25,11 @@ const inputParamsSchema = {
         options: ["normal", "lofted", "cross_section"],
         default_value: "normal",
         hint: "Type of loft to create",
+    },
+    boolean: {
+        type: "boolean_operation",
+        default_value: { targets: [], opperation: 'NONE' },
+        hint: "Optional boolean operation with selected solids"
     }
 };
 

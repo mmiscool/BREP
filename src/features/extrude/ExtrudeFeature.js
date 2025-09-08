@@ -1,5 +1,6 @@
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
+import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
 
 const inputParamsSchema = {
   featureID: {
@@ -19,6 +20,11 @@ const inputParamsSchema = {
     default_value: 1,
     hint: "Extrude distance when no path is provided",
   },
+  boolean: {
+    type: "boolean_operation",
+    default_value: { targets: [], opperation: 'NONE' },
+    hint: "Optional boolean operation with selected solids"
+  }
 };
 
 export class ExtrudeFeature {
@@ -47,7 +53,7 @@ export class ExtrudeFeature {
     });
     extrude.visualize();
 
-
-    return [extrude];
+    // Apply optional boolean operation via shared helper
+    return await applyBooleanOperation(partHistory || {}, extrude, this.inputParams.boolean, this.inputParams.featureID);
   }
 }

@@ -4,6 +4,7 @@
 
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
+import { applyBooleanOperation } from '../../BREP/applyBooleanOperation.js';
 
 const inputParamsSchema = {
     featureID: {
@@ -25,6 +26,11 @@ const inputParamsSchema = {
         type: 'number',
         default_value: 10,
         hint: 'Depth along Z'
+    },
+    boolean: {
+        type: 'boolean_operation',
+        default_value: { targets: [], opperation: 'NONE' },
+        hint: 'Optional boolean operation with selected solids'
     }
 };
 
@@ -51,6 +57,7 @@ export class PrimitiveCubeFeature {
         });
         cube.visualize();
 
-        return [cube];
+        // Apply optional boolean operation
+        return await applyBooleanOperation(this.partHistory || {}, cube, this.inputParams.boolean, featureID);
     }
 }

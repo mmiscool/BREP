@@ -4,6 +4,7 @@
 
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
+import { applyBooleanOperation } from '../../BREP/applyBooleanOperation.js';
 
 const inputParamsSchema = {
   featureID: {
@@ -30,6 +31,11 @@ const inputParamsSchema = {
     type: 'number',
     default_value: 32,
     hint: 'Number of segments around the circumference'
+  },
+  boolean: {
+    type: 'boolean_operation',
+    default_value: { targets: [], opperation: 'NONE' },
+    hint: 'Optional boolean operation with selected solids'
   }
 };
 
@@ -56,9 +62,7 @@ export class PrimitiveConeFeature {
     });
     cone.visualize();
 
-  
-
-    return [cone];
+    return await applyBooleanOperation(partHistory || {}, cone, this.inputParams.boolean, this.inputParams.featureID);
   }
 }
 

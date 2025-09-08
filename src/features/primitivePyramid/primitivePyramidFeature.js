@@ -7,6 +7,7 @@
 
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
+import { applyBooleanOperation } from '../../BREP/applyBooleanOperation.js';
 
 const inputParamsSchema = {
     featureID: {
@@ -28,6 +29,11 @@ const inputParamsSchema = {
         type: 'number',
         default_value: 10,
         hint: 'Height of the pyramid along Y-axis'
+    },
+    boolean: {
+        type: 'boolean_operation',
+        default_value: { targets: [], opperation: 'NONE' },
+        hint: 'Optional boolean operation with selected solids'
     }
 };
 
@@ -54,6 +60,6 @@ export class PrimitivePyramidFeature {
         });
         pyramid.visualize();
 
-        return [pyramid];
+        return await applyBooleanOperation(this.partHistory || {}, pyramid, this.inputParams.boolean, featureID);
     }
 }

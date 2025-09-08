@@ -883,6 +883,17 @@ class genFeatureUI {
         for (const [key, el] of this._inputs.entries()) {
             const def = this.schema[key] || {};
             const v = this._pickInitialValue(key, def);
+            // Special composite types handle their own refresh
+            if (def && def.type === 'boolean_operation') {
+                const row = this._fieldsWrap.querySelector(`[data-key="${key}"]`);
+                const select = row ? row.querySelector('select[data-role="bool-op"]') : null;
+                if (select) select.value = (v && typeof v === 'object' && v.opperation) ? String(v.opperation) : 'NONE';
+                const chips = row ? row.querySelector('.ref-chips') : null;
+                const targets = (v && typeof v === 'object' && Array.isArray(v.targets)) ? v.targets : [];
+                if (chips) this._renderChips(chips, key, targets);
+                continue;
+            }
+
             this._setInputValue(el, def.type, v);
 
             // If this is a multi reference selection, also refresh chip list
@@ -1078,6 +1089,99 @@ class genFeatureUI {
                     } else {
                         controlWrap.appendChild(inputEl);
                     }
+                    break;
+                }
+
+                case 'boolean_operation': {
+                    // Ensure default object exists
+                    if (!this.params[key] || typeof this.params[key] !== 'object') {
+                        this.params[key] = { targets: [], opperation: 'NONE' };
+                    } else {
+                        if (!Array.isArray(this.params[key].targets)) this.params[key].targets = [];
+                        if (!this.params[key].opperation) this.params[key].opperation = 'NONE';
+                    }
+
+                    const wrap = document.createElement('div');
+                    wrap.className = 'bool-op-wrap';
+
+                    // Operation dropdown
+                    const sel = document.createElement('select');
+                    sel.className = 'select';
+                    sel.dataset.role = 'bool-op';
+                    const ops = Array.isArray(def.options) && def.options.length ? def.options : ['NONE', 'UNION', 'SUBTRACT', 'INTERSECT'];
+                    for (const op of ops) {
+                        const opt = document.createElement('option');
+                        opt.value = String(op);
+                        opt.textContent = String(op);
+                        sel.appendChild(opt);
+                    }
+                    sel.value = String(this.params[key].opperation || 'NONE');
+                    sel.addEventListener('change', () => {
+                        if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], opperation: 'NONE' };
+                        this.params[key].opperation = sel.value;
+                        this._emitParamsChange(key, this.params[key]);
+                    });
+                    wrap.appendChild(sel);
+
+                    // Target multi-select (solids)
+                    const refWrap = document.createElement('div');
+                    refWrap.className = 'ref-multi-wrap';
+                    const chipsWrap = document.createElement('div');
+                    chipsWrap.className = 'ref-chips';
+                    refWrap.appendChild(chipsWrap);
+
+                    const inputElTargets = document.createElement('input');
+                    inputElTargets.type = 'text';
+                    inputElTargets.className = 'input';
+                    inputElTargets.dataset.multiple = 'true';
+                    inputElTargets.placeholder = 'Click then select solids…';
+                    // initialize chips
+                    this._renderChips(chipsWrap, key, Array.isArray(this.params[key].targets) ? this.params[key].targets : []);
+
+                    const activate = () => {
+                        // Activate with SOLID-only selection filter
+                        this._activateReferenceSelection(inputElTargets, { selectionFilter: ['SOLID'] });
+                    };
+                    chipsWrap.addEventListener('click', activate);
+                    inputElTargets.addEventListener('click', activate);
+
+                    // On change, parse incoming list and update targets
+                    inputElTargets.addEventListener('change', () => {
+                        // Handle force-clear (e.g., ESC from selection widget)
+                        if (inputElTargets.dataset && inputElTargets.dataset.forceClear === 'true') {
+                            if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], opperation: 'NONE' };
+                            this.params[key].targets = [];
+                            this._renderChips(chipsWrap, key, this.params[key].targets);
+                            inputElTargets.value = '';
+                            delete inputElTargets.dataset.forceClear;
+                            this._emitParamsChange(key, this.params[key]);
+                            return;
+                        }
+                        if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], opperation: 'NONE' };
+                        let incoming = [];
+                        try {
+                            const parsed = JSON.parse(inputElTargets.value);
+                            if (Array.isArray(parsed)) incoming = parsed;
+                        } catch (_) {
+                            if (inputElTargets.value && String(inputElTargets.value).trim() !== '') incoming = [String(inputElTargets.value).trim()];
+                        }
+                        // Merge unique into targets
+                        const cur = Array.isArray(this.params[key].targets) ? this.params[key].targets : [];
+                        for (const name of incoming) {
+                            if (!cur.includes(name)) cur.push(name);
+                        }
+                        this.params[key].targets = cur;
+                        this._renderChips(chipsWrap, key, cur);
+                        inputElTargets.value = '';
+                        this._emitParamsChange(key, this.params[key]);
+                    });
+
+                    refWrap.appendChild(inputElTargets);
+                    wrap.appendChild(refWrap);
+
+                    controlWrap.appendChild(wrap);
+                    // Track the hidden input for refresh convenience
+                    inputEl = inputElTargets;
                     break;
                 }
 
@@ -1313,10 +1417,20 @@ class genFeatureUI {
             btn.title = 'Remove';
             btn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                if (!Array.isArray(this.params[key])) this.params[key] = [];
-                const idx = this.params[key].indexOf(name);
-                if (idx >= 0) this.params[key].splice(idx, 1);
-                this._renderChips(chipsWrap, key, this.params[key]);
+                // Support both plain array params and object-with-targets
+                let currentArrayRef = null;
+                if (Array.isArray(this.params[key])) {
+                    currentArrayRef = this.params[key];
+                } else if (this.params[key] && typeof this.params[key] === 'object' && Array.isArray(this.params[key].targets)) {
+                    currentArrayRef = this.params[key].targets;
+                } else {
+                    // Initialize as array if nothing sensible exists
+                    this.params[key] = [];
+                    currentArrayRef = this.params[key];
+                }
+                const idx = currentArrayRef.indexOf(name);
+                if (idx >= 0) currentArrayRef.splice(idx, 1);
+                this._renderChips(chipsWrap, key, currentArrayRef);
                 this._emitParamsChange(key, this.params[key]);
                 try {
                     if (typeof this.options.onReferenceChipRemove === 'function') {

@@ -6,6 +6,7 @@
 
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
+import { applyBooleanOperation } from '../../BREP/applyBooleanOperation.js';
 
 const inputParamsSchema = {
     featureID: {
@@ -32,6 +33,11 @@ const inputParamsSchema = {
         type: 'number',
         default_value: 360,
         hint: 'Sweep angle of the torus in degrees (0, 360]'
+    },
+    boolean: {
+        type: 'boolean_operation',
+        default_value: { targets: [], opperation: 'NONE' },
+        hint: 'Optional boolean operation with selected solids'
     }
 };
 
@@ -65,6 +71,6 @@ export class PrimitiveTorusFeature {
         });
         torus.visualize();
 
-        return [torus];
+        return await applyBooleanOperation(this.partHistory || {}, torus, this.inputParams.boolean, featureID);
     }
 }

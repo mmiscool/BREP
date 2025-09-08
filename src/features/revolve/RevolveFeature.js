@@ -17,6 +17,11 @@ const inputParamsSchema = {
         type: "number",
         default_value: 360,
         hint: "Revolve angle",
+    },
+    boolean: {
+        type: "boolean_operation",
+        default_value: { targets: [], opperation: 'NONE' },
+        hint: "Optional boolean operation with selected solids"
     }
 };
 

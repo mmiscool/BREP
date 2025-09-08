@@ -1,5 +1,6 @@
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
+import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
 
 const inputParamsSchema = {
   featureID: {
@@ -30,6 +31,11 @@ const inputParamsSchema = {
     type: "number",
     default_value: 0,
     hint: "Twist angle for the sweep",
+  },
+  boolean: {
+    type: "boolean_operation",
+    default_value: { targets: [], opperation: 'NONE' },
+    hint: "Optional boolean operation with selected solids"
   }
 };
 
@@ -59,7 +65,7 @@ export class SweepFeature {
     });
     sweep.visualize();
 
-
-    return [sweep];
+    // Apply optional boolean operation via shared helper
+    return await applyBooleanOperation(partHistory || {}, sweep, this.inputParams.boolean, this.inputParams.featureID);
   }
 }

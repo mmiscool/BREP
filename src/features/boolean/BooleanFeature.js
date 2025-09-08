@@ -1,5 +1,5 @@
 import { extractDefaultValues } from "../../PartHistory.js";
-import { BREP } from '../../BREP/BREP.js'
+import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
 
 const inputParamsSchema = {
     featureID: {
@@ -12,21 +12,13 @@ const inputParamsSchema = {
         selectionFilter: ["SOLID"],
         multiple: false,
         default_value: null,
-        hint: "Solid to operate on",
+        hint: "Primary target solid",
     },
-    toolSolid: {
-        type: "reference_selection",
-        selectionFilter: ["SOLID"],
-        multiple: true,
-        default_value: [],
-        hint: "One or more solids to use as tools",
-    },
-
-    operation: {
-        type: "options",
-        options: ["UNION", "SUBTRACT", "INTERSECT", ],
-        default_value: "UNION",
-        hint: "Boolean operation type (union, subtract or intersection)",
+    boolean: {
+        type: "boolean_operation",
+        // For the Boolean feature, the widget's targets represent the OTHER solids to combine with the targetSolid
+        default_value: { targets: [], opperation: 'UNION' },
+        hint: "Operation + other solids (as tools)",
     }
 };
 
@@ -44,49 +36,48 @@ export class BooleanFeature {
     async run(partHistory) {
         const scene = partHistory.scene;
         const targetName = this.inputParams.targetSolid;
-        const toolParam = this.inputParams.toolSolid;
-
-        const target = await scene.getObjectByName(targetName);
+        const target = targetName ? await scene.getObjectByName(targetName) : null;
         if (!target) throw new Error(`Target solid not found: ${targetName}`);
 
-        // Normalize tools to an array of names
-        let toolNames = [];
-        if (Array.isArray(toolParam)) toolNames = toolParam.filter(Boolean);
-        else if (toolParam != null) toolNames = [toolParam];
+        const bool = this.inputParams.boolean || { targets: [], opperation: 'NONE' };
+        const op = String(bool.opperation || 'NONE').toUpperCase();
+        const toolNames = Array.isArray(bool.targets) ? bool.targets.filter(Boolean) : [];
+        if (op === 'NONE' || toolNames.length === 0) {
+            // No-op: leave scene unchanged
+            return [];
+        }
 
-        if (toolNames.length === 0) throw new Error(`No tool solids selected`);
-
-        // Get tool objects, dedupe by name, and filter missing
+        // Collect tool solids
         const seen = new Set();
         const tools = [];
         for (const name of toolNames) {
-            if (!name || seen.has(name)) continue;
-            seen.add(name);
-            const obj = await scene.getObjectByName(name);
+            const key = String(name);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const obj = await scene.getObjectByName(key);
             if (obj) tools.push(obj);
         }
-        if (tools.length === 0) throw new Error(`Tool solids not found: ${toolNames.join(', ')}`);
+        if (tools.length === 0) return [];
 
-        // Apply boolean operation across tools
-        let result = target;
-        const op = this.inputParams.operation;
-        for (const tool of tools) {
-            if (op === "SUBTRACT") result = result.subtract(tool);
-            else if (op === "UNION") result = result.union(tool);
-            else if (op === "INTERSECT") result = result.intersect(tool);
+        // Use the shared helper semantics:
+        // - For UNION/INTERSECT: base = target, targets = tools → returns [result]; tools removed; we remove target.
+        // - For SUBTRACT: invert per helper by passing base = union(tools), targets = [target] → returns [result];
+        //   helper will remove target and the base union; also mark the original tool solids as removed here.
+        let outputs = [];
+        if (op === 'SUBTRACT') {
+            let toolUnion = tools[0];
+            for (let i = 1; i < tools.length; i++) toolUnion = toolUnion.union(tools[i]);
+            // Remove the original tools (the helper removes only the baseUnion and target)
+            for (const t of tools) t.remove = true;
+            const param = { opperation: 'SUBTRACT', targets: [targetName] };
+            outputs = await applyBooleanOperation(partHistory, toolUnion, param, this.inputParams.featureID);
+        } else {
+            const param = { opperation: op, targets: toolNames };
+            outputs = await applyBooleanOperation(partHistory, target, param, this.inputParams.featureID);
+            // Ensure original target is removed to avoid duplication
+            try { target.remove = true; } catch (_) { }
         }
 
-        result.visualize();
-
-        // Remove original bodies
-        target.remove =true;
-        for (const tool of tools) tool.remove =true;
-
-        // Ensure result is identifiable for downstream references
-        result.name = this.inputParams.featureID;
-
-
-        return [result];
+        return outputs;
     }
 }
-
