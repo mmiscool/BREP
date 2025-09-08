@@ -1,6 +1,7 @@
 
 import { extractDefaultValues } from "../../PartHistory.js";
 import * as THREE from 'three';
+import { CADmaterials } from '../../UI/CADmaterials.js';
 
 const inputParamsSchema = {
     featureID: {
@@ -60,12 +61,14 @@ export class PlaneFeature {
         } else {
             const planeMesh = await new THREE.Mesh(
                 new THREE.PlaneGeometry(5, 5),
-                new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide, opacity: 0.1, transparent: true })
+                (CADmaterials?.PLANE?.BASE ?? new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide, opacity: 0.1, transparent: true }))
             );
             planeMesh.rotation.x = this.inputParams.orientation === "XZ" ? Math.PI / 2 : 0;
             planeMesh.rotation.y = this.inputParams.orientation === "YZ" ? Math.PI / 2 : 0;
             //planeMesh.position.z = this.inputParams.orientation === "XY" ? Math.PI / 2 : 0;
             planeMesh.uuid = this.inputParams.featureID; // Assign the featureID to the mesh's uuid
+            planeMesh.name = this.inputParams.featureID; // Ensure selectable by name
+            planeMesh.type = 'PLANE';                    // Participate in PLANE selection
             //console.log("this is the uuid", planeMesh.uuid, "and the featureID", this.inputParams.featureID);
             return planeMesh;
         }

@@ -2,6 +2,7 @@ import { CADmaterials } from "./CADmaterials.js";
 export class SelectionFilter {
     static SOLID = "SOLID";
     static FACE = "FACE";
+    static PLANE = "PLANE";
     static SKETCH = "SKETCH";
     static EDGE = "EDGE";
     static LOOP = "LOOP";
@@ -21,7 +22,7 @@ export class SelectionFilter {
         throw new Error("SelectionFilter is static and cannot be instantiated.");
     }
 
-    static get TYPES() { return [this.SOLID, this.FACE, this.SKETCH, this.EDGE, this.LOOP, this.ALL]; }
+    static get TYPES() { return [this.SOLID, this.FACE, this.PLANE, this.SKETCH, this.EDGE, this.LOOP, this.ALL]; }
 
     // Convenience: return the list of selectable types for the dropdown (excludes ALL)
     static getAvailableTypes() {
@@ -242,6 +243,8 @@ export class SelectionFilter {
             if (objectToToggleSelectionOn.selected) {
                 if (objectToToggleSelectionOn.type === SelectionFilter.FACE) {
                     objectToToggleSelectionOn.material = CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE;
+                } else if (objectToToggleSelectionOn.type === SelectionFilter.PLANE) {
+                    objectToToggleSelectionOn.material = CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? objectToToggleSelectionOn.material;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.EDGE) {
                     objectToToggleSelectionOn.material = CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.SOLID) {
@@ -249,6 +252,7 @@ export class SelectionFilter {
                     objectToToggleSelectionOn.children.forEach(child => {
                         // apply selected material based on object type for faces and edges
                         if (child.type === SelectionFilter.FACE) child.material = CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE;
+                        if (child.type === SelectionFilter.PLANE) child.material = CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? child.material;
                         if (child.type === SelectionFilter.EDGE) child.material = CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE;
                     });
                 }
@@ -256,6 +260,8 @@ export class SelectionFilter {
             } else {
                 if (objectToToggleSelectionOn.type === SelectionFilter.FACE) {
                     objectToToggleSelectionOn.material = CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED;
+                } else if (objectToToggleSelectionOn.type === SelectionFilter.PLANE) {
+                    objectToToggleSelectionOn.material = CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? objectToToggleSelectionOn.material;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.EDGE) {
                     objectToToggleSelectionOn.material = CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.SOLID) {
@@ -263,6 +269,7 @@ export class SelectionFilter {
                     objectToToggleSelectionOn.children.forEach(child => {
                         // apply selected material based on object type for faces and edges
                         if (child.type === SelectionFilter.FACE) child.material = child.selected ? CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE : CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED;
+                        if (child.type === SelectionFilter.PLANE) child.material = child.selected ? (CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? child.material) : (CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? child.material);
                         if (child.type === SelectionFilter.EDGE) child.material = child.selected ? CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE : CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
                     });
                 }
@@ -279,6 +286,8 @@ export class SelectionFilter {
             // reset material to base
             if (child.type === SelectionFilter.FACE) {
                 child.material = CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED;
+            } else if (child.type === SelectionFilter.PLANE) {
+                child.material = CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? child.material;
             } else if (child.type === SelectionFilter.EDGE) {
                 child.material = CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
             }
@@ -293,6 +302,8 @@ export class SelectionFilter {
                 // change material to selected
                 if (child.type === SelectionFilter.FACE) {
                     child.material = CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE;
+                } else if (child.type === SelectionFilter.PLANE) {
+                    child.material = CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? child.material;
                 } else if (child.type === SelectionFilter.EDGE) {
                     child.material = CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE;
                 } else if (child.type === SelectionFilter.SOLID) {
@@ -309,6 +320,8 @@ export class SelectionFilter {
                 child.selected = false;
                 if (child.type === SelectionFilter.FACE) {
                     child.material = CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED;
+                } else if (child.type === SelectionFilter.PLANE) {
+                    child.material = CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? child.material;
                 } else if (child.type === SelectionFilter.EDGE) {
                     child.material = CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
                 } else if (child.type === SelectionFilter.SOLID) {
@@ -316,6 +329,9 @@ export class SelectionFilter {
                     child.children.forEach(grandchild => {
                         if (grandchild.type === SelectionFilter.FACE) {
                             grandchild.material = grandchild.selected ? (CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE) : (CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED);
+                        }
+                        if (grandchild.type === SelectionFilter.PLANE) {
+                            grandchild.material = grandchild.selected ? (CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? grandchild.material) : (CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? grandchild.material);
                         }
                         if (grandchild.type === SelectionFilter.EDGE) {
                             grandchild.material = grandchild.selected ? (CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE) : (CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED);

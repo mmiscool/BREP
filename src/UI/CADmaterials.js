@@ -6,6 +6,22 @@ import { SelectionFilter } from './SelectionFilter.js';
 
 
 export const CADmaterials = {
+    PLANE: {
+        BASE: new THREE.MeshBasicMaterial({
+            color: "#00ff00",
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.2,
+            depthWrite: false
+        }),
+        SELECTED: new THREE.MeshBasicMaterial({
+            color: "#80ff80",
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.35,
+            depthWrite: false
+        }),
+    },
     EDGE: {
         BASE: new LineMaterial({
             color: "#ff0000",

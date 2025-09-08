@@ -3,11 +3,9 @@ import { SelectionFilter } from './SelectionFilter.js';
 
 export class SelectionFilterWidget {
     constructor(viewer) {
-        console.log(viewer.partHistory);
         this.uiElement = document.createElement("div");
         this.selectedEntities = new Set();
         this.viewer = viewer;
-        console.log(this.viewer.partHistory);
         this.initUI();
     }
 

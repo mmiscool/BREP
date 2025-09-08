@@ -53,16 +53,15 @@ export class FilletFeature {
         this.persistentData = {};
     }
     async run(partHistory) {
-        console.log(this);
         // check if all the edges belong to the same solid
         const inputObjects = partHistory.getObjectsByName(this.inputParams.edges);
 
-        console.log("FilletFeature input objects:", inputObjects);
+        //console.log("FilletFeature input objects:", inputObjects);
 
         const edgeObjs = [];
 
         inputObjects.forEach(obj => {
-            console.log("Processing input object:", obj);
+            //console.log("Processing input object:", obj);
             if (obj.type === "EDGE") {
 
                 // check if edge already in array
@@ -167,7 +166,7 @@ function makeSingleFilletSolid(edgeObj,
     const swapFaces = false;
 
 
-    console.log("Creating fillet solid for edge:", edgeObj, radius, inflate, flipSide, direction, flipTangent, swapFaces, debug);
+    //console.log("Creating fillet solid for edge:", edgeObj, radius, inflate, flipSide, direction, flipTangent, swapFaces, debug);
 
     const tool = new FilletSolid({ edgeToFillet: edgeObj, radius, inflate, invert2D: false, reverseTangent: !!flipTangent, swapFaces: !!swapFaces, sideMode: direction, debug });
     // tool.fixTriangleWindingsByAdjacency();

@@ -1,6 +1,6 @@
 import { extractDefaultValues } from "../../PartHistory.js";
 import * as THREE from 'three';
-import { BREP } from '../../BREP/BREP.js';
+// no direct BREP usage here
 
 const inputParamsSchema = {
     featureID: {
@@ -17,9 +17,8 @@ const inputParamsSchema = {
     },
     mirrorPlane: {
         type: "reference_selection",
-        // Selection is restricted to FACE to align with current SelectionFilter types.
-        // Plane picking can be enabled later by adding a 'PLANE' type.
-        selectionFilter: ["FACE"],
+        // Allow mirroring about either a face or a datum plane
+        selectionFilter: ["FACE", "PLANE"],
         multiple: false,
         default_value: null,
         hint: "Select the plane or face to mirror about",

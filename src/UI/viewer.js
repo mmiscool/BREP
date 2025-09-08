@@ -104,7 +104,7 @@ export class Viewer {
                 if (this.sidebar) {
                     this.sidebar.style.opacity = .9;
                 }
-                console.log('camera moving...');
+                // (quiet) camera moving
             },
             onIdle: () => {
                 // show sidebar when idle
