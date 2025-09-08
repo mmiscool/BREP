@@ -83,6 +83,61 @@ await ph.runHistory();
 - `manifold-3d` creates a robust manifold and propagates face IDs through CSG, so original face labels remain usable after unions/differences/intersections.
 - Faces and edges are visualized via Three.js; face names remain accessible for downstream feature logic.
 
+## BREP Model and Classes
+
+- **BREP model:** Triangle mesh plus per‑triangle face labels. Labels map to globally unique IDs in Manifold, which propagate through CSG so selections remain stable. Edges are derived at boundaries between distinct face labels and represented as polyline chains.
+- **Manifoldization:** Authoring arrays are cleaned before build: triangle windings are made consistent by adjacency; outward orientation is enforced by signed volume; an optional weld epsilon removes duplicate vertices and degenerates. Results are cached until geometry mutates.
+- **Visualization:** `Solid.visualize()` creates one `Face` mesh per face label and `Edge` polylines for label boundaries. Objects include semantic names to support selection and downstream features.
+
+### Solid
+
+- **Type:** `THREE.Group` subclass providing authoring, CSG, queries, and export.
+- **Geometry storage:** `_vertProperties` (flat positions), `_triVerts` (triangle indices), `_triIDs` (per‑triangle face ID), with name↔ID maps to preserve labels through CSG.
+
+- `addTriangle(faceName, v1, v2, v3)`: Adds a labeled triangle; inputs `faceName:string`, `v1:[x,y,z]`, `v2:[x,y,z]`, `v3:[x,y,z]`; returns `Solid` (this).
+- `setEpsilon(epsilon = 0)`: Sets weld tolerance, welds vertices, drops degenerates, fixes windings; inputs `epsilon:number`; returns `Solid` (this).
+- `mirrorAcrossPlane(point, normal)`: Returns a mirrored copy across a plane; inputs `point:THREE.Vector3|[x,y,z]`, `normal:THREE.Vector3|[x,y,z]`; returns `Solid`.
+- `invertNormals()`: Flips triangle windings to invert normals; inputs none; returns `Solid` (this).
+- `fixTriangleWindingsByAdjacency()`: Enforces consistent orientation across shared edges; inputs none; returns `Solid` (this).
+- `removeTinyBoundaryTriangles(areaThreshold, maxIterations = 1)`: Removes sliver triangles along label boundaries via safe 2–2 flips; inputs `areaThreshold:number`, `maxIterations?:number`; returns `number` (flips performed).
+- `getMesh()`: Gets current Manifold MeshGL; inputs none; returns `MeshGL` (`{ numProp, vertProperties, triVerts, faceID, ... }`).
+- `getFace(name)`: Fetches triangles for a face label; inputs `name:string`; returns `Array<{ faceName, indices:number[], p1:[x,y,z], p2:[x,y,z], p3:[x,y,z] }>`.
+- `getFaces(includeEmpty = false)`: Enumerates faces and their triangles; inputs `includeEmpty?:boolean`; returns `Array<{ faceName:string, triangles:Triangle[] }>`.
+- `getFaceNames()`: Lists known face labels; inputs none; returns `string[]`.
+- `getBoundaryEdgePolylines()`: Computes boundary polylines between distinct face labels; inputs none; returns `Array<{ name:string, faceA:string, faceB:string, indices:number[], positions:[x,y,z][], closedLoop?:boolean }>`.
+- `visualize(options = {})`: Builds per‑face meshes and edge polylines into this group; inputs `options:{ showEdges?:boolean, materialForFace?:(name)=>Material, name?:string }`; returns `Solid` (this).
+- `union(other)`: Boolean union; inputs `other:Solid`; returns `Solid`.
+- `subtract(other)`: Boolean difference (A − B); inputs `other:Solid`; returns `Solid`.
+- `intersect(other)`: Boolean intersection; inputs `other:Solid`; returns `Solid`.
+- `difference(other)`: Boolean difference via Manifold API; inputs `other:Solid`; returns `Solid`.
+- `simplify(tolerance?)`: Simplifies mesh preserving label boundaries; inputs `tolerance?:number`; returns `Solid`.
+- `setTolerance(tolerance)`: Sets manifold tolerance (may simplify); inputs `tolerance:number`; returns `Solid`.
+- `volume()`: Computes enclosed volume; inputs none; returns `number`.
+- `surfaceArea()`: Computes total surface area; inputs none; returns `number`.
+- `toSTL(name = 'solid', precision = 6)`: Exports ASCII STL; inputs `name?:string`, `precision?:number`; returns `string` (STL text).
+- `writeSTL(filePath, name = 'solid', precision = 6)`: Writes ASCII STL to disk (Node only); inputs `filePath:string`, `name?:string`, `precision?:number`; returns `Promise<string>` (path written).
+
+### Face
+
+- **Type:** `THREE.Mesh` representing all triangles that share a face label (can be non‑planar or disjoint islands).
+- **Properties:** `name` (label), `type` = `FACE`, `edges` (adjacent `Edge` objects), `geometry` (per‑face BufferGeometry built by `visualize()`).
+
+- `getAverageNormal()`: Computes area‑weighted world‑space average normal; inputs none; returns `THREE.Vector3`.
+- `surfaceArea()`: Computes world‑space surface area; inputs none; returns `number`.
+
+### Edge
+
+- **Type:** `Line2` polyline representing a boundary chain between two face labels.
+- **Properties:** `name` (boundary name), `type` = `EDGE`, `faces` (the two adjacent `Face` objects when present), `closedLoop` (boolean), `userData.polylineLocal` (polyline points), `userData.faceA/faceB` (label names).
+
+- `length()`: Computes world‑space polyline length; inputs none; returns `number`.
+
+### How the BREP Works Here
+
+- **Label‑driven topology:** Faces are semantic groups defined at authoring/import time and tracked per triangle. After booleans, label provenance survives so selections can continue to target the same named faces/edges.
+- **Edges from labels:** Boundary edges are computed between triangles of different labels, then chained into polylines per label pair. This avoids fragile edge reconstruction and remains stable across many operations.
+- **Manifold contract:** Inputs are assumed (or repaired to) be closed, watertight 2‑manifolds. The system corrects orientation and coherency but cannot heal gross self‑intersections or missing surfaces.
+
 ## Topological Naming
 
 Topological naming is about keeping stable references to faces and edges as the model recomputes. This project uses per‑triangle face labels that propagate through CSG so features can reliably refer to geometry across edits.
