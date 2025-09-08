@@ -51,8 +51,6 @@ export class Viewer {
         this.container = container;
         this.sidebar = sidebar;
         this.scene = partHistory instanceof PartHistory ? partHistory.scene : new THREE.Scene();
-        this.raycaster = new THREE.Raycaster();
-        this._pointerNDC = new THREE.Vector2();
 
         // Renderer
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true, });
@@ -128,9 +126,6 @@ export class Viewer {
 
 
         // State for interaction
-        this._hovered = null;           // currently hovered interactive object (the "handler owner")
-        this._active = null;            // object that received pointerdown (for drag/click)
-        this._dragging = false;
         this._pointerDown = false;
         this._downButton = 0;           // 0 left, 2 right
         this._downPos = { x: 0, y: 0 };
@@ -138,6 +133,12 @@ export class Viewer {
         this._raf = null;
         this._disposed = false;
         this._sketchMode = null;
+        this._lastPointerEvent = null;
+
+        // Raycaster for picking
+        this.raycaster = new THREE.Raycaster();
+        // Slightly generous line threshold for edge picking (world units)
+        try { this.raycaster.params.Line.threshold = 0.1; } catch { }
 
         // Bindings
         this._onPointerMove = this._onPointerMove.bind(this);
@@ -147,6 +148,8 @@ export class Viewer {
         this._onResize = this._onResize.bind(this);
         this._onControlsChange = this._onControlsChange.bind(this);
         this._loop = this._loop.bind(this);
+        this._updateHover = this._updateHover.bind(this);
+        this._selectAt = this._selectAt.bind(this);
 
         // Events
         const el = this.renderer.domElement;
@@ -162,7 +165,7 @@ export class Viewer {
         window.addEventListener('pointerup', this._onPointerUp, { passive: false, capture: true });
         el.addEventListener('contextmenu', this._onContextMenu);
         window.addEventListener('resize', this._onResize);
-        // Keep hover picking in sync while the camera moves
+        // Keep camera updates; no picking to sync
         this.controls.addEventListener('change', this._onControlsChange);
 
         this.SelectionFilter = SelectionFilter;
@@ -311,222 +314,80 @@ export class Viewer {
     }
 
     // ————————————————————————————————————————
-    // Internal: Pointer + Raycasting
+    // Internal: Picking helpers
     // ————————————————————————————————————————
-    _updatePointerNDC(event) {
+    _getPointerNDC(event) {
         const rect = this.renderer.domElement.getBoundingClientRect();
-        this._pointerNDC.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        this._pointerNDC.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        const x = (event.clientX - rect.left) / rect.width;
+        const y = (event.clientY - rect.top) / rect.height;
+        // Convert to NDC (-1..1)
+        return new THREE.Vector2(x * 2 - 1, -(y * 2 - 1));
     }
 
-    // For event-aware picking, pass a predicate that determines whether an ancestor "qualifies"
-    _intersect(event, qualifiesPredicate = null) {
-        this._updatePointerNDC(event);
+    _mapIntersectionToTarget(intersection) {
+        if (!intersection || !intersection.object) return null;
+        const curType = SelectionFilter.getCurrentType && SelectionFilter.getCurrentType();
 
-        // Layers: match what’s rendered
-        if (this.camera && this.camera.layers && this.raycaster.layers) {
-            this.raycaster.layers.mask = this.camera.layers.mask;
-        }
+        // Prefer the intersected object if it is clickable
+        let obj = intersection.object;
 
-        // Build the picking ray for the current pointer
-        this.raycaster.setFromCamera(this._pointerNDC, this.camera);
-
-        // 🔑 Make line picking pixel-tight (≈1px) before intersecting
-        // Support grouped CADmaterials (EDGE.BASE) with fallback
-        const edgePickPx = (CADmaterials?.EDGE?.BASE?.linewidth ?? CADmaterials?.EDGE?.linewidth ?? 0.6);
-        this._setPixelTightLineThreshold(edgePickPx);
-
-        // Intersect everything (recursive); we'll filter below
-        const hits = this.raycaster.intersectObjects(this.scene.children, true);
-        if (!hits.length) return null;
-
-        // sort hits by distance (nearest first) and then by type. If the distance is the same prefere edges over faces
-        hits.sort((a, b) => {
-            const distanceDiff = a.distance - b.distance;
-            if (distanceDiff !== 0) return distanceDiff;
-            // Prefer edges over faces
-            const aIsEdge = a.object.isLine2;
-            const bIsEdge = b.object.isLine2;
-            if (aIsEdge && !bIsEdge) return -1;
-            if (!aIsEdge && bIsEdge) return 1;
-            return 0;
-        });
-
-        const isChainAllowed = (node) => {
-            let cur = node;
-            while (cur && cur !== this.scene) {
-                if (cur.type && SelectionFilter.IsAllowed(cur.type)) return true;
-                cur = cur.parent;
+        // If current selection is SOLID, promote to nearest SOLID ancestor
+        if (curType === SelectionFilter.SOLID) {
+            let p = obj;
+            while (p) {
+                if (p.type === SelectionFilter.SOLID) { obj = p; break; }
+                p = p.parent;
             }
-            return false;
-        };
-
-        for (const hit of hits) {
-            const obj = hit.object;
-            // Only consider things that are actually visible / renderable
-            if (!this._isActuallyVisible(obj)) continue;
-            const owner = this._findHandlerOwner(obj, qualifiesPredicate);
-            if (!owner) continue;
-            // Respect the selection filter: allow if either the owner, the leaf, or any ancestor is allowed
-            const allowed = isChainAllowed(owner) || isChainAllowed(obj);
-            if (!allowed) continue;
-            return { owner, hit };
-        }
-        return null;
-    }
-
-    _setPixelTightLineThreshold(pickPx = .5) {
-        // pickPx is the half-width in pixels you consider "on the line".
-        // 0.6 ≈ must be visually on the 1px line; raise slightly if selection feels too strict.
-
-        const el = this.renderer.domElement;
-        const width = el.clientWidth || el.width || 1;
-        const height = el.clientHeight || el.height || 1;
-
-        let worldPerPixel = 1e-6; // fallback tiny value
-
-        if (this.camera && this.camera.isOrthographicCamera) {
-            // For ortho, world-per-pixel is constant, derived from the frustum size.
-            const wppX = (this.camera.right - this.camera.left) / width;
-            const wppY = (this.camera.top - this.camera.bottom) / height;
-            worldPerPixel = Math.max(wppX, wppY);
-        } else if (this.camera && this.camera.isPerspectiveCamera) {
-            // Reasonable approximation for perspective: use target-ish distance.
-            // If your controls expose a target or distance, prefer that.
-            const dist = this.controls && typeof this.controls.getDistance === 'function'
-                ? this.controls.getDistance()
-                : this.camera.position.length();
-
-            const fovRad = (this.camera.fov * Math.PI) / 180;
-            worldPerPixel = (2 * Math.tan(fovRad / 2) * dist) / height;
         }
 
-        const threshold = Math.max(1e-6, worldPerPixel * pickPx);
-        this.raycaster.params.Line = this.raycaster.params.Line || {};
-        this.raycaster.params.Line.threshold = threshold;
-        // Also set for Line2 raycasting
-        this.raycaster.params.Line2 = this.raycaster.params.Line2 || {};
-        this.raycaster.params.Line2.threshold = threshold;
+        // If the object (or its ancestors) doesn't expose onClick, climb to one that does
+        let target = obj;
+        while (target && typeof target.onClick !== 'function') target = target.parent;
+        if (!target) return null;
 
-        // (Optional) keep points tight as well, if you ever have them:
-        // this.raycaster.params.Points = this.raycaster.params.Points || {};
-        // this.raycaster.params.Points.threshold = threshold;
-    }
-
-    // Helper: true only if the object would be rendered (visibility chain, layers, and material visibility/alpha)
-    _isActuallyVisible(object3D) {
-        if (!object3D || !object3D.isObject3D) return false;
-        if (object3D.visible === false) return false;
-        // Visibility must be true for object and all ancestors
-        for (let o = object3D; o; o = o.parent) {
-            if (o.visible === false) return false;
-            // Respect camera/layer visibility like the renderer
-            if (this.camera && this.camera.layers && o.layers && !o.layers.test(this.camera.layers)) return false;
-        }
-
-        // If it’s a Mesh (or Line/Points with material), ensure at least one visible, non-fully-transparent material
-        const materials = this._getMaterialList(object3D);
-        if (materials.length) {
-            let anyRenderable = false;
-            for (const m of materials) {
-                if (!m) continue;
-                // material.visible=false should hide it; fully transparent shouldn’t catch clicks
-                const visible = m.visible !== false;
-                const alphaVisible = !(m.transparent === true && (m.opacity ?? 1) <= 0);
-                if (visible && alphaVisible) {
-                    anyRenderable = true;
-                    break;
-                }
+        // Respect selection filter: ensure target is a permitted type, or ALL
+        if (typeof SelectionFilter.IsAllowed === 'function') {
+            // Allow selecting already-selected items regardless (toggle off), consistent with SceneListing
+            if (!SelectionFilter.IsAllowed(target.type) && !target.selected) {
+                // Try to find a closer ancestor/descendant of allowed type that is clickable
+                // Ascend first (e.g., FACE hit while EDGE is active should try parent SOLID only if allowed)
+                let t = target.parent;
+                while (t && typeof t.onClick === 'function' && !SelectionFilter.IsAllowed(t.type)) t = t.parent;
+                if (t && typeof t.onClick === 'function' && SelectionFilter.IsAllowed(t.type)) target = t;
+                else return null;
             }
-            if (!anyRenderable) return false;
         }
 
-        return true;
+        return target;
     }
 
-    // Normalize material(s) into an array for Mesh/Line/Points; empty array for objects without CADmaterials
-    _getMaterialList(obj) {
-        // Only Mesh/Line/Points (and their instanced variants) carry CADmaterials
-        const isMaterialCarrier =
-            obj && (
-                obj.isMesh ||
-                obj.isLine || obj.isLineSegments || obj.isLineLoop ||
-                obj.isPoints ||
-                obj.isInstancedMesh
-            );
-
-        if (!isMaterialCarrier) return [];
-
-        const { material } = obj;
-        if (Array.isArray(material)) return material;
-        return material ? [material] : [];
-    }
-
-    _findHandlerOwner(obj, qualifiesPredicate = null) {
-        // Accept either camelCase (onClick) or lowercase (onclick) etc.
-        const anyHandler = (o) => {
-            if (!o) return false;
-            return !!(
-                typeof this._getHandler(o, 'onClick') === 'function' ||
-                typeof this._getHandler(o, 'onRightClick') === 'function' ||
-                typeof this._getHandler(o, 'onDragStart') === 'function' ||
-                typeof this._getHandler(o, 'onDragEnd') === 'function' ||
-                typeof this._getHandler(o, 'onPointerEnter') === 'function' ||
-                typeof this._getHandler(o, 'onPointerExit') === 'function' ||
-                typeof this._getHandler(o, 'onPointerMove') === 'function'
-            );
-        };
-
-        let cur = obj;
-        while (cur && cur !== this.scene) {
-            const qualifies = typeof qualifiesPredicate === 'function'
-                ? !!qualifiesPredicate(cur)
-                : anyHandler(cur);
-            if (qualifies) return cur;
-            cur = cur.parent;
+    _pickAtEvent(event) {
+        if (!event) return { hit: null, target: null };
+        const ndc = this._getPointerNDC(event);
+        this.raycaster.setFromCamera(ndc, this.camera);
+        // Intersect everything; raycaster will skip non-geometry nodes
+        const intersects = this.raycaster.intersectObjects(this.scene.children, true);
+        for (const it of intersects) {
+            const target = this._mapIntersectionToTarget(it);
+            if (target) return { hit: it, target };
         }
-        return null;
+        return { hit: null, target: null };
     }
 
-    _getHandler(obj, camelKey) {
-        // Supports both `onClick` and `onclick` (and similar)
-        const lowerKey = camelKey.toLowerCase();
-        return obj[camelKey] || obj[lowerKey] || null;
-    }
-
-    _eventPayload(originalEvent, hit = null) {
-        // payload passed into user callbacks
-        return {
-            type: originalEvent.type,
-            originalEvent,
-            environment: this,
-            camera: this.camera,
-            controls: this.controls,
-            raycaster: this.raycaster,
-            // Intersection details (if any)
-            intersection: hit ? hit.hit : null,
-            point: hit && hit.hit ? hit.hit.point : null,
-            face: hit && hit.hit ? hit.hit.face : null,
-            uv: hit && hit.hit ? hit.hit.uv : null,
-            normal: hit && hit.hit && hit.hit.face ? hit.hit.face.normal : null,
-        };
-    }
-
-    // Check if an object has a handler relevant for the current mouse button
-    _qualifiesForButton(obj, event) {
-        if (!obj) return false;
-        const btn = event.button;
-        if (btn === 0) {
-            // Left: interactive if it can either click or drag
-            return (
-                typeof this._getHandler(obj, 'onClick') === 'function' ||
-                typeof this._getHandler(obj, 'onDragStart') === 'function'
-            );
-        } else if (btn === 2) {
-            // Right: needs an onRightClick
-            return typeof this._getHandler(obj, 'onRightClick') === 'function';
+    _updateHover(event) {
+        const { target } = this._pickAtEvent(event);
+        if (target) {
+            try { SelectionFilter.setHoverObject(target); } catch { }
+        } else {
+            try { SelectionFilter.clearHover(); } catch { }
         }
-        return false; // middle or other buttons never block controls
+    }
+
+    _selectAt(event) {
+        const { target } = this._pickAtEvent(event);
+        if (target && typeof target.onClick === 'function') {
+            try { target.onClick(); } catch { }
+        }
     }
 
     // ————————————————————————————————————————
@@ -534,181 +395,40 @@ export class Viewer {
     // ————————————————————————————————————————
     _onPointerMove(event) {
         if (this._disposed) return;
-
-        // Remember the last known pointer event so we can recompute hover while the camera moves
+        // Keep last pointer position and refresh hover
         this._lastPointerEvent = event;
-
-        // Hover highlighting (respect selection filter)
-        try {
-            // Update hover when not dragging an interactive object. While navigating the camera
-            // (pointer down with no active object), still update hover so results track the view.
-            const navigatingCamera = this._pointerDown && !this._active;
-            if (!this._dragging && (!this._pointerDown || navigatingCamera)) {
-                const hit = this._intersect(event, (o) => typeof this._getHandler(o, 'onClick') === 'function');
-                if (hit && hit.hit) {
-                    const leaf = hit.hit.object;
-                    const owner = hit.owner;
-                    const ownerAllowed = owner && owner.type ? SelectionFilter.IsAllowed(owner.type) : false;
-                    const leafAllowed = leaf && leaf.type ? SelectionFilter.IsAllowed(leaf.type) : false;
-                    // Find nearest allowed ancestor if needed (e.g., SOLID when hovering FACE)
-                    const findAllowedAncestor = (node) => {
-                        let cur = node;
-                        while (cur && cur !== this.scene) {
-                            if (cur.type && SelectionFilter.IsAllowed(cur.type)) return cur;
-                            cur = cur.parent;
-                        }
-                        return null;
-                    };
-                    let target = null;
-                    if (leafAllowed) target = leaf;
-                    else if (ownerAllowed) target = owner;
-                    else target = findAllowedAncestor(owner) || findAllowedAncestor(leaf);
-
-                    if (target) SelectionFilter.setHoverObject(target);
-                    else SelectionFilter.setHoverObject(null);
-                } else {
-                    SelectionFilter.setHoverObject(null);
-                }
-            }
-        } catch (_) { }
-
-        // If a drag should begin, start it only after threshold and only if the active object supports dragging.
-        if (this._pointerDown && this._active && !this._dragging) {
-            const dx = event.clientX - this._downPos.x;
-            const dy = event.clientY - this._downPos.y;
-            if (Math.hypot(dx, dy) > this._dragThreshold) {
-                const fnDragStart = this._getHandler(this._active, 'onDragStart');
-                if (typeof fnDragStart === 'function') {
-                    this._dragging = true;
-                    // Disable camera controls *only once* we truly entered an object drag.
-                    this.controls.enabled = false;
-                    fnDragStart.call(this._active, this._eventPayload(event));
-                }
-            }
-        }
-
-        // Hover & pointer move (hover works with any handler; does not disable controls)
-        const hit = this._intersect(event); // may be null
-
-        // Handle enter/exit
-        const newHovered = this._active || (hit ? hit.owner : null); // lock hover to active during drag
-        if (newHovered !== this._hovered) {
-            // Exit old
-            if (this._hovered) {
-                const fnExit = this._getHandler(this._hovered, 'onPointerExit');
-                if (typeof fnExit === 'function') fnExit.call(this._hovered, this._eventPayload(event, hit));
-            }
-            // Enter new
-            if (newHovered) {
-                const fnEnter = this._getHandler(newHovered, 'onPointerEnter');
-                if (typeof fnEnter === 'function') fnEnter.call(newHovered, this._eventPayload(event, hit));
-            }
-            this._hovered = newHovered;
-        }
-
-        // Pointer move callback (prefer active object, else current hit owner)
-        const moveTarget = this._active || (hit ? hit.owner : null);
-        if (moveTarget) {
-            const fnMove = this._getHandler(moveTarget, 'onPointerMove');
-            if (typeof fnMove === 'function') fnMove.call(moveTarget, this._eventPayload(event, hit));
-        }
+        this._updateHover(event);
     }
 
     _onPointerDown(event) {
         if (this._disposed) return;
-
         this._pointerDown = true;
         this._downButton = event.button;
         this._downPos.x = event.clientX;
         this._downPos.y = event.clientY;
-
-        // Only consider objects that *qualify* for this button (don’t block controls otherwise)
-        const hit = this._intersect(event, (o) => this._qualifiesForButton(o, event));
-
-        if (hit && hit.owner) {
-            // Begin potential object interaction: do NOT block controls yet.
-            this._active = hit.owner;
-
-            // Capture pointer to keep receiving move/up even if leaving canvas
-            try { this.renderer.domElement.setPointerCapture(event.pointerId); } catch { /* noop */ }
-
-            // Do not prevent default here; let controls receive the gesture until/iff a drag actually starts.
-        } else {
-            // No qualifying object under pointer => allow normal controls
-            this._active = null;
-            this.controls.enabled = true;
-        }
+        this.controls.enabled = true;
+        // Prevent default to avoid unwanted text selection/scroll on drag
+        try { event.preventDefault(); } catch { }
     }
 
     _onPointerUp(event) {
         if (this._disposed) return;
-
-        const wasActive = this._active;
-        const wasDragging = this._dragging;
-
-        // Release pointer capture if we had it
-        try { this.renderer.domElement.releasePointerCapture(event.pointerId); } catch { /* noop */ }
-
-        // Determine if this qualifies as a click (small movement + same button)
-        const dx = event.clientX - this._downPos.x;
-        const dy = event.clientY - this._downPos.y;
-        const moved = Math.hypot(dx, dy) > this._dragThreshold;
-        const sameButton = (event.button === this._downButton);
-
-        let handled = false;
-
-        if (wasActive) {
-            // Fire drag end if we started a drag (we consider any movement beyond threshold as drag)
-            if (wasDragging) {
-                const fnDragEnd = this._getHandler(wasActive, 'onDragEnd');
-                if (typeof fnDragEnd === 'function') {
-                    fnDragEnd.call(wasActive, this._eventPayload(event));
-                    handled = true;
-                }
-            } else if (!moved && sameButton) {
-                // Click / RightClick — only on a qualifying owner
-                const predicate = (o) => this._qualifiesForButton(o, event);
-                const hit = this._intersect(event, predicate); // re-check under pointer respecting visibility & qualifiers
-                if (hit && hit.owner === wasActive) {
-                    if (event.button === 2) {
-                        const fnRight = this._getHandler(wasActive, 'onRightClick');
-                        if (typeof fnRight === 'function') {
-                            fnRight.call(wasActive, this._eventPayload(event, hit));
-                            handled = true;
-                        }
-                    } else if (event.button === 0) {
-                        const fnClick = this._getHandler(wasActive, 'onClick');
-
-                        if (typeof fnClick === 'function') {
-                            fnClick.call(wasActive, this._eventPayload(event, hit));
-                            handled = true;
-                        }
-                    }
-                }
-            }
+        // Click selection if within drag threshold and left button
+        const dx = Math.abs(event.clientX - this._downPos.x);
+        const dy = Math.abs(event.clientY - this._downPos.y);
+        const moved = (dx + dy) > this._dragThreshold;
+        if (this._pointerDown && this._downButton === 0 && !moved) {
+            this._selectAt(event);
         }
-
-        // Reset interaction + restore controls
+        // Reset flags and keep controls enabled
         this._pointerDown = false;
-        this._dragging = false;
-        this._active = null;
         this.controls.enabled = true;
-        //console.log("Pointer up:", event,handled);
-
-        // Only prevent default if we actually handled an object interaction
-        if (handled) event.preventDefault();
+        void event;
     }
 
     _onContextMenu(event) {
-        // Support onRightClick without showing the browser menu, only if an owner qualifies
-        const hit = this._intersect(event, (o) => typeof this._getHandler(o, 'onRightClick') === 'function');
-        if (hit && hit.owner) {
-            const fnRight = this._getHandler(hit.owner, 'onRightClick');
-            if (typeof fnRight === 'function') {
-                fnRight.call(hit.owner, this._eventPayload(event, hit));
-                event.preventDefault();
-            }
-        }
+        // No interactive targets; allow default context menu
+        void event;
     }
 
     // ————————————————————————————————————————
@@ -786,9 +506,7 @@ export class Viewer {
     // Re-evaluate hover while the camera animates/moves (e.g., orbiting)
     _onControlsChange() {
         if (this._disposed) return;
-        if (this._dragging) return; // do not interfere with object drags
-        if (!this._lastPointerEvent) return; // nothing to test against
-        // Reuse the same logic as pointer move to refresh hover under the cursor
-        this._onPointerMove(this._lastPointerEvent);
+        // Re-evaluate hover while camera moves (if we have a last pointer)
+        if (this._lastPointerEvent) this._updateHover(this._lastPointerEvent);
     }
 }

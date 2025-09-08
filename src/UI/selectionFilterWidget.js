@@ -117,28 +117,43 @@ export class SelectionFilterWidget {
 
     updateUI() { // Update the UI based on the current selection
         this.uiElement.innerHTML = "<b>Selection Filter:</b>"; // Clear existing UI
-        //console.log(SelectionFilter.TYPES);
-        //console.log(SelectionFilter);
-        // Create checkboxes for each selection filter type
-        [...SelectionFilter.TYPES].forEach(type => {
-            const label = document.createElement("label");
-            const checkbox = document.createElement("input");
-            checkbox.type = "checkbox";
-            checkbox.value = type;
-            checkbox.checked = SelectionFilter.IsAllowed(type);
-            checkbox.addEventListener("change", () => {
-                if (checkbox.checked) {
-                    SelectionFilter.allowType(type);
-                } else {
-                    SelectionFilter.disallowType(type);
-                }
-                this.updateUI();
-            });
-            label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(type));
-            this.uiElement.appendChild(label);
 
+        // Build a single-select dropdown with only available types
+        const wrap = document.createElement('div');
+        wrap.style.display = 'flex';
+        wrap.style.gap = '8px';
+        wrap.style.alignItems = 'center';
+
+        const select = document.createElement('select');
+        select.title = 'Selection Type';
+        const types = SelectionFilter.getAvailableTypes();
+
+        // Populate options
+        select.innerHTML = '';
+        for (const t of types) {
+            const opt = document.createElement('option');
+            opt.value = t;
+            opt.textContent = t;
+            select.appendChild(opt);
+        }
+
+        // Default current type to first available if not set
+        const cur = SelectionFilter.getCurrentType();
+        const defaultType = cur && types.includes(cur) ? cur : (types[0] || null);
+        if (defaultType && defaultType !== cur) {
+            SelectionFilter.setCurrentType(defaultType);
+        }
+        if (defaultType) select.value = defaultType;
+
+        // Change handler: updates the active single selection type
+        select.addEventListener('change', () => {
+            const next = select.value;
+            SelectionFilter.setCurrentType(next);
+            // Do not alter existing selections; only future picks are affected
         });
+
+        wrap.appendChild(select);
+        this.uiElement.appendChild(wrap);
     }
 
 

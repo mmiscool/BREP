@@ -7,9 +7,13 @@ export class SelectionFilter {
     static LOOP = "LOOP";
     static ALL = "ALL";
 
+    // The set (or ALL) of types available in the current context
     static allowedSelectionTypes = SelectionFilter.ALL;
+    // The single, active selection type the user has chosen
+    static currentType = null;
     static viewer = null;
     static previouseAllowedSelectionTypes = null;
+    static previousCurrentType = null;
     static _hovered = new Set(); // objects currently hover-highlighted
     static hoverColor = '#ffd54a'; // default hover tint
 
@@ -19,23 +23,63 @@ export class SelectionFilter {
 
     static get TYPES() { return [this.SOLID, this.FACE, this.SKETCH, this.EDGE, this.LOOP, this.ALL]; }
 
+    // Convenience: return the list of selectable types for the dropdown (excludes ALL)
+    static getAvailableTypes() {
+        if (SelectionFilter.allowedSelectionTypes === SelectionFilter.ALL) {
+            return SelectionFilter.TYPES.filter(t => t !== SelectionFilter.ALL);
+        }
+        const arr = Array.from(SelectionFilter.allowedSelectionTypes || []);
+        return arr.filter(t => t && t !== SelectionFilter.ALL);
+    }
+
+    static getCurrentType() {
+        return SelectionFilter.currentType;
+    }
+
+    static setCurrentType(type) {
+        if (!type) return;
+        if (!SelectionFilter.TYPES.includes(type) || type === SelectionFilter.ALL) return;
+        // Ensure the chosen type is part of the available set (or ALL)
+        if (
+            SelectionFilter.allowedSelectionTypes !== SelectionFilter.ALL &&
+            !SelectionFilter.allowedSelectionTypes.has(type)
+        ) return;
+        SelectionFilter.currentType = type;
+        SelectionFilter.triggerUI();
+    }
+
     static SetSelectionTypes(types) {
-        if (types === SelectionFilter.ALL) { SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL; return; }
+        if (types === SelectionFilter.ALL) {
+            SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL;
+            // Default currentType if none set
+            const first = SelectionFilter.getAvailableTypes()[0] || null;
+            if (first) SelectionFilter.currentType = first;
+            SelectionFilter.triggerUI();
+            return;
+        }
         const list = Array.isArray(types) ? types : [types];
-        const invalid = list.filter(t => !SelectionFilter.TYPES.includes(t));
+        const invalid = list.filter(t => !SelectionFilter.TYPES.includes(t) || t === SelectionFilter.ALL);
         if (invalid.length) throw new Error(`Unknown selection type(s): ${invalid.join(", ")}`);
         SelectionFilter.allowedSelectionTypes = new Set(list);
+        // Default to first if currentType not in new set
+        const first = list[0] || null;
+        if (!SelectionFilter.currentType || (first && !SelectionFilter.allowedSelectionTypes.has(SelectionFilter.currentType))) {
+            SelectionFilter.currentType = first;
+        }
         SelectionFilter.triggerUI();
     }
 
     static stashAllowedSelectionTypes() {
         SelectionFilter.previouseAllowedSelectionTypes = SelectionFilter.allowedSelectionTypes;
+        SelectionFilter.previousCurrentType = SelectionFilter.currentType;
     }
 
     static restoreAllowedSelectionTypes() {
         if (SelectionFilter.previouseAllowedSelectionTypes !== null) {
             SelectionFilter.allowedSelectionTypes = SelectionFilter.previouseAllowedSelectionTypes;
+            SelectionFilter.currentType = SelectionFilter.previousCurrentType;
             SelectionFilter.previouseAllowedSelectionTypes = null;
+            SelectionFilter.previousCurrentType = null;
             SelectionFilter.triggerUI();
         }
     }
@@ -43,13 +87,17 @@ export class SelectionFilter {
 
 
     static allowType(type) {
-        if (type === SelectionFilter.ALL) { SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL; return; }
-        if (SelectionFilter.TYPES.includes(type)) SelectionFilter.allowedSelectionTypes.add(type);
-        else throw new Error(`Unknown selection type: ${type}`);
+        // Legacy support: expand available set; does not change currentType
+        if (type === SelectionFilter.ALL) { SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL; SelectionFilter.triggerUI(); return; }
+        if (SelectionFilter.TYPES.includes(type)) {
+            if (SelectionFilter.allowedSelectionTypes === SelectionFilter.ALL) { SelectionFilter.triggerUI(); return; }
+            SelectionFilter.allowedSelectionTypes.add(type);
+        } else throw new Error(`Unknown selection type: ${type}`);
         SelectionFilter.triggerUI();
     }
 
     static disallowType(type) {
+        // Legacy support: shrink available set; does not change currentType (may become invalid until next SetSelectionTypes)
         if (SelectionFilter.allowedSelectionTypes === SelectionFilter.ALL) SelectionFilter.allowedSelectionTypes = new Set();
         if (SelectionFilter.TYPES.includes(type)) SelectionFilter.allowedSelectionTypes.delete(type);
         else throw new Error(`Unknown selection type: ${type}`);
@@ -62,12 +110,17 @@ export class SelectionFilter {
     }
 
     static IsAllowed(type) {
+        // Single-selection mode: only the currentType is allowed for new interactions
+        const cur = SelectionFilter.currentType;
+        if (cur && type) return cur === type;
+        // Fallback: if no currentType yet, allow any available type
         if (SelectionFilter.allowedSelectionTypes === SelectionFilter.ALL) return true;
         return SelectionFilter.allowedSelectionTypes.has(type);
     }
 
     static Reset() {
         SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL;
+        SelectionFilter.currentType = SelectionFilter.getAvailableTypes()[0] || null;
         SelectionFilter.triggerUI();
     }
 
@@ -180,7 +233,8 @@ export class SelectionFilter {
 
         let parentSelectedAction = false;
         // check if the object is selectable and if it is toggle the .selected atribute on the object. 
-        if (SelectionFilter.IsAllowed(type)) {
+        // Allow toggling off even if type is currently disallowed; only block new selections
+        if (SelectionFilter.IsAllowed(type) || objectToToggleSelectionOn.selected === true) {
             objectToToggleSelectionOn.selected = !objectToToggleSelectionOn.selected;
             // change the material on the object to indicate it is selected or not.
             //if (objectToToggleSelectionOn.type === ""
