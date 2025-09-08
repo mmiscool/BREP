@@ -110,7 +110,7 @@ export class FileManagerWidget {
     const style = document.createElement('style');
     style.id = 'file-manager-widget-styles';
     style.textContent = `
-      .fm-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; }
+      .fm-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid white; }
       .fm-row.header { border-bottom: 1px solid #1f2937; padding-bottom: 8px; margin-bottom: 4px; }
       .fm-grow { flex: 1 1 auto; overflow: hidden; }
       .fm-input { width: 100%; box-sizing: border-box; padding: 6px 8px; background: #111827; color: #e5e7eb; border: 1px solid #374151; border-radius: 6px; }
@@ -247,8 +247,8 @@ export class FileManagerWidget {
       const nameSpan = document.createElement('div');
       nameSpan.className = 'fm-name';
       nameSpan.textContent = it.name;
-      // Double-click file name to load the model
-      nameSpan.addEventListener('dblclick', () => this.loadModel(it.name));
+      // Click file name to load the model
+      nameSpan.addEventListener('click', () => this.loadModel(it.name));
       left.appendChild(nameSpan);
       const dt = new Date(it.savedAt);
       const dateLine = document.createElement('div');

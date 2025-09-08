@@ -36,6 +36,8 @@ export class SceneListing {
         // --- State ------------------------------------------------------------------
         /** @type {Map<string, {obj: any, li: HTMLLIElement, chk: HTMLInputElement, nameEl: HTMLButtonElement, childrenUL?: HTMLUListElement, lastSelected?: boolean}>} */
         this.nodes = new Map();
+        // Remember per-solid expand/collapse state across scene rebuilds (keyed by solid name)
+        this._expandedByName = new Map(); // name -> boolean
         this._running = false;
         this._raf = 0;
 
@@ -242,8 +244,8 @@ export class SceneListing {
         };
         this.nodes.set(obj.uuid, info);
 
-        // Initial state
-        if (!parentSolid) this.#setOpen(li, true); // expand solids by default
+        // Initial state: solids collapsed by default; restore remembered open state by name
+        if (!parentSolid) this.#setOpen(li, this.#wantOpen(obj));
         this.#applyTypeClass(li, obj);
         return info;
     }
@@ -329,11 +331,33 @@ export class SceneListing {
             li.classList.remove("open");
             if (caret) caret.textContent = "▸";
         }
+        // Persist state for solids by name
+        try {
+            const uuid = li?.dataset?.uuid;
+            const info = uuid ? this.nodes.get(uuid) : null;
+            const obj = info ? info.obj : null;
+            if (obj && this.#isSolid(obj)) {
+                const key = (obj.name && String(obj.name).length) ? String(obj.name) : null;
+                if (key) this._expandedByName.set(key, !!open);
+            }
+        } catch (_) { }
     }
 
     #setAllOpen(open) {
         for (const info of this.nodes.values()) {
             if (this.#isSolid(info.obj)) this.#setOpen(info.li, open);
+        }
+    }
+
+    // Remembered open state for solids (by name), default collapsed when unknown/unnamed
+    #wantOpen(obj) {
+        try {
+            if (!obj || !this.#isSolid(obj)) return false;
+            const key = (obj.name && String(obj.name).length) ? String(obj.name) : null;
+            if (!key) return false;
+            return !!this._expandedByName.get(key);
+        } catch (_) {
+            return false;
         }
     }
 
