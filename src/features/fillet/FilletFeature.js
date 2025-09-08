@@ -16,7 +16,7 @@ const inputParamsSchema = {
     },
     radius: {
         type: "number",
-        step: 0.125,
+        step: 0.1,
         default_value: 1,
         hint: "Fillet radius",
     },

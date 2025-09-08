@@ -3,6 +3,7 @@ import path from '../path.proxy.js';
 import fs from '../fs.proxy.js';
 import { PartHistory } from "../PartHistory.js";
 import { test_primitiveCube } from './test_primitiveCube.js';
+import { test_solidMetrics, afterRun_solidMetrics } from './test_solidMetrics.js';
 import { test_primitiveCylinder } from './test_primitiveCylinder.js';
 import { test_plane } from './test_plane.js';
 import { test_primitiveCone } from './test_primitiveCone.js';
@@ -33,6 +34,7 @@ export const testFunctions = [
     { test: test_Fillet, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_Chamfer, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_mirror, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
+    { test: test_solidMetrics, afterRun: afterRun_solidMetrics, printArtifacts: true, exportFaces: true, exportSolids: true, resetHistory: true },
 
 ];
 
@@ -136,6 +138,10 @@ export async function runSingleTest(testFunction, partHistory = new PartHistory(
 
     await testFunction.test(partHistory);
     await partHistory.runHistory();
+    // Optional per-test post-run hook for validations/metrics
+    if (typeof testFunction.afterRun === 'function') {
+        try { await testFunction.afterRun(partHistory); } catch (e) { console.warn('afterRun failed:', e?.message || e); }
+    }
     console.log(partHistory);
     // sleep for 1 second to allow any async operations to complete
     await new Promise(resolve => setTimeout(resolve, 1000));

@@ -73,6 +73,47 @@ export class Edge extends Line2 {
         this.closedLoop = false;
 
     }
+
+    // Total polyline length in world space
+    length() {
+        const tmpA = new THREE.Vector3();
+        const tmpB = new THREE.Vector3();
+        let total = 0;
+
+        // Prefer positions from visualize() payload
+        const pts = this.userData && Array.isArray(this.userData.polylineLocal)
+            ? this.userData.polylineLocal
+            : null;
+
+        const addSeg = (ax, ay, az, bx, by, bz) => {
+            tmpA.set(ax, ay, az).applyMatrix4(this.matrixWorld);
+            tmpB.set(bx, by, bz).applyMatrix4(this.matrixWorld);
+            total += tmpA.distanceTo(tmpB);
+        };
+
+        if (pts && pts.length >= 2) {
+            for (let i = 0; i < pts.length - 1; i++) {
+                const p = pts[i];
+                const q = pts[i + 1];
+                addSeg(p[0], p[1], p[2], q[0], q[1], q[2]);
+            }
+            return total;
+        }
+
+        // Fallback: read from geometry positions if available
+        const pos = this.geometry && this.geometry.getAttribute && this.geometry.getAttribute('position');
+        if (pos && pos.itemSize === 3 && pos.count >= 2) {
+            for (let i = 0; i < pos.count - 1; i++) {
+                addSeg(
+                    pos.getX(i), pos.getY(i), pos.getZ(i),
+                    pos.getX(i + 1), pos.getY(i + 1), pos.getZ(i + 1)
+                );
+            }
+            return total;
+        }
+
+        return 0;
+    }
 }
 
 export class Face extends THREE.Mesh {
@@ -130,6 +171,49 @@ export class Face extends THREE.Mesh {
 
         if (accum.lengthSq() === 0) return new THREE.Vector3(0, 1, 0);
         return accum.normalize();
+    }
+
+    // Sum triangle areas in world space
+    surfaceArea() {
+        const geom = this.geometry;
+        if (!geom) return 0;
+        const pos = geom.getAttribute && geom.getAttribute('position');
+        if (!pos || pos.itemSize !== 3) return 0;
+
+        const idx = geom.getIndex && geom.getIndex();
+        const a = new THREE.Vector3();
+        const b = new THREE.Vector3();
+        const c = new THREE.Vector3();
+        const ab = new THREE.Vector3();
+        const ac = new THREE.Vector3();
+        let area = 0;
+
+        const toWorld = (out, i) => out.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(this.matrixWorld);
+
+        if (idx) {
+            const triCount = (idx.count / 3) | 0;
+            for (let t = 0; t < triCount; t++) {
+                const i0 = idx.getX(3 * t + 0) >>> 0;
+                const i1 = idx.getX(3 * t + 1) >>> 0;
+                const i2 = idx.getX(3 * t + 2) >>> 0;
+                toWorld(a, i0); toWorld(b, i1); toWorld(c, i2);
+                ab.subVectors(b, a);
+                ac.subVectors(c, a);
+                area += 0.5 * ab.cross(ac).length();
+            }
+        } else {
+            const triCount = (pos.count / 3) | 0;
+            for (let t = 0; t < triCount; t++) {
+                const i0 = 3 * t + 0;
+                const i1 = 3 * t + 1;
+                const i2 = 3 * t + 2;
+                toWorld(a, i0); toWorld(b, i1); toWorld(c, i2);
+                ab.subVectors(b, a);
+                ac.subVectors(c, a);
+                area += 0.5 * ab.cross(ac).length();
+            }
+        }
+        return area;
     }
 }
 
@@ -1350,6 +1434,45 @@ export class Solid extends THREE.Group {
         const outM = m.setTolerance(tolerance);
         const mapCopy = new Map(this._idToFaceName);
         return Solid._fromManifold(outM, mapCopy);
+    }
+
+    // Compute closed volume from oriented triangles (MeshGL from manifold)
+    volume() {
+        const mesh = this.getMesh();
+        const vp = mesh.vertProperties;
+        const tv = mesh.triVerts;
+        let vol6 = 0;
+        for (let t = 0; t < tv.length; t += 3) {
+            const i0 = tv[t] * 3, i1 = tv[t + 1] * 3, i2 = tv[t + 2] * 3;
+            const x0 = vp[i0], y0 = vp[i0 + 1], z0 = vp[i0 + 2];
+            const x1 = vp[i1], y1 = vp[i1 + 1], z1 = vp[i1 + 2];
+            const x2 = vp[i2], y2 = vp[i2 + 1], z2 = vp[i2 + 2];
+            vol6 += x0 * (y1 * z2 - z1 * y2)
+                  - y0 * (x1 * z2 - z1 * x2)
+                  + z0 * (x1 * y2 - y1 * x2);
+        }
+        return Math.abs(vol6) / 6.0;
+    }
+
+    // Sum of triangle areas on the surface
+    surfaceArea() {
+        const mesh = this.getMesh();
+        const vp = mesh.vertProperties;
+        const tv = mesh.triVerts;
+        let area = 0;
+        for (let t = 0; t < tv.length; t += 3) {
+            const i0 = tv[t] * 3, i1 = tv[t + 1] * 3, i2 = tv[t + 2] * 3;
+            const ax = vp[i0], ay = vp[i0 + 1], az = vp[i0 + 2];
+            const bx = vp[i1], by = vp[i1 + 1], bz = vp[i1 + 2];
+            const cx = vp[i2], cy = vp[i2 + 1], cz = vp[i2 + 2];
+            const ux = bx - ax, uy = by - ay, uz = bz - az;
+            const vx = cx - ax, vy = cy - ay, vz = cz - az;
+            const nx = uy * vz - uz * vy;
+            const ny = uz * vx - ux * vz;
+            const nz = ux * vy - uy * vx;
+            area += 0.5 * Math.hypot(nx, ny, nz);
+        }
+        return area;
     }
 }
 

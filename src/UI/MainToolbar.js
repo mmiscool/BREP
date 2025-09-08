@@ -69,11 +69,13 @@ export class MainToolbar {
     left.className = 'mtb-left';
 
     // Buttons (modular; add more later)
-    left.appendChild(this._btn('Save', 'Save current model', () => this._onSave()));
-    left.appendChild(this._btn('Zoom to fit', 'Frame all geometry', () => this.viewer?.zoomToFit?.()));
-    left.appendChild(this._btn('Wireframe', 'Toggle wireframe', () => this.viewer?.toggleWireframe?.()));
-    left.appendChild(this._btn('About', 'Open About page', () => window.open('about.html', '_blank')));
-    left.appendChild(this._btn('Export STL', 'Export current part as STL', () => this._onExportSTL()));
+    // use unicode icons for compactness
+    left.appendChild(this._btn('💾', 'Save current model', () => this._onSave()));
+    left.appendChild(this._btn('🔍', 'Frame all geometry', () => this.viewer?.zoomToFit?.()));
+    // Use a mesh-like icon to better suggest wireframe
+    left.appendChild(this._btn('🕸️', 'Toggle wireframe', () => this.viewer?.toggleWireframe?.()));
+    left.appendChild(this._btn('📤', 'Export current part as STL', () => this._onExportSTL()));
+    left.appendChild(this._btn('ℹ️', 'Open About page', () => window.open('about.html', '_blank')));
 
     const right = document.createElement('div');
     right.className = 'mtb-right';

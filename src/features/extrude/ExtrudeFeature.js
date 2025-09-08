@@ -10,7 +10,7 @@ const inputParamsSchema = {
   },
   profile: {
     type: "reference_selection",
-    selectionFilter: ["SKETCH", "FACE"],
+    selectionFilter: ["FACE", "SKETCH",],
     multiple: false,
     default_value: null,
     hint: "Select the profile to sweep",
@@ -34,7 +34,7 @@ export class ExtrudeFeature {
 
   constructor() {
     this.inputParams = extractDefaultValues(inputParamsSchema);
-    
+
     this.persistentData = {};
   }
 
