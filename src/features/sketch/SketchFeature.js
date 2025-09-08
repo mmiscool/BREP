@@ -133,8 +133,10 @@ export class SketchFeature {
             } else if (g.type==='arc' && g.points?.length===3) {
                 const c = pointById.get(g.points[0]); const sa=pointById.get(g.points[1]); const sb=pointById.get(g.points[2]); if(!c||!sa||!sb) continue;
                 const cx=c.x, cy=c.y; const r=Math.hypot(sa.x-cx, sa.y-cy);
-                let a0=Math.atan2(sa.y-cy, sa.x-cx), a1=Math.atan2(sb.y-cy, sb.x-cx); let d=a1-a0; while(d<=-Math.PI) d+=2*Math.PI; while(d>Math.PI) d-=2*Math.PI;
-                const n=Math.max(8, Math.ceil(curveRes*Math.abs(d)/(2*Math.PI)));
+                let a0=Math.atan2(sa.y-cy, sa.x-cx), a1=Math.atan2(sb.y-cy, sb.x-cx);
+                // CCW sweep in [0, 2π). If start≈end, treat as full circle.
+                let d = a1 - a0; d = ((d % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI); if (Math.abs(d) < 1e-6) d = 2*Math.PI;
+                const n=Math.max(8, Math.ceil(curveRes*(d)/(2*Math.PI)));
                 const pts=[]; for(let i=0;i<=n;i++){ const t=a0+d*(i/n); pts.push([cx+r*Math.cos(t), cy+r*Math.sin(t)]);} 
                 segs.push({ id:g.id, pts });
                 const flat=[]; const worldPts=[]; for(const p of pts){ const v=toWorld(p[0],p[1]); flat.push(v.x,v.y,v.z); worldPts.push([v.x,v.y,v.z]); }

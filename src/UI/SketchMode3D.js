@@ -1155,10 +1155,11 @@ export class SketchMode3D {
         const rr = Math.hypot(pA.x - cx, pA.y - cy);
         let a0 = Math.atan2(pA.y - cy, pA.x - cx);
         let a1 = Math.atan2(pB.y - cy, pB.x - cx);
+        // Use CCW sweep in [0, 2π). If start≈end, draw full circle (2π).
         let d = a1 - a0;
-        while (d <= -Math.PI) d += 2 * Math.PI;
-        while (d > Math.PI) d -= 2 * Math.PI;
-        const segs = Math.max(8, Math.ceil((64 * Math.abs(d)) / (2 * Math.PI)));
+        d = ((d % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+        if (Math.abs(d) < 1e-6) d = 2 * Math.PI;
+        const segs = Math.max(8, Math.ceil((64 * d) / (2 * Math.PI)));
         const pts = [];
         for (let i = 0; i <= segs; i++) {
           const t = a0 + d * (i / segs);
