@@ -887,7 +887,10 @@ class genFeatureUI {
             if (def && def.type === 'boolean_operation') {
                 const row = this._fieldsWrap.querySelector(`[data-key="${key}"]`);
                 const select = row ? row.querySelector('select[data-role="bool-op"]') : null;
-                if (select) select.value = (v && typeof v === 'object' && v.opperation) ? String(v.opperation) : 'NONE';
+                if (select) {
+                    const opVal = (v && typeof v === 'object') ? (v.operation ?? v.opperation) : null;
+                    select.value = opVal ? String(opVal) : 'NONE';
+                }
                 const chips = row ? row.querySelector('.ref-chips') : null;
                 const targets = (v && typeof v === 'object' && Array.isArray(v.targets)) ? v.targets : [];
                 if (chips) this._renderChips(chips, key, targets);
@@ -968,13 +971,14 @@ class genFeatureUI {
                         return numericPattern.test(value);
                     }
 
+                    const DEBUG_UI = false;
                     inputEl.addEventListener("beforeinput", (e) => {
-                        console.log("beforeinput event fired");
-                        console.log("inputEl.value:", inputEl.value);
-                        console.log("e.data:", e.data);
+                        if (DEBUG_UI) console.log("beforeinput event fired");
+                        if (DEBUG_UI) console.log("inputEl.value:", inputEl.value);
+                        if (DEBUG_UI) console.log("e.data:", e.data);
 
                         if (isNumericLike(inputEl.value) && isNumericLike(e.data) && inputEl.type === "text") {
-                            console.log("input type was text but we are changing it to a number")
+                            if (DEBUG_UI) console.log("input type was text but we are changing it to a number")
                             if (inputEl.type !== "number") inputEl.type = "number";
                             return;
                         } else if (!isNumericLike(inputEl.value) || !isNumericLike(e.data) && inputEl.type === "number") {
@@ -1095,10 +1099,10 @@ class genFeatureUI {
                 case 'boolean_operation': {
                     // Ensure default object exists
                     if (!this.params[key] || typeof this.params[key] !== 'object') {
-                        this.params[key] = { targets: [], opperation: 'NONE' };
+                        this.params[key] = { targets: [], operation: 'NONE', opperation: 'NONE' };
                     } else {
                         if (!Array.isArray(this.params[key].targets)) this.params[key].targets = [];
-                        if (!this.params[key].opperation) this.params[key].opperation = 'NONE';
+                        if (!this.params[key].operation && !this.params[key].opperation) this.params[key].operation = 'NONE';
                     }
 
                     const wrap = document.createElement('div');
@@ -1115,9 +1119,11 @@ class genFeatureUI {
                         opt.textContent = String(op);
                         sel.appendChild(opt);
                     }
-                    sel.value = String(this.params[key].opperation || 'NONE');
+                    sel.value = String((this.params[key].operation ?? this.params[key].opperation) || 'NONE');
                     sel.addEventListener('change', () => {
-                        if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], opperation: 'NONE' };
+                        if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], operation: 'NONE' };
+                        // Keep both keys in sync for backward compatibility
+                        this.params[key].operation = sel.value;
                         this.params[key].opperation = sel.value;
                         this._emitParamsChange(key, this.params[key]);
                     });
@@ -1149,7 +1155,7 @@ class genFeatureUI {
                     inputElTargets.addEventListener('change', () => {
                         // Handle force-clear (e.g., ESC from selection widget)
                         if (inputElTargets.dataset && inputElTargets.dataset.forceClear === 'true') {
-                            if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], opperation: 'NONE' };
+                            if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], operation: 'NONE' };
                             this.params[key].targets = [];
                             this._renderChips(chipsWrap, key, this.params[key].targets);
                             inputElTargets.value = '';
@@ -1157,7 +1163,7 @@ class genFeatureUI {
                             this._emitParamsChange(key, this.params[key]);
                             return;
                         }
-                        if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], opperation: 'NONE' };
+                        if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], operation: 'NONE' };
                         let incoming = [];
                         try {
                             const parsed = JSON.parse(inputElTargets.value);

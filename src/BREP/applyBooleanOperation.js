@@ -9,7 +9,9 @@
 export async function applyBooleanOperation(partHistory, baseSolid, booleanParam, featureID) {
   try {
     if (!booleanParam || typeof booleanParam !== 'object') return [baseSolid];
-    const op = String(booleanParam.opperation || 'NONE').toUpperCase();
+    // Back-compat: accept both `operation` and misspelled `opperation`
+    const opRaw = (booleanParam.operation != null) ? booleanParam.operation : booleanParam.opperation;
+    const op = String(opRaw || 'NONE').toUpperCase();
     const names = Array.isArray(booleanParam.targets) ? booleanParam.targets.filter(Boolean) : [];
 
     if (op === 'NONE' || names.length === 0) {

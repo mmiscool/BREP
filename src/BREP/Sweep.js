@@ -1,5 +1,6 @@
 import { Solid } from './BetterSolid.js';
 import * as THREE from 'three';
+const DEBUG = false;
 
 export class FacesSolid extends Solid {
   constructor({ name = 'FromFaces' } = {}) {
@@ -15,7 +16,7 @@ export class FacesSolid extends Solid {
    */
   manifoldFromFaces() {
     // Ensure world transforms are up to date
-    console.log(`[FacesSolid] manifoldFromFaces start: name=${this.name}`);
+    if (DEBUG) console.log(`[FacesSolid] manifoldFromFaces start: name=${this.name}`);
     this.updateWorldMatrix(true, true);
 
     // Collect meshes recursively under this Solid. Exclude line-based helpers (Line/Line2/etc.)
@@ -26,7 +27,7 @@ export class FacesSolid extends Solid {
       if (obj.isLine || obj.isLine2 || obj.isLineSegments || obj.isLineLoop) return;
       meshes.push(obj);
     });
-    console.log(`[FacesSolid] found ${meshes.length} mesh children:`, meshes.map(m => m.name));
+    if (DEBUG) console.log(`[FacesSolid] found ${meshes.length} mesh children:`, meshes.map(m => m.name));
     if (meshes.length === 0) {
       throw new Error('FacesSolid.manifoldFromFaces: no meshes found under this group');
     }
@@ -54,7 +55,7 @@ export class FacesSolid extends Solid {
     if (entries.length === 0) {
       throw new Error('FacesSolid.manifoldFromFaces: no valid triangle meshes found');
     }
-    console.log(`[FacesSolid] totals before weld: verts=${totalVerts}, tris=${totalTris}`);
+    if (DEBUG) console.log(`[FacesSolid] totals before weld: verts=${totalVerts}, tris=${totalTris}`);
 
     // Weld vertices across meshes by exact-coordinate keys (no tolerance snapping).
     // Accumulate canonical vertices and remap triangle indices accordingly.
@@ -123,11 +124,11 @@ export class FacesSolid extends Solid {
       console.error('[FacesSolid] index OOB before setArrays', { maxIndex, vCount: vertProperties.length / numProp });
     }
     const dropped = totalTris - triLabels.length;
-    console.log(`[FacesSolid] after weld: verts=${vertProperties.length / numProp}, tris=${triVerts.length / 3}, droppedDegenerate=${dropped}`);
+    if (DEBUG) console.log(`[FacesSolid] after weld: verts=${vertProperties.length / numProp}, tris=${triVerts.length / 3}, droppedDegenerate=${dropped}`);
 
     // Install arrays onto this Solid; Manifold will be built on demand
     this.setArrays({ numProp, vertProperties, triVerts, triLabels, faceInfo });
-    console.log('[FacesSolid] setArrays done:', { numProp, vCount: vertProperties.length / numProp, triCount: triVerts.length / 3 });
+    if (DEBUG) console.log('[FacesSolid] setArrays done:', { numProp, vCount: vertProperties.length / numProp, triCount: triVerts.length / 3 });
 
     // Seed faceNames for provenance-aligned display
     const inner = new Map();
@@ -137,7 +138,7 @@ export class FacesSolid extends Solid {
     const faceNames = new Map();
     faceNames.set(this._originalID, inner);
     this.faceNames = faceNames;
-    console.log('[FacesSolid] faceNames seeded for originalID', this._originalID, 'labels:', Array.from(inner.entries()));
+    if (DEBUG) console.log('[FacesSolid] faceNames seeded for originalID', this._originalID, 'labels:', Array.from(inner.entries()));
 
     return this;
   }

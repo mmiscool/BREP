@@ -1,4 +1,5 @@
 import { SelectionFilter } from './SelectionFilter.js';
+const DEBUG = false;
 
 
 export class SelectionFilterWidget {
@@ -13,8 +14,8 @@ export class SelectionFilterWidget {
 
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
-                console.log('Escape key pressed!');
-                console.log(this.viewer.partHistory.scene.children);
+                if (DEBUG) console.log('Escape key pressed!');
+                if (DEBUG) console.log(this.viewer.partHistory.scene.children);
                 SelectionFilter.unselectAll(this.viewer.partHistory.scene);
                 // iterate over all the objects within the scene including their children
                 const activeRefSelect = findActiveReferenceSelection();
@@ -79,12 +80,12 @@ export class SelectionFilterWidget {
             if (this.selectedEntities.length !== this.selectedEntitiesBefore.length ||
                 this.selectedEntities.some(id => !this.selectedEntitiesBefore.includes(id)) ||
                 this.selectedEntitiesBefore.some(id => !this.selectedEntities.includes(id))) {
-                console.log("Selection changed:", this.selectedEntities);
+                if (DEBUG) console.log("Selection changed:", this.selectedEntities);
 
 
 
                 const activeRefSelect = findActiveReferenceSelection();
-                console.log(activeRefSelect);
+                if (DEBUG) console.log(activeRefSelect);
                 if (activeRefSelect) {
                     const isMulti = String(activeRefSelect.dataset?.multiple || '') === 'true';
                     if (isMulti) {
