@@ -15,6 +15,7 @@ import { test_SweepFace } from './test_sweepFace.js';
 import { test_ExtrudeFace } from './test_extrudeFace.js';
 import { test_Fillet } from './test_fillet.js';
 import { test_Chamfer } from './test_chamfer.js';
+import { test_mirror } from './test_mirror.js';
 
 
 export const testFunctions = [
@@ -31,6 +32,7 @@ export const testFunctions = [
     { test: test_ExtrudeFace, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_Fillet, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_Chamfer, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
+    { test: test_mirror, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
 
 ];
 
