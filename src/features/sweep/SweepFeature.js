@@ -61,6 +61,9 @@ export class SweepFeature {
       faceObj = obj.children.find(ch => ch.type === 'FACE') || obj.children.find(ch => ch.userData?.faceName);
     }
 
+    // if the face is a child of a sketch we need to remove the sketch from the scene
+    if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') faceObj.parent.remove = true;
+
     // Create the sweep solid
     const sweep = new BREP.Sweep({
       face: faceObj,
