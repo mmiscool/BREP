@@ -1,4 +1,5 @@
-# BREP
+# [BREP](https://github.com/mmiscool/BREP)
+## [Source repo https://github.com/mmiscool/BREP](https://github.com/mmiscool/BREP)
 
 A feature-based modeling playground experimenting with BREP-style workflows on top of triangle meshes. It combines robust manifold CSG (via the [Manifold](https://github.com/elalish/manifold/) library) with a simple face/edge representation, a history pipeline, and Three.js visualization. Import meshes (STL), repair and group them into faces, then perform boolean operations, fillets, chamfers, sweeps, lofts, and more.
 
@@ -10,7 +11,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Robust CSG powered by `manifold-3d` with face-label provenance carried through booleans.
 - Mesh-to-BREP conversion that groups triangles into faces by normal deflection.
 - Mesh repair pipeline: weld, T‑junction fix, overlap removal, hole fill, and consistent normals.
-- Importers for both STL (using Three.js loaders).
+- Importers for STL and 3MF (via Three.js loaders).
 - Primitive solids (cube, sphere, cylinder, cone, torus, pyramid) and typical CAD features (sketch/extrude, sweep, loft, revolve, fillet, chamfer, mirror, boolean ops).
 - Modular main toolbar with: Save, Zoom to Fit, Wireframe toggle, About, and STL export.
 - Selection Filter surfaced in the toolbar for quick access.
@@ -26,16 +27,16 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Primitive Pyramid: Implemented
 - Plane: Implemented
 - Datium: Planned
-- Sketch: Planned
+- Sketch: Implemented
 - Extrude: Implemented
-- Sweep: Work in progress 
+- Sweep: Implemented
 - Loft: Planned
-- Revolve: Planned
+- Revolve: Implemented
 - Mirror: Implemented
 - Boolean: Implemented
 - Fillet: Implemented
 - Chamfer: Implemented
-- STL Import: Implemented
+- STL/3MF Import: Implemented
 
 ## Getting Started
 
@@ -62,6 +63,7 @@ Prereqs: Node.js 18+ and `pnpm` installed.
 Use the “STL Import” feature in the history panel. It now supports both STL and 3MF:
 
 - STL: ASCII or binary. Parsed with `three/examples/jsm/loaders/STLLoader.js`.
+- 3MF: ZIP-based format. Parsed with `three/examples/jsm/loaders/3MFLoader.js` and merged.
 
 After parsing, an optional centering step runs, followed by the mesh repair pipeline (configurable levels). Finally, triangles are labeled into faces by deflection angle and authored into a `Solid` for CSG and visualization.
 
