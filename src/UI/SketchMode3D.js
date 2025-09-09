@@ -3,6 +3,9 @@
 
 import * as THREE from "three";
 import ConstraintSolver from "../features/sketch/sketchSolver2D/ConstraintEngine.js";
+import { drawConstraintGlyph } from "./sketcher/glyphs.js";
+import { updateListHighlights, applyHoverAndSelectionColors } from "./sketcher/highlights.js";
+import { mountDimRoot, clearDims as dimsClear, renderDimensions as dimsRender, dimDistance3D as dimsDimDistance3D, dimRadius3D as dimsDimRadius3D, dimAngle3D as dimsDimAngle3D } from "./sketcher/dimensions.js";
 import { AccordionWidget } from "./AccordionWidget.js";
 
 export class SketchMode3D {
@@ -21,6 +24,7 @@ export class SketchMode3D {
     this._drag = { active: false, pointId: null };
     this._pendingDrag = { pointId: null, x: 0, y: 0, started: false };
     this._selection = new Set();
+    this._hover = null; // current hovered item {type,id}
     this._tool = "select";
     this._ctxBar = null;
     // Handle sizing helpers
@@ -64,16 +68,30 @@ export class SketchMode3D {
 
     // Compute basis from reference (fallback to world XY), prefer persisted basis
     let basis = null;
-    if (feature?.persistentData?.basis) {
-      const b = feature.persistentData.basis;
+    const saved = feature?.persistentData?.basis || null;
+    const savedMatchesRef = saved && (saved.refName === refName);
+    if (saved && savedMatchesRef) {
       basis = {
-        x: new THREE.Vector3().fromArray(b.x),
-        y: new THREE.Vector3().fromArray(b.y),
-        z: new THREE.Vector3().fromArray(b.z),
-        origin: new THREE.Vector3().fromArray(b.origin),
+        x: new THREE.Vector3().fromArray(saved.x),
+        y: new THREE.Vector3().fromArray(saved.y),
+        z: new THREE.Vector3().fromArray(saved.z),
+        origin: new THREE.Vector3().fromArray(saved.origin),
       };
     } else {
       basis = this.#basisFromReference(refObj);
+      // Persist freshly computed basis tagged with refName so future edits reuse it
+      try {
+        if (feature) {
+          feature.persistentData = feature.persistentData || {};
+          feature.persistentData.basis = {
+            origin: [basis.origin.x, basis.origin.y, basis.origin.z],
+            x: [basis.x.x, basis.x.y, basis.x.z],
+            y: [basis.y.x, basis.y.y, basis.y.z],
+            z: [basis.z.x, basis.z.y, basis.z.z],
+            refName: refName || undefined,
+          };
+        }
+      } catch {}
     }
 
     // Determine distance so entire plane is visible
@@ -511,6 +529,21 @@ export class SketchMode3D {
       } catch { }
       return;
     }
+    // Passive hover highlighting when not panning
+    if (!this._panning) {
+      const pid = this.#hitTestPoint(e);
+      if (pid != null) this.#setHover({ type: "point", id: pid });
+      else {
+        const gh = this.#hitTestGeometry(e);
+        if (gh) this.#setHover({ type: "geometry", id: gh.id });
+        else {
+          const dh = this.#hitTestDim(e);
+          if (dh) this.#setHover({ type: "constraint", id: dh.cid });
+          else this.#setHover(null);
+        }
+      }
+    }
+
     if (!this._panning || !this._lock) return;
     const dx = e.clientX - this._panStart.x;
     const dy = e.clientY - this._panStart.y;
@@ -813,6 +846,7 @@ export class SketchMode3D {
         } catch { }
         this.#rebuildSketchGraphics();
         this.#refreshContextBar();
+        try { updateListHighlights(this); } catch {}
         return;
       }
       const act = t.getAttribute("data-act");
@@ -826,7 +860,26 @@ export class SketchMode3D {
       }
       this.#refreshContextBar();
     };
+
+    // Hover sync from list to 3D
+    this._acc.uiElement.onmousemove = (ev) => {
+      const t = ev.target;
+      if (!(t instanceof HTMLElement)) return;
+      const act = t.getAttribute("data-act");
+      if (!act) return this.#setHover(null);
+      const [k, id] = act.split(":");
+      if (k === "p") this.#setHover({ type: "point", id: parseInt(id) });
+      else if (k === "g") this.#setHover({ type: "geometry", id: parseInt(id) });
+      else if (k === "c") this.#setHover({ type: "constraint", id: parseInt(id) });
+    };
+    this._acc.uiElement.onmouseleave = () => this.#setHover(null);
+
+    // Immediately style with selection/hover states
+    try { updateListHighlights(this); } catch {}
   }
+
+  #updateListHighlights() { try { updateListHighlights(this); } catch {} }
+  #applyHoverAndSelectionColors() { try { applyHoverAndSelectionColors(this); } catch {} }
 
   #refreshContextBar() {
     if (!this._ctxBar || !this._solver) return;
@@ -1011,6 +1064,17 @@ export class SketchMode3D {
     );
     if (existing) this._selection.delete(existing);
     else this._selection.add(item);
+    try { updateListHighlights(this); } catch {}
+    try { applyHoverAndSelectionColors(this); } catch {}
+  }
+
+  #setHover(item) {
+    const prev = this._hover ? this._hover.type + ":" + this._hover.id : null;
+    const next = item ? item.type + ":" + item.id : null;
+    if (prev === next) return;
+    this._hover = item;
+    try { updateListHighlights(this); } catch {}
+    try { applyHoverAndSelectionColors(this); } catch {}
   }
 
   #hitTestPoint(e) {
@@ -1198,6 +1262,7 @@ export class SketchMode3D {
     }
     this.#refreshLists();
     this.#renderDimensions();
+    this.#applyHoverAndSelectionColors();
   }
 
   #updateHandleSizes() {
@@ -1264,201 +1329,11 @@ export class SketchMode3D {
     }
   }
 
-  #renderDimensions() {
-    if (!this._dimRoot || !this._solver || !this._lock) return;
-    this.#clearDims();
-    const s = this._solver.sketchObject;
-    const to3 = (u, v) =>
-      new THREE.Vector3()
-        .copy(this._lock.basis.origin)
-        .addScaledVector(this._lock.basis.x, u)
-        .addScaledVector(this._lock.basis.y, v);
-    const P = (id) => s.points.find((p) => p.id === id);
+  #renderDimensions() { try { dimsRender(this); } catch {} }
 
-    const mk = (c, text, world, planeOffOverride = null) => {
-      const d = document.createElement("div");
-      d.className = "dim-label";
-      d.style.position = "absolute";
-      d.style.padding = "2px 6px";
-      d.style.border = "1px solid #364053";
-      d.style.borderRadius = "6px";
-      d.style.background = "rgba(20,24,30,.9)";
-      d.style.color = "#e6e6e6";
-      d.style.font = "12px system-ui,sans-serif";
-      d.style.pointerEvents = "auto";
-      d.textContent = text;
 
-      // Drag support
-      let dragging = false,
-        sx = 0,
-        sy = 0,
-        start = {};
-      d.addEventListener("pointerdown", (e) => {
-        dragging = true;
-        const uv = this.#pointerToPlaneUV(e);
-        sx = uv?.u || 0;
-        sy = uv?.v || 0;
-        start = { ...(this._dimOffsets.get(c.id) || {}) };
-        d.setPointerCapture(e.pointerId);
-        e.preventDefault();
-        e.stopPropagation();
-      });
-      d.addEventListener("pointermove", (e) => {
-        if (!dragging) return;
-        const uv = this.#pointerToPlaneUV(e);
-        if (!uv) return;
-        if (
-          c.type === "⟺" &&
-          c.displayStyle === "radius" &&
-          Array.isArray(c.points) &&
-          c.points.length >= 2
-        ) {
-          const sObj = this._solver.sketchObject;
-          const pc = sObj.points.find((p) => p.id === c.points[0]);
-          const pr = sObj.points.find((p) => p.id === c.points[1]);
-          if (!pc || !pr) return;
-          const vx = pr.x - pc.x,
-            vy = pr.y - pc.y;
-          const L = Math.hypot(vx, vy) || 1;
-          const rx = vx / L,
-            ry = vy / L;
-          const nx = -ry,
-            ny = rx;
-          const baseU =
-            pr.x + (Number(start.dr) || 0) * rx + (Number(start.dp) || 0) * nx;
-          const baseV =
-            pr.y + (Number(start.dr) || 0) * ry + (Number(start.dp) || 0) * ny;
-          const du = uv.u - baseU;
-          const dv = uv.v - baseV;
-          const dr = (Number(start.dr) || 0) + (du * rx + dv * ry);
-          const dp = (Number(start.dp) || 0) + (du * nx + dv * ny);
-          this._dimOffsets.set(c.id, { dr, dp });
-          const labelOff = { du: rx * dr + nx * dp, dv: ry * dr + ny * dp };
-          this.#updateOneDimPosition(d, world, labelOff);
-          this.#renderDimensions();
-        } else {
-          const du = (Number(start.du) || 0) + (uv.u - sx);
-          const dv = (Number(start.dv) || 0) + (uv.v - sy);
-          this._dimOffsets.set(c.id, { du, dv });
-          this.#updateOneDimPosition(d, world, { du, dv });
-          this.#renderDimensions();
-        }
-        e.preventDefault();
-        e.stopPropagation();
-      });
-      d.addEventListener("pointerup", (e) => {
-        dragging = false;
-        try {
-          d.releasePointerCapture(e.pointerId);
-        } catch { }
-        e.preventDefault();
-        e.stopPropagation();
-      });
-
-      // Edit on double click
-      d.addEventListener("dblclick", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const v = prompt("Enter value", String(c.value ?? ""));
-        if (v == null) return;
-        const num = parseFloat(v);
-        if (!Number.isFinite(num)) return;
-        c.value = num;
-        try {
-          this._solver.solveSketch("full");
-        } catch { }
-        this.#rebuildSketchGraphics();
-      });
-
-      this._dimRoot.appendChild(d);
-      const saved = this._dimOffsets.get(c.id) || { du: 0, dv: 0 };
-      const off = planeOffOverride || saved;
-      this.#updateOneDimPosition(d, world, off);
-    };
-
-    for (const c of s.constraints || []) {
-      if (c.type === "⟺") {
-        if (c.displayStyle === "radius" && c.points?.length >= 2) {
-          const pc = P(c.points[0]),
-            pr = P(c.points[1]);
-          if (!pc || !pr) continue;
-          // Draw leader in 3D (with dr/dp dogleg)
-          this.#dimRadius3D(pc, pr, c.id);
-          // Compute label world from dr/dp
-          const v = new THREE.Vector2(pr.x - pc.x, pr.y - pc.y);
-          const L = v.length() || 1;
-          const rx = v.x / L,
-            ry = v.y / L; // radial unit
-          const nx = -ry,
-            ny = rx; // normal
-          const offSaved = this._dimOffsets.get(c.id) || {};
-          const dr = Number(offSaved.dr) || 0;
-          const dp = Number(offSaved.dp) || 0;
-          const label = to3(pr.x + rx * dr + nx * dp, pr.y + ry * dr + ny * dp);
-          const val = Number(c.value) ?? 0;
-          const txt =
-            c.displayStyle === "diameter"
-              ? `⌀${(2 * val).toFixed(3)}     Diameter`
-              : `R${val.toFixed(3)}     Radius`;
-          mk(c, txt, label, { du: 0, dv: 0 });
-        } else if (c.points?.length >= 2) {
-          const p0 = P(c.points[0]),
-            p1 = P(c.points[1]);
-          if (!p0 || !p1) continue;
-          // Draw dimension line with arrows between p0,p1 (3D)
-          const nxny = (() => {
-            const dx = p1.x - p0.x,
-              dy = p1.y - p0.y;
-            const L = Math.hypot(dx, dy) || 1;
-            const tx = dx / L,
-              ty = dy / L;
-            return { nx: -ty, ny: tx };
-          })();
-          const rect = this.viewer.renderer.domElement.getBoundingClientRect();
-          const base = Math.max(
-            0.1,
-            this.#worldPerPixel(this.viewer.camera, rect.width, rect.height) *
-            20,
-          );
-          const offSaved = this._dimOffsets.get(c.id) || { du: 0, dv: 0 };
-          const d =
-            typeof offSaved.d === "number"
-              ? offSaved.d
-              : (offSaved.du || 0) * nxny.nx + (offSaved.dv || 0) * nxny.ny;
-          this.#dimDistance3D(p0, p1, c.id);
-          mk(
-            c,
-            String((Number(c.value) ?? 0).toFixed(3)),
-            to3((p0.x + p1.x) / 2, (p0.y + p1.y) / 2),
-            { du: nxny.nx * (base + d), dv: nxny.ny * (base + d) },
-          );
-        }
-      }
-      if (c.type === "∠" && c.points?.length >= 4) {
-        const p0 = P(c.points[0]),
-          p1 = P(c.points[1]),
-          p2 = P(c.points[2]),
-          p3 = P(c.points[3]);
-        if (!p0 || !p1 || !p2 || !p3) continue;
-        const ix = (A, B, C, D) => {
-          const den = (A.x - B.x) * (C.y - D.y) - (A.y - B.y) * (C.x - D.x);
-          if (Math.abs(den) < 1e-9) return { x: B.x, y: B.y };
-          const x =
-            ((A.x * A.y - B.x * B.y) * (C.x - D.x) -
-              (A.x - B.x) * (C.x * C.y - D.x * D.y)) /
-            den;
-          const y =
-            ((A.x * A.y - B.x * B.y) * (C.y - D.y) -
-              (A.y - B.y) * (C.x * C.y - D.x * D.y)) /
-            den;
-          return { x, y };
-        };
-        const I = ix(p0, p1, p2, p3);
-        this.#dimAngle3D(p0, p1, p2, p3, c.id, I);
-        mk(c, String(c.value ?? ""), to3(I.x, I.y));
-      }
-    }
-  }
+  // Draw small glyphs to visualize non-dimension constraints
+  #drawConstraintGlyph(c) { try { drawConstraintGlyph(this, c); } catch {} }
 
   #updateOneDimPosition(el, world, off) {
     const du = Number(off?.du) || 0;
@@ -1488,215 +1363,11 @@ export class SketchMode3D {
   }
 
   // ----- 3D Draw helpers on sketch plane -----
-  #dimDistance3D(p0, p1, cid) {
-    const off = this._dimOffsets.get(cid) || { du: 0, dv: 0 };
-    const X = this._lock.basis.x,
-      Y = this._lock.basis.y,
-      O = this._lock.basis.origin;
-    const u0 = p0.x,
-      v0 = p0.y,
-      u1 = p1.x,
-      v1 = p1.y;
-    const dx = u1 - u0,
-      dy = v1 - v0;
-    const L = Math.hypot(dx, dy) || 1;
-    const tx = dx / L,
-      ty = dy / L;
-    const nx = -ty,
-      ny = tx;
-    // Base offset scaled by world-per-pixel so size remains readable (~20px)
-    const rect = this.viewer.renderer.domElement.getBoundingClientRect();
-    const wpp = this.#worldPerPixel(
-      this.viewer.camera,
-      rect.width,
-      rect.height,
-    );
-    const base = Math.max(0.1, wpp * 20);
-    // Scalar-only placement: project any saved {du,dv} onto normal; prefer explicit {d}
-    const d =
-      typeof off.d === "number"
-        ? off.d
-        : (off.du || 0) * nx + (off.dv || 0) * ny;
-    const ou = nx * (base + d),
-      ov = ny * (base + d);
-    // UV helpers
-    const P = (u, v) =>
-      new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
-    const addLine = (pts, mat) => {
-      const g = new THREE.BufferGeometry().setFromPoints(
-        pts.map((p) => P(p.u, p.v)),
-      );
-      const ln = new THREE.Line(g, mat);
-      ln.userData = { kind: "dim", cid };
-      this._dim3D.add(ln);
-    };
-    const green = new THREE.LineBasicMaterial({ color: 0x67e667 });
-    // Dimension line (parallel to segment at offset ou,ov)
-    addLine(
-      [
-        { u: u0 + ou, v: v0 + ov },
-        { u: u1 + ou, v: v1 + ov },
-      ],
-      green,
-    );
-    // Extension lines (perpendicular to dimension, i.e., along normal)
-    addLine(
-      [
-        { u: u0, v: v0 },
-        { u: u0 + ou, v: v0 + ov },
-      ],
-      green.clone(),
-    );
-    addLine(
-      [
-        { u: u1, v: v1 },
-        { u: u1 + ou, v: v1 + ov },
-      ],
-      green.clone(),
-    );
-    // Arrowheads in UV
-    const ah = Math.max(0.06, wpp * 6);
-    const s = 0.6; // arrow depth and wing scale
-    const arrow = (ux, vy, dir) => {
-      const tip = { u: ux + ou, v: vy + ov };
-      const ax = dir * tx,
-        ay = dir * ty; // along dimension
-      const wx = -ay,
-        wy = ax; // wing direction (perp to dim)
-      const A = {
-        u: tip.u + ax * ah + wx * ah * s,
-        v: tip.v + ay * ah + wy * ah * s,
-      };
-      const B = {
-        u: tip.u + ax * ah - wx * ah * s,
-        v: tip.v + ay * ah - wy * ah * s,
-      };
-      addLine([{ u: tip.u, v: tip.v }, A], green.clone());
-      addLine([{ u: tip.u, v: tip.v }, B], green.clone());
-    };
-    arrow(u0, v0, 1); // forward at first end
-    arrow(u1, v1, -1); // backward at second end
-  }
+  #dimDistance3D(p0, p1, cid) { try { dimsDimDistance3D(this, p0, p1, cid); } catch {} }
 
-  #dimRadius3D(pc, pr, cid) {
-    const off = this._dimOffsets.get(cid) || {};
-    const X = this._lock.basis.x,
-      Y = this._lock.basis.y,
-      O = this._lock.basis.origin;
-    const P = (u, v) =>
-      new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
-    const blue = new THREE.LineBasicMaterial({ color: 0x69a8ff });
-    const add = (uvs) => {
-      const g = new THREE.BufferGeometry().setFromPoints(
-        uvs.map((q) => P(q.u, q.v)),
-      );
-      const ln = new THREE.Line(g, blue);
-      ln.userData = { kind: "dim", cid };
-      this._dim3D.add(ln);
-    };
-    // Compute radial and normal
-    const vx = pr.x - pc.x,
-      vy = pr.y - pc.y;
-    const L = Math.hypot(vx, vy) || 1;
-    const rx = vx / L,
-      ry = vy / L;
-    const nx = -ry,
-      ny = rx;
-    const dr = Number(off.dr) || 0;
-    const dp = Number(off.dp) || 0;
-    // Leader parts: center->rim, rim->elbow (radial), elbow->dogleg (normal)
-    const elbow = { u: pr.x + rx * dr, v: pr.y + ry * dr };
-    const dogleg = { u: elbow.u + nx * dp, v: elbow.v + ny * dp };
-    add([
-      { u: pc.x, v: pc.y },
-      { u: pr.x, v: pr.y },
-    ]);
-    add([{ u: pr.x, v: pr.y }, elbow]);
-    add([elbow, dogleg]);
-    // Arrow at rim (pointing from rim toward center)
-    const ah = Math.max(
-      0.06,
-      this.#worldPerPixel(
-        this.viewer.camera,
-        this.viewer.renderer.domElement.clientWidth,
-        this.viewer.renderer.domElement.clientHeight,
-      ) * 6,
-    );
-    const tip = { u: pr.x, v: pr.y };
-    const A = {
-      u: tip.u - rx * ah + nx * ah * 0.6,
-      v: tip.v - ry * ah + ny * ah * 0.6,
-    };
-    const B = {
-      u: tip.u - rx * ah - nx * ah * 0.6,
-      v: tip.v - ry * ah - ny * ah * 0.6,
-    };
-    add([tip, A]);
-    add([tip, B]);
-  }
+  #dimRadius3D(pc, pr, cid) { try { dimsDimRadius3D(this, pc, pr, cid); } catch {} }
 
-  #dimAngle3D(p0, p1, p2, p3, cid, I) {
-    const off = this._dimOffsets.get(cid) || { du: 0, dv: 0 };
-    const X = this._lock.basis.x,
-      Y = this._lock.basis.y,
-      O = this._lock.basis.origin;
-    const P = (u, v) =>
-      new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
-    const d1 = new THREE.Vector2(p1.x - p0.x, p1.y - p0.y).normalize();
-    const d2 = new THREE.Vector2(p3.x - p2.x, p3.y - p2.y).normalize();
-    let a0 = Math.atan2(d1.y, d1.x),
-      a1 = Math.atan2(d2.y, d2.x);
-    let d = a1 - a0;
-    while (d <= -Math.PI) d += 2 * Math.PI;
-    while (d > Math.PI) d -= 2 * Math.PI;
-    const r = 0.6;
-    const cx = I.x + off.du,
-      cy = I.y + off.dv;
-    const segs = 32;
-    const uvs = [];
-    for (let i = 0; i <= segs; i++) {
-      const t = a0 + d * (i / segs);
-      uvs.push({ u: cx + Math.cos(t) * r, v: cy + Math.sin(t) * r });
-    }
-    const blue = new THREE.LineBasicMaterial({ color: 0x69a8ff });
-    const g = new THREE.BufferGeometry().setFromPoints(
-      uvs.map((q) => P(q.u, q.v)),
-    );
-    const ln = new THREE.Line(g, blue);
-    ln.userData = { kind: "dim", cid };
-    this._dim3D.add(ln);
-    // Arrowheads at arc ends (tangent direction)
-    const ah = 0.06;
-    const s = 0.6;
-    const addArrowUV = (t) => {
-      const tx = -Math.sin(t),
-        ty = Math.cos(t);
-      const wx = -ty,
-        wy = tx;
-      const tip = { u: cx + Math.cos(t) * r, v: cy + Math.sin(t) * r };
-      const A = {
-        u: tip.u + tx * ah + wx * ah * s,
-        v: tip.v + ty * ah + wy * ah * s,
-      };
-      const B = {
-        u: tip.u + tx * ah - wx * ah * s,
-        v: tip.v + ty * ah - wy * ah * s,
-      };
-      const mat = blue.clone();
-      const gg1 = new THREE.BufferGeometry().setFromPoints([
-        P(tip.u, tip.v),
-        P(A.u, A.v),
-      ]);
-      const gg2 = new THREE.BufferGeometry().setFromPoints([
-        P(tip.u, tip.v),
-        P(B.u, B.v),
-      ]);
-      this._dim3D.add(new THREE.Line(gg1, mat));
-      this._dim3D.add(new THREE.Line(gg2, mat));
-    };
-    addArrowUV(a0);
-    addArrowUV(a0 + d);
-  }
+  #dimAngle3D(p0, p1, p2, p3, cid, I) { try { dimsDimAngle3D(this, p0, p1, p2, p3, cid, I); } catch {} }
 
   #startDimDrag(cid, e) {
     this._dragDim.active = true;

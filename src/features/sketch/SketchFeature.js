@@ -45,11 +45,14 @@ export class SketchFeature {
     }
 
     // Build or reuse a stable plane basis from the selected sketchPlane.
-    // basis = { origin: [x,y,z], x: [x,y,z], y: [x,y,z], z: [x,y,z] }
+    // basis = { origin: [x,y,z], x: [x,y,z], y: [x,y,z], z: [x,y,z], refName?: string }
     _getOrCreateBasis() {
-        if (this.persistentData?.basis) return this.persistentData.basis;
+        // Recompute basis if reference changed
+        const currentRef = this.inputParams?.sketchPlane || null;
+        const pdBasis = this.persistentData?.basis || null;
+        if (pdBasis && pdBasis.refName === currentRef) return pdBasis;
         const ph = this.partHistory;
-        const refName = this.inputParams?.sketchPlane || null;
+        const refName = currentRef;
         const refObj = refName ? ph?.scene?.getObjectByName(refName) : null;
 
         const x = new THREE.Vector3(1,0,0);
@@ -59,7 +62,15 @@ export class SketchFeature {
 
         if (refObj) {
             refObj.updateWorldMatrix(true, true);
-            origin.copy(refObj.getWorldPosition(new THREE.Vector3()));
+            // Prefer geometric center if available
+            try {
+                const g = refObj.geometry;
+                if (g) {
+                    const bs = g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere);
+                    if (bs) origin.copy(refObj.localToWorld(bs.center.clone()));
+                    else origin.copy(refObj.getWorldPosition(new THREE.Vector3()));
+                } else origin.copy(refObj.getWorldPosition(new THREE.Vector3()));
+            } catch { origin.copy(refObj.getWorldPosition(new THREE.Vector3())); }
             // For Face, use its avg normal; otherwise use object orientation
             if (refObj.type === 'FACE' && typeof refObj.getAverageNormal === 'function') {
                 const n = refObj.getAverageNormal();
@@ -85,6 +96,7 @@ export class SketchFeature {
             x: [x.x, x.y, x.z],
             y: [y.x, y.y, y.z],
             z: [z.x, z.y, z.z],
+            refName: refName || undefined,
         };
         this.persistentData = this.persistentData || {};
         this.persistentData.basis = basis;
