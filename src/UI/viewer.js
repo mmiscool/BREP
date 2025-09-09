@@ -392,6 +392,10 @@ export class Viewer {
         this._wireframeEnabled = !!enabled;
         try {
             this.scene.traverse((obj) => {
+                // Exclude edge/loop/line objects from wireframe toggling
+                if (!obj) return;
+                if (obj.type === 'EDGE' || obj.type === 'LOOP' || obj.isLine || obj.isLine2 || obj.isLineSegments || obj.isLineLoop) return;
+
                 const apply = (mat) => { if (mat && 'wireframe' in mat) mat.wireframe = !!enabled; };
                 if (obj.material) {
                     if (Array.isArray(obj.material)) obj.material.forEach(apply); else apply(obj.material);
