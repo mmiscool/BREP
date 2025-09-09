@@ -18,6 +18,7 @@ import { MainToolbar } from './MainToolbar.js';
 import { FileManagerWidget } from './fileManagerWidget.js';
 import './mobile.js';
 import { SketchMode3D } from './SketchMode3D.js';
+import { ViewCube } from './ViewCube.js';
 
 export class Viewer {
     /**
@@ -134,6 +135,7 @@ export class Viewer {
         this._disposed = false;
         this._sketchMode = null;
         this._lastPointerEvent = null;
+        this._cubeActive = false;
 
         // Raycaster for picking
         this.raycaster = new THREE.Raycaster();
@@ -169,6 +171,15 @@ export class Viewer {
         this.controls.addEventListener('change', this._onControlsChange);
 
         this.SelectionFilter = SelectionFilter;
+
+        // View cube overlay
+        this.viewCube = new ViewCube({
+            renderer: this.renderer,
+            targetCamera: this.camera,
+            controls: this.controls,
+            size: 120,
+            margin: 12,
+        });
 
         // Initial sizing + start
         this._resizeRendererToDisplaySize();
@@ -308,6 +319,7 @@ export class Viewer {
 
     render() {
         this.renderer.render(this.scene, this.camera);
+        try { this.viewCube && this.viewCube.render(); } catch {}
     }
 
     // Zoom-to-fit using only ArcballControls operations (pan + zoom).
@@ -499,22 +511,35 @@ export class Viewer {
         if (this._disposed) return;
         // Keep last pointer position and refresh hover
         this._lastPointerEvent = event;
+        // If hovering over the view cube, avoid main-scene hover
+        try {
+            if (this.viewCube && this.viewCube.isEventInside(event)) return;
+        } catch {}
         this._updateHover(event);
     }
 
     _onPointerDown(event) {
         if (this._disposed) return;
+        // If pressing in the view cube region, disable controls for this gesture
+        try {
+            this._cubeActive = !!(this.viewCube && this.viewCube.isEventInside(event));
+        } catch { this._cubeActive = false; }
         this._pointerDown = true;
         this._downButton = event.button;
         this._downPos.x = event.clientX;
         this._downPos.y = event.clientY;
-        this.controls.enabled = true;
+        this.controls.enabled = !this._cubeActive;
         // Prevent default to avoid unwanted text selection/scroll on drag
         try { event.preventDefault(); } catch { }
     }
 
     _onPointerUp(event) {
         if (this._disposed) return;
+        // If the gesture began in the cube, handle click there exclusively
+        if (this._cubeActive) {
+            try { if (this.viewCube && this.viewCube.handleClick(event)) { this._cubeActive = false; return; } } catch {}
+            this._cubeActive = false;
+        }
         // Click selection if within drag threshold and left button
         const dx = Math.abs(event.clientX - this._downPos.x);
         const dy = Math.abs(event.clientY - this._downPos.y);
