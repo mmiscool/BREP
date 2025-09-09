@@ -16,12 +16,14 @@ const inputParamsSchema = {
     },
     distance: {
         type: "number",
+        step: 0.1,
         default_value: 1,
         hint: "Chamfer distance (equal offset along both faces)",
     },
     inflate: {
         type: "number",
-        default_value: 0.0005,
+        default_value: 0.1,
+        step: 0.1,
         hint: "Grow the cutting solid by this amount (units). Very small values (e.g., 0.0005) help avoid residual slivers after CSG.",
     },
     direction: {

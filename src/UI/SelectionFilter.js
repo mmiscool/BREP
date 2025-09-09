@@ -16,7 +16,7 @@ export class SelectionFilter {
     static previouseAllowedSelectionTypes = null;
     static previousCurrentType = null;
     static _hovered = new Set(); // objects currently hover-highlighted
-    static hoverColor = '#ffd54a'; // default hover tint
+    static hoverColor = '#fbff00'; // default hover tint
 
     constructor() {
         throw new Error("SelectionFilter is static and cannot be instantiated.");

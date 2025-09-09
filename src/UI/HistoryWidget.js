@@ -344,7 +344,11 @@ export class HistoryWidget {
                     }
                 } catch (_) { }
             },
-            scene: ph && ph.scene ? ph.scene : null
+            // Provide richer context for schema-driven button actions
+            scene: ph && ph.scene ? ph.scene : null,
+            viewer: this.viewer || null,
+            partHistory: this._getPartHistory() || null,
+            featureRef: feature || null,
         });
         body.appendChild(ui.uiElement);
 
@@ -1381,7 +1385,29 @@ class genFeatureUI {
                         const fid = (this.params && Object.prototype.hasOwnProperty.call(this.params, 'featureID'))
                             ? this.params.featureID
                             : null;
-                        try { if (typeof this.options.onAction === 'function') this.options.onAction(fid, key); } catch (_) { }
+                        // First: schema-defined actionFunction (universal button support)
+                        let handled = false;
+                        try {
+                            if (def && typeof def.actionFunction === 'function') {
+                                const ctx = {
+                                    featureID: fid,
+                                    key,
+                                    viewer: this.options?.viewer || null,
+                                    partHistory: this.options?.partHistory || null,
+                                    feature: this.options?.featureRef || null,
+                                    params: this.params,
+                                    schemaDef: def,
+                                };
+                                const r = def.actionFunction(ctx);
+                                // Treat non-undefined return as handled; otherwise assume handled too
+                                handled = true;
+                                void r;
+                            }
+                        } catch (_) { /* swallow to allow fallback */ }
+                        // Backward-compatibility: delegate to onAction if not handled by schema
+                        if (!handled) {
+                            try { if (typeof this.options.onAction === 'function') this.options.onAction(fid, key); } catch (_) { }
+                        }
                     });
                     break;
                 }

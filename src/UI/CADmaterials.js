@@ -8,24 +8,25 @@ import { SelectionFilter } from './SelectionFilter.js';
 export const CADmaterials = {
     PLANE: {
         BASE: new THREE.MeshBasicMaterial({
-            color: "#00ff00",
+            color: "#2eff2e",
             side: THREE.DoubleSide,
             transparent: true,
-            opacity: 0.2,
+            opacity: 1,
             depthWrite: false
         }),
         SELECTED: new THREE.MeshBasicMaterial({
-            color: "#80ff80",
+            color: "#2eff2e",
             side: THREE.DoubleSide,
             transparent: true,
-            opacity: 0.35,
+            opacity: 1,
+            wireframe: true,
             depthWrite: false
         }),
     },
     EDGE: {
         BASE: new LineMaterial({
-            color: "#ff0000",
-            linewidth: 5,
+            color: "#009dff",
+            linewidth: 5.1,
             //linecap: "round",
             linejoin: "round",
             transparent: true,
@@ -35,7 +36,7 @@ export const CADmaterials = {
         }),
         SELECTED: new LineMaterial({
             color: "#ff00ff",
-            linewidth: 5,
+            linewidth: 6,
             //linecap: "round",
             linejoin: "round",
             transparent: true,
@@ -44,7 +45,7 @@ export const CADmaterials = {
     LOOP: {
         BASE: new LineMaterial({
             color: "#ff0000",
-            linewidth: 5,
+            linewidth: 5.5,
             //linecap: "round",
             linejoin: "round",
             transparent: true,
@@ -59,10 +60,10 @@ export const CADmaterials = {
     },
     FACE: {
         BASE: new THREE.MeshStandardMaterial({
-            color: "#0000ff",
+            color: "#00009e",
             side: THREE.DoubleSide,
             transparent: true,
-            opacity: 0.8,
+            opacity: 0.75,
             wireframe: false,
             flatShading: true,
             metalness: 0.5,
@@ -73,8 +74,8 @@ export const CADmaterials = {
             color: "#00ffff",
             side: THREE.DoubleSide,
             transparent: true,
-            opacity: 0.8,
-            wireframe: false,
+            opacity: 1,
+            wireframe: true,
             flatShading: true,
             metalness: 0.5,
             polygonOffset: true,

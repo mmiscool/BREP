@@ -23,6 +23,17 @@ const inputParamsSchema = {
         label: "Edit Sketch",
         default_value: null,
         hint: "Launch the 2D sketch editor",
+        actionFunction: (ctx) => {
+            try {
+                if (ctx && ctx.viewer && typeof ctx.viewer.startSketchMode === 'function') {
+                    ctx.viewer.startSketchMode(ctx.featureID);
+                } else {
+                    throw new Error('viewer.startSketchMode unavailable');
+                }
+            } catch (e) {
+                console.warn('[SketchFeature] Failed to start sketch mode:', e?.message || e);
+            }
+        }
     },
     curveResolution: {
         type: "number",
