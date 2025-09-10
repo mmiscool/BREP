@@ -26,6 +26,22 @@ const inputParamsSchema = {
         default_value: 0.1,
         hint: "Grow the cutting solid by this amount (units). Use small values like 0.0005 to avoid thin leftovers after subtraction.",
     },
+    projectStripsOpenEdges: {
+        type: "boolean",
+        default_value: false,
+        hint: "Use face‑projected side strips even for open edges (safer but can affect INSET cases)",
+    },
+    forceSeamInset: {
+        type: "boolean",
+        default_value: false,
+        hint: "Inset seam into faces for open edges (reduces coplanar overlaps; disable if INSET fillets misbehave)",
+    },
+    seamInsetScale: {
+        type: "number",
+        step: 1e-4,
+        default_value: 1e-3,
+        hint: "Scale factor for seam inset distance relative to radius",
+    },
 
     direction: {
         type: "options",
@@ -107,7 +123,10 @@ export class FilletFeature {
                 this.inputParams.radius,
                 this.inputParams.inflate,
                 this.inputParams.direction,
-                this.inputParams.debug);
+                this.inputParams.debug,
+                this.inputParams.projectStripsOpenEdges,
+                this.inputParams.forceSeamInset,
+                this.inputParams.seamInsetScale);
             objectsForBoolean.push(filletSolid);
         }
 
@@ -160,7 +179,10 @@ function makeSingleFilletSolid(edgeObj,
     radius = 1,
     inflate = 0,
     direction = 'INSET',
-    debug = false) {
+    debug = false,
+    projectStripsOpenEdges = false,
+    forceSeamInset = false,
+    seamInsetScale = 1e-3) {
     const flipSide = false;
     const flipTangent = false;
     const swapFaces = false;
@@ -168,7 +190,7 @@ function makeSingleFilletSolid(edgeObj,
 
     //console.log("Creating fillet solid for edge:", edgeObj, radius, inflate, flipSide, direction, flipTangent, swapFaces, debug);
 
-    const tool = new FilletSolid({ edgeToFillet: edgeObj, radius, inflate, invert2D: false, reverseTangent: !!flipTangent, swapFaces: !!swapFaces, sideMode: direction, debug });
+    const tool = new FilletSolid({ edgeToFillet: edgeObj, radius, inflate, invert2D: false, reverseTangent: !!flipTangent, swapFaces: !!swapFaces, sideMode: direction, debug, projectStripsOpenEdges, forceSeamInset, seamInsetScale });
     // tool.fixTriangleWindingsByAdjacency();
     // tool.invertNormals();
     tool.name = "FILLET_TOOL";

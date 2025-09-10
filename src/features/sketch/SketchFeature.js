@@ -55,13 +55,13 @@ export class SketchFeature {
         this.persistentData = this.persistentData || {};
     }
 
-    // Build or reuse a stable plane basis from the selected sketchPlane.
+    // Build (and persist) a plane basis from the selected sketchPlane.
+    // Always recompute from the current referenced object transform if available,
+    // so the sketch follows moves/updates of the face/plane.
     // basis = { origin: [x,y,z], x: [x,y,z], y: [x,y,z], z: [x,y,z], refName?: string }
     _getOrCreateBasis() {
-        // Recompute basis if reference changed
         const currentRef = this.inputParams?.sketchPlane || null;
         const pdBasis = this.persistentData?.basis || null;
-        if (pdBasis && pdBasis.refName === currentRef) return pdBasis;
         const ph = this.partHistory;
         const refName = currentRef;
         const refObj = refName ? ph?.scene?.getObjectByName(refName) : null;
@@ -102,6 +102,9 @@ export class SketchFeature {
             }
         }
 
+        // If the reference object is missing (e.g., deleted), keep prior basis if present
+        if (!refObj && pdBasis) return pdBasis;
+
         const basis = {
             origin: [origin.x, origin.y, origin.z],
             x: [x.x, x.y, x.z],
@@ -128,7 +131,93 @@ export class SketchFeature {
         const bX = new THREE.Vector3().fromArray(basis.x);
         const bY = new THREE.Vector3().fromArray(basis.y);
 
-        const sketch = this.persistentData?.sketch || { points: [{ id:0, x:0, y:0, fixed:true }], geometries: [], constraints: [{ id:0, type:"⏚", points:[0]}] };
+        // Start from persisted sketch
+        let sketch = this.persistentData?.sketch || { points: [{ id:0, x:0, y:0, fixed:true }], geometries: [], constraints: [{ id:0, type:"⏚", points:[0]}] };
+        // Update external reference points by projecting selected model edge endpoints
+        try {
+            const scene = this.partHistory?.scene;
+            const refs = Array.isArray(this.persistentData?.externalRefs) ? this.persistentData.externalRefs : [];
+            if (scene && refs.length) {
+                const toUV = (w)=>{ const d = new THREE.Vector3().copy(w).sub(bO); return { u: d.dot(bX), v: d.dot(bY) }; };
+                const edgeEndpoints = (edge)=>{
+                    if (!edge) return null;
+                    const a = new THREE.Vector3();
+                    const b = new THREE.Vector3();
+                    const toW = (v)=> v.applyMatrix4(edge.matrixWorld);
+                    const pts = Array.isArray(edge?.userData?.polylineLocal) ? edge.userData.polylineLocal : null;
+                    if (pts && pts.length >= 2) {
+                        a.set(pts[0][0], pts[0][1], pts[0][2]);
+                        b.set(pts[pts.length-1][0], pts[pts.length-1][1], pts[pts.length-1][2]);
+                        return { a: toW(a), b: toW(b) };
+                    }
+                    const pos = edge?.geometry?.getAttribute?.('position');
+                    if (pos && pos.itemSize === 3 && pos.count >= 2) {
+                        a.set(pos.getX(0), pos.getY(0), pos.getZ(0));
+                        b.set(pos.getX(pos.count-1), pos.getY(pos.count-1), pos.getZ(pos.count-1));
+                        return { a: toW(a), b: toW(b) };
+                    }
+                    return null;
+                };
+                const ptById = new Map(sketch.points.map(p=>[p.id,p]));
+                let changed = false;
+                for (const r of refs) {
+                    try {
+                        let edge = scene.getObjectById(r.edgeId);
+                        if (!edge || edge.type !== 'EDGE') {
+                            // Fallback by solidName + edgeName, then global by edgeName
+                            if (r.solidName) {
+                                const solid = this.partHistory?.scene?.getObjectByName(r.solidName);
+                                if (solid) {
+                                    let found = null;
+                                    solid.traverse((obj) => { if (!found && obj.type === 'EDGE' && obj.name === r.edgeName) found = obj; });
+                                    if (found) edge = found;
+                                }
+                            }
+                            if ((!edge || edge.type !== 'EDGE') && r.edgeName) {
+                                let found = null;
+                                this.partHistory?.scene?.traverse((obj) => { if (!found && obj.type === 'EDGE' && obj.name === r.edgeName) found = obj; });
+                                if (found) edge = found;
+                            }
+                            if (edge && edge.type === 'EDGE') {
+                                // refresh stored id/name metadata
+                                r.edgeId = edge.id;
+                                try { r.edgeName = edge.name || r.edgeName || null; } catch {}
+                                try { r.solidName = edge.parent?.name || r.solidName || null; } catch {}
+                                changed = true;
+                            }
+                        }
+                        if (!edge || edge.type !== 'EDGE') continue; // keep existing points if edge vanished
+                        const ends = edgeEndpoints(edge);
+                        if (!ends) continue;
+                        const uvA = toUV(ends.a);
+                        const uvB = toUV(ends.b);
+                        const p0 = ptById.get(r.p0);
+                        const p1 = ptById.get(r.p1);
+                        if (p0 && (p0.x !== uvA.u || p0.y !== uvA.v)) { p0.x = uvA.u; p0.y = uvA.v; changed = true; }
+                        if (p1 && (p1.x !== uvB.u || p1.y !== uvB.v)) { p1.x = uvB.u; p1.y = uvB.v; changed = true; }
+                        if (p0) p0.fixed = true; if (p1) p1.fixed = true;
+                        // Ensure ground constraints exist for these points so solver treats them fixed
+                        const ensureGround = (pid)=>{
+                            if (!sketch.constraints.some(c=>c.type==='⏚' && Array.isArray(c.points) && c.points[0]===pid)){
+                                const cid = Math.max(0, ...sketch.constraints.map(c=> +c.id || 0)) + 1;
+                                sketch.constraints.push({ id: cid, type: '⏚', points:[pid] });
+                                changed = true;
+                            }
+                        };
+                        if (p0) ensureGround(p0.id);
+                        if (p1) ensureGround(p1.id);
+                    } catch {}
+                }
+                if (changed) {
+                    try {
+                        const engine = new ConstraintEngine(JSON.stringify(sketch));
+                        const solved = engine.solve(500);
+                        sketch = solved;
+                        this.persistentData.sketch = solved;
+                    } catch {}
+                }
+            }
+        } catch {}
         const curveRes = Math.max(8, Math.floor(Number(this.inputParams?.curveResolution) || 64));
 
         // Helper: 2D → 3D

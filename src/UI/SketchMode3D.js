@@ -44,6 +44,8 @@ export class SketchMode3D {
       start: { dx: 0, dy: 0 },
     };
     this._controlsPrev = null; // remember controls state when locking
+    // Track SKETCH groups we hide while editing so we can restore visibility
+    this._hiddenSketches = [];
   }
 
   open() {
@@ -112,6 +114,20 @@ export class SketchMode3D {
 
     this._lock = { basis, distance: d, target: basis.origin.clone() };
 
+    // Hide any existing SKETCH groups in the scene to avoid overlaying
+    try {
+      this._hiddenSketches = [];
+      v.scene.traverse((obj) => {
+        if (obj && obj.type === 'SKETCH') {
+          const wasVisible = !!obj.visible;
+          if (wasVisible) {
+            this._hiddenSketches.push(obj);
+            obj.visible = false;
+          }
+        }
+      });
+    } catch { }
+
     // Attach lightweight UI and hide the app sidebar + main toolbar during sketch mode
     try {
       if (v.sidebar) {
@@ -177,6 +193,9 @@ export class SketchMode3D {
     v.scene.add(this._dim3D);
     this.#rebuildSketchGraphics();
 
+    // Refresh external reference points to current model projection
+    try { this.#refreshExternalPointsPositions(true); } catch {}
+
     // Mount label overlay root and initial render
     this.#mountDimRoot();
     this.#renderDimensions();
@@ -185,6 +204,15 @@ export class SketchMode3D {
     const tick = () => {
       try {
         this.#updateHandleSizes();
+      } catch { }
+      // Light auto-refresh for external reference points (every ~300ms)
+      try {
+        const now = performance.now ? performance.now() : Date.now();
+        this._lastExtRefresh = this._lastExtRefresh || 0;
+        if (now - this._lastExtRefresh > 300) {
+          this._lastExtRefresh = now;
+          this.#refreshExternalPointsPositions(false);
+        }
       } catch { }
       this._sizeRAF = requestAnimationFrame(tick);
     };
@@ -271,6 +299,16 @@ export class SketchMode3D {
     } catch { }
     this._dimRoot = null;
     this._dimOffsets.clear();
+
+    // Restore visibility of any SKETCH groups we hid on open
+    try {
+      if (Array.isArray(this._hiddenSketches)) {
+        for (const obj of this._hiddenSketches) {
+          if (obj && obj.type === 'SKETCH') obj.visible = true;
+        }
+      }
+    } catch { }
+    this._hiddenSketches = [];
 
     // Restore sidebar and main toolbar
     try {
@@ -376,6 +414,20 @@ export class SketchMode3D {
   #onPointerDown(e) {
     // Tool-based behavior
     if (this._tool !== "select" && e.button === 0) {
+      // Pick Edges tool: click scene edges to add external refs
+      if (this._tool === "pickEdges") {
+        const hit = this.#hitTestSceneEdge(e);
+        if (hit && hit.object?.type === 'EDGE') {
+          this.#ensureExternalRefForEdge(hit.object);
+          this.#persistExternalRefs();
+          try { this._solver.solveSketch("full"); } catch { }
+          this.#rebuildSketchGraphics();
+          this.#refreshContextBar();
+          this.#renderExternalRefsList();
+        }
+        try { e.preventDefault(); e.stopPropagation(); } catch {}
+        return;
+      }
       const hit = this.#hitTestPoint(e);
       let pid = hit;
       if (pid == null) {
@@ -453,6 +505,33 @@ export class SketchMode3D {
     // Select tool: if clicking a point, arm a pending drag; else try dim/geometry; else pan
     const hit = this.#hitTestPoint(e);
     if (hit != null) {
+      // Prevent dragging of external reference points; allow selection only
+      try {
+        const f = this.#getSketchFeature();
+        const isExternal = (f?.persistentData?.externalRefs || []).some((r) => r.p0 === hit || r.p1 === hit);
+        if (isExternal) {
+          if (e.button === 0) {
+            this.#toggleSelection({ type: "point", id: hit });
+            this.#refreshContextBar();
+            this.#rebuildSketchGraphics();
+            try { e.preventDefault(); e.stopPropagation(); } catch {}
+          }
+          return;
+        }
+      } catch { }
+      // Prevent dragging of fixed sketch points
+      try {
+        const p = this._solver?.getPointById?.(hit);
+        if (p && p.fixed) {
+          if (e.button === 0) {
+            this.#toggleSelection({ type: "point", id: hit });
+            this.#refreshContextBar();
+            this.#rebuildSketchGraphics();
+            try { e.preventDefault(); e.stopPropagation(); } catch {}
+          }
+          return;
+        }
+      } catch {}
       this._pendingDrag.pointId = hit;
       this._pendingDrag.x = e.clientX;
       this._pendingDrag.y = e.clientY;
@@ -510,6 +589,13 @@ export class SketchMode3D {
       if (!uv) return;
       const p = this._solver?.getPointById(this._drag.pointId);
       if (p) {
+        if (p.fixed) {
+          // Do not move fixed points
+          try { e.preventDefault(); e.stopPropagation(); } catch {}
+          this._drag.active = false;
+          this._drag.pointId = null;
+          return;
+        }
         p.x = uv.u;
         p.y = uv.v;
         this._solver.solveSketch("full");
@@ -531,6 +617,11 @@ export class SketchMode3D {
     }
     // Passive hover highlighting when not panning
     if (!this._panning) {
+      // Edge picking cursor hint
+      if (this._tool === 'pickEdges') {
+        const h = this.#hitTestSceneEdge(e);
+        try { this.viewer.renderer.domElement.style.cursor = h ? 'crosshair' : ''; } catch {}
+      }
       const pid = this.#hitTestPoint(e);
       if (pid != null) this.#setHover({ type: "point", id: pid });
       else {
@@ -721,8 +812,308 @@ export class SketchMode3D {
       this._secConstraints = await acc.addSection("Constraints");
       this._secCurves = await acc.addSection("Curves");
       this._secPoints = await acc.addSection("Points");
+      this._secExternal = await acc.addSection("External References");
+      this.#mountExternalRefsUI();
       this.#refreshLists();
     })();
+  }
+
+  // Build UI for External References section
+  #mountExternalRefsUI() {
+    const sec = this._secExternal;
+    if (!sec) return;
+    const wrap = sec.uiElement;
+    wrap.innerHTML = "";
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.gap = "6px";
+    row.style.margin = "4px 0";
+
+    const addBtn = document.createElement("button");
+    addBtn.textContent = "Add Selected Edges";
+    addBtn.style.flex = "1";
+    addBtn.style.background = "transparent";
+    addBtn.style.color = "#ddd";
+    addBtn.style.border = "1px solid #364053";
+    addBtn.style.borderRadius = "6px";
+    addBtn.style.padding = "4px 8px";
+    addBtn.onclick = () => this.#addExternalReferencesFromSelection();
+    row.appendChild(addBtn);
+
+    const refreshBtn = document.createElement("button");
+    refreshBtn.textContent = "Refresh";
+    refreshBtn.style.background = "transparent";
+    refreshBtn.style.color = "#ddd";
+    refreshBtn.style.border = "1px solid #364053";
+    refreshBtn.style.borderRadius = "6px";
+    refreshBtn.style.padding = "4px 8px";
+    refreshBtn.onclick = () => this.#refreshExternalPointsPositions(true);
+    row.appendChild(refreshBtn);
+
+    wrap.appendChild(row);
+
+    const list = document.createElement("div");
+    list.className = "ext-ref-list";
+    wrap.appendChild(list);
+    this._extRefListEl = list;
+
+    this.#renderExternalRefsList();
+  }
+
+  // Helper: get current Sketch feature object
+  #getSketchFeature() {
+    try {
+      const ph = this.viewer?.partHistory;
+      const f = Array.isArray(ph?.features)
+        ? ph.features.find((x) => x?.inputParams?.featureID === this.featureID)
+        : null;
+      return f || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Helper: compute world endpoints for a BREP Edge object
+  #edgeEndpointsWorld(edge) {
+    if (!edge) return null;
+    const toWorld = (v) => v.applyMatrix4(edge.matrixWorld);
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const pts = Array.isArray(edge?.userData?.polylineLocal)
+      ? edge.userData.polylineLocal
+      : null;
+    if (pts && pts.length >= 2) {
+      a.set(pts[0][0], pts[0][1], pts[0][2]);
+      b.set(pts[pts.length - 1][0], pts[pts.length - 1][1], pts[pts.length - 1][2]);
+      return { a: toWorld(a), b: toWorld(b) };
+    }
+    const pos = edge?.geometry?.getAttribute?.("position");
+    if (pos && pos.itemSize === 3 && pos.count >= 2) {
+      a.set(pos.getX(0), pos.getY(0), pos.getZ(0));
+      b.set(pos.getX(pos.count - 1), pos.getY(pos.count - 1), pos.getZ(pos.count - 1));
+      return { a: toWorld(a), b: toWorld(b) };
+    }
+    return null;
+  }
+
+  // Helper: project world point to current sketch UV
+  #projectWorldToUV(world) {
+    if (!this._lock?.basis) return { u: 0, v: 0 };
+    const o = this._lock.basis.origin;
+    const bx = this._lock.basis.x;
+    const by = this._lock.basis.y;
+    const d = world.clone().sub(o);
+    return { u: d.dot(bx), v: d.dot(by) };
+  }
+
+  // Ensure external refs exist for currently selected edges
+  #addExternalReferencesFromSelection() {
+    try {
+      const scene = this.viewer?.partHistory?.scene;
+      if (!scene || !this._solver) return;
+      const edges = [];
+      scene.traverse((obj) => { if (obj?.type === 'EDGE' && obj.selected) edges.push(obj); });
+      if (!edges.length) return;
+      for (const e of edges) this.#ensureExternalRefForEdge(e);
+      this.#persistExternalRefs();
+      this._solver.solveSketch("full");
+      this.#rebuildSketchGraphics();
+      this.#refreshContextBar();
+      this.#renderExternalRefsList();
+    } catch { }
+  }
+
+  // Create mapping + points for edge if not present; else update positions
+  #ensureExternalRefForEdge(edge) {
+    const f = this.#getSketchFeature();
+    if (!f || !this._solver || !edge) return;
+    f.persistentData = f.persistentData || {};
+    f.persistentData.externalRefs = Array.isArray(f.persistentData.externalRefs)
+      ? f.persistentData.externalRefs
+      : [];
+    const refs = f.persistentData.externalRefs;
+    let ref = refs.find((r) => r && (r.edgeId === edge.id || (r.edgeName && r.edgeName === edge.name)));
+    const s = this._solver.sketchObject;
+    const ends = this.#edgeEndpointsWorld(edge);
+    if (!ends) return;
+    const uvA = this.#projectWorldToUV(ends.a);
+    const uvB = this.#projectWorldToUV(ends.b);
+
+    const nextPointId = () => Math.max(0, ...s.points.map((p) => +p.id || 0)) + 1;
+
+    if (!ref) {
+      const id0 = nextPointId();
+      const id1 = nextPointId();
+      const p0 = { id: id0, x: uvA.u, y: uvA.v, fixed: true };
+      const p1 = { id: id1, x: uvB.u, y: uvB.v, fixed: true };
+      s.points.push(p0, p1);
+      const pushGround = (pid) => {
+        const exists = s.constraints.some((c) => c.type === '⏚' && Array.isArray(c.points) && c.points[0] === pid);
+        if (!exists) {
+          const cid = Math.max(0, ...s.constraints.map((c) => +c.id || 0)) + 1;
+          s.constraints.push({ id: cid, type: '⏚', points: [pid] });
+        }
+      };
+      pushGround(p0.id);
+      pushGround(p1.id);
+      ref = { edgeId: edge.id, edgeName: edge.name || null, solidName: edge.parent?.name || null, p0: p0.id, p1: p1.id };
+      refs.push(ref);
+    } else {
+      const pt0 = s.points.find((p) => p.id === ref.p0);
+      const pt1 = s.points.find((p) => p.id === ref.p1);
+      // Ensure stored name metadata stays fresh
+      try { ref.edgeName = edge.name || ref.edgeName || null; } catch {}
+      try { ref.solidName = edge.parent?.name || ref.solidName || null; } catch {}
+      if (pt0) { pt0.x = uvA.u; pt0.y = uvA.v; pt0.fixed = true; }
+      if (pt1) { pt1.x = uvB.u; pt1.y = uvB.v; pt1.fixed = true; }
+      const ensureGround = (pid) => {
+        const exists = s.constraints.some((c) => c.type === '⏚' && Array.isArray(c.points) && c.points[0] === pid);
+        if (!exists) {
+          const cid = Math.max(0, ...s.constraints.map((c) => +c.id || 0)) + 1;
+          s.constraints.push({ id: cid, type: '⏚', points: [pid] });
+        }
+      };
+      if (pt0) ensureGround(pt0.id);
+      if (pt1) ensureGround(pt1.id);
+    }
+  }
+
+  // Refresh positions for all existing external refs; optionally solve
+  #refreshExternalPointsPositions(runSolve) {
+    const f = this.#getSketchFeature();
+    if (!f || !Array.isArray(f?.persistentData?.externalRefs) || !this._solver) return;
+    const scene = this.viewer?.partHistory?.scene;
+    const s = this._solver.sketchObject;
+    let changed = false;
+    for (const ref of f.persistentData.externalRefs) {
+      try {
+        let edge = scene.getObjectById(ref.edgeId);
+        if (!edge || edge.type !== 'EDGE') {
+          // Fallback by name within solid, then global
+          if (ref.solidName) {
+            const solid = this.viewer?.partHistory?.scene?.getObjectByName(ref.solidName);
+            if (solid) {
+              let found = null;
+              solid.traverse((obj) => { if (!found && obj.type === 'EDGE' && obj.name === ref.edgeName) found = obj; });
+              if (found) edge = found;
+            }
+          }
+          if ((!edge || edge.type !== 'EDGE') && ref.edgeName) {
+            let found = null;
+            this.viewer?.partHistory?.scene?.traverse((obj) => { if (!found && obj.type === 'EDGE' && obj.name === ref.edgeName) found = obj; });
+            if (found) edge = found;
+          }
+          if (edge && edge.type === 'EDGE') {
+            // refresh stored id/name metadata
+            ref.edgeId = edge.id;
+            ref.edgeName = edge.name || ref.edgeName || null;
+            ref.solidName = edge.parent?.name || ref.solidName || null;
+          }
+        }
+        if (!edge || edge.type !== 'EDGE') continue;
+        const ends = this.#edgeEndpointsWorld(edge);
+        if (!ends) continue;
+        const uvA = this.#projectWorldToUV(ends.a);
+        const uvB = this.#projectWorldToUV(ends.b);
+        const pt0 = s.points.find((p) => p.id === ref.p0);
+        const pt1 = s.points.find((p) => p.id === ref.p1);
+        if (pt0 && (pt0.x !== uvA.u || pt0.y !== uvA.v)) { pt0.x = uvA.u; pt0.y = uvA.v; pt0.fixed = true; changed = true; }
+        if (pt1 && (pt1.x !== uvB.u || pt1.y !== uvB.v)) { pt1.x = uvB.u; pt1.y = uvB.v; pt1.fixed = true; changed = true; }
+        const ensureGround = (pid) => {
+          const exists = s.constraints.some((c) => c.type === '⏚' && Array.isArray(c.points) && c.points[0] === pid);
+          if (!exists) {
+            const cid = Math.max(0, ...s.constraints.map((c) => +c.id || 0)) + 1;
+            s.constraints.push({ id: cid, type: '⏚', points: [pid] });
+            changed = true;
+          }
+        };
+        if (pt0) ensureGround(pt0.id);
+        if (pt1) ensureGround(pt1.id);
+      } catch { }
+    }
+    if (changed || runSolve) {
+      try { this._solver.solveSketch("full"); } catch { }
+      this.#rebuildSketchGraphics();
+      this.#refreshContextBar();
+      this.#renderExternalRefsList();
+      this.#persistExternalRefs();
+    }
+  }
+
+  // Persist refs (already on feature object)
+  #persistExternalRefs() {
+    const f = this.#getSketchFeature();
+    if (!f) return;
+    try { f.persistentData = f.persistentData || {}; } catch { }
+  }
+
+  // Render the list of external references
+  #renderExternalRefsList() {
+    const list = this._extRefListEl;
+    if (!list) return;
+    const f = this.#getSketchFeature();
+    const s = this._solver?.sketchObject;
+    const refs = (f?.persistentData?.externalRefs) || [];
+    const row = (label, act, del) => `
+      <div class="sk-row" style="display:flex;align-items:center;gap:6px;margin:2px 0">
+        <button data-ext-act="${act}" style="flex:1;text-align:left;background:transparent;color:#ddd;border:1px solid #364053;border-radius:4px;padding:3px 6px">${label}</button>
+        <button data-ext-del="${del}" title="Unlink" style="color:#ffcf8b;background:transparent;border:1px solid #5b4a2b;border-radius:4px;padding:3px 6px">Unlink</button>
+      </div>`;
+    list.innerHTML = refs
+      .map((r) => {
+        const p0 = s?.points?.find((p) => p.id === r.p0);
+        const p1 = s?.points?.find((p) => p.id === r.p1);
+        const p0s = p0 ? `P${p0.id} (${p0.x.toFixed(2)}, ${p0.y.toFixed(2)})` : "?";
+        const p1s = p1 ? `P${p1.id} (${p1.x.toFixed(2)}, ${p1.y.toFixed(2)})` : "?";
+        return row(`Edge #${r.edgeId} → ${p0s}, ${p1s}`, `e:${r.edgeId}`, `e:${r.edgeId}`);
+      })
+      .join("");
+
+    list.onclick = (ev) => {
+      const t = ev.target;
+      if (!(t instanceof HTMLElement)) return;
+      const del = t.getAttribute("data-ext-del");
+      if (del) {
+        const [_k, idStr] = del.split(":");
+        const edgeId = parseInt(idStr);
+        const f2 = this.#getSketchFeature();
+        if (!f2) return;
+        const arr = Array.isArray(f2?.persistentData?.externalRefs)
+          ? f2.persistentData.externalRefs
+          : [];
+        const idx = arr.findIndex((r) => r.edgeId === edgeId);
+        if (idx >= 0) {
+          const r = arr[idx];
+          arr.splice(idx, 1);
+          try {
+            const sObj = this._solver?.sketchObject;
+            if (sObj) {
+              sObj.constraints = sObj.constraints.filter((c) => !(c.type === '⏚' && Array.isArray(c.points) && (c.points[0] === r.p0 || c.points[0] === r.p1)));
+            }
+          } catch { }
+          this.#persistExternalRefs();
+          this._solver?.solveSketch("full");
+          this.#rebuildSketchGraphics();
+          this.#refreshContextBar();
+          this.#renderExternalRefsList();
+        }
+        return;
+      }
+      const act = t.getAttribute("data-ext-act");
+      if (act) {
+        const [_k, idStr] = act.split(":");
+        const edgeId = parseInt(idStr);
+        const f2 = this.#getSketchFeature();
+        const r = (f2?.persistentData?.externalRefs || []).find((x) => x.edgeId === edgeId);
+        if (r) {
+          this._selection.clear();
+          if (this._solver?.getPointById(r.p0)) this._selection.add({ type: 'point', id: r.p0 });
+          if (this._solver?.getPointById(r.p1)) this._selection.add({ type: 'point', id: r.p1 });
+          this.#refreshContextBar();
+          this.#rebuildSketchGraphics();
+        }
+      }
+    };
   }
 
   #mountTopToolbar() {
@@ -757,6 +1148,7 @@ export class SketchMode3D {
     bar.appendChild(mk("Line", "line"));
     bar.appendChild(mk("Circle", "circle"));
     bar.appendChild(mk("Arc", "arc"));
+    bar.appendChild(mk("Pick Edges", "pickEdges"));
     this._topbar = bar;
     host.appendChild(bar);
   }
@@ -1120,6 +1512,33 @@ export class SketchMode3D {
       const ud = h.object?.userData || {};
       if (ud.kind === "geometry" && Number.isFinite(ud.id))
         return { id: ud.id, type: ud.type };
+    }
+    return null;
+  }
+  // Hit-test any EDGE in the whole scene (for external ref picking)
+  #hitTestSceneEdge(e) {
+    const v = this.viewer;
+    if (!v) return null;
+    const rect = v.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -(((e.clientY - rect.top) / rect.height) * 2 - 1),
+    );
+    this._raycaster.setFromCamera(ndc, v.camera);
+    try {
+      const { width, height } = this.#canvasClientSize(v.renderer.domElement);
+      const wpp = this.#worldPerPixel(v.camera, width, height);
+      this._raycaster.params.Line = this._raycaster.params.Line || {};
+      this._raycaster.params.Line.threshold = Math.max(0.05, wpp * 6);
+    } catch { }
+    // Intersect entire scene but filter to type EDGE
+    const hits = this._raycaster.intersectObjects(v.scene.children, true);
+    for (const h of hits) {
+      let o = h.object;
+      while (o) {
+        if (o.type === 'EDGE') return h;
+        o = o.parent;
+      }
     }
     return null;
   }

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 
 
 export class FilletSolid extends Solid {
-    constructor({ edgeToFillet, radius = 1, arcSegments = 16, sampleCount = 50, invert2D = true, reverseTangent = false, swapFaces = false, sideMode = 'INSET', debug = false, debugStride = 12, inflate = 0, snapSeamToEdge = true, sideStripSubdiv = 8, seamInsetScale = 1e-3 }) {
+    constructor({ edgeToFillet, radius = 1, arcSegments = 16, sampleCount = 50, invert2D = true, reverseTangent = false, swapFaces = false, sideMode = 'INSET', debug = false, debugStride = 12, inflate = 0, snapSeamToEdge = true, sideStripSubdiv = 8, seamInsetScale = 1e-3, projectStripsOpenEdges = false, forceSeamInset = false }) {
         super();
         this.edgeToFillet = edgeToFillet;
         this.radius = radius;
@@ -35,6 +35,12 @@ export class FilletSolid extends Solid {
         // to avoid CSG residue from coincident geometry; applied as
         //   inset = max(1e-9, seamInsetScale * radius)
         this.seamInsetScale = Number.isFinite(seamInsetScale) ? seamInsetScale : 1e-3;
+        // Prefer projecting side strips onto the source faces for closed loops,
+        // and optionally also for open edges when enabled.
+        this.projectStripsOpenEdges = !!projectStripsOpenEdges;
+        // When true, apply seam inset even for open edges; default false to
+        // preserve previous behavior that worked better for INSET fillets.
+        this.forceSeamInset = !!forceSeamInset;
         this.generate();
     }
 
@@ -246,16 +252,18 @@ export class FilletSolid extends Solid {
 
         // Bias seams slightly into the source solid to prevent coincident
         // surfaces from leaving sliver shards after subtraction. For open
-        // (non-closed) edges, keep inset = 0 to avoid creating gaps that can
-        // lead to a non-manifold tool.
-        const seamInset = (isClosed ? Math.max(1e-9, this.seamInsetScale * rEff) : 0);
+        // (non-closed) edges, keep inset = 0 unless forceSeamInset is true
+        // to avoid creating gaps that can lead to a non-manifold tool.
+        const seamInset = ((isClosed || this.forceSeamInset) ? Math.max(1e-9, this.seamInsetScale * rEff) : 0);
         if (seamInset > 0) {
             seamA = insetPolylineAlongFaceNormals(trisA, seamA, +seamInset); // into face A
             seamB = insetPolylineAlongFaceNormals(trisB, seamB, +seamInset); // into face B
         }
 
         const baseName = `FILLET_${faceA.name}|${faceB.name}`;
-        const useFaceProjectedStrips = isClosed; // safer: only for closed loops by default
+        // Use face‑projected side strips for closed loops by default; allow
+        // enabling them for open edges via option.
+        const useFaceProjectedStrips = (isClosed || this.projectStripsOpenEdges);
 
         // Build curved fillet; snap ring endpoints to seamA/seamB
         buildWedgeDirect(this, baseName,
@@ -711,7 +719,8 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
     const faceSideA  = `${faceName}_SIDE_A`;
     const faceSideB  = `${faceName}_SIDE_B`;
 
-    // Create arc rings (n x (arcSegments+1))
+    // Create arc rings (n x (arcSegments+1)) WITHOUT snapping to seams yet.
+    // We align parameterization across rings first, then snap endpoints.
     const arcRings = new Array(n);
     for (let i = 0; i < n; i++) {
         const { C, t, r0, angle } = sectorDefs[i];
@@ -721,34 +730,68 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
             const dir = r0.clone().applyAxisAngle(t, a).normalize();
             ring[j] = C.clone().addScaledVector(dir, radius);
         }
-        // Snap ring endpoints to exact face-tangency points if provided.
-        if (seamA && seamA[i]) ring[0] = seamA[i].clone();
-        if (seamB && seamB[i]) ring[arcSegments] = seamB[i].clone();
         arcRings[i] = ring;
     }
 
-    // Ensure consistent parameterization (avoid alternating arcs creating a
-    // zig-zag/sharktooth pattern). For each consecutive pair, choose the
-    // orientation of the second ring that best matches the first ring so that
-    // corresponding endpoints (j=0 and j=arcSegments) stay aligned.
+    // Helper utilities for alignment
     const sqrDist = (a, b) => a.distanceToSquared(b);
+    const rotateRingInPlace = (ring, shift) => {
+        // shift can be negative; keep within 0..M-1; last element duplicates first
+        const M = ring.length; // = arcSegments + 1
+        if (M <= 1) return ring;
+        let s = ((shift % (M - 1)) + (M - 1)) % (M - 1);
+        if (s === 0) return ring;
+        const head = ring.slice(0, M - 1);
+        head.unshift(...head.splice(head.length - s, s)); // rotate right by s
+        for (let i = 0; i < M - 1; i++) ring[i] = head[i];
+        ring[M - 1] = ring[0].clone();
+        return ring;
+    };
+    const reverseRingInPlace = (ring) => {
+        const M = ring.length;
+        if (M <= 2) return ring;
+        const head = ring.slice(0, M - 1).reverse();
+        for (let i = 0; i < M - 1; i++) ring[i] = head[i];
+        ring[M - 1] = ring[0].clone();
+        return ring;
+    };
+    const bestAlign = (rA, rB) => {
+        // Try all cyclic shifts at a coarse sampling; also consider reversal.
+        // Return {flip:boolean, shift:int}
+        const M = rA.length;
+        const step = Math.max(1, Math.round((M - 1) / 8));
+        let best = { flip: false, shift: 0, err: Infinity };
+        for (const flip of [false, true]) {
+            // Accessor for cand ring index (with optional flip)
+            const getB = (k) => flip ? rB[(M - 1) - k] : rB[k];
+            for (let s = 0; s < (M - 1); s++) {
+                let e = 0;
+                for (let j = 0; j < M; j += step) {
+                    const k = (j % (M - 1));
+                    const kb = (k + s) % (M - 1);
+                    e += sqrDist(rA[k], getB(kb));
+                }
+                if (e < best.err) best = { flip, shift: s, err: e };
+            }
+        }
+        return best;
+    };
+
+    // Align parameterization ring-to-ring by allowing both flip and cyclic shift.
     for (let i = 0; i < n - 1; i++) {
         const rA = arcRings[i];
         const rB = arcRings[i + 1];
         if (!rA || !rB) continue;
-        // Compare using multiple samples around the ring, not just the ends.
-        let errSame = 0, errFlip = 0;
-        const step = Math.max(1, Math.round(arcSegments / 6));
-        for (let j = 0; j <= arcSegments; j += step) {
-            const k = j;
-            const kf = arcSegments - j;
-            errSame += sqrDist(rA[k], rB[k]);
-            errFlip += sqrDist(rA[k], rB[kf]);
-        }
-        if (errFlip + 1e-10 < errSame) {
-            // Reverse in-place so indices (j) remain consistent hereafter
-            rB.reverse();
-        }
+        const pick = bestAlign(rA, rB);
+        if (pick.flip) reverseRingInPlace(rB);
+        if (pick.shift) rotateRingInPlace(rB, pick.shift);
+    }
+
+    // After alignment, snap ring endpoints to exact face-tangency points if provided.
+    for (let i = 0; i < n; i++) {
+        const ring = arcRings[i];
+        if (seamA && seamA[i]) ring[0] = seamA[i].clone();
+        if (seamB && seamB[i]) ring[arcSegments] = seamB[i].clone();
     }
 
     // Curved surface between successive arc rings. Alternate the quad
@@ -774,16 +817,11 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
     if (closeLoop && n > 2) {
         let r0 = arcRings[n - 1];
         let r1 = arcRings[0];
-        // Pick orientation for the seam that best matches the previous ring
-        let errSame = 0, errFlip = 0;
-        const step = Math.max(1, Math.round(arcSegments / 6));
-        for (let j = 0; j <= arcSegments; j += step) {
-            const k = j;
-            const kf = arcSegments - j;
-            errSame += sqrDist(r0[k], r1[k]);
-            errFlip += sqrDist(r0[k], r1[kf]);
-        }
-        const flip = (errFlip + 1e-10 < errSame);
+        // Allow both flip and cyclic rotation for the seam ring alignment as well
+        const pick = bestAlign(r0, r1);
+        let flip = false;
+        if (pick.flip) { reverseRingInPlace(r1); flip = true; }
+        if (pick.shift) rotateRingInPlace(r1, pick.shift);
         for (let j = 0; j < arcSegments; j++) {
             const idx = j;
             const idxN = j + 1;
