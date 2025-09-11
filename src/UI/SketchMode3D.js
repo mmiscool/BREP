@@ -1,5 +1,4 @@
-// SketchMode3D: In-scene sketch editing with camera locked to a plane.
-// Phase 1: camera lock + minimal Finish/Cancel overlay UI + panning only.
+// SketchMode3D: In-scene sketch editing overlay (no camera locking).
 
 import * as THREE from "three";
 import ConstraintSolver from "../features/sketch/sketchSolver2D/ConstraintEngine.js";
@@ -13,10 +12,10 @@ export class SketchMode3D {
     this.viewer = viewer;
     this.featureID = featureID;
     this._ui = null;
-    this._saved = null; // camera + controls snapshot
-    this._lock = null; // { basis:{x,y,z,origin}, distance, target }
-    this._panning = false;
-    this._panStart = { x: 0, y: 0 };
+    this._saved = null; // (unused) legacy snapshot
+    this._lock = null; // { basis:{x,y,z,origin} }
+    this._panning = false; // legacy manual camera pan (disabled)
+    this._panStart = { x: 0, y: 0 }; // legacy manual camera pan (disabled)
     // Editing state
     this._solver = null;
     this._sketchGroup = null;
@@ -43,22 +42,24 @@ export class SketchMode3D {
       sy: 0,
       start: { dx: 0, dy: 0 },
     };
-    this._controlsPrev = null; // remember controls state when locking
+    this._controlsPrev = null; // legacy controls state (unused)
     // Track SKETCH groups we hide while editing so we can restore visibility
     this._hiddenSketches = [];
+    // No clipping plane; orientation must do the work
+    // Debug vectors
+    this._debugGroup = null;     // container for camera/face normal vectors
+    this._camRay = null;         // THREE.Line for camera forward ray
+    this._camRayGeom = null;     // BufferGeometry for camera ray
+    this._refObj = null;         // Reference FACE/PLANE object used for normals
+    this._debugLengthScale = 2.0; // scale factor for debug vector lengths
   }
 
   open() {
     const v = this.viewer;
     if (!v) return;
 
-    // Snapshot camera/controls state
-    this._saved = {
-      position: v.camera.position.clone(),
-      quaternion: v.camera.quaternion.clone(),
-      up: v.camera.up.clone(),
-      controlsEnabled: v.controls.enabled,
-    };
+    // Align camera to face/plane (look flat at the sketch reference)
+    // while preserving current camera distance.
 
     // Find the sketch reference object
     const ph = v.partHistory;
@@ -67,6 +68,7 @@ export class SketchMode3D {
       : null;
     const refName = feature?.inputParams?.sketchPlane || null;
     const refObj = refName ? ph.scene.getObjectByName(refName) : null;
+    this._refObj = refObj || null;
 
     // Compute basis from reference (fallback to world XY), prefer persisted basis
     let basis = null;
@@ -79,6 +81,8 @@ export class SketchMode3D {
         z: new THREE.Vector3().fromArray(saved.z),
         origin: new THREE.Vector3().fromArray(saved.origin),
       };
+
+      console.log("[SketchMode3D] Reusing saved basis for", refName);
     } else {
       basis = this.#basisFromReference(refObj);
       // Persist freshly computed basis tagged with refName so future edits reuse it
@@ -96,23 +100,50 @@ export class SketchMode3D {
       } catch {}
     }
 
-    // Determine distance so entire plane is visible
-    const d = 20; // generic distance along normal; ortho camera ignores distance for scale, but we keep it stable
+    // Basis used for projecting points to/from world; also align camera now
+    const pivotBasis = basis.origin.clone();
+    // Compute a better visual pivot: world-space center of the reference object (face/plane)
+    let pivotLook = pivotBasis.clone();
+    try {
+      if (refObj) {
+        refObj.updateWorldMatrix(true, true);
+        // Prefer world-space bounding box center
+        const box = new THREE.Box3().setFromObject(refObj);
+        if (box && !box.isEmpty()) {
+          pivotLook.copy(box.getCenter(new THREE.Vector3()));
+        } else {
+          // Fallback to bounding sphere center in local -> world
+          const g = refObj.geometry;
+          const bs = g && (g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere));
+          if (bs) pivotLook.copy(refObj.localToWorld(bs.center.clone()));
+          else pivotLook.copy(refObj.getWorldPosition(new THREE.Vector3()));
+        }
+      }
+    } catch { }
+    const currentDist = v.camera.position.distanceTo(pivotLook); // read-only
+    this._lock = { basis, distance: currentDist || 20 };
 
-    // Apply camera lock
-    const q = this.#quatFromAxes(basis.x, basis.y, basis.z);
-    v.camera.up.copy(basis.y);
-    v.camera.position.copy(basis.origin).addScaledVector(basis.z, d);
-    v.camera.quaternion.copy(q);
-    v.camera.updateProjectionMatrix();
-
-    // Keep Arcball controls enabled for zoom, but disable rotation; we handle pan ourselves
-    //try { v.controls.enabled = true; } catch {}
-    // try { v.controls.enableRotate = false; } catch {}
-    // try { v.controls.enablePan = true; } catch {}
-    // try { v.controls.enableZoom = true; } catch {}
-
-    this._lock = { basis, distance: d, target: basis.origin.clone() };
+    // Reposition and orient camera to face the sketch plane head-on.
+    try {
+      const cam = v.camera;
+      const dist = Math.max(0.01, this._lock.distance || 20);
+      const z = basis.z.clone().normalize();
+      const y = basis.y.clone().normalize();
+      const pos = pivotLook.clone().add(z.multiplyScalar(dist));
+      cam.position.copy(pos);
+      cam.up.copy(y);
+      cam.lookAt(pivotLook);
+      cam.updateMatrixWorld(true);
+      // Align Arcball target/pivot to the face center so first drag won't jump
+      try { if (v.controls) v.controls.target.copy(pivotLook); } catch {}
+      try { v.controls && v.controls._gizmos && v.controls._gizmos.position && v.controls._gizmos.position.copy(pivotLook); } catch {}
+      // Sync internal control matrices and gizmo size/state
+      try { v.controls && v.controls.update && v.controls.update(); } catch {}
+      // Ensure gizmo matrices are current before snapshotting state (prevents first-pan jump)
+      try { v.controls && v.controls._gizmos && v.controls._gizmos.updateMatrixWorld && v.controls._gizmos.updateMatrixWorld(true); } catch {}
+      try { v.controls && v.controls.updateMatrixState && v.controls.updateMatrixState(); } catch {}
+      try { v.render && v.render(); } catch {}
+    } catch {}
 
     // Hide any existing SKETCH groups in the scene to avoid overlaying
     try {
@@ -196,15 +227,18 @@ export class SketchMode3D {
     // Refresh external reference points to current model projection
     try { this.#refreshExternalPointsPositions(true); } catch {}
 
+    // Removed debug vectors (camera ray + triangle normals)
+
     // Mount label overlay root and initial render
     this.#mountDimRoot();
     this.#renderDimensions();
 
-    // Keep handles a constant screen size while zooming
+    // Keep handles a constant screen size while zooming (no camera relock)
     const tick = () => {
       try {
         this.#updateHandleSizes();
       } catch { }
+      // Removed debug vector updates
       // Light auto-refresh for external reference points (every ~300ms)
       try {
         const now = performance.now ? performance.now() : Date.now();
@@ -218,7 +252,7 @@ export class SketchMode3D {
     };
     this._sizeRAF = requestAnimationFrame(tick);
 
-    // Pointer listeners for panning
+    // Pointer listeners for sketch interactions (no camera panning)
     const el = v.renderer.domElement;
     this._onMove = (e) => this.#onPointerMove(e);
     this._onDown = (e) => this.#onPointerDown(e);
@@ -269,13 +303,21 @@ export class SketchMode3D {
       } catch { }
       this._dim3D = null;
     }
-    if (this._saved && v) {
-      v.camera.position.copy(this._saved.position);
-      v.camera.quaternion.copy(this._saved.quaternion);
-      v.camera.up.copy(this._saved.up);
-      v.camera.updateProjectionMatrix();
-      v.controls.enabled = this._saved.controlsEnabled;
+    // Remove debug vectors
+    if (this._debugGroup && v?.scene) {
+      try {
+        v.scene.remove(this._debugGroup);
+        this._debugGroup.traverse((ch) => {
+          try { ch.geometry && ch.geometry.dispose(); } catch {}
+          try { ch.material && ch.material.dispose && ch.material.dispose(); } catch {}
+        });
+      } catch {}
     }
+    this._debugGroup = null;
+    this._camRay = null;
+    this._camRayGeom = null;
+    // Do not restore or alter camera/controls
+    // No clipping plane to restore
     // remove listeners
     const el = v?.renderer?.domElement;
     if (el) {
@@ -546,17 +588,14 @@ export class SketchMode3D {
           this.#toggleSelection({ type: "geometry", id: ghit.id });
           this.#refreshContextBar();
           this.#rebuildSketchGraphics();
-        } else {
-          // clicked empty space → clear selection
+      } else {
+          // clicked empty space → clear selection (no manual camera pan)
           if (e.button === 0) {
             if (this._selection.size) {
               this._selection.clear();
               this.#refreshContextBar();
               this.#rebuildSketchGraphics();
             }
-            this._panning = true;
-            this._panStart.x = e.clientX;
-            this._panStart.y = e.clientY;
           }
         }
       }
@@ -615,8 +654,8 @@ export class SketchMode3D {
       } catch { }
       return;
     }
-    // Passive hover highlighting when not panning
-    if (!this._panning) {
+    // Passive hover highlighting
+    {
       // Edge picking cursor hint
       if (this._tool === 'pickEdges') {
         const h = this.#hitTestSceneEdge(e);
@@ -635,27 +674,7 @@ export class SketchMode3D {
       }
     }
 
-    if (!this._panning || !this._lock) return;
-    const dx = e.clientX - this._panStart.x;
-    const dy = e.clientY - this._panStart.y;
-    if (dx === 0 && dy === 0) return;
-    this._panStart.x = e.clientX;
-    this._panStart.y = e.clientY;
-    const v = this.viewer;
-    const { width, height } = this.#canvasClientSize(v.renderer.domElement);
-    const wpp = this.#worldPerPixel(v.camera, width, height);
-    const move = new THREE.Vector3();
-    move.addScaledVector(this._lock.basis.x, -dx * wpp);
-    move.addScaledVector(this._lock.basis.y, dy * wpp);
-    v.camera.position.add(move);
-    try {
-      e.preventDefault();
-      e.stopPropagation();
-    } catch { }
-    // Update overlay positions while panning
-    try {
-      this.#updateDimPositions();
-    } catch { }
+    // No manual camera panning or position changes
   }
 
   #onPointerUp(e) {
@@ -674,7 +693,7 @@ export class SketchMode3D {
     try {
       if (this._dragDim?.active) this.#endDimDrag(e);
     } catch { }
-    this._panning = false;
+    this._panning = false; // legacy pan disabled
     this._drag.active = false;
     this._drag.pointId = null;
     this._pendingDrag.pointId = null;
@@ -743,22 +762,42 @@ export class SketchMode3D {
 
     // If FACE, attempt to use its average normal and a stable X axis
     if (obj.type === "FACE" && typeof obj.getAverageNormal === "function") {
-      const n = obj.getAverageNormal();
+      // Raw normal from face triangles (may be inward)
+      let n = obj.getAverageNormal();
+      const rawN = n.clone();
+      // origin ~ face centroid if available (used for outward test)
+      try {
+        const g = obj.geometry;
+        const bs = g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere);
+        if (bs) origin.copy(obj.localToWorld(bs.center.clone()));
+        else origin.copy(obj.getWorldPosition(new THREE.Vector3()));
+      } catch { origin.copy(obj.getWorldPosition(new THREE.Vector3())); }
+
+      // Determine solid center if possible
+      let solidCenter = null;
+      try {
+        let solid = obj.parent;
+        while (solid && solid.type !== 'SOLID') solid = solid.parent;
+        if (solid) {
+          const box = new THREE.Box3().setFromObject(solid);
+          if (!box.isEmpty()) solidCenter = box.getCenter(new THREE.Vector3());
+        }
+      } catch {}
+
+      // If we know a center, align normal to point from center -> face (outward)
+      let flipped = false;
+      if (solidCenter) {
+        const toFace = origin.clone().sub(solidCenter).normalize();
+        if (toFace.lengthSq() > 0 && n.dot(toFace) < 0) { n.multiplyScalar(-1); flipped = true; }
+      }
+
       const worldUp = new THREE.Vector3(0, 1, 0);
       const tmp = new THREE.Vector3();
-      const zx =
-        Math.abs(n.dot(worldUp)) > 0.9 ? new THREE.Vector3(1, 0, 0) : worldUp; // pick a non-parallel ref
+      const zx = Math.abs(n.dot(worldUp)) > 0.9 ? new THREE.Vector3(1, 0, 0) : worldUp; // pick a non-parallel ref
       x.copy(tmp.crossVectors(zx, n).normalize());
       y.copy(tmp.crossVectors(n, x).normalize());
       z.copy(n.clone().normalize());
-      // origin ~ face centroid if available
-      const g = obj.geometry;
-      try {
-        const bs =
-          g.boundingSphere || (g.computeBoundingSphere(), g.boundingSphere);
-        if (bs) origin.copy(obj.localToWorld(bs.center.clone()));
-      } catch { }
-      return { x, y, z, origin };
+      return { x, y, z, origin, rawNormal: rawN, flippedByCenter: flipped, solidCenter };
     }
 
     // For generic Mesh (plane), derive z from its world normal
@@ -772,7 +811,7 @@ export class SketchMode3D {
     x.copy(tmp.crossVectors(zx, n).normalize());
     y.copy(tmp.crossVectors(n, x).normalize());
     z.copy(n);
-    return { x, y, z, origin };
+    return { x, y, z, origin, rawNormal: n.clone() };
   }
 
   #quatFromAxes(x, y, z) {
@@ -1700,6 +1739,8 @@ export class SketchMode3D {
     }
   }
 
+  // Camera locking/remapping removed: no camera adjustments during sketch mode
+
   // ============================= Dimension overlays =============================
   #mountDimRoot() {
     const host = this.viewer?.container;
@@ -1781,6 +1822,114 @@ export class SketchMode3D {
     return (s.constraints || []).find((c) => parseInt(c.id) === cid) || null;
   }
 
+  // ===== Debug vectors: camera ray + triangle normals on reference face =====
+  #buildDebugVectors() {
+    const v = this.viewer;
+    if (!v || !v.scene) return;
+    if (this._debugGroup) {
+      try { v.scene.remove(this._debugGroup); } catch {}
+      this._debugGroup = null;
+    }
+    const grp = new THREE.Group();
+    grp.name = `__SKETCH_DEBUG__:${this.featureID}`;
+    v.scene.add(grp);
+    this._debugGroup = grp;
+
+    // Camera ray geometry (2 points)
+    const rayGeom = new THREE.BufferGeometry();
+    rayGeom.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+    const rayMat = new THREE.LineBasicMaterial({ color: 0xff4444, depthTest: false, transparent: true, opacity: 1.0 });
+    const ray = new THREE.Line(rayGeom, rayMat);
+    ray.renderOrder = 3;
+    grp.add(ray);
+    this._camRayGeom = rayGeom;
+    this._camRay = ray;
+
+    // Per-triangle normals on the reference FACE
+    try { this.#buildFaceTriangleNormals(this._refObj, grp); } catch {}
+  }
+
+  #buildFaceTriangleNormals(face, grp) {
+    if (!face || !face.geometry || !grp) return;
+    const geom = face.geometry;
+    const pos = geom.getAttribute && geom.getAttribute('position');
+    if (!pos || pos.itemSize !== 3) return;
+    const idx = geom.getIndex && geom.getIndex();
+    const triCount = idx ? (idx.count / 3) | 0 : (pos.count / 3) | 0;
+    if (triCount <= 0) return;
+
+    // Choose a reasonable length based on face size
+    let len = 1;
+    try {
+      const bs = geom.boundingSphere || (geom.computeBoundingSphere(), geom.boundingSphere);
+      if (bs) len = Math.max(0.02, bs.radius * 0.4 * (this._debugLengthScale || 1));
+    } catch {}
+
+    const positions = new Float32Array(triCount * 2 * 3);
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    const ab = new THREE.Vector3();
+    const ac = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    const toWorld = (out, i) => out.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(face.matrixWorld);
+
+    for (let t = 0; t < triCount; t++) {
+      const i0 = idx ? (idx.getX(3 * t + 0) >>> 0) : (3 * t + 0);
+      const i1 = idx ? (idx.getX(3 * t + 1) >>> 0) : (3 * t + 1);
+      const i2 = idx ? (idx.getX(3 * t + 2) >>> 0) : (3 * t + 2);
+      toWorld(a, i0); toWorld(b, i1); toWorld(c, i2);
+      center.copy(a).add(b).add(c).multiplyScalar(1/3);
+      ab.subVectors(b, a);
+      ac.subVectors(c, a);
+      n.copy(ab).cross(ac).normalize();
+      const j = t * 6;
+      positions[j + 0] = center.x; positions[j + 1] = center.y; positions[j + 2] = center.z;
+      positions[j + 3] = center.x + n.x * len; positions[j + 4] = center.y + n.y * len; positions[j + 5] = center.z + n.z * len;
+    }
+
+    const segGeom = new THREE.BufferGeometry();
+    segGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const segMat = new THREE.LineBasicMaterial({ color: 0xffff55, depthTest: false, transparent: true, opacity: 0.95 });
+    const lines = new THREE.LineSegments(segGeom, segMat);
+    lines.renderOrder = 2;
+    grp.add(lines);
+
+    // Average face normal at centroid
+    try {
+      const avg = typeof face.getAverageNormal === 'function' ? face.getAverageNormal().clone().normalize() : null;
+      const bs = geom.boundingSphere || (geom.computeBoundingSphere(), geom.boundingSphere);
+      const O = bs ? face.localToWorld(bs.center.clone()) : face.getWorldPosition(new THREE.Vector3());
+      if (avg && O) {
+        const faceGeom = new THREE.BufferGeometry();
+        faceGeom.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array([
+          O.x, O.y, O.z,
+          O.x + avg.x * len * 2.5, O.y + avg.y * len * 2.5, O.z + avg.z * len * 2.5,
+        ]), 3));
+        const faceMat = new THREE.LineBasicMaterial({ color: 0x55ff55, depthTest: false, transparent: true, opacity: 1.0 });
+        const faceLine = new THREE.LineSegments(faceGeom, faceMat);
+        faceLine.renderOrder = 3;
+        grp.add(faceLine);
+      }
+    } catch {}
+  }
+
+  #updateDebugVectors() {
+    const v = this.viewer;
+    if (!v || !this._debugGroup || !this._camRay || !this._camRayGeom) return;
+    // Update camera ray from camera position along forward direction
+    const cam = v.camera;
+    const start = cam.position.clone();
+    const dir = new THREE.Vector3(); cam.getWorldDirection(dir);
+    const length = Math.max(1e-6, (this._lock?.distance || 10) * (this._debugLengthScale || 2));
+    const end = start.clone().add(dir.clone().multiplyScalar(Math.max(1e-6, length)));
+    const arr = this._camRayGeom.getAttribute('position');
+    arr.set([start.x, start.y, start.z, end.x, end.y, end.z]);
+    arr.needsUpdate = true;
+    this._camRayGeom.computeBoundingSphere();
+  }
+
   // ----- 3D Draw helpers on sketch plane -----
   #dimDistance3D(p0, p1, cid) { try { dimsDimDistance3D(this, p0, p1, cid); } catch {} }
 
@@ -1811,7 +1960,7 @@ export class SketchMode3D {
     } catch { }
     e.preventDefault();
     e.stopPropagation();
-    this.#setControlsLocked(true);
+    // Do not lock controls during dimension drag
   }
   #moveDimDrag(e) {
     if (!this._dragDim.active) return;
@@ -1866,11 +2015,8 @@ export class SketchMode3D {
     } catch { }
     e.preventDefault();
     e.stopPropagation();
-    // Defer re-enabling and then tell controls an interaction ended
-    setTimeout(() => {
-      this.#setControlsLocked(false);
-      this.#notifyControlsEnd(e);
-    }, 30);
+    // Notify controls that interaction ended (no lock/unlock)
+    setTimeout(() => { this.#notifyControlsEnd(e); }, 30);
   }
 
   #notifyControlsEnd(e) {
@@ -1899,19 +2045,7 @@ export class SketchMode3D {
       } catch { }
     } catch { }
   }
-  #setControlsLocked(lock) {
-    const c = this.viewer?.controls;
-    if (!c) return;
-    if (lock) {
-      if (!this._controlsPrev) this._controlsPrev = { enabled: c.enabled };
-      c.enabled = false;
-    } else {
-      if (this._controlsPrev) {
-        c.enabled = this._controlsPrev.enabled;
-        this._controlsPrev = null;
-      }
-    }
-  }
+  // Controls locking removed
   #svgAngle(p0, p1, p2, p3, cid, I) {
     if (!this._dimSVG) return;
     const svg = this._dimSVG;
