@@ -277,6 +277,19 @@ export class SketchMode3D {
           try { this.#rebuildSketchGraphics(); } catch {}
           try { ev.preventDefault(); ev.stopPropagation(); } catch {}
         }
+        return;
+      }
+      if (k === 'Delete' || k === 'Backspace') {
+        // Remove selected constraints
+        const cons = Array.from(this._selection).filter(i => i.type === 'constraint');
+        if (cons.length && this._solver) {
+          try { for (const it of cons) this._solver.removeConstraintById?.(parseInt(it.id)); } catch {}
+          try { this._solver.solveSketch('full'); } catch {}
+          this._selection.clear();
+          this.#rebuildSketchGraphics();
+          this.#refreshContextBar();
+          try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+        }
       }
     };
     window.addEventListener('keydown', this._onKeyDown, { passive: true });
@@ -610,6 +623,15 @@ export class SketchMode3D {
         consumed = true;
         return;
       }
+      // Try constraint glyph selection (non-dimension symbols)
+      const ghit2 = this.#hitTestGlyph(e);
+      if (ghit2 && e.button === 0) {
+        try { this.toggleSelectConstraint?.(ghit2.cid); } catch {}
+        try { this.#renderDimensions(); } catch {}
+        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
+        consumed = true;
+        return;
+      }
       const ghit = this.#hitTestGeometry(e);
       if (ghit && e.button === 0) {
         this.#toggleSelection({ type: "geometry", id: ghit.id });
@@ -686,7 +708,11 @@ export class SketchMode3D {
       else {
         const gh = this.#hitTestGeometry(e);
         if (gh) this.#setHover({ type: "geometry", id: gh.id });
-        else this.#setHover(null);
+        else {
+          const dh = this.#hitTestDim(e) || this.#hitTestGlyph(e);
+          if (dh && dh.cid != null) this.#setHover({ type: 'constraint', id: dh.cid });
+          else this.#setHover(null);
+        }
       }
     }
 
@@ -1777,6 +1803,25 @@ export class SketchMode3D {
 
     if (bestCid != null && bestDist <= tol) return { cid: bestCid };
     return null;
+  }
+
+  #hitTestGlyph(e) {
+    // Hit test constraint glyph centers placed by glyph renderer
+    const v = this.viewer;
+    if (!v || !this._lock || !this._glyphCenters) return null;
+    const uv = this.#pointerToPlaneUV(e);
+    if (!uv) return null;
+    const { width, height } = this.#canvasClientSize(v.renderer.domElement);
+    const wpp = this.#worldPerPixel(v.camera, width, height);
+    const tol = Math.max(0.05, wpp * 8);
+    let best = null, bestD = Infinity;
+    try {
+      for (const [cid, pt] of this._glyphCenters.entries()) {
+        const d = Math.hypot((uv.u - pt.u), (uv.v - pt.v));
+        if (d < bestD) { bestD = d; best = cid; }
+      }
+    } catch {}
+    return (best != null && bestD <= tol) ? { cid: best } : null;
   }
 
   #rebuildSketchGraphics() {

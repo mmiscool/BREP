@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { drawConstraintGlyph } from './glyphs.js';
+import { drawConstraintGlyphs } from './glyphs.js';
 
 // Unified dimension colors
 const DIM_COLOR_DEFAULT = 0x69a8ff;   // blue
@@ -32,7 +32,7 @@ export function mountDimRoot(inst) {
 
 export function clearDims(inst) {
   if (!inst._dimRoot) return;
-  const labels = Array.from(inst._dimRoot.querySelectorAll('.dim-label'));
+  const labels = Array.from(inst._dimRoot.querySelectorAll('.dim-label, .glyph-label'));
   labels.forEach((n) => n.parentNode && n.parentNode.removeChild(n));
   if (inst._dimSVG) while (inst._dimSVG.firstChild) inst._dimSVG.removeChild(inst._dimSVG.firstChild);
   if (inst._dim3D) {
@@ -225,6 +225,18 @@ export function renderDimensions(inst) {
     updateOneDimPosition(inst, d, world, off);
   };
 
+  // Prepare glyph placement avoidance (used by drawConstraintGlyph)
+  try {
+    const rectForGlyph = inst.viewer.renderer.domElement.getBoundingClientRect();
+    const baseGlyph = Math.max(0.1, worldPerPixel(inst.viewer.camera, rectForGlyph.width, rectForGlyph.height) * 14);
+    inst._glyphAvoid = {
+      placed: [],            // array of {u,v}
+      minDist: baseGlyph * 0.9,
+      step: baseGlyph * 0.3,
+    };
+  } catch {}
+
+  const glyphConstraints = [];
   for (const c of s.constraints || []) {
     const sel = Array.from(inst._selection || []).some(it => it.type === 'constraint' && it.id === c.id);
     const hov = inst._hover && inst._hover.type === 'constraint' && inst._hover.id === c.id;
@@ -257,10 +269,14 @@ export function renderDimensions(inst) {
       const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
       dimAngle3D(inst, p0,p1,p2,p3,c.id,I, col);
       mk(c, String(c.value ?? ''), to3(I.x, I.y));
+    } else {
+      // Non-dimension constraints: collect for grouped glyph rendering
+      glyphConstraints.push(c);
     }
-    // other constraints glyphs
-    try { drawConstraintGlyph(inst, c); } catch {}
   }
+
+  // Render grouped glyphs (non-dimension constraints)
+  try { drawConstraintGlyphs(inst, glyphConstraints); } catch {}
 }
 
 // Helpers (module-local)
