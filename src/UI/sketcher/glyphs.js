@@ -68,6 +68,8 @@ export function drawConstraintGlyphs(inst, constraints) {
   const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
   const wpp = worldPerPixel(inst.viewer.camera, rect.width, rect.height);
   const base = Math.max(0.1, wpp * 14);
+  const handleR = Math.max(0.02, wpp * 8 * 0.5);
+  const iconR = Math.max(base * 0.9, handleR * 1.9); // approx glyph half size in world units
   const P = (id) => s.points.find((p) => p.id === id);
   const mid = (a, b) => ({ u: (a.x + b.x) / 2, v: (a.y + b.y) / 2 });
   const dir = (a, b) => { const dx = b.x - a.x, dy = b.y - a.y; const L = Math.hypot(dx, dy) || 1; return { tx: dx / L, ty: dy / L, nx: -dy / L, ny: dx / L }; };
@@ -77,9 +79,7 @@ export function drawConstraintGlyphs(inst, constraints) {
   const nudgeFromPoints = (u, v) => {
     const pts = (s && Array.isArray(s.points)) ? s.points : [];
     // Ensure clearance relative to both handle size and glyph label size
-    const handleR = Math.max(0.02, wpp * 8 * 0.5);
-    const labelR = base * 0.8; // approx half-width of glyph label in world units
-    const minDist = Math.max(handleR * 1.9, labelR);
+    const minDist = iconR;
     let uu = u, vv = v;
     let iter = 0;
     while (iter++ < 10) {
@@ -89,13 +89,38 @@ export function drawConstraintGlyphs(inst, constraints) {
         if (d < nd) { nd = d; nearest = p; }
       }
       if (!nearest || nd >= minDist) break;
-      const dx = uu - nearest.x, dy = vv - nearest.y;
-      const L = Math.hypot(dx, dy) || 1e-6;
+      let dx = uu - nearest.x, dy = vv - nearest.y;
+      let L = Math.hypot(dx, dy);
+      if (L < 1e-6) { dx = 0.70710678; dy = 0.70710678; L = 1; }
       const push = (minDist - nd) + (0.35 * minDist);
       uu = nearest.x + (dx / L) * (nd + push);
       vv = nearest.y + (dy / L) * (nd + push);
     }
     return { u: uu, v: vv };
+  };
+
+  // Avoid both points and existing glyphs; keeps result near (u0,v0)
+  const placedIcons = [];
+  const freeFromIcons = (u, v) => placedIcons.every(p => Math.hypot(u - p.u, v - p.v) >= iconR * 1.2);
+  const avoidAll = (u0, v0) => {
+    // First clear from points
+    let p = nudgeFromPoints(u0, v0);
+    if (freeFromIcons(p.u, p.v)) return p;
+    // Spiral search outwards
+    const step = iconR * 0.6;
+    const maxRings = 16;
+    for (let ring = 1; ring <= maxRings; ring++) {
+      const r = ring * step;
+      const spokes = 8 + ring * 2;
+      for (let i = 0; i < spokes; i++) {
+        const ang = (i / spokes) * Math.PI * 2;
+        const cu = u0 + Math.cos(ang) * r;
+        const cv = v0 + Math.sin(ang) * r;
+        const q = nudgeFromPoints(cu, cv);
+        if (freeFromIcons(q.u, q.v)) return q;
+      }
+    }
+    return p; // fallback
   };
   // Build groups by sorted unique point set
   const groups = new Map();
@@ -107,14 +132,48 @@ export function drawConstraintGlyphs(inst, constraints) {
     const arr = groups.get(key) || []; arr.push(c); groups.set(key, arr);
   }
 
-  // Compute anchor per group: average of unique points
-  const anchorFor = (ids) => {
+  // Compute anchor per group
+  const lineIntersect = (A, B, C, D) => {
+    // Returns intersection of infinite lines AB and CD; fallback to average of midpoints
+    const A1 = B.y - A.y; const B1 = A.x - B.x; const C1 = A1 * A.x + B1 * A.y;
+    const A2 = D.y - C.y; const B2 = C.x - D.x; const C2 = A2 * C.x + B2 * C.y;
+    const den = A1 * B2 - A2 * B1;
+    if (Math.abs(den) < 1e-9) {
+      const m1 = { x: (A.x + B.x) * 0.5, y: (A.y + B.y) * 0.5 };
+      const m2 = { x: (C.x + D.x) * 0.5, y: (C.y + D.y) * 0.5 };
+      return { x: (m1.x + m2.x) * 0.5, y: (m1.y + m2.y) * 0.5 };
+    }
+    const x = (B2 * C1 - B1 * C2) / den;
+    const y = (A1 * C2 - A2 * C1) / den;
+    return { x, y };
+  };
+  const anchorFor = (ids, arr) => {
+    // If any perpendicular exists in this group, use line intersection of its two lines as anchor
+    const perp = (arr || []).find(c => c && c.type === '⟂' && Array.isArray(c.points) && c.points.length >= 4);
+    if (perp) {
+      const A = P(perp.points[0]); const B = P(perp.points[1]);
+      const C = P(perp.points[2]); const D = P(perp.points[3]);
+      if (A && B && C && D) {
+        const I = lineIntersect(A, B, C, D);
+        const off = nudgeFromPoints(I.x, I.y);
+        return { u: off.u, v: off.v };
+      }
+    }
+    // If the group is only coincident constraints, anchor near the first point
+    if ((arr || []).length && (arr || []).every(c => c && c.type === '≡')) {
+      const p0 = P(ids[0]);
+      if (p0) {
+        const off = nudgeFromPoints(p0.x, p0.y);
+        return { u: off.u, v: off.v };
+      }
+    }
+    // Default: centroid of unique points, nudged slightly for visibility
     let sx=0, sy=0, n=0;
     for (const id of ids) { const p = P(id); if (p) { sx += p.x; sy += p.y; n++; } }
     if (!n) return { u:0, v:0 };
     const u = sx / n, v = sy / n;
-    // Nudge off-geometry slightly for visibility
-    const nudge = base * 0.25; return { u: u + nudge, v: v + nudge };
+    const off = nudgeFromPoints(u, v);
+    return { u: off.u, v: off.v };
   };
 
   // Draw each group: lay out symbols in a row centered at anchor
@@ -123,19 +182,20 @@ export function drawConstraintGlyphs(inst, constraints) {
 
   for (const [key, arr] of groups.entries()) {
     const ids = key.split(',').map(Number);
-    const anchor = anchorFor(ids);
+    const anchor = anchorFor(ids, arr);
     const spacing = base * 0.7;
     const startU = anchor.u - spacing * (arr.length - 1) / 2;
     const y = anchor.v;
     for (let i = 0; i < arr.length; i++) {
       const c = arr[i];
       const cx = startU + i * spacing;
-      const adj = nudgeFromPoints(cx, y);
+      const adj = avoidAll(cx, y);
       // Record for hit-testing
       try { inst._glyphCenters.set(c.id, { u: adj.u, v: adj.v }); } catch {}
+      placedIcons.push({ u: adj.u, v: adj.v });
       // Small pick radius disk (invisible) for selection
       try {
-        const pickR = base * 0.45;
+        const pickR = iconR;
         const g = new THREE.CircleGeometry(pickR, 20);
         // Orient the circle in plane XY mapped to sketch plane
         const X = inst._lock.basis.x.clone().normalize();
