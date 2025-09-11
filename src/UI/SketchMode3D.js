@@ -259,7 +259,8 @@ export class SketchMode3D {
     this._onDown = (e) => this.#onPointerDown(e);
     this._onUp = (e) => this.#onPointerUp(e);
     el.addEventListener("pointermove", this._onMove, { passive: false });
-    el.addEventListener("pointerdown", this._onDown, { passive: false });
+    // Use capture to prevent ArcballControls from starting spins on dimension/point/curve clicks
+    el.addEventListener("pointerdown", this._onDown, { passive: false, capture: true });
     window.addEventListener("pointerup", this._onUp, {
       passive: false,
       capture: true,
@@ -314,7 +315,7 @@ export class SketchMode3D {
         el.removeEventListener("pointermove", this._onMove);
       } catch { }
       try {
-        el.removeEventListener("pointerdown", this._onDown);
+        el.removeEventListener("pointerdown", this._onDown, { capture: true });
       } catch { }
     }
     try {
@@ -577,23 +578,19 @@ export class SketchMode3D {
       this._pendingDrag.y = e.clientY;
       this._pendingDrag.started = false;
     } else {
-      const dhit = this.#hitTestDim(e);
-      if (dhit && e.button === 0) {
-        this.#startDimDrag(dhit.cid, e);
+      // Only labels (HTML overlay) manipulate dimensions; canvas clicks ignore 3D dim curves.
+      const ghit = this.#hitTestGeometry(e);
+      if (ghit && e.button === 0) {
+        this.#toggleSelection({ type: "geometry", id: ghit.id });
+        this.#refreshContextBar();
+        this.#rebuildSketchGraphics();
       } else {
-        const ghit = this.#hitTestGeometry(e);
-        if (ghit && e.button === 0) {
-          this.#toggleSelection({ type: "geometry", id: ghit.id });
-          this.#refreshContextBar();
-          this.#rebuildSketchGraphics();
-      } else {
-          // clicked empty space → clear selection (no manual camera pan)
-          if (e.button === 0) {
-            if (this._selection.size) {
-              this._selection.clear();
-              this.#refreshContextBar();
-              this.#rebuildSketchGraphics();
-            }
+        // clicked empty space → clear selection (no manual camera pan)
+        if (e.button === 0) {
+          if (this._selection.size) {
+            this._selection.clear();
+            this.#refreshContextBar();
+            this.#rebuildSketchGraphics();
           }
         }
       }
@@ -658,11 +655,7 @@ export class SketchMode3D {
       else {
         const gh = this.#hitTestGeometry(e);
         if (gh) this.#setHover({ type: "geometry", id: gh.id });
-        else {
-          const dh = this.#hitTestDim(e);
-          if (dh) this.#setHover({ type: "constraint", id: dh.cid });
-          else this.#setHover(null);
-        }
+        else this.#setHover(null);
       }
     }
 
@@ -1497,6 +1490,8 @@ export class SketchMode3D {
     else this._selection.add(item);
     try { updateListHighlights(this); } catch {}
     try { applyHoverAndSelectionColors(this); } catch {}
+    // Ensure the corresponding list section is visible and the row is in view
+    try { this.revealListForItem?.(item.type, item.id); } catch {}
   }
 
   #setHover(item) {
@@ -1506,62 +1501,145 @@ export class SketchMode3D {
     this._hover = item;
     try { updateListHighlights(this); } catch {}
     try { applyHoverAndSelectionColors(this); } catch {}
+    // Auto-expand and reveal hovered item in the list
+    if (item && item.type && (item.id != null)) {
+      try { this.revealListForItem?.(item.type, item.id); } catch {}
+    }
+  }
+
+  // Public: allow external UI (e.g., dim labels) to set hover on constraints
+  hoverConstraintFromLabel(cid) {
+    this.#setHover({ type: 'constraint', id: cid });
+    try { this.revealListForItem?.('constraint', cid); } catch {}
+  }
+  clearHoverFromLabel(_cid) {
+    // Only clear if we're not dragging a dimension
+    if (this._dragDim?.active) return;
+    this.#setHover(null);
+  }
+
+  // Public: toggle select a constraint from label click
+  toggleSelectConstraint(cid) {
+    this.#toggleSelection({ type: 'constraint', id: cid });
+    this.#refreshContextBar();
+    this.#rebuildSketchGraphics();
+  }
+
+  // Ensure the relevant accordion section is expanded and the row scrolled into view
+  async revealListForItem(kind, id) {
+    try {
+      const acc = this._acc; if (!acc) return;
+      const title = kind === 'point' ? 'Points' : (kind === 'geometry' ? 'Curves' : (kind === 'constraint' ? 'Constraints' : null));
+      if (!title) return;
+      // Expand the section
+      try { await acc.expandSection(title); } catch {}
+      // Find and scroll the row into view
+      const root = acc.uiElement; if (!root) return;
+      const key = (kind === 'point') ? `p:${id}` : (kind === 'geometry') ? `g:${id}` : `c:${id}`;
+      const btn = root.querySelector(`[data-act="${key}"]`);
+      const row = btn && btn.closest ? btn.closest('.sk-row') : null;
+      if (row && typeof row.scrollIntoView === 'function') {
+        try { row.scrollIntoView({ block: 'nearest' }); } catch { row.scrollIntoView(); }
+      }
+    } catch { /* noop */ }
   }
 
   #hitTestPoint(e) {
-    if (!this._sketchGroup) return null;
+    if (!this._sketchGroup || !this._solver) return null;
     const v = this.viewer;
-    const rect = v.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -(((e.clientY - rect.top) / rect.height) * 2 - 1),
-    );
-    this.#setRayFromCamera(ndc);
-    const prevMask = this._raycaster.layers.mask;
-    try { this._raycaster.layers.set(31); } catch {}
-    const hits = this._raycaster.intersectObjects(
-      this._sketchGroup.children,
-      true,
-    );
-    this._raycaster.layers.mask = prevMask;
-    for (const h of hits) {
-      const ud = h.object?.userData || {};
-      if (ud.kind === "point" && Number.isFinite(ud.id)) return ud.id;
+    const uv = this.#pointerToPlaneUV(e);
+    if (!uv) return null;
+    const s = this._solver.sketchObject;
+    const { width, height } = this.#canvasClientSize(v.renderer.domElement);
+    const wpp = this.#worldPerPixel(v.camera, width, height);
+    // Match handle radius used for point spheres
+    const handleR = Math.max(0.02, wpp * 8 * 0.5);
+    const tol = handleR * 1.2;
+    let bestId = null, bestD = Infinity;
+    for (const p of s.points || []) {
+      const d = Math.hypot(uv.u - p.x, uv.v - p.y);
+      if (d < bestD) { bestD = d; bestId = p.id; }
     }
-    return null;
+    return (bestId != null && bestD <= tol) ? bestId : null;
   }
 
   #hitTestGeometry(e) {
-    if (!this._sketchGroup) return null;
+    // Prefer true closest distance in sketch plane (u,v) over ray hit order
     const v = this.viewer;
-    const rect = v.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -(((e.clientY - rect.top) / rect.height) * 2 - 1),
-    );
-    this.#setRayFromCamera(ndc);
-    try {
-      const { width, height } = this.#canvasClientSize(v.renderer.domElement);
-      const wpp = this.#worldPerPixel(v.camera, width, height);
-      this._raycaster.params.Line = this._raycaster.params.Line || {};
-      this._raycaster.params.Line.threshold = Math.max(0.05, wpp * 6);
-      // Also set threshold for Line2 (fat lines) in screen pixels
-      const dpr = (window.devicePixelRatio || 1);
-      this._raycaster.params.Line2 = this._raycaster.params.Line2 || {};
-      this._raycaster.params.Line2.threshold = Math.max(1, 2 * dpr);
-    } catch { }
-    const prevMask = this._raycaster.layers.mask;
-    try { this._raycaster.layers.set(31); } catch {}
-    const hits = this._raycaster.intersectObjects(
-      this._sketchGroup.children,
-      true,
-    );
-    this._raycaster.layers.mask = prevMask;
-    for (const h of hits) {
-      const ud = h.object?.userData || {};
-      if (ud.kind === "geometry" && Number.isFinite(ud.id))
-        return { id: ud.id, type: ud.type };
+    if (!v || !this._solver || !this._lock) return null;
+    const uv = this.#pointerToPlaneUV(e);
+    if (!uv) return null;
+    const s = this._solver.sketchObject;
+    if (!s) return null;
+
+    // Tolerance based on screen scale (world units per pixel)
+    const { width, height } = this.#canvasClientSize(v.renderer.domElement);
+    const wpp = this.#worldPerPixel(v.camera, width, height);
+    const tol = Math.max(0.05, wpp * 6);
+
+    let best = null;
+    let bestDist = Infinity;
+
+    const distToSeg = (ax, ay, bx, by, px, py) => {
+      const vx = bx - ax, vy = by - ay;
+      const wx = px - ax, wy = py - ay;
+      const L2 = vx * vx + vy * vy || 1e-12;
+      let t = (wx * vx + wy * vy) / L2;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const nx = ax + vx * t, ny = ay + vy * t;
+      const dx = px - nx, dy = py - ny;
+      return Math.hypot(dx, dy);
+    };
+
+    const normAng = (a) => {
+      const twoPi = Math.PI * 2;
+      a = a % twoPi; if (a < 0) a += twoPi; return a;
+    };
+
+    for (const geo of s.geometries || []) {
+      if (geo.type === 'line' && Array.isArray(geo.points) && geo.points.length >= 2) {
+        const p0 = s.points.find(p => p.id === geo.points[0]);
+        const p1 = s.points.find(p => p.id === geo.points[1]);
+        if (!p0 || !p1) continue;
+        const d = distToSeg(p0.x, p0.y, p1.x, p1.y, uv.u, uv.v);
+        if (d < bestDist) { bestDist = d; best = { id: geo.id, type: 'line' }; }
+      } else if (geo.type === 'circle' && Array.isArray(geo.points) && geo.points.length >= 2) {
+        const pc = s.points.find(p => p.id === geo.points[0]);
+        const pr = s.points.find(p => p.id === geo.points[1]);
+        if (!pc || !pr) continue;
+        const rr = Math.hypot(pr.x - pc.x, pr.y - pc.y);
+        const d = Math.abs(Math.hypot(uv.u - pc.x, uv.v - pc.y) - rr);
+        if (d < bestDist) { bestDist = d; best = { id: geo.id, type: 'circle' }; }
+      } else if (geo.type === 'arc' && Array.isArray(geo.points) && geo.points.length >= 3) {
+        const pc = s.points.find(p => p.id === geo.points[0]);
+        const pa = s.points.find(p => p.id === geo.points[1]);
+        const pb = s.points.find(p => p.id === geo.points[2]);
+        if (!pc || !pa || !pb) continue;
+        const cx = pc.x, cy = pc.y;
+        const rr = Math.hypot(pa.x - cx, pa.y - cy);
+        let a0 = Math.atan2(pa.y - cy, pa.x - cx);
+        let a1 = Math.atan2(pb.y - cy, pb.x - cx);
+        a0 = normAng(a0); a1 = normAng(a1);
+        let dAng = a1 - a0; if (dAng < 0) dAng += Math.PI * 2; // CCW sweep [0,2π)
+        // If start≈end, treat as full circle fallback
+        const fullCircle = (Math.abs(dAng) < 1e-6);
+        if (fullCircle) {
+          const d = Math.abs(Math.hypot(uv.u - cx, uv.v - cy) - rr);
+          if (d < bestDist) { bestDist = d; best = { id: geo.id, type: 'arc' }; }
+        } else {
+          // Project point angle to arc range
+          let av = normAng(Math.atan2(uv.v - cy, uv.u - cx));
+          let t = (av - a0); if (t < 0) t += Math.PI * 2; t = t / dAng;
+          if (t < 0) t = 0; else if (t > 1) t = 1;
+          const px = cx + rr * Math.cos(a0 + t * dAng);
+          const py = cy + rr * Math.sin(a0 + t * dAng);
+          const d = Math.hypot(uv.u - px, uv.v - py);
+          if (d < bestDist) { bestDist = d; best = { id: geo.id, type: 'arc' }; }
+        }
+      }
     }
+
+    if (best && bestDist <= tol) return best;
     return null;
   }
   // Hit-test any EDGE in the whole scene (for external ref picking)
@@ -1594,33 +1672,62 @@ export class SketchMode3D {
     return null;
   }
   #hitTestDim(e) {
-    if (!this._dim3D) return null;
+    // Choose the closest dimension (constraint) in plane-space to the cursor
     const v = this.viewer;
-    const rect = v.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -(((e.clientY - rect.top) / rect.height) * 2 - 1),
-    );
-    this.#setRayFromCamera(ndc);
-    try {
-      const { width, height } = this.#canvasClientSize(v.renderer.domElement);
-      const wpp = this.#worldPerPixel(v.camera, width, height);
-      this._raycaster.params.Line = this._raycaster.params.Line || {};
-      this._raycaster.params.Line.threshold = Math.max(0.05, wpp * 6);
-      const dpr = (window.devicePixelRatio || 1);
-      this._raycaster.params.Line2 = this._raycaster.params.Line2 || {};
-      this._raycaster.params.Line2.threshold = Math.max(1, 2 * dpr);
-    } catch { }
-    // Dimensions render on overlay layer 31; ensure raycaster includes them
-    const prevMask = this._raycaster.layers.mask;
-    try { this._raycaster.layers.set(31); } catch {}
-    const hits = this._raycaster.intersectObjects(this._dim3D.children, true);
-    this._raycaster.layers.mask = prevMask;
-    for (const h of hits) {
-      const ud = h.object?.userData || {};
-      if (ud.kind === "dim" && ud.cid !== undefined && ud.cid !== null)
-        return { cid: ud.cid };
+    if (!v || !this._solver || !this._lock) return null;
+    const uv = this.#pointerToPlaneUV(e);
+    if (!uv) return null;
+    const s = this._solver.sketchObject;
+    if (!s) return null;
+    const P = (id) => s.points.find((p) => p.id === id);
+    const { width, height } = this.#canvasClientSize(v.renderer.domElement);
+    const wpp = this.#worldPerPixel(v.camera, width, height);
+    const tol = Math.max(0.05, wpp * 10);
+
+    const distToSeg = (ax, ay, bx, by, px, py) => {
+      const vx = bx - ax, vy = by - ay;
+      const wx = px - ax, wy = py - ay;
+      const L2 = vx * vx + vy * vy || 1e-12;
+      let t = (wx * vx + wy * vy) / L2; if (t < 0) t = 0; else if (t > 1) t = 1;
+      const nx = ax + vx * t, ny = ay + vy * t;
+      return Math.hypot(px - nx, py - ny);
+    };
+    const intersect = (A, B, C, D) => {
+      const den = (A.x - B.x) * (C.y - D.y) - (A.y - B.y) * (C.x - D.x);
+      if (Math.abs(den) < 1e-9) return { x: B.x, y: B.y };
+      const x = ((A.x * A.y - B.x * B.y) * (C.x - D.x) - (A.x - B.x) * (C.x * C.y - D.x * D.y)) / den;
+      const y = ((A.x * A.y - B.x * B.y) * (C.y - D.y) - (A.y - B.y) * (C.x * C.y - D.x * D.y)) / den;
+      return { x, y };
+    };
+    const normAng = (a) => { const t = Math.PI * 2; a = a % t; return a < 0 ? a + t : a; };
+
+    let bestCid = null;
+    let bestDist = Infinity;
+
+    for (const c of (s.constraints || [])) {
+      if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
+        if (c.displayStyle === 'radius') {
+          const pc = P(c.points[0]); const pr = P(c.points[1]); if (!pc || !pr) continue;
+          const rr = Math.hypot(pr.x - pc.x, pr.y - pc.y);
+          const d = Math.abs(Math.hypot(uv.u - pc.x, uv.v - pc.y) - rr);
+          if (d < bestDist) { bestDist = d; bestCid = c.id; }
+        } else {
+          const p0 = P(c.points[0]); const p1 = P(c.points[1]); if (!p0 || !p1) continue;
+          const d = distToSeg(p0.x, p0.y, p1.x, p1.y, uv.u, uv.v);
+          if (d < bestDist) { bestDist = d; bestCid = c.id; }
+        }
+      } else if (c.type === '∠' && Array.isArray(c.points) && c.points.length >= 4) {
+        const p0 = P(c.points[0]), p1 = P(c.points[1]), p2 = P(c.points[2]), p3 = P(c.points[3]);
+        if (!p0 || !p1 || !p2 || !p3) continue;
+        const I = intersect(p0, p1, p2, p3);
+        // Approximate: distance to circular arc at nominal radius around I
+        const rSel = Math.max(0.2, wpp * 12);
+        const d = Math.abs(Math.hypot(uv.u - I.x, uv.v - I.y) - rSel);
+        if (d < bestDist) { bestDist = d; bestCid = c.id; }
+      }
     }
+
+    if (bestCid != null && bestDist <= tol) return { cid: bestCid };
     return null;
   }
 
@@ -1851,6 +1958,7 @@ export class SketchMode3D {
     // Disable camera controls during dimension drag
     try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch {}
     e.preventDefault();
+    try { e.stopImmediatePropagation(); } catch {}
     e.stopPropagation();
   }
   #moveDimDrag(e) {

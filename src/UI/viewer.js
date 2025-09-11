@@ -139,8 +139,9 @@ export class Viewer {
 
         // Raycaster for picking
         this.raycaster = new THREE.Raycaster();
-        // Slightly generous line threshold for edge picking (world units)
-        try { this.raycaster.params.Line.threshold = 0.1; } catch { }
+        // Initialize params containers; thresholds set per-pick for stability
+        try { this.raycaster.params.Line = this.raycaster.params.Line || {}; } catch { }
+        try { this.raycaster.params.Line2 = this.raycaster.params.Line2 || {}; } catch { }
 
         // Bindings
         this._onPointerMove = this._onPointerMove.bind(this);
@@ -482,6 +483,16 @@ export class Viewer {
         if (!event) return { hit: null, target: null };
         const ndc = this._getPointerNDC(event);
         this.raycaster.setFromCamera(ndc, this.camera);
+        // Tune line picking thresholds per-frame based on zoom and DPI
+        try {
+            const rect = this.renderer.domElement.getBoundingClientRect();
+            const wpp = this._worldPerPixel(this.camera, rect.width, rect.height);
+            this.raycaster.params.Line = this.raycaster.params.Line || {};
+            this.raycaster.params.Line.threshold = Math.max(0.05, wpp * 6);
+            const dpr = (window.devicePixelRatio || 1);
+            this.raycaster.params.Line2 = this.raycaster.params.Line2 || {};
+            this.raycaster.params.Line2.threshold = Math.max(1, 2 * dpr);
+        } catch { }
         // Shift the ray origin far behind the camera along the ray direction
         try {
             const span = Math.abs((this.camera?.far ?? 0) - (this.camera?.near ?? 0)) || 1;
@@ -644,5 +655,18 @@ export class Viewer {
         if (this._disposed) return;
         // Re-evaluate hover while camera moves (if we have a last pointer)
         if (this._lastPointerEvent) this._updateHover(this._lastPointerEvent);
+    }
+
+    // Compute world-units per screen pixel for current camera and viewport
+    _worldPerPixel(camera, width, height) {
+        if (camera && camera.isOrthographicCamera) {
+            const zoom = (typeof camera.zoom === 'number' && camera.zoom > 0) ? camera.zoom : 1;
+            const wppX = (camera.right - camera.left) / (width * zoom);
+            const wppY = (camera.top - camera.bottom) / (height * zoom);
+            return Math.max(wppX, wppY);
+        }
+        const dist = camera.position.length();
+        const fovRad = (camera.fov * Math.PI) / 180;
+        return (2 * Math.tan(fovRad / 2) * dist) / height;
     }
 }

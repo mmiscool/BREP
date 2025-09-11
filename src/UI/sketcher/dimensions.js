@@ -61,47 +61,96 @@ export function renderDimensions(inst) {
     d.style.pointerEvents = 'auto';
     d.textContent = text;
 
-    // Drag support
-    let dragging = false, sx = 0, sy = 0, start = {};
+    // Drag + click-to-select support with small-move threshold
+    let dragging = false, moved = false, sx = 0, sy = 0, start = {};
+    let sClientX = 0, sClientY = 0;
+    // Precomputed helpers for distance/radius modes
+    let distNx = 0, distNy = 0, distStartD = 0;
+    let radRx = 0, radRy = 0, radNx = 0, radNy = 0, radStartDr = 0, radStartDp = 0;
     d.addEventListener('pointerdown', (e) => {
-      dragging = true;
+      dragging = true; moved = false;
       const uv = pointerToPlaneUV(inst, e);
       sx = uv?.u || 0; sy = uv?.v || 0;
       start = { ...(inst._dimOffsets.get(c.id) || {}) };
-      try { d.setPointerCapture(e.pointerId); } catch {}
-      e.preventDefault(); e.stopPropagation();
-    });
-    d.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const uv = pointerToPlaneUV(inst, e); if (!uv) return;
+      sClientX = e.clientX || 0; sClientY = e.clientY || 0;
+      // Prepare mode-specific baselines
       if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
         const sObj = inst._solver.sketchObject;
         const pc = sObj.points.find((p) => p.id === c.points[0]);
         const pr = sObj.points.find((p) => p.id === c.points[1]);
-        if (!pc || !pr) return;
-        const vx = pr.x - pc.x, vy = pr.y - pc.y; const L = Math.hypot(vx, vy) || 1; const rx = vx/L, ry = vy/L; const nx = -ry, ny = rx;
-        const baseU = pr.x + (Number(start.dr)||0)*rx + (Number(start.dp)||0)*nx;
-        const baseV = pr.y + (Number(start.dr)||0)*ry + (Number(start.dp)||0)*ny;
-        const du = uv.u - baseU; const dv = uv.v - baseV;
-        const dr = (Number(start.dr)||0) + (du*rx + dv*ry);
-        const dp = (Number(start.dp)||0) + (du*nx + dv*ny);
-        inst._dimOffsets.set(c.id, { dr, dp });
-        const labelOff = { du: rx*dr + nx*dp, dv: ry*dr + ny*dp };
-        updateOneDimPosition(inst, d, world, labelOff);
-        renderDimensions(inst);
-      } else {
-        const du = (Number(start.du)||0) + (uv.u - sx);
-        const dv = (Number(start.dv)||0) + (uv.v - sy);
-        inst._dimOffsets.set(c.id, { du, dv });
-        updateOneDimPosition(inst, d, world, { du, dv });
-        renderDimensions(inst);
+        if (pc && pr) {
+          const vx = pr.x - pc.x, vy = pr.y - pc.y; const L = Math.hypot(vx, vy) || 1;
+          radRx = vx / L; radRy = vy / L; radNx = -radRy; radNy = radRx;
+          radStartDr = Number(start.dr) || 0; radStartDp = Number(start.dp) || 0;
+        }
+      } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
+        const sObj = inst._solver.sketchObject;
+        const p0 = sObj.points.find((p) => p.id === c.points[0]);
+        const p1 = sObj.points.find((p) => p.id === c.points[1]);
+        if (p0 && p1) {
+          const dx = p1.x - p0.x, dy = p1.y - p0.y; const L = Math.hypot(dx, dy) || 1;
+          distNx = -(dy / L); distNy = dx / L;
+          // If previous offset was vector {du,dv}, project onto normal to get scalar d
+          const du0 = Number(start.du) || 0, dv0 = Number(start.dv) || 0;
+          distStartD = (typeof start.d === 'number') ? Number(start.d) : (du0 * distNx + dv0 * distNy);
+        }
       }
-      e.preventDefault(); e.stopPropagation();
+      // Prevent camera from starting a spin while interacting with dimensions
+      try { if (inst.viewer?.controls) inst.viewer.controls.enabled = false; } catch {}
+      try { d.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+    });
+    d.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const uv = pointerToPlaneUV(inst, e); if (!uv) return;
+      // Activate drag only after a small pixel threshold to keep click reliable
+      const pxThreshold = 3;
+      const pxDx = Math.abs((e.clientX || 0) - sClientX);
+      const pxDy = Math.abs((e.clientY || 0) - sClientY);
+      if (!moved && (pxDx + pxDy) < pxThreshold) return;
+      moved = true;
+      if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
+        // Radius/diameter: track along radial (dr) and perpendicular (dp)
+        const du = uv.u - sx;
+        const dv = uv.v - sy;
+        const dr = (Number(radStartDr)||0) + (du*radRx + dv*radRy);
+        const dp = (Number(radStartDp)||0) + (du*radNx + dv*radNy);
+        inst._dimOffsets.set(c.id, { dr, dp });
+        const labelOff = { du: radRx*dr + radNx*dp, dv: radRy*dr + radNy*dp };
+        updateOneDimPosition(inst, d, world, labelOff);
+      } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
+        // Distance between two points: store scalar offset along normal (d)
+        const deltaN = (uv.u - sx) * distNx + (uv.v - sy) * distNy;
+        const newD = distStartD + deltaN;
+        inst._dimOffsets.set(c.id, { d: newD });
+        // Live position of label using current camera scale factor (base)
+        const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
+        const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
+        updateOneDimPosition(inst, d, world, { du: distNx*(base + newD), dv: distNy*(base + newD) });
+      }
+      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
     });
     d.addEventListener('pointerup', (e) => {
-      dragging = false;
+      const wasDragging = dragging; dragging = false;
       try { d.releasePointerCapture(e.pointerId); } catch {}
-      e.preventDefault(); e.stopPropagation();
+      // Re-enable camera controls after finishing interaction
+      try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch {}
+      if (wasDragging && moved) {
+        // Finalize by re-rendering leaders + label
+        try { renderDimensions(inst); } catch {}
+      } else {
+        // Treat as click: toggle select this constraint
+        try { inst.toggleSelectConstraint?.(c.id); } catch {}
+      }
+      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+    });
+
+    // Hover should reflect in the sidebar and 3D overlays
+    d.addEventListener('pointerenter', () => {
+      try { inst.hoverConstraintFromLabel?.(c.id); } catch {}
+    });
+    d.addEventListener('pointerleave', () => {
+      try { inst.clearHoverFromLabel?.(c.id); } catch {}
     });
 
     d.addEventListener('dblclick', (e) => {
@@ -142,6 +191,8 @@ export function renderDimensions(inst) {
       try { inst._solver.solveSketch('full'); } catch {}
       try { inst._solver?.hooks?.updateCanvas?.(); } catch {}
     });
+
+    // Click handled via pointerup when not moved
 
     inst._dimRoot.appendChild(d);
     const saved = inst._dimOffsets.get(c.id) || { du: 0, dv: 0 };
