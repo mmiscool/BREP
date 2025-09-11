@@ -72,6 +72,31 @@ export function drawConstraintGlyphs(inst, constraints) {
   const mid = (a, b) => ({ u: (a.x + b.x) / 2, v: (a.y + b.y) / 2 });
   const dir = (a, b) => { const dx = b.x - a.x, dy = b.y - a.y; const L = Math.hypot(dx, dy) || 1; return { tx: dx / L, ty: dy / L, nx: -dy / L, ny: dx / L }; };
   const proj = (A, B, C) => { const d = dir(A, B); const vx = C.x - A.x, vy = C.y - A.y; const t = vx * d.tx + vy * d.ty; return { u: A.x + t * d.tx, v: A.y + t * d.ty, nx: d.nx, ny: d.ny }; };
+
+  // Nudge a (u,v) position away from nearby sketch points to avoid overlap
+  const nudgeFromPoints = (u, v) => {
+    const pts = (s && Array.isArray(s.points)) ? s.points : [];
+    // Ensure clearance relative to both handle size and glyph label size
+    const handleR = Math.max(0.02, wpp * 8 * 0.5);
+    const labelR = base * 0.8; // approx half-width of glyph label in world units
+    const minDist = Math.max(handleR * 1.9, labelR);
+    let uu = u, vv = v;
+    let iter = 0;
+    while (iter++ < 10) {
+      let nearest = null, nd = Infinity;
+      for (const p of pts) {
+        const d = Math.hypot(uu - p.x, vv - p.y);
+        if (d < nd) { nd = d; nearest = p; }
+      }
+      if (!nearest || nd >= minDist) break;
+      const dx = uu - nearest.x, dy = vv - nearest.y;
+      const L = Math.hypot(dx, dy) || 1e-6;
+      const push = (minDist - nd) + (0.35 * minDist);
+      uu = nearest.x + (dx / L) * (nd + push);
+      vv = nearest.y + (dy / L) * (nd + push);
+    }
+    return { u: uu, v: vv };
+  };
   // Build groups by sorted unique point set
   const groups = new Map();
   for (const c of (constraints || [])) {
@@ -105,8 +130,9 @@ export function drawConstraintGlyphs(inst, constraints) {
     for (let i = 0; i < arr.length; i++) {
       const c = arr[i];
       const cx = startU + i * spacing;
+      const adj = nudgeFromPoints(cx, y);
       // Record for hit-testing
-      try { inst._glyphCenters.set(c.id, { u: cx, v: y }); } catch {}
+      try { inst._glyphCenters.set(c.id, { u: adj.u, v: adj.v }); } catch {}
       // Small pick radius disk (invisible) for selection
       try {
         const pickR = base * 0.45;
@@ -115,7 +141,7 @@ export function drawConstraintGlyphs(inst, constraints) {
         const X = inst._lock.basis.x.clone().normalize();
         const Y = inst._lock.basis.y.clone().normalize();
         const Z = new THREE.Vector3().crossVectors(X, Y).normalize();
-        const m = new THREE.Matrix4().makeBasis(X, Y, Z).setPosition(to3(cx, y));
+        const m = new THREE.Matrix4().makeBasis(X, Y, Z).setPosition(to3(adj.u, adj.v));
         const mat = new THREE.MeshBasicMaterial({ visible: false });
         const mesh = new THREE.Mesh(g, mat);
         mesh.applyMatrix4(m);
@@ -128,7 +154,7 @@ export function drawConstraintGlyphs(inst, constraints) {
       // Draw the glyph symbol itself as unicode character from constraint.type
       try {
         const color = selSet.has(c.id) ? COLOR_SELECTED : (hovId === c.id ? COLOR_HOVER : COLOR_DEFAULT);
-        placeGlyphLabel(c, c.type || '?', cx, y, color);
+        placeGlyphLabel(c, c.type || '?', adj.u, adj.v, color);
       } catch {}
     }
   }

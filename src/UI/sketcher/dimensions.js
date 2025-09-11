@@ -282,10 +282,39 @@ export function renderDimensions(inst) {
 // Helpers (module-local)
 function updateOneDimPosition(inst, el, world, off) {
   const du = Number(off?.du) || 0; const dv = Number(off?.dv) || 0;
-  const w = world.clone().add(inst._lock.basis.x.clone().multiplyScalar(du)).add(inst._lock.basis.y.clone().multiplyScalar(dv));
+  const O = inst._lock.basis.origin, X = inst._lock.basis.x, Y = inst._lock.basis.y;
+  // Base world position for the label
+  let w = world.clone().add(X.clone().multiplyScalar(du)).add(Y.clone().multiplyScalar(dv));
+  // Compute plane coords
+  try {
+    const d = w.clone().sub(O);
+    let u = d.dot(X.clone().normalize());
+    let v = d.dot(Y.clone().normalize());
+    // Nudge away from nearby sketch points to avoid overlap
+    const pts = (inst._solver && Array.isArray(inst._solver.sketchObject?.points)) ? inst._solver.sketchObject.points : [];
+    const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
+    const wpp = worldPerPixel(inst.viewer.camera, rect.width, rect.height);
+    const handleR = Math.max(0.02, wpp * 8 * 0.5);
+    const minDist = handleR * 1.2;
+    let iter = 0;
+    while (iter++ < 4) {
+      let nearest = null, nd = Infinity;
+      for (const p of pts) {
+        const dd = Math.hypot(u - p.x, v - p.y);
+        if (dd < nd) { nd = dd; nearest = p; }
+      }
+      if (!nearest || nd >= minDist) break;
+      const dx = u - nearest.x, dy = v - nearest.y; const L = Math.hypot(dx, dy) || 1e-6;
+      const push = (minDist - nd) + (0.15 * minDist);
+      u = nearest.x + (dx / L) * (nd + push);
+      v = nearest.y + (dy / L) * (nd + push);
+    }
+    // Rebuild world position from nudged (u,v)
+    w = new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
+  } catch {}
   const pt = w.project(inst.viewer.camera);
-  const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
-  const x = (pt.x * 0.5 + 0.5) * rect.width; const y = (-pt.y * 0.5 + 0.5) * rect.height;
+  const rect2 = inst.viewer.renderer.domElement.getBoundingClientRect();
+  const x = (pt.x * 0.5 + 0.5) * rect2.width; const y = (-pt.y * 0.5 + 0.5) * rect2.height;
   el.style.left = `${Math.round(x)}px`; el.style.top = `${Math.round(y)}px`;
 }
 
