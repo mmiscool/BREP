@@ -107,8 +107,39 @@ export function renderDimensions(inst) {
     d.addEventListener('dblclick', (e) => {
       e.preventDefault(); e.stopPropagation();
       const v = prompt('Enter value', String(c.value ?? ''));
-      if (v == null) return; const num = parseFloat(v); if (!Number.isFinite(num)) return;
-      c.value = num; try { inst._solver.solveSketch('full'); } catch {}
+      if (v == null) return;
+      const ph = inst?.viewer?.partHistory;
+      const exprSrc = ph?.expressions || '';
+
+      // Evaluate using the same approach as feature dialogs
+      const runExpr = (expressions, equation) => {
+        try {
+          const fn = `${expressions}; return ${equation} ;`;
+          let result = Function(fn)();
+          if (typeof result === 'string') {
+            const num = Number(result);
+            if (!Number.isNaN(num)) return num;
+          }
+          return result;
+        } catch (err) {
+          console.log('Expression eval failed:', err?.message || err);
+          return null;
+        }
+      };
+
+      // If it's a plain number, store numeric. Otherwise store both expr and numeric.
+      const plainNumberRe = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?\s*$/i;
+      let numeric = null;
+      if (plainNumberRe.test(v)) {
+        numeric = parseFloat(v);
+        c.valueExpr = undefined;
+      } else {
+        numeric = runExpr(exprSrc, v);
+        if (numeric == null || !Number.isFinite(numeric)) return;
+        c.valueExpr = String(v);
+      }
+      c.value = Number(numeric);
+      try { inst._solver.solveSketch('full'); } catch {}
       try { inst._solver?.hooks?.updateCanvas?.(); } catch {}
     });
 

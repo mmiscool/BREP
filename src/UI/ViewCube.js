@@ -199,72 +199,72 @@ export class ViewCube {
     if (intersects && intersects.length) {
       const face = intersects[0].object;
       const dir = face?.userData?.dir;
-      if (dir) this._reorientCamera(dir);
+      const name = face?.userData?.name || '';
+      if (dir) this._reorientCamera(dir, name);
       return true;
     }
     return false;
   }
 
-  _reorientCamera(dir) {
+  _reorientCamera(dir, faceName = '') {
     const cam = this.targetCamera;
     if (!cam) return;
 
-    // Keep same distance from origin
-    const dist = cam.position.length() || 10;
-    const pos = dir.clone().normalize().multiplyScalar(dist);
+    // Determine current pivot (ArcballControls center) and keep distance to it
+    const pivot = (this.controls && this.controls._gizmos && this.controls._gizmos.position)
+      ? this.controls._gizmos.position.clone()
+      : new THREE.Vector3(0, 0, 0);
+    const dist = cam.position.distanceTo(pivot) || cam.position.length() || 10;
+    const pos = pivot.clone().add(dir.clone().normalize().multiplyScalar(dist));
 
     // Choose a stable up vector for the final view
     const useZup = Math.abs(dir.y) > 0.9; // top/bottom -> Z up to avoid roll
     const up = useZup ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
 
-    // Compute target orientation quaternion that looks at origin with chosen up
-    const lookQuat = (eye, target, upv) => {
-      const m = new THREE.Matrix4();
-      m.lookAt(eye, target, upv);
-      m.invert();
-      const q = new THREE.Quaternion();
-      q.setFromRotationMatrix(m);
-      return q;
-    };
-
-    const fromPos = cam.position.clone();
     const toPos = pos;
-    const fromQuat = cam.quaternion.clone();
-    const toQuat = lookQuat(toPos, new THREE.Vector3(0, 0, 0), up);
-    const fromUp = cam.up.clone();
 
-    // Smooth animation
-    const dur = 350; // ms
-    const t0 = performance.now();
+    // Immediate reorientation: absolute pose using lookAt toward pivot
+    cam.position.copy(toPos);
+    cam.up.copy(up);
+    cam.lookAt(pivot);
+    cam.updateMatrixWorld(true);
+
+    // Debug: Log detailed camera state after snapping
+    try {
+      const p = cam.position.clone();
+      const q = cam.quaternion.clone();
+      const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+      const fwd = new THREE.Vector3();
+      cam.getWorldDirection(fwd); // normalized, points toward -Z of camera
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize();
+      const upWorldFromQuat = new THREE.Vector3(0, 1, 0).applyQuaternion(q).normalize();
+      // eslint-disable-next-line no-console
+      console.log('[ViewCube] Camera snap', {
+        face: faceName,
+        targetDir: { x: dir.x, y: dir.y, z: dir.z },
+        distanceToPivot: cam.position.distanceTo(pivot),
+        pivot: { x: +pivot.x.toFixed(6), y: +pivot.y.toFixed(6), z: +pivot.z.toFixed(6) },
+        position: { x: +p.x.toFixed(6), y: +p.y.toFixed(6), z: +p.z.toFixed(6) },
+        quaternion: { x: +q.x.toFixed(6), y: +q.y.toFixed(6), z: +q.z.toFixed(6), w: +q.w.toFixed(6) },
+        eulerXYZdeg: {
+          x: +(e.x * 180 / Math.PI).toFixed(3),
+          y: +(e.y * 180 / Math.PI).toFixed(3),
+          z: +(e.z * 180 / Math.PI).toFixed(3),
+        },
+        worldForward: { x: +fwd.x.toFixed(6), y: +fwd.y.toFixed(6), z: +fwd.z.toFixed(6) },
+        worldRight: { x: +right.x.toFixed(6), y: +right.y.toFixed(6), z: +right.z.toFixed(6) },
+        worldUpFromQuat: { x: +upWorldFromQuat.x.toFixed(6), y: +upWorldFromQuat.y.toFixed(6), z: +upWorldFromQuat.z.toFixed(6) },
+        cameraUpProperty: { x: +cam.up.x.toFixed(6), y: +cam.up.y.toFixed(6), z: +cam.up.z.toFixed(6) },
+        zoom: cam.zoom,
+        frustum: cam.isOrthographicCamera ? { left: cam.left, right: cam.right, top: cam.top, bottom: cam.bottom } : null,
+      });
+    } catch {}
+
+    // Sync controls to the new absolute state
     const controls = this.controls;
-    if (controls) controls.enabled = false;
-
-    const ease = (t) => t * t * (3 - 2 * t); // smoothstep
-    const step = () => {
-      const now = performance.now();
-      const t = Math.min(1, (now - t0) / dur);
-      const k = ease(t);
-
-      cam.position.lerpVectors(fromPos, toPos, k);
-      cam.quaternion.copy(fromQuat);
-      cam.quaternion.slerp(toQuat, k);
-      // Keep up vector trending toward target up for numerical stability
-      cam.up.lerpVectors(fromUp, up, k);
-      cam.updateMatrixWorld(true);
-
-      if (controls && controls.updateMatrixState) controls.updateMatrixState();
-
-      if (t < 1) {
-        requestAnimationFrame(step);
-      } else {
-        // Ensure final exact values
-        cam.position.copy(toPos);
-        cam.quaternion.copy(toQuat);
-        cam.up.copy(up);
-        cam.updateMatrixWorld(true);
-        if (controls) { controls.enabled = true; if (controls.update) controls.update(); }
-      }
-    };
-    requestAnimationFrame(step);
+    if (controls && controls.updateMatrixState) {
+      try { controls.updateMatrixState(); } catch {}
+    }
+    if (controls) controls.enabled = true;
   }
 }

@@ -133,6 +133,52 @@ export class SketchFeature {
 
         // Start from persisted sketch
         let sketch = this.persistentData?.sketch || { points: [{ id:0, x:0, y:0, fixed:true }], geometries: [], constraints: [{ id:0, type:"⏚", points:[0]}] };
+
+        // Evaluate any expression-backed values on points/constraints using global expressions
+        try {
+            const exprSrc = this.partHistory?.expressions || '';
+            const runExpr = (expressions, equation) => {
+                try {
+                    const fn = `${expressions}; return ${equation} ;`;
+                    let result = Function(fn)();
+                    if (typeof result === 'string') {
+                        const num = Number(result);
+                        if (!Number.isNaN(num)) return num;
+                    }
+                    return result;
+                } catch { return null; }
+            };
+            if (Array.isArray(sketch?.points)) {
+                for (const p of sketch.points) {
+                    if (typeof p.x === 'string') {
+                        const n = runExpr(exprSrc, p.x);
+                        if (n != null && Number.isFinite(n)) p.x = Number(n);
+                    }
+                    if (typeof p.y === 'string') {
+                        const n = runExpr(exprSrc, p.y);
+                        if (n != null && Number.isFinite(n)) p.y = Number(n);
+                    }
+                }
+            }
+            if (Array.isArray(sketch?.constraints)) {
+                for (const c of sketch.constraints) {
+                    if (typeof c?.valueExpr === 'string') {
+                        const n = runExpr(exprSrc, c.valueExpr);
+                        if (n != null && Number.isFinite(n)) c.value = Number(n);
+                    } else if (typeof c?.value === 'string') {
+                        const n = runExpr(exprSrc, c.value);
+                        if (n != null && Number.isFinite(n)) c.value = Number(n);
+                    }
+                }
+            }
+            // Re-solve sketch with evaluated values to reflect latest expressions
+            try {
+                const engine = new ConstraintEngine(JSON.stringify(sketch));
+                const solved = engine.solve(500);
+                sketch = solved;
+                this.persistentData.sketch = solved;
+            } catch {}
+        } catch {}
         // Update external reference points by projecting selected model edge endpoints
         try {
             const scene = this.partHistory?.scene;

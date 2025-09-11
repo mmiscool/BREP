@@ -6,14 +6,14 @@ const inputParamsSchema = {
   featureID: {
     type: "string",
     default_value: null,
-    hint: "unique identifier for the sweep feature",
+    hint: "unique identifier for the extrude feature",
   },
   profile: {
     type: "reference_selection",
-    selectionFilter: ["FACE", "SKETCH",],
+    selectionFilter: ["FACE", "SKETCH"],
     multiple: false,
     default_value: null,
-    hint: "Select the profile to sweep",
+    hint: "Select the profile to extrude",
   },
   distance: {
     type: "number",
@@ -40,7 +40,7 @@ export class ExtrudeFeature {
 
   async run(partHistory) {
     // actual code to create the extrude feature.
-    const { profile, distance, twistAngle } = this.inputParams;
+    const { profile, distance } = this.inputParams;
 
     // Resolve profile: accept FACE name or a SKETCH group name
     const obj = partHistory.scene.getObjectByName(profile);
@@ -59,7 +59,7 @@ export class ExtrudeFeature {
     const extrude = new BREP.Sweep({
       face: faceObj,
       sweepPathEdges: [],
-      distance: distance * -1,
+      distance: distance,
       name: this.inputParams.featureID
     });
     extrude.visualize();
