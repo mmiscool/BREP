@@ -19,6 +19,9 @@ export class SketchMode3D {
     this._raycaster = new THREE.Raycaster();
     this._drag = { active: false, pointId: null };
     this._pendingDrag = { pointId: null, x: 0, y: 0, started: false };
+    // Geometry dragging (move all points of a curve)
+    this._dragGeo = { active: false, ids: [], startUV: { u: 0, v: 0 }, pointsStart: null };
+    this._pendingGeo = { ids: null, x: 0, y: 0, startUV: null, started: false };
     // Track clicks on blank canvas area to clear selection on click (not drag)
     this._blankDown = { active: false, x: 0, y: 0 };
     this._selection = new Set();
@@ -613,7 +616,30 @@ export class SketchMode3D {
       this._pendingDrag.started = false;
       consumed = true; // we are arming a drag → suppress controls
     } else {
-      // Try dimension leaders/graphics selection in canvas
+      // Prefer selecting sketch geometry over constraints when clicking the canvas
+      const ghit = this.#hitTestGeometry(e);
+      if (ghit && e.button === 0) {
+        // Arm a pending geometry drag (translate its points together)
+        try {
+          const s = this._solver?.sketchObject;
+          const geo = (s?.geometries || []).find(g => g.id === parseInt(ghit.id));
+          const idsRaw = Array.isArray(geo?.points) ? geo.points.slice() : [];
+          const ids = Array.from(new Set(idsRaw.map(x => parseInt(x))));
+          // Filter out external reference or fixed points (not draggable)
+          const f = this.#getSketchFeature();
+          const ext = (f?.persistentData?.externalRefs || []);
+          const isExternal = (pid) => ext.some(r => r.p0 === pid || r.p1 === pid);
+          const movable = ids.filter(pid => {
+            const p = this._solver?.getPointById?.(pid);
+            return p && !p.fixed && !isExternal(pid);
+          });
+          const uv = this.#pointerToPlaneUV(e);
+          this._pendingGeo = { ids: movable, x: e.clientX, y: e.clientY, startUV: uv, started: false, geometryId: ghit.id };
+        } catch { this._pendingGeo = { ids: null, x: 0, y: 0, startUV: null, started: false, geometryId: null }; }
+        consumed = true;
+        return;
+      }
+      // Then try dimension leaders/graphics selection in canvas
       const dhit = this.#hitTestDim(e);
       if (dhit && e.button === 0) {
         try { this.toggleSelectConstraint?.(dhit.cid); } catch {}
@@ -623,7 +649,7 @@ export class SketchMode3D {
         consumed = true;
         return;
       }
-      // Try constraint glyph selection (non-dimension symbols)
+      // Finally, constraint glyph selection (non-dimension symbols)
       const ghit2 = this.#hitTestGlyph(e);
       if (ghit2 && e.button === 0) {
         try { this.toggleSelectConstraint?.(ghit2.cid); } catch {}
@@ -631,13 +657,6 @@ export class SketchMode3D {
         try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
         consumed = true;
         return;
-      }
-      const ghit = this.#hitTestGeometry(e);
-      if (ghit && e.button === 0) {
-        this.#toggleSelection({ type: "geometry", id: ghit.id });
-        this.#refreshContextBar();
-        this.#rebuildSketchGraphics();
-        consumed = true;
       } else {
         // Clicked empty space: do not consume so ArcballControls can spin the model.
         // Arm a blank click so on pointerup we can clear selection if it wasn't a drag.
@@ -671,6 +690,27 @@ export class SketchMode3D {
       }
     }
 
+    // Promote pending geometry drag
+    if (!this._dragGeo.active && this._pendingGeo?.ids && Array.isArray(this._pendingGeo.ids)) {
+      const d = Math.hypot((e.clientX - (this._pendingGeo.x || 0)), (e.clientY - (this._pendingGeo.y || 0)));
+      if (d >= threshold && this._pendingGeo.ids.length > 0) {
+        this._dragGeo.active = true;
+        this._dragGeo.ids = this._pendingGeo.ids.slice();
+        this._dragGeo.startUV = this._pendingGeo.startUV || this.#pointerToPlaneUV(e) || { u: 0, v: 0 };
+        // Capture starting positions of all points
+        this._dragGeo.pointsStart = new Map();
+        try {
+          for (const pid of this._dragGeo.ids) {
+            const p = this._solver?.getPointById?.(pid);
+            if (p) this._dragGeo.pointsStart.set(pid, { x: p.x, y: p.y });
+          }
+        } catch {}
+        this._pendingGeo.started = true;
+        try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch {}
+        try { e.target.setPointerCapture?.(e.pointerId); } catch {}
+      }
+    }
+
     if (this._drag.active) {
       const uv = this.#pointerToPlaneUV(e);
       if (!uv) return;
@@ -689,6 +729,24 @@ export class SketchMode3D {
         this.#rebuildSketchGraphics();
       }
       try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
+      return;
+    }
+    if (this._dragGeo.active) {
+      const uv = this.#pointerToPlaneUV(e);
+      if (uv) {
+        const du = uv.u - (this._dragGeo.startUV?.u || 0);
+        const dv = uv.v - (this._dragGeo.startUV?.v || 0);
+        try {
+          for (const pid of this._dragGeo.ids || []) {
+            const p = this._solver?.getPointById?.(pid);
+            const st = this._dragGeo.pointsStart?.get?.(pid);
+            if (p && st) { p.x = st.x + du; p.y = st.y + dv; }
+          }
+        } catch {}
+        try { this._solver.solveSketch("full"); } catch {}
+        this.#rebuildSketchGraphics();
+      }
+      try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
       return;
     }
     if (this._dragDim?.active) {
@@ -731,6 +789,15 @@ export class SketchMode3D {
       this.#refreshContextBar();
       this.#rebuildSketchGraphics();
     }
+    // If geometry pending but not dragged, toggle its selection
+    if (!this._dragGeo.active && this._pendingGeo?.ids && this._pendingGeo.started === false) {
+      const gid = this._pendingGeo.geometryId != null ? parseInt(this._pendingGeo.geometryId) : null;
+      if (gid != null) {
+        this.#toggleSelection({ type: "geometry", id: gid });
+        this.#refreshContextBar();
+        this.#rebuildSketchGraphics();
+      }
+    }
     // If pressed on blank space and didn't drag, clear selection
     if (this._blankDown?.active) {
       const threshold = (this.viewer && typeof this.viewer._dragThreshold === 'number') ? this.viewer._dragThreshold : 5;
@@ -750,6 +817,13 @@ export class SketchMode3D {
     try {
       if (this._dragDim?.active) this.#endDimDrag(e);
     } catch { }
+    // End any geometry drag
+    if (this._dragGeo.active) {
+      this._dragGeo.active = false;
+      this._dragGeo.ids = [];
+      this._dragGeo.pointsStart = null;
+      try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch {}
+    }
     // Re-enable camera controls after any sketch drag
     try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch {}
     try { this.#notifyControlsEnd(e); } catch {}
@@ -757,6 +831,7 @@ export class SketchMode3D {
     this._drag.pointId = null;
     this._pendingDrag.pointId = null;
     this._pendingDrag.started = false;
+    this._pendingGeo = { ids: null, x: 0, y: 0, startUV: null, started: false, geometryId: null };
   }
 
   #canvasClientSize(canvas) {
