@@ -11,17 +11,23 @@ export function drawConstraintGlyph(inst, c) {
     .addScaledVector(inst._lock.basis.y, v);
   const addLine = (u0, v0, u1, v1, color = 0x69a8ff) => {
     const g = new THREE.BufferGeometry().setFromPoints([to3(u0, v0), to3(u1, v1)]);
-    const m = new THREE.LineBasicMaterial({ color });
+    const m = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
     const ln = new THREE.Line(g, m);
     ln.userData = { kind: 'dim', cid: c.id };
+    ln.renderOrder = 10020;
+    try { ln.layers.set(31); } catch {}
     inst._dim3D.add(ln);
   };
   const addRing = (u, v, r, color = 0x69a8ff) => {
     const seg = 20; const pts = [];
     for (let i = 0; i <= seg; i++) { const t = (i / seg) * Math.PI * 2; pts.push(to3(u + r * Math.cos(t), v + r * Math.sin(t))); }
     const g = new THREE.BufferGeometry().setFromPoints(pts);
-    const m = new THREE.LineBasicMaterial({ color });
-    const ln = new THREE.Line(g, m); ln.userData = { kind: 'dim', cid: c.id }; inst._dim3D.add(ln);
+    const m = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
+    const ln = new THREE.Line(g, m);
+    ln.userData = { kind: 'dim', cid: c.id };
+    ln.renderOrder = 10020;
+    try { ln.layers.set(31); } catch {}
+    inst._dim3D.add(ln);
   };
   const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
   const wpp = worldPerPixel(inst.viewer.camera, rect.width, rect.height);
@@ -78,4 +84,3 @@ function worldPerPixel(camera, width, height) {
   const fovRad = (camera.fov * Math.PI) / 180;
   return (2 * Math.tan(fovRad / 2) * dist) / height;
 }
-

@@ -5,7 +5,7 @@
 import { OrthographicCamera, Matrix4 } from 'three';
 
 export class OrthoCameraIdle extends OrthographicCamera {
-  constructor(left, right, top, bottom, near = 0.1, far = 2000) {
+  constructor(left, right, top, bottom, near = 0.000000001, far = 200000000) {
     super(left, right, top, bottom, near, far);
 
     this._idle = {

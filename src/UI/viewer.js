@@ -476,9 +476,18 @@ export class Viewer {
     }
 
     _pickAtEvent(event) {
+        // While Sketch Mode is active, suppress normal scene picking
+        // SketchMode3D manages its own picking for sketch points/curves and model edges.
+        if (this._sketchMode) return { hit: null, target: null };
         if (!event) return { hit: null, target: null };
         const ndc = this._getPointerNDC(event);
         this.raycaster.setFromCamera(ndc, this.camera);
+        // Shift the ray origin far behind the camera along the ray direction
+        try {
+            const span = Math.abs((this.camera?.far ?? 0) - (this.camera?.near ?? 0)) || 1;
+            const back = Math.max(1e6, span * 10);
+            this.raycaster.ray.origin.addScaledVector(this.raycaster.ray.direction, -back);
+        } catch { }
         // Intersect everything; raycaster will skip non-geometry nodes
         const intersects = this.raycaster.intersectObjects(this.scene.children, true);
         for (const it of intersects) {

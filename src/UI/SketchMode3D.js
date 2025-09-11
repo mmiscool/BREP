@@ -2,9 +2,8 @@
 
 import * as THREE from "three";
 import ConstraintSolver from "../features/sketch/sketchSolver2D/ConstraintEngine.js";
-import { drawConstraintGlyph } from "./sketcher/glyphs.js";
 import { updateListHighlights, applyHoverAndSelectionColors } from "./sketcher/highlights.js";
-import { mountDimRoot, clearDims as dimsClear, renderDimensions as dimsRender, dimDistance3D as dimsDimDistance3D, dimRadius3D as dimsDimRadius3D, dimAngle3D as dimsDimAngle3D } from "./sketcher/dimensions.js";
+import { renderDimensions as dimsRender } from "./sketcher/dimensions.js";
 import { AccordionWidget } from "./AccordionWidget.js";
 
 export class SketchMode3D {
@@ -14,8 +13,6 @@ export class SketchMode3D {
     this._ui = null;
     this._saved = null; // (unused) legacy snapshot
     this._lock = null; // { basis:{x,y,z,origin} }
-    this._panning = false; // legacy manual camera pan (disabled)
-    this._panStart = { x: 0, y: 0 }; // legacy manual camera pan (disabled)
     // Editing state
     this._solver = null;
     this._sketchGroup = null;
@@ -46,12 +43,8 @@ export class SketchMode3D {
     // Track SKETCH groups we hide while editing so we can restore visibility
     this._hiddenSketches = [];
     // No clipping plane; orientation must do the work
-    // Debug vectors
-    this._debugGroup = null;     // container for camera/face normal vectors
-    this._camRay = null;         // THREE.Line for camera forward ray
-    this._camRayGeom = null;     // BufferGeometry for camera ray
-    this._refObj = null;         // Reference FACE/PLANE object used for normals
-    this._debugLengthScale = 2.0; // scale factor for debug vector lengths
+    // Reference object used for plane basis/orientation
+    this._refObj = null;
   }
 
   open() {
@@ -120,7 +113,7 @@ export class SketchMode3D {
         }
       }
     } catch { }
-    const currentDist = v.camera.position.distanceTo(pivotLook); // read-only
+    const currentDist = v.camera.position.distanceTo(pivotLook)*(-1); // read-only
     this._lock = { basis, distance: currentDist || 20 };
 
     // Reposition and orient camera to face the sketch plane head-on.
@@ -222,6 +215,14 @@ export class SketchMode3D {
     this._dim3D = new THREE.Group();
     this._dim3D.name = `__SKETCH_DIMS__:${this.featureID}`;
     v.scene.add(this._dim3D);
+
+    // Ensure camera renders the sketch layer (31) in addition to default
+    try {
+      this._camLayersPrev = v.camera?.layers?.mask;
+      if (v.camera?.layers && typeof v.camera.layers.enable === 'function') {
+        v.camera.layers.enable(31);
+      }
+    } catch { }
     this.#rebuildSketchGraphics();
 
     // Refresh external reference points to current model projection
@@ -303,19 +304,7 @@ export class SketchMode3D {
       } catch { }
       this._dim3D = null;
     }
-    // Remove debug vectors
-    if (this._debugGroup && v?.scene) {
-      try {
-        v.scene.remove(this._debugGroup);
-        this._debugGroup.traverse((ch) => {
-          try { ch.geometry && ch.geometry.dispose(); } catch {}
-          try { ch.material && ch.material.dispose && ch.material.dispose(); } catch {}
-        });
-      } catch {}
-    }
-    this._debugGroup = null;
-    this._camRay = null;
-    this._camRayGeom = null;
+    // No debug vectors to clean up
     // Do not restore or alter camera/controls
     // No clipping plane to restore
     // remove listeners
@@ -341,6 +330,14 @@ export class SketchMode3D {
     } catch { }
     this._dimRoot = null;
     this._dimOffsets.clear();
+
+    // Restore camera layers visibility
+    try {
+      if (v?.camera?.layers && this._camLayersPrev !== undefined) {
+        v.camera.layers.mask = this._camLayersPrev;
+      }
+    } catch { }
+    this._camLayersPrev = undefined;
 
     // Restore visibility of any SKETCH groups we hid on open
     try {
@@ -467,7 +464,7 @@ export class SketchMode3D {
           this.#refreshContextBar();
           this.#renderExternalRefsList();
         }
-        try { e.preventDefault(); e.stopPropagation(); } catch {}
+        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
         return;
       }
       const hit = this.#hitTestPoint(e);
@@ -536,10 +533,7 @@ export class SketchMode3D {
         }
       }
       if (e.button === 0) {
-        try {
-          e.preventDefault();
-          e.stopPropagation();
-        } catch { }
+        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
       }
       return;
     }
@@ -547,6 +541,10 @@ export class SketchMode3D {
     // Select tool: if clicking a point, arm a pending drag; else try dim/geometry; else pan
     const hit = this.#hitTestPoint(e);
     if (hit != null) {
+      // Disable camera controls immediately when pressing on a sketch point
+      if (e.button === 0) {
+        try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch {}
+      }
       // Prevent dragging of external reference points; allow selection only
       try {
         const f = this.#getSketchFeature();
@@ -556,7 +554,7 @@ export class SketchMode3D {
             this.#toggleSelection({ type: "point", id: hit });
             this.#refreshContextBar();
             this.#rebuildSketchGraphics();
-            try { e.preventDefault(); e.stopPropagation(); } catch {}
+            try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
           }
           return;
         }
@@ -569,7 +567,7 @@ export class SketchMode3D {
             this.#toggleSelection({ type: "point", id: hit });
             this.#refreshContextBar();
             this.#rebuildSketchGraphics();
-            try { e.preventDefault(); e.stopPropagation(); } catch {}
+            try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
           }
           return;
         }
@@ -601,10 +599,7 @@ export class SketchMode3D {
       }
     }
     if (e.button === 0) {
-      try {
-        e.preventDefault();
-        e.stopPropagation();
-      } catch { }
+      try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
     }
   }
 
@@ -620,6 +615,9 @@ export class SketchMode3D {
         this._drag.active = true;
         this._drag.pointId = this._pendingDrag.pointId;
         this._pendingDrag.started = true;
+        // Disable camera controls while dragging sketch points
+        try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch {}
+        try { e.target.setPointerCapture?.(e.pointerId); } catch {}
       }
     }
 
@@ -640,18 +638,12 @@ export class SketchMode3D {
         this._solver.solveSketch("full");
         this.#rebuildSketchGraphics();
       }
-      try {
-        e.preventDefault();
-        e.stopPropagation();
-      } catch { }
+      try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
       return;
     }
     if (this._dragDim?.active) {
       this.#moveDimDrag(e);
-      try {
-        e.preventDefault();
-        e.stopPropagation();
-      } catch { }
+      try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
       return;
     }
     // Passive hover highlighting
@@ -693,7 +685,9 @@ export class SketchMode3D {
     try {
       if (this._dragDim?.active) this.#endDimDrag(e);
     } catch { }
-    this._panning = false; // legacy pan disabled
+    // Re-enable camera controls after any sketch drag
+    try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch {}
+    try { this.#notifyControlsEnd(e); } catch {}
     this._drag.active = false;
     this._drag.pointId = null;
     this._pendingDrag.pointId = null;
@@ -736,7 +730,7 @@ export class SketchMode3D {
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -(((e.clientY - rect.top) / rect.height) * 2 - 1),
     );
-    this._raycaster.setFromCamera(ndc, v.camera);
+    this.#setRayFromCamera(ndc);
     const pl = this.#plane();
     if (!pl) return null;
     const hit = new THREE.Vector3();
@@ -747,6 +741,19 @@ export class SketchMode3D {
     const by = this._lock.basis.y;
     const d = hit.clone().sub(o);
     return { u: d.dot(bx), v: d.dot(by) };
+  }
+
+  // Helper: set ray from camera and shift origin far behind camera along ray direction
+  #setRayFromCamera(ndc) {
+    const v = this.viewer;
+    this._raycaster.setFromCamera(ndc, v.camera);
+    try {
+      const ray = this._raycaster.ray;
+      // Use a large offset relative to camera frustum, fallback to fixed large number
+      const span = Math.abs((v.camera?.far ?? 0) - (v.camera?.near ?? 0)) || 1;
+      const back = Math.max(1e6, span * 10);
+      ray.origin.addScaledVector(ray.direction, -back);
+    } catch { /* noop */ }
   }
 
   #basisFromReference(obj) {
@@ -814,14 +821,7 @@ export class SketchMode3D {
     return { x, y, z, origin, rawNormal: n.clone() };
   }
 
-  #quatFromAxes(x, y, z) {
-    // Build a quaternion from orthonormal axes
-    const m = new THREE.Matrix4();
-    m.makeBasis(x, y, z);
-    const q = new THREE.Quaternion();
-    q.setFromRotationMatrix(m);
-    return q;
-  }
+  
 
   // ---------- UI + Drawing ----------
   #mountSketchSidebar() {
@@ -1516,11 +1516,14 @@ export class SketchMode3D {
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -(((e.clientY - rect.top) / rect.height) * 2 - 1),
     );
-    this._raycaster.setFromCamera(ndc, v.camera);
+    this.#setRayFromCamera(ndc);
+    const prevMask = this._raycaster.layers.mask;
+    try { this._raycaster.layers.set(31); } catch {}
     const hits = this._raycaster.intersectObjects(
       this._sketchGroup.children,
       true,
     );
+    this._raycaster.layers.mask = prevMask;
     for (const h of hits) {
       const ud = h.object?.userData || {};
       if (ud.kind === "point" && Number.isFinite(ud.id)) return ud.id;
@@ -1536,17 +1539,24 @@ export class SketchMode3D {
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -(((e.clientY - rect.top) / rect.height) * 2 - 1),
     );
-    this._raycaster.setFromCamera(ndc, v.camera);
+    this.#setRayFromCamera(ndc);
     try {
       const { width, height } = this.#canvasClientSize(v.renderer.domElement);
       const wpp = this.#worldPerPixel(v.camera, width, height);
       this._raycaster.params.Line = this._raycaster.params.Line || {};
       this._raycaster.params.Line.threshold = Math.max(0.05, wpp * 6);
+      // Also set threshold for Line2 (fat lines) in screen pixels
+      const dpr = (window.devicePixelRatio || 1);
+      this._raycaster.params.Line2 = this._raycaster.params.Line2 || {};
+      this._raycaster.params.Line2.threshold = Math.max(1, 2 * dpr);
     } catch { }
+    const prevMask = this._raycaster.layers.mask;
+    try { this._raycaster.layers.set(31); } catch {}
     const hits = this._raycaster.intersectObjects(
       this._sketchGroup.children,
       true,
     );
+    this._raycaster.layers.mask = prevMask;
     for (const h of hits) {
       const ud = h.object?.userData || {};
       if (ud.kind === "geometry" && Number.isFinite(ud.id))
@@ -1563,22 +1573,24 @@ export class SketchMode3D {
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -(((e.clientY - rect.top) / rect.height) * 2 - 1),
     );
-    this._raycaster.setFromCamera(ndc, v.camera);
+    this.#setRayFromCamera(ndc);
     try {
       const { width, height } = this.#canvasClientSize(v.renderer.domElement);
       const wpp = this.#worldPerPixel(v.camera, width, height);
       this._raycaster.params.Line = this._raycaster.params.Line || {};
       this._raycaster.params.Line.threshold = Math.max(0.05, wpp * 6);
+      // Ensure fat-line intersections are generous enough in pixels
+      const dpr = (window.devicePixelRatio || 1);
+      this._raycaster.params.Line2 = this._raycaster.params.Line2 || {};
+      this._raycaster.params.Line2.threshold = Math.max(1, 2 * dpr);
     } catch { }
-    // Intersect entire scene but filter to type EDGE
-    const hits = this._raycaster.intersectObjects(v.scene.children, true);
-    for (const h of hits) {
-      let o = h.object;
-      while (o) {
-        if (o.type === 'EDGE') return h;
-        o = o.parent;
-      }
-    }
+    // Intersect only EDGE objects (ignore faces and everything else)
+    const edgeObjects = [];
+    try {
+      v.scene.traverse((obj) => { if (obj && obj.type === 'EDGE' && obj.visible !== false) edgeObjects.push(obj); });
+    } catch {}
+    const hits = edgeObjects.length ? this._raycaster.intersectObjects(edgeObjects, true) : [];
+    if (hits && hits.length) return hits[0];
     return null;
   }
   #hitTestDim(e) {
@@ -1589,14 +1601,21 @@ export class SketchMode3D {
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -(((e.clientY - rect.top) / rect.height) * 2 - 1),
     );
-    this._raycaster.setFromCamera(ndc, v.camera);
+    this.#setRayFromCamera(ndc);
     try {
       const { width, height } = this.#canvasClientSize(v.renderer.domElement);
       const wpp = this.#worldPerPixel(v.camera, width, height);
       this._raycaster.params.Line = this._raycaster.params.Line || {};
       this._raycaster.params.Line.threshold = Math.max(0.05, wpp * 6);
+      const dpr = (window.devicePixelRatio || 1);
+      this._raycaster.params.Line2 = this._raycaster.params.Line2 || {};
+      this._raycaster.params.Line2.threshold = Math.max(1, 2 * dpr);
     } catch { }
+    // Dimensions render on overlay layer 31; ensure raycaster includes them
+    const prevMask = this._raycaster.layers.mask;
+    try { this._raycaster.layers.set(31); } catch {}
     const hits = this._raycaster.intersectObjects(this._dim3D.children, true);
+    this._raycaster.layers.mask = prevMask;
     for (const h of hits) {
       const ud = h.object?.userData || {};
       if (ud.kind === "dim" && ud.cid !== undefined && ud.cid !== null)
@@ -1624,7 +1643,13 @@ export class SketchMode3D {
       Y = b.y;
     const to3 = (u, v) =>
       new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
-    const lineMat = new THREE.LineBasicMaterial({ color: 0xffff88 });
+    // Sketch curves should always render on top of scene geometry
+    const lineMat = new THREE.LineBasicMaterial({
+      color: 0xffff88,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+    });
     for (const geo of s.geometries || []) {
       if (geo.type === "line" && geo.points?.length === 2) {
         const p0 = s.points.find((p) => p.id === geo.points[0]);
@@ -1641,6 +1666,8 @@ export class SketchMode3D {
           mat.color.set(sel ? 0x6fe26f : 0xffff88);
         } catch { }
         const ln = new THREE.Line(bg, mat);
+        ln.renderOrder = 10000;
+        try { ln.layers.set(31); } catch {}
         ln.userData = { kind: "geometry", id: geo.id, type: "line" };
         grp.add(ln);
       } else if (geo.type === "circle") {
@@ -1664,6 +1691,8 @@ export class SketchMode3D {
           mat.color.set(sel ? 0x6fe26f : 0xffff88);
         } catch { }
         const ln = new THREE.Line(bg, mat);
+        ln.renderOrder = 10000;
+        try { ln.layers.set(31); } catch {}
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
       } else if (geo.type === "arc") {
@@ -1696,6 +1725,8 @@ export class SketchMode3D {
           mat.color.set(sel ? 0x6fe26f : 0xffff88);
         } catch { }
         const ln = new THREE.Line(bg, mat);
+        ln.renderOrder = 10000;
+        try { ln.layers.set(31); } catch {}
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
       }
@@ -1711,8 +1742,13 @@ export class SketchMode3D {
       );
       const mat = new THREE.MeshBasicMaterial({
         color: selected ? 0x6fe26f : 0x9ec9ff,
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
       });
       const m = new THREE.Mesh(this._handleGeom, mat);
+      m.renderOrder = 10001;
+      try { m.layers.set(31); } catch {}
       m.position.copy(to3(p.x, p.y));
       m.userData = { kind: "point", id: p.id };
       m.scale.setScalar(r);
@@ -1768,51 +1804,16 @@ export class SketchMode3D {
     this._dimRoot = el;
   }
 
-  #clearDims() {
-    if (!this._dimRoot) return;
-    // Clear labels
-    const labels = Array.from(this._dimRoot.querySelectorAll(".dim-label"));
-    labels.forEach((n) => n.parentNode && n.parentNode.removeChild(n));
-    // Clear SVG content (kept empty for now)
-    if (this._dimSVG)
-      while (this._dimSVG.firstChild)
-        this._dimSVG.removeChild(this._dimSVG.firstChild);
-    // Clear 3D leaders
-    if (this._dim3D) {
-      while (this._dim3D.children.length) {
-        const ch = this._dim3D.children.pop();
-        try {
-          ch.geometry?.dispose();
-          ch.material?.dispose?.();
-        } catch { }
-      }
-    }
-  }
+  
 
   #renderDimensions() { try { dimsRender(this); } catch {} }
 
 
-  // Draw small glyphs to visualize non-dimension constraints
-  #drawConstraintGlyph(c) { try { drawConstraintGlyph(this, c); } catch {} }
+  
 
-  #updateOneDimPosition(el, world, off) {
-    const du = Number(off?.du) || 0;
-    const dv = Number(off?.dv) || 0;
-    const w = world
-      .clone()
-      .add(this._lock.basis.x.clone().multiplyScalar(du))
-      .add(this._lock.basis.y.clone().multiplyScalar(dv));
-    const pt = w.project(this.viewer.camera);
-    const rect = this.viewer.renderer.domElement.getBoundingClientRect();
-    const x = (pt.x * 0.5 + 0.5) * rect.width;
-    const y = (-pt.y * 0.5 + 0.5) * rect.height;
-    el.style.left = `${Math.round(x)}px`;
-    el.style.top = `${Math.round(y)}px`;
-  }
+  
 
-  #updateDimPositions() {
-    this.#renderDimensions();
-  }
+  
 
   // Lookup a constraint by id from the current sketch
   #getConstraintById(id) {
@@ -1822,120 +1823,9 @@ export class SketchMode3D {
     return (s.constraints || []).find((c) => parseInt(c.id) === cid) || null;
   }
 
-  // ===== Debug vectors: camera ray + triangle normals on reference face =====
-  #buildDebugVectors() {
-    const v = this.viewer;
-    if (!v || !v.scene) return;
-    if (this._debugGroup) {
-      try { v.scene.remove(this._debugGroup); } catch {}
-      this._debugGroup = null;
-    }
-    const grp = new THREE.Group();
-    grp.name = `__SKETCH_DEBUG__:${this.featureID}`;
-    v.scene.add(grp);
-    this._debugGroup = grp;
+  
 
-    // Camera ray geometry (2 points)
-    const rayGeom = new THREE.BufferGeometry();
-    rayGeom.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
-    const rayMat = new THREE.LineBasicMaterial({ color: 0xff4444, depthTest: false, transparent: true, opacity: 1.0 });
-    const ray = new THREE.Line(rayGeom, rayMat);
-    ray.renderOrder = 3;
-    grp.add(ray);
-    this._camRayGeom = rayGeom;
-    this._camRay = ray;
-
-    // Per-triangle normals on the reference FACE
-    try { this.#buildFaceTriangleNormals(this._refObj, grp); } catch {}
-  }
-
-  #buildFaceTriangleNormals(face, grp) {
-    if (!face || !face.geometry || !grp) return;
-    const geom = face.geometry;
-    const pos = geom.getAttribute && geom.getAttribute('position');
-    if (!pos || pos.itemSize !== 3) return;
-    const idx = geom.getIndex && geom.getIndex();
-    const triCount = idx ? (idx.count / 3) | 0 : (pos.count / 3) | 0;
-    if (triCount <= 0) return;
-
-    // Choose a reasonable length based on face size
-    let len = 1;
-    try {
-      const bs = geom.boundingSphere || (geom.computeBoundingSphere(), geom.boundingSphere);
-      if (bs) len = Math.max(0.02, bs.radius * 0.4 * (this._debugLengthScale || 1));
-    } catch {}
-
-    const positions = new Float32Array(triCount * 2 * 3);
-    const a = new THREE.Vector3();
-    const b = new THREE.Vector3();
-    const c = new THREE.Vector3();
-    const ab = new THREE.Vector3();
-    const ac = new THREE.Vector3();
-    const center = new THREE.Vector3();
-    const n = new THREE.Vector3();
-    const toWorld = (out, i) => out.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(face.matrixWorld);
-
-    for (let t = 0; t < triCount; t++) {
-      const i0 = idx ? (idx.getX(3 * t + 0) >>> 0) : (3 * t + 0);
-      const i1 = idx ? (idx.getX(3 * t + 1) >>> 0) : (3 * t + 1);
-      const i2 = idx ? (idx.getX(3 * t + 2) >>> 0) : (3 * t + 2);
-      toWorld(a, i0); toWorld(b, i1); toWorld(c, i2);
-      center.copy(a).add(b).add(c).multiplyScalar(1/3);
-      ab.subVectors(b, a);
-      ac.subVectors(c, a);
-      n.copy(ab).cross(ac).normalize();
-      const j = t * 6;
-      positions[j + 0] = center.x; positions[j + 1] = center.y; positions[j + 2] = center.z;
-      positions[j + 3] = center.x + n.x * len; positions[j + 4] = center.y + n.y * len; positions[j + 5] = center.z + n.z * len;
-    }
-
-    const segGeom = new THREE.BufferGeometry();
-    segGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    const segMat = new THREE.LineBasicMaterial({ color: 0xffff55, depthTest: false, transparent: true, opacity: 0.95 });
-    const lines = new THREE.LineSegments(segGeom, segMat);
-    lines.renderOrder = 2;
-    grp.add(lines);
-
-    // Average face normal at centroid
-    try {
-      const avg = typeof face.getAverageNormal === 'function' ? face.getAverageNormal().clone().normalize() : null;
-      const bs = geom.boundingSphere || (geom.computeBoundingSphere(), geom.boundingSphere);
-      const O = bs ? face.localToWorld(bs.center.clone()) : face.getWorldPosition(new THREE.Vector3());
-      if (avg && O) {
-        const faceGeom = new THREE.BufferGeometry();
-        faceGeom.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array([
-          O.x, O.y, O.z,
-          O.x + avg.x * len * 2.5, O.y + avg.y * len * 2.5, O.z + avg.z * len * 2.5,
-        ]), 3));
-        const faceMat = new THREE.LineBasicMaterial({ color: 0x55ff55, depthTest: false, transparent: true, opacity: 1.0 });
-        const faceLine = new THREE.LineSegments(faceGeom, faceMat);
-        faceLine.renderOrder = 3;
-        grp.add(faceLine);
-      }
-    } catch {}
-  }
-
-  #updateDebugVectors() {
-    const v = this.viewer;
-    if (!v || !this._debugGroup || !this._camRay || !this._camRayGeom) return;
-    // Update camera ray from camera position along forward direction
-    const cam = v.camera;
-    const start = cam.position.clone();
-    const dir = new THREE.Vector3(); cam.getWorldDirection(dir);
-    const length = Math.max(1e-6, (this._lock?.distance || 10) * (this._debugLengthScale || 2));
-    const end = start.clone().add(dir.clone().multiplyScalar(Math.max(1e-6, length)));
-    const arr = this._camRayGeom.getAttribute('position');
-    arr.set([start.x, start.y, start.z, end.x, end.y, end.z]);
-    arr.needsUpdate = true;
-    this._camRayGeom.computeBoundingSphere();
-  }
-
-  // ----- 3D Draw helpers on sketch plane -----
-  #dimDistance3D(p0, p1, cid) { try { dimsDimDistance3D(this, p0, p1, cid); } catch {} }
-
-  #dimRadius3D(pc, pr, cid) { try { dimsDimRadius3D(this, pc, pr, cid); } catch {} }
-
-  #dimAngle3D(p0, p1, p2, p3, cid, I) { try { dimsDimAngle3D(this, p0, p1, p2, p3, cid, I); } catch {} }
+  
 
   #startDimDrag(cid, e) {
     this._dragDim.active = true;
@@ -1958,9 +1848,10 @@ export class SketchMode3D {
     try {
       e.target.setPointerCapture?.(e.pointerId);
     } catch { }
+    // Disable camera controls during dimension drag
+    try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch {}
     e.preventDefault();
     e.stopPropagation();
-    // Do not lock controls during dimension drag
   }
   #moveDimDrag(e) {
     if (!this._dragDim.active) return;
@@ -2016,109 +1907,14 @@ export class SketchMode3D {
     e.preventDefault();
     e.stopPropagation();
     // Notify controls that interaction ended (no lock/unlock)
+    try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch {}
     setTimeout(() => { this.#notifyControlsEnd(e); }, 30);
   }
 
   #notifyControlsEnd(e) {
-    try {
-      const el = this.viewer?.renderer?.domElement;
-      const ctrls = this.viewer?.controls;
-      if (!el) return;
-      const opts = {
-        bubbles: true,
-        cancelable: true,
-        pointerId: e?.pointerId || 1,
-        button: e?.button ?? 0,
-        buttons: 0,
-        clientX: e?.clientX ?? 0,
-        clientY: e?.clientY ?? 0,
-        pointerType: e?.pointerType || "mouse",
-      };
-      try {
-        el.dispatchEvent(new PointerEvent("pointerup", opts));
-      } catch { }
-      try {
-        el.dispatchEvent(new MouseEvent("mouseup", opts));
-      } catch { }
-      try {
-        ctrls?.dispatchEvent?.({ type: "end" });
-      } catch { }
-    } catch { }
+    // Notify controls the interaction ended without synthesizing DOM events,
+    // to avoid re-entering our own pointerup handler.
+    try { this.viewer?.controls?.dispatchEvent?.({ type: "end" }); } catch {}
   }
   // Controls locking removed
-  #svgAngle(p0, p1, p2, p3, cid, I) {
-    if (!this._dimSVG) return;
-    const svg = this._dimSVG;
-    const rect = this.viewer.renderer.domElement.getBoundingClientRect();
-    const toWorld = (pt) =>
-      new THREE.Vector3()
-        .copy(this._lock.basis.origin)
-        .addScaledVector(this._lock.basis.x, pt.x)
-        .addScaledVector(this._lock.basis.y, pt.y);
-    const A = toWorld(p0),
-      B = toWorld(p1),
-      C = toWorld(p2),
-      D = toWorld(p3),
-      O = toWorld(I);
-    const a = A.clone().sub(B),
-      c = C.clone().sub(D); // directions from vertex
-    const r = a.length() * 0.15; // small radius scaled by first segment
-    // Build plane basis projection to screen for arc approximation: sample in world and project
-    const nSamples = 24;
-    const pts = [];
-    const v0 = a.clone().normalize();
-    const v1 = c.clone().normalize();
-    // angle between v0 and v1 around +Z of sketch plane
-    // Build an orthonormal 2D basis on plane to parametrize arc
-    const X = this._lock.basis.x.clone().normalize();
-    const Y = this._lock.basis.y.clone().normalize();
-    const toUV = (w) => ({ u: w.dot(X), v: w.dot(Y) });
-    const fromUV = (u, v) =>
-      new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
-    const v0uv = toUV(B.clone().add(v0).sub(O)),
-      v1uv = toUV(D.clone().add(v1).sub(O));
-    let a0 = Math.atan2(v0uv.v, v0uv.u);
-    let a1 = Math.atan2(v1uv.v, v1uv.u);
-    let d = a1 - a0;
-    while (d <= -Math.PI) d += 2 * Math.PI;
-    while (d > Math.PI) d -= 2 * Math.PI;
-    for (let i = 0; i <= nSamples; i++) {
-      const t = a0 + d * (i / nSamples);
-      const P = fromUV(Math.cos(t) * r, Math.sin(t) * r);
-      const p = P.clone().project(this.viewer.camera);
-      const x = (p.x * 0.5 + 0.5) * rect.width;
-      const y = (-p.y * 0.5 + 0.5) * rect.height;
-      pts.push([x, y]);
-    }
-    const mk = (name, attrs) => {
-      const el = document.createElementNS("http://www.w3.org/2000/svg", name);
-      for (const k in attrs) el.setAttribute(k, String(attrs[k]));
-      svg.appendChild(el);
-      return el;
-    };
-    // Polyline arc
-    mk("polyline", {
-      points: pts.map((p) => p.join(",")).join(" "),
-      fill: "none",
-      stroke: "#69a8ff",
-      "stroke-width": 2,
-    });
-    // small arrows at ends
-    const drawArrow = (p, q) => {
-      const vx = q[0] - p[0],
-        vy = q[1] - p[1];
-      const len = Math.hypot(vx, vy) || 1;
-      const ux = vx / len,
-        uy = vy / len;
-      const px = -uy,
-        py = ux;
-      const ah = 6;
-      const points = `${q[0]},${q[1]} ${q[0] - ux * ah + px * ah * 0.6},${q[1] - uy * ah + py * ah * 0.6} ${q[0] - ux * ah - px * ah * 0.6},${q[1] - uy * ah - py * ah * 0.6}`;
-      mk("polygon", { points, fill: "#69a8ff" });
-    };
-    if (pts.length >= 2) {
-      drawArrow(pts[1], pts[0]);
-      drawArrow(pts[pts.length - 2], pts[pts.length - 1]);
-    }
-  }
 }

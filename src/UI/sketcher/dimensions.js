@@ -217,8 +217,8 @@ export function dimDistance3D(inst, p0, p1, cid) {
   const d = typeof off.d === 'number' ? off.d : (off.du||0)*nx + (off.dv||0)*ny;
   const ou = nx*(base+d), ov = ny*(base+d);
   const P = (u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
-  const addLine=(pts,mat)=>{ const g=new THREE.BufferGeometry().setFromPoints(pts.map(p=>P(p.u,p.v))); const ln=new THREE.Line(g,mat); ln.userData={kind:'dim',cid}; inst._dim3D.add(ln); };
-  const green=new THREE.LineBasicMaterial({color:0x67e667});
+  const addLine=(pts,mat)=>{ const g=new THREE.BufferGeometry().setFromPoints(pts.map(p=>P(p.u,p.v))); const ln=new THREE.Line(g,mat); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln); };
+  const green=new THREE.LineBasicMaterial({color:0x67e667, depthTest:false, depthWrite:false, transparent:true});
   addLine([{u:u0+ou,v:v0+ov},{u:u1+ou,v:v1+ov}], green);
   addLine([{u:u0,v:v0},{u:u0+ou,v:v0+ov}], green.clone());
   addLine([{u:u1,v:v1},{u:u1+ou,v:v1+ov}], green.clone());
@@ -231,8 +231,8 @@ export function dimRadius3D(inst, pc, pr, cid) {
   const off = inst._dimOffsets.get(cid) || {};
   const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin;
   const P=(u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
-  const blue=new THREE.LineBasicMaterial({ color:0x69a8ff });
-  const add=(uvs)=>{ const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; inst._dim3D.add(ln); };
+  const blue=new THREE.LineBasicMaterial({ color:0x69a8ff, depthTest:false, depthWrite:false, transparent:true });
+  const add=(uvs)=>{ const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln); };
   const vx=pr.x-pc.x, vy=pr.y-pc.y; const L=Math.hypot(vx,vy)||1; const rx=vx/L, ry=vy/L; const nx=-ry, ny=rx; const dr=Number(off.dr)||0; const dp=Number(off.dp)||0;
   const elbow={u: pr.x + rx*dr, v: pr.y + ry*dr}; const dogleg={u: elbow.u + nx*dp, v: elbow.v + ny*dp};
   add([{u:pc.x,v:pc.y},{u:pr.x,v:pr.y}]); add([{u:pr.x,v:pr.y}, elbow]); add([elbow, dogleg]);
@@ -246,8 +246,8 @@ export function dimAngle3D(inst, p0,p1,p2,p3,cid,I) {
   const d1=new THREE.Vector2(p1.x-p0.x, p1.y-p0.y).normalize(); const d2=new THREE.Vector2(p3.x-p2.x, p3.y-p2.y).normalize();
   let a0=Math.atan2(d1.y,d1.x), a1=Math.atan2(d2.y,d2.x); let d=a1-a0; while(d<=-Math.PI)d+=2*Math.PI; while(d>Math.PI)d-=2*Math.PI;
   const r=0.6; const cx=I.x+off.du, cy=I.y+off.dv; const segs=32; const uvs=[]; for(let i=0;i<=segs;i++){ const t=a0+d*(i/segs); uvs.push({u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}); }
-  const blue=new THREE.LineBasicMaterial({color:0x69a8ff}); const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; inst._dim3D.add(ln);
-  const ah=0.06, s=0.6; const addArrowUV=(t)=>{ const tx=-Math.sin(t), ty=Math.cos(t); const wx=-ty, wy=tx; const tip={u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}; const A={u:tip.u+tx*ah+wx*ah*s, v:tip.v+ty*ah+wy*ah*s}; const B={u:tip.u+tx*ah-wx*ah*s, v:tip.v+ty*ah-wy*ah*s}; const gg1=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(A.u,A.v)]); const gg2=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(B.u,B.v)]); inst._dim3D.add(new THREE.Line(gg1, blue.clone())); inst._dim3D.add(new THREE.Line(gg2, blue.clone())); };
+  const blue=new THREE.LineBasicMaterial({color:0x69a8ff, depthTest:false, depthWrite:false, transparent:true}); const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln);
+  const ah=0.06, s=0.6; const addArrowUV=(t)=>{ const tx=-Math.sin(t), ty=Math.cos(t); const wx=-ty, wy=tx; const tip={u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}; const A={u:tip.u+tx*ah+wx*ah*s, v:tip.v+ty*ah+wy*ah*s}; const B={u:tip.u+tx*ah-wx*ah*s, v:tip.v+ty*ah-wy*ah*s}; const gg1=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(A.u,A.v)]); const gg2=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(B.u,B.v)]); const la=new THREE.Line(gg1, blue.clone()); const lb=new THREE.Line(gg2, blue.clone()); la.renderOrder = 10020; lb.renderOrder = 10020; try { la.layers.set(31); lb.layers.set(31); } catch {} inst._dim3D.add(la); inst._dim3D.add(lb); };
   addArrowUV(a0); addArrowUV(a0+d);
 }
 
