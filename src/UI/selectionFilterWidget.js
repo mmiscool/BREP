@@ -31,6 +31,8 @@ export class SelectionFilterWidget {
                     }
                     activeRefSelect.removeAttribute("active-reference-selection");
                     activeRefSelect.style.filter = "none";
+                    // Restore the selection types to the previous state
+                    try { SelectionFilter.restoreAllowedSelectionTypes(); } catch (_) { }
                 }
 
             }
@@ -150,6 +152,8 @@ export class SelectionFilterWidget {
             const activeRefSelect = findActiveReferenceSelection();
             if (DEBUG) console.log(activeRefSelect);
             if (!activeRefSelect) return;
+            // Only route to widgets within the currently open history section
+            if (!isRefInOpenHistoryItem(activeRefSelect)) return;
 
             const isMulti = String(activeRefSelect.dataset?.multiple || '') === 'true';
             if (isMulti) {
@@ -168,6 +172,8 @@ export class SelectionFilterWidget {
                 activeRefSelect.removeAttribute('active-reference-selection');
                 activeRefSelect.style.filter = 'none';
                 activeRefSelect.dispatchEvent(new Event('change'));
+                // Restore selection types to what they were before activation
+                try { SelectionFilter.restoreAllowedSelectionTypes(); } catch (_) { }
             }
         };
         window.addEventListener('selection-changed', onSelectionChanged);
@@ -280,4 +286,24 @@ const findActiveReferenceSelection = (root = document) => {
         if (ts > bestTs) { bestTs = ts; best = el; }
     }
     return best || matches[0];
+};
+
+// Returns true only if the element is inside an open HistoryWidget accordion item
+const isRefInOpenHistoryItem = (el) => {
+    if (!el) return false;
+    let n = el;
+    const seen = new Set();
+    while (n && !seen.has(n)) {
+        seen.add(n);
+        try {
+            if (n.classList && n.classList.contains('acc-item')) {
+                return n.classList.contains('open');
+            }
+        } catch (_) { /* no-op */ }
+        if (n.parentElement) { n = n.parentElement; continue; }
+        const root = (typeof n.getRootNode === 'function') ? n.getRootNode() : null;
+        if (root && root.host) { n = root.host; continue; }
+        break;
+    }
+    return false;
 };

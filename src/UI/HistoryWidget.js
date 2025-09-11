@@ -453,13 +453,11 @@ export class HistoryWidget {
                     e.headerBtn.setAttribute("aria-expanded", "false");
                     e.root.classList.remove("open");
                     e.content.hidden = true;
+                    // Ensure any active reference selection is stopped when a section closes
+                    try { e.ui && typeof e.ui._stopActiveReferenceSelection === 'function' && e.ui._stopActiveReferenceSelection(); } catch (_) { }
                 }
             }
-
-            // Ensure a reference selection input activates only on transition closed->open
-            if (!wasOpen) {
-                try { entry.ui && typeof entry.ui.activateFirstReferenceSelection === 'function' && entry.ui.activateFirstReferenceSelection(); } catch (_) { }
-            }
+            // Do not auto-activate reference selection; only activate on explicit user click
         }
     }
 
@@ -941,6 +939,29 @@ class genFeatureUI {
         this._panel.appendChild(this._fieldsWrap);
 
         this._renderAllFields();
+
+        // Deactivate reference selection when focusing or clicking into any other control
+        const stopIfOtherControl = (target) => {
+            try {
+                // If the active input is not the current focus target, stop selection
+                const active = genFeatureUI.__activeRefInput || null;
+                if (!active) return;
+                if (target === active) return;
+                // If target is inside the same active element (e.g., clicking within the input), skip
+                if (target && typeof target.closest === 'function') {
+                    if (target.closest('[active-reference-selection]')) return;
+                }
+                this._stopActiveReferenceSelection();
+            } catch (_) { }
+        };
+        // Capture focus changes within this form
+        this._shadow.addEventListener('focusin', (ev) => {
+            stopIfOtherControl(ev.target);
+        }, true);
+        // Also capture mouse interactions to be safe
+        this._shadow.addEventListener('mousedown', (ev) => {
+            stopIfOtherControl(ev.target);
+        }, true);
     }
 
     /** Returns the live params object (already kept in sync). */
