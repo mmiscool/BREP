@@ -647,6 +647,8 @@ export class Viewer {
             this._resizeScheduled = false;
             this._resizeRendererToDisplaySize();
             this.render();
+            // Keep overlayed labels/leaders in sync with new viewport
+            try { this._sketchMode?.onCameraChanged?.(); } catch {}
         });
     }
 
@@ -655,6 +657,8 @@ export class Viewer {
         if (this._disposed) return;
         // Re-evaluate hover while camera moves (if we have a last pointer)
         if (this._lastPointerEvent) this._updateHover(this._lastPointerEvent);
+        // While orbiting/panning/zooming, reposition dimension labels/leaders
+        try { this._sketchMode?.onCameraChanged?.(); } catch {}
     }
 
     // Compute world-units per screen pixel for current camera and viewport

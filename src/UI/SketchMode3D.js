@@ -19,6 +19,8 @@ export class SketchMode3D {
     this._raycaster = new THREE.Raycaster();
     this._drag = { active: false, pointId: null };
     this._pendingDrag = { pointId: null, x: 0, y: 0, started: false };
+    // Track clicks on blank canvas area to clear selection on click (not drag)
+    this._blankDown = { active: false, x: 0, y: 0 };
     this._selection = new Set();
     this._hover = null; // current hovered item {type,id}
     this._tool = "select";
@@ -265,6 +267,19 @@ export class SketchMode3D {
       passive: false,
       capture: true,
     });
+    // ESC key clears selection
+    this._onKeyDown = (ev) => {
+      const k = ev.key || ev.code || '';
+      if (k === 'Escape' || k === 'Esc') {
+        if (this._selection.size) {
+          this._selection.clear();
+          try { this.#refreshContextBar(); } catch {}
+          try { this.#rebuildSketchGraphics(); } catch {}
+          try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+        }
+      }
+    };
+    window.addEventListener('keydown', this._onKeyDown, { passive: true });
   }
 
   close() {
@@ -321,6 +336,7 @@ export class SketchMode3D {
     try {
       window.removeEventListener("pointerup", this._onUp, true);
     } catch { }
+    try { window.removeEventListener('keydown', this._onKeyDown); } catch {}
     this._lock = null;
     try {
       cancelAnimationFrame(this._sizeRAF);
@@ -452,6 +468,7 @@ export class SketchMode3D {
   }
 
   #onPointerDown(e) {
+    let consumed = false; // whether we handled the event and should block controls
     // Tool-based behavior
     if (this._tool !== "select" && e.button === 0) {
       // Pick Edges tool: click scene edges to add external refs
@@ -466,6 +483,7 @@ export class SketchMode3D {
           this.#renderExternalRefsList();
         }
         try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
+        consumed = true;
         return;
       }
       const hit = this.#hitTestPoint(e);
@@ -535,6 +553,7 @@ export class SketchMode3D {
       }
       if (e.button === 0) {
         try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
+        consumed = true;
       }
       return;
     }
@@ -557,6 +576,7 @@ export class SketchMode3D {
             this.#rebuildSketchGraphics();
             try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
           }
+          consumed = true;
           return;
         }
       } catch { }
@@ -570,6 +590,7 @@ export class SketchMode3D {
             this.#rebuildSketchGraphics();
             try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
           }
+          consumed = true;
           return;
         }
       } catch {}
@@ -577,25 +598,35 @@ export class SketchMode3D {
       this._pendingDrag.x = e.clientX;
       this._pendingDrag.y = e.clientY;
       this._pendingDrag.started = false;
+      consumed = true; // we are arming a drag → suppress controls
     } else {
-      // Only labels (HTML overlay) manipulate dimensions; canvas clicks ignore 3D dim curves.
+      // Try dimension leaders/graphics selection in canvas
+      const dhit = this.#hitTestDim(e);
+      if (dhit && e.button === 0) {
+        try { this.toggleSelectConstraint?.(dhit.cid); } catch {}
+        // Re-render dimension styling to reflect selection state
+        try { this.#renderDimensions(); } catch {}
+        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
+        consumed = true;
+        return;
+      }
       const ghit = this.#hitTestGeometry(e);
       if (ghit && e.button === 0) {
         this.#toggleSelection({ type: "geometry", id: ghit.id });
         this.#refreshContextBar();
         this.#rebuildSketchGraphics();
+        consumed = true;
       } else {
-        // clicked empty space → clear selection (no manual camera pan)
+        // Clicked empty space: do not consume so ArcballControls can spin the model.
+        // Arm a blank click so on pointerup we can clear selection if it wasn't a drag.
         if (e.button === 0) {
-          if (this._selection.size) {
-            this._selection.clear();
-            this.#refreshContextBar();
-            this.#rebuildSketchGraphics();
-          }
+          this._blankDown.active = true;
+          this._blankDown.x = e.clientX;
+          this._blankDown.y = e.clientY;
         }
       }
     }
-    if (e.button === 0) {
+    if (consumed && e.button === 0) {
       try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
     }
   }
@@ -673,6 +704,21 @@ export class SketchMode3D {
       this.#toggleSelection({ type: "point", id: this._pendingDrag.pointId });
       this.#refreshContextBar();
       this.#rebuildSketchGraphics();
+    }
+    // If pressed on blank space and didn't drag, clear selection
+    if (this._blankDown?.active) {
+      const threshold = (this.viewer && typeof this.viewer._dragThreshold === 'number') ? this.viewer._dragThreshold : 5;
+      const dx = (e.clientX || 0) - (this._blankDown.x || 0);
+      const dy = (e.clientY || 0) - (this._blankDown.y || 0);
+      const moved = Math.abs(dx) + Math.abs(dy) > threshold;
+      if (!this._drag.active && !this._pendingDrag.started && !this._dragDim?.active && !moved) {
+        if (this._selection.size) {
+          this._selection.clear();
+          this.#refreshContextBar();
+          this.#rebuildSketchGraphics();
+        }
+      }
+      this._blankDown.active = false;
     }
     // End any dimension drag
     try {
@@ -1490,6 +1536,8 @@ export class SketchMode3D {
     else this._selection.add(item);
     try { updateListHighlights(this); } catch {}
     try { applyHoverAndSelectionColors(this); } catch {}
+    // Keep dimension visuals in sync with constraint selection state
+    try { this.#renderDimensions(); } catch {}
     // Ensure the corresponding list section is visible and the row is in view
     try { this.revealListForItem?.(item.type, item.id); } catch {}
   }
@@ -1914,6 +1962,11 @@ export class SketchMode3D {
   
 
   #renderDimensions() { try { dimsRender(this); } catch {} }
+
+  // Public: called by Viewer when camera or viewport changes
+  onCameraChanged() {
+    try { this.#renderDimensions(); } catch {}
+  }
 
 
   

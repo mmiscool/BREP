@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { drawConstraintGlyph } from './glyphs.js';
 
+// Unified dimension colors
+const DIM_COLOR_DEFAULT = 0x69a8ff;   // blue
+const DIM_COLOR_HOVER   = 0xffd54a;   // yellow
+const DIM_COLOR_SELECTED= 0x6fe26f;   // green
+
 export function mountDimRoot(inst) {
   const host = inst.viewer?.container;
   if (!host) return;
@@ -61,6 +66,17 @@ export function renderDimensions(inst) {
     d.style.pointerEvents = 'auto';
     d.textContent = text;
 
+    // Selection/hover styling for labels
+    const isSel = Array.from(inst._selection || []).some(it => it.type === 'constraint' && it.id === c.id);
+    const isHov = inst._hover && inst._hover.type === 'constraint' && inst._hover.id === c.id;
+    if (isSel) {
+      d.style.border = '1px solid #2f6d2f';
+      d.style.background = 'rgba(111,226,111,.16)';
+    } else if (isHov) {
+      d.style.border = '1px solid #6f5a12';
+      d.style.background = 'rgba(255,213,74,.12)';
+    }
+
     // Drag + click-to-select support with small-move threshold
     let dragging = false, moved = false, sx = 0, sy = 0, start = {};
     let sClientX = 0, sClientY = 0;
@@ -98,7 +114,7 @@ export function renderDimensions(inst) {
       // Prevent camera from starting a spin while interacting with dimensions
       try { if (inst.viewer?.controls) inst.viewer.controls.enabled = false; } catch {}
       try { d.setPointerCapture(e.pointerId); } catch {}
-      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+      // Do not prevent default here so click/dblclick can still fire
     });
     d.addEventListener('pointermove', (e) => {
       if (!dragging) return;
@@ -111,12 +127,16 @@ export function renderDimensions(inst) {
       moved = true;
       if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
         // Radius/diameter: track along radial (dr) and perpendicular (dp)
+        // Compute change from pointerdown so live label moves relative to the
+        // original rendered position (world already includes start dr/dp).
         const du = uv.u - sx;
         const dv = uv.v - sy;
         const dr = (Number(radStartDr)||0) + (du*radRx + dv*radRy);
         const dp = (Number(radStartDp)||0) + (du*radNx + dv*radNy);
         inst._dimOffsets.set(c.id, { dr, dp });
-        const labelOff = { du: radRx*dr + radNx*dp, dv: radRy*dr + radNy*dp };
+        const ddr = dr - (Number(radStartDr)||0);
+        const ddp = dp - (Number(radStartDp)||0);
+        const labelOff = { du: radRx*ddr + radNx*ddp, dv: radRy*ddr + radNy*ddp };
         updateOneDimPosition(inst, d, world, labelOff);
       } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
         // Distance between two points: store scalar offset along normal (d)
@@ -128,6 +148,7 @@ export function renderDimensions(inst) {
         const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
         updateOneDimPosition(inst, d, world, { du: distNx*(base + newD), dv: distNy*(base + newD) });
       }
+      // Consume during drag to avoid text selection; suppress click
       e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
     });
     d.addEventListener('pointerup', (e) => {
@@ -138,11 +159,10 @@ export function renderDimensions(inst) {
       if (wasDragging && moved) {
         // Finalize by re-rendering leaders + label
         try { renderDimensions(inst); } catch {}
-      } else {
-        // Treat as click: toggle select this constraint
-        try { inst.toggleSelectConstraint?.(c.id); } catch {}
+        // Prevent generating a click when we dragged
+        e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
       }
-      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+      // If it was a click (not moved), let the click/dblclick handlers run
     });
 
     // Hover should reflect in the sidebar and 3D overlays
@@ -192,7 +212,12 @@ export function renderDimensions(inst) {
       try { inst._solver?.hooks?.updateCanvas?.(); } catch {}
     });
 
-    // Click handled via pointerup when not moved
+    // Click toggles constraint selection; ignore the second click in a double-click (detail>1)
+    d.addEventListener('click', (e) => {
+      if (e.detail > 1) return; // let dblclick handle editing
+      try { inst.toggleSelectConstraint?.(c.id); } catch {}
+      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+    });
 
     inst._dimRoot.appendChild(d);
     const saved = inst._dimOffsets.get(c.id) || { du: 0, dv: 0 };
@@ -201,10 +226,13 @@ export function renderDimensions(inst) {
   };
 
   for (const c of s.constraints || []) {
+    const sel = Array.from(inst._selection || []).some(it => it.type === 'constraint' && it.id === c.id);
+    const hov = inst._hover && inst._hover.type === 'constraint' && inst._hover.id === c.id;
     if (c.type === '⟺') {
       if (c.displayStyle === 'radius' && c.points?.length >= 2) {
         const pc = P(c.points[0]), pr = P(c.points[1]); if (!pc || !pr) continue;
-        dimRadius3D(inst, pc, pr, c.id);
+        const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
+        dimRadius3D(inst, pc, pr, c.id, col);
         const v = new THREE.Vector2(pr.x - pc.x, pr.y - pc.y); const L = v.length() || 1; const rx = v.x/L, ry = v.y/L; const nx = -ry, ny = rx;
         const offSaved = inst._dimOffsets.get(c.id) || {}; const dr = Number(offSaved.dr)||0; const dp = Number(offSaved.dp)||0;
         const label = to3(pr.x + rx*dr + nx*dp, pr.y + ry*dr + ny*dp);
@@ -218,14 +246,16 @@ export function renderDimensions(inst) {
         const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
         const offSaved = inst._dimOffsets.get(c.id) || { du:0, dv:0 };
         const d = typeof offSaved.d === 'number' ? offSaved.d : (offSaved.du||0)*nxny.nx + (offSaved.dv||0)*nxny.ny;
-        dimDistance3D(inst, p0, p1, c.id);
+        const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
+        dimDistance3D(inst, p0, p1, c.id, col);
         mk(c, String((Number(c.value) ?? 0).toFixed(3)), to3((p0.x+p1.x)/2, (p0.y+p1.y)/2), { du: nxny.nx*(base+d), dv: nxny.ny*(base+d) });
       }
     }
     if (c.type === '∠' && c.points?.length >= 4) {
       const p0=P(c.points[0]), p1=P(c.points[1]), p2=P(c.points[2]), p3=P(c.points[3]); if (!p0||!p1||!p2||!p3) continue;
       const I = intersect(p0,p1,p2,p3);
-      dimAngle3D(inst, p0,p1,p2,p3,c.id,I);
+      const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
+      dimAngle3D(inst, p0,p1,p2,p3,c.id,I, col);
       mk(c, String(c.value ?? ''), to3(I.x, I.y));
     }
     // other constraints glyphs
@@ -259,7 +289,7 @@ function pointerToPlaneUV(inst, e) {
   return { u, v: v2 };
 }
 
-export function dimDistance3D(inst, p0, p1, cid) {
+export function dimDistance3D(inst, p0, p1, cid, color = 0x67e667) {
   const off = inst._dimOffsets.get(cid) || { du:0, dv:0 };
   const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin;
   const u0=p0.x, v0=p0.y, u1=p1.x, v1=p1.y; const dx=u1-u0, dy=v1-v0; const L=Math.hypot(dx,dy)||1; const tx=dx/L, ty=dy/L; const nx=-ty, ny=tx;
@@ -269,7 +299,7 @@ export function dimDistance3D(inst, p0, p1, cid) {
   const ou = nx*(base+d), ov = ny*(base+d);
   const P = (u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
   const addLine=(pts,mat)=>{ const g=new THREE.BufferGeometry().setFromPoints(pts.map(p=>P(p.u,p.v))); const ln=new THREE.Line(g,mat); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln); };
-  const green=new THREE.LineBasicMaterial({color:0x67e667, depthTest:false, depthWrite:false, transparent:true});
+  const green=new THREE.LineBasicMaterial({color, depthTest:false, depthWrite:false, transparent:true});
   addLine([{u:u0+ou,v:v0+ov},{u:u1+ou,v:v1+ov}], green);
   addLine([{u:u0,v:v0},{u:u0+ou,v:v0+ov}], green.clone());
   addLine([{u:u1,v:v1},{u:u1+ou,v:v1+ov}], green.clone());
@@ -278,11 +308,11 @@ export function dimDistance3D(inst, p0, p1, cid) {
   arrow(u0,v0,1); arrow(u1,v1,-1);
 }
 
-export function dimRadius3D(inst, pc, pr, cid) {
+export function dimRadius3D(inst, pc, pr, cid, color = 0x69a8ff) {
   const off = inst._dimOffsets.get(cid) || {};
   const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin;
   const P=(u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
-  const blue=new THREE.LineBasicMaterial({ color:0x69a8ff, depthTest:false, depthWrite:false, transparent:true });
+  const blue=new THREE.LineBasicMaterial({ color, depthTest:false, depthWrite:false, transparent:true });
   const add=(uvs)=>{ const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln); };
   const vx=pr.x-pc.x, vy=pr.y-pc.y; const L=Math.hypot(vx,vy)||1; const rx=vx/L, ry=vy/L; const nx=-ry, ny=rx; const dr=Number(off.dr)||0; const dp=Number(off.dp)||0;
   const elbow={u: pr.x + rx*dr, v: pr.y + ry*dr}; const dogleg={u: elbow.u + nx*dp, v: elbow.v + ny*dp};
@@ -291,13 +321,13 @@ export function dimRadius3D(inst, pc, pr, cid) {
   add([tip, A]); add([tip, B]);
 }
 
-export function dimAngle3D(inst, p0,p1,p2,p3,cid,I) {
+export function dimAngle3D(inst, p0,p1,p2,p3,cid,I, color = 0x69a8ff) {
   const off = inst._dimOffsets.get(cid) || { du:0, dv:0 };
   const X=inst._lock.basis.x, Y=inst._lock.basis.y, O=inst._lock.basis.origin; const P=(u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
   const d1=new THREE.Vector2(p1.x-p0.x, p1.y-p0.y).normalize(); const d2=new THREE.Vector2(p3.x-p2.x, p3.y-p2.y).normalize();
   let a0=Math.atan2(d1.y,d1.x), a1=Math.atan2(d2.y,d2.x); let d=a1-a0; while(d<=-Math.PI)d+=2*Math.PI; while(d>Math.PI)d-=2*Math.PI;
   const r=0.6; const cx=I.x+off.du, cy=I.y+off.dv; const segs=32; const uvs=[]; for(let i=0;i<=segs;i++){ const t=a0+d*(i/segs); uvs.push({u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}); }
-  const blue=new THREE.LineBasicMaterial({color:0x69a8ff, depthTest:false, depthWrite:false, transparent:true}); const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln);
+  const blue=new THREE.LineBasicMaterial({color, depthTest:false, depthWrite:false, transparent:true}); const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln);
   const ah=0.06, s=0.6; const addArrowUV=(t)=>{ const tx=-Math.sin(t), ty=Math.cos(t); const wx=-ty, wy=tx; const tip={u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}; const A={u:tip.u+tx*ah+wx*ah*s, v:tip.v+ty*ah+wy*ah*s}; const B={u:tip.u+tx*ah-wx*ah*s, v:tip.v+ty*ah-wy*ah*s}; const gg1=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(A.u,A.v)]); const gg2=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(B.u,B.v)]); const la=new THREE.Line(gg1, blue.clone()); const lb=new THREE.Line(gg2, blue.clone()); la.renderOrder = 10020; lb.renderOrder = 10020; try { la.layers.set(31); lb.layers.set(31); } catch {} inst._dim3D.add(la); inst._dim3D.add(lb); };
   addArrowUV(a0); addArrowUV(a0+d);
 }
