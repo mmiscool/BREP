@@ -77,6 +77,7 @@ export class AccordionWidget {
         font-weight: 700;
         user-select: none;
         background: #111827;
+        user-select: none;
       }
       .accordion-title:hover {
         background: #0f172a;
