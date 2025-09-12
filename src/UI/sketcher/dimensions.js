@@ -62,6 +62,8 @@ export function renderDimensions(inst) {
     return;
   }
   clearDims(inst);
+  // Reset per-frame angle geometry cache used to center labels on arc midpoints
+  try { inst._dimAngleGeom = new Map(); } catch {}
   const s = inst._solver.sketchObject;
   const to3 = (u, v) => new THREE.Vector3()
     .copy(inst._lock.basis.origin)
@@ -69,11 +71,14 @@ export function renderDimensions(inst) {
     .addScaledVector(inst._lock.basis.y, v);
   const P = (id) => s.points.find((p) => p.id === id);
 
-  const mk = (c, text, world, planeOffOverride = null) => {
+  const mk = (c, text, world, planeOffOverride = null, noNudge = false) => {
     const d = document.createElement('div');
     d.className = 'dim-label';
     try { d.dataset.cid = String(c.id); } catch { }
     d.style.position = 'absolute';
+    // Center the label on the placement point
+    d.style.transform = 'translate(-50%, -50%)';
+    d.style.transformOrigin = '50% 50%';
     d.style.padding = '2px 6px';
     d.style.border = '1px solid #364053';
     d.style.borderRadius = '6px';
@@ -106,7 +111,7 @@ export function renderDimensions(inst) {
     inst._dimRoot.appendChild(d);
     const saved = inst._dimOffsets.get(c.id) || { du: 0, dv: 0 };
     const off = planeOffOverride || saved;
-    updateOneDimPosition(inst, d, world, off);
+    updateOneDimPosition(inst, d, world, off, noNudge);
   };
 
   // Prepare glyph placement avoidance (used by drawConstraintGlyph)
@@ -148,10 +153,11 @@ export function renderDimensions(inst) {
         const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
         const offSaved = inst._dimOffsets.get(c.id) || { du: 0, dv: 0 };
         const d = typeof offSaved.d === 'number' ? offSaved.d : (offSaved.du || 0) * basis.nx + (offSaved.dv || 0) * basis.ny;
-        const t = typeof offSaved.t === 'number' ? offSaved.t : (offSaved.du || 0) * basis.tx + (offSaved.dv || 0) * basis.ty;
+        // Constrain label to center of the dimension line: lock tangential offset to 0
+        const t = 0;
         const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
         dimDistance3D(inst, p0, p1, c.id, col);
-        mk(c, String((Number(c.value) ?? 0).toFixed(3)), to3((p0.x + p1.x) / 2, (p0.y + p1.y) / 2), { du: basis.tx * t + basis.nx * (base + d), dv: basis.ty * t + basis.ny * (base + d) });
+        mk(c, String((Number(c.value) ?? 0).toFixed(3)), to3((p0.x + p1.x) / 2, (p0.y + p1.y) / 2), { du: basis.tx * t + basis.nx * (base + d), dv: basis.ty * t + basis.ny * (base + d) }, true);
       }
     }
     if (c.type === '∠' && c.points?.length >= 4) {
@@ -161,7 +167,16 @@ export function renderDimensions(inst) {
       // Pass current numeric value to renderer so the arc length matches the annotation
       const angleValueDeg = (typeof c.value === 'number' && Number.isFinite(c.value)) ? Number(c.value) : null;
       dimAngle3D(inst, p0, p1, p2, p3, c.id, I, col, angleValueDeg);
-      mk(c, String(c.value ?? ''), to3(I.x, I.y));
+      // Center label on arc midpoint if available from the arc construction
+      let labelWorld = to3(I.x, I.y);
+      try {
+        const gmap = inst._dimAngleGeom;
+        const gd = gmap && (gmap.get ? gmap.get(c.id) : gmap[c.id]);
+        if (gd && Number.isFinite(gd.midU) && Number.isFinite(gd.midV)) {
+          labelWorld = to3(gd.midU, gd.midV);
+        }
+      } catch {}
+      mk(c, String(c.value ?? ''), labelWorld, { du: 0, dv: 0 }, true);
     } else {
       // Non-dimension constraints: collect for grouped glyph rendering
       glyphConstraints.push(c);
@@ -341,7 +356,7 @@ function attachDimLabelEvents(inst, el, c, world) {
   let sClientX = 0, sClientY = 0;
   let distNx = 0, distNy = 0, distTx = 0, distTy = 0, distStartD = 0, distStartT = 0;
   let radRx = 0, radRy = 0, radNx = 0, radNy = 0, radStartDr = 0, radStartDp = 0;
-  let angStartDU = 0, angStartDV = 0;
+  let angStartDU = 0, angStartDV = 0, angMidDX = 0, angMidDY = 0, angStartMag = 0;
   let pendingOff = null;
 
   el.addEventListener('pointerdown', (e) => {
@@ -372,10 +387,22 @@ function attachDimLabelEvents(inst, el, c, world) {
         distNx = -ty; distNy = tx;
         const du0 = Number(start.du) || 0, dv0 = Number(start.dv) || 0;
         distStartD = (typeof start.d === 'number') ? Number(start.d) : (du0 * distNx + dv0 * distNy);
-        distStartT = (typeof start.t === 'number') ? Number(start.t) : (du0 * distTx + dv0 * distTy);
+        // Constrain label to center: lock initial tangential offset to 0
+        distStartT = 0;
       }
     } else if (c.type === '∠') {
       angStartDU = Number(start.du) || 0; angStartDV = Number(start.dv) || 0;
+      angStartMag = Math.hypot(angStartDU, angStartDV);
+      // Use current arc midpoint direction if available; fallback to start offset direction
+      try {
+        const gd = inst._dimAngleGeom && (inst._dimAngleGeom.get ? inst._dimAngleGeom.get(c.id) : inst._dimAngleGeom[c.id]);
+        if (gd && Number.isFinite(gd.midU) && Number.isFinite(gd.midV) && Number.isFinite(gd.cx) && Number.isFinite(gd.cy)) {
+          const vx = gd.midU - gd.cx, vy = gd.midV - gd.cy; const L = Math.hypot(vx, vy) || 1;
+          angMidDX = vx / L; angMidDY = vy / L;
+        } else {
+          const L = Math.hypot(angStartDU, angStartDV) || 1; angMidDX = (angStartDU / L); angMidDY = (angStartDV / L);
+        }
+      } catch { const L = Math.hypot(angStartDU, angStartDV) || 1; angMidDX = (angStartDU / L); angMidDY = (angStartDV / L); }
     }
     try { if (inst.viewer?.controls) inst.viewer.controls.enabled = false; } catch { }
     try { el.setPointerCapture(e.pointerId); } catch { }
@@ -402,21 +429,32 @@ function attachDimLabelEvents(inst, el, c, world) {
       try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst, c.id); } catch { }
     } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
       const deltaN = du * distNx + dv * distNy;
-      const deltaT = du * distTx + dv * distTy;
-      const newD = distStartD + deltaN; const newT = distStartT + deltaT;
+      const newD = distStartD + deltaN; const newT = 0;
       pendingOff = { d: newD, t: newT };
       const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
       const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
-      const toLabel = { du: distTx * newT + distNx * (base + newD), dv: distTy * newT + distNy * (base + newD) };
+      const toLabel = { du: distNx * (base + newD), dv: distNy * (base + newD) };
       updateOneDimPosition(inst, el, world, toLabel, true);
       dbg('preview-distance', { cid: c.id, d: newD, t: newT, toLabel });
       try { inst._dimOffsets.set(c.id, { du: toLabel.du, dv: toLabel.dv }); _redrawDim3D(inst, c.id); } catch { }
     } else if (c.type === '∠') {
-      const toLabel = { du: angStartDU + du, dv: angStartDV + dv };
-      pendingOff = { ...toLabel };
-      updateOneDimPosition(inst, el, world, toLabel, true);
-      dbg('preview-angle', { cid: c.id, toLabel });
-      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst, c.id); } catch { }
+      // Constrain angle label to arc midpoint: allow only radial changes along midpoint direction
+      const deltaRadial = du * angMidDX + dv * angMidDY;
+      const m = Math.max(0, angStartMag + deltaRadial);
+      const toGeom = { du: angMidDX * m, dv: angMidDY * m };
+      pendingOff = { ...toGeom };
+      try { inst._dimOffsets.set(c.id, toGeom); _redrawDim3D(inst, c.id); } catch { }
+      // Reposition label exactly at new arc midpoint
+      try {
+        const gd = inst._dimAngleGeom && (inst._dimAngleGeom.get ? inst._dimAngleGeom.get(c.id) : inst._dimAngleGeom[c.id]);
+        if (gd) {
+          const labelWorld = new THREE.Vector3().copy(inst._lock.basis.origin)
+            .addScaledVector(inst._lock.basis.x, gd.midU)
+            .addScaledVector(inst._lock.basis.y, gd.midV);
+          updateOneDimPosition(inst, el, labelWorld, { du: 0, dv: 0 }, true);
+        }
+      } catch {}
+      dbg('preview-angle', { cid: c.id, toGeom });
     }
     e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch { }
   });
@@ -431,12 +469,13 @@ function attachDimLabelEvents(inst, el, c, world) {
     } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
       const du = uv.u - sx; const dv = uv.v - sy;
       const deltaN = du * distNx + dv * distNy;
-      const deltaT = du * distTx + dv * distTy;
-      const newD = distStartD + deltaN; const newT = distStartT + deltaT;
+      const newD = distStartD + deltaN; const newT = 0;
       return { d: newD, t: newT };
     } else if (c.type === '∠') {
       const du = uv.u - sx; const dv = uv.v - sy;
-      return { du: angStartDU + du, dv: angStartDV + dv };
+      const deltaRadial = du * angMidDX + dv * angMidDY;
+      const m = Math.max(0, angStartMag + deltaRadial);
+      return { du: angMidDX * m, dv: angMidDY * m };
     }
     return null;
   };
@@ -492,7 +531,8 @@ export function dimDistance3D(inst, p0, p1, cid, color = 0x67e667) {
   addLine([{ u: u1, v: v1 }, { u: u1 + ou, v: v1 + ov }], green.clone());
   const ah = Math.max(0.06, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 6);
   const s = 0.6; const arrow = (ux, vy, dir) => { const tip = { u: ux + ou, v: vy + ov }; const ax = dir * tx, ay = dir * ty; const wx = -ay, wy = ax; const A = { u: tip.u + ax * ah + wx * ah * s, v: tip.v + ay * ah + wy * ah * s }; const B = { u: tip.u + ax * ah - wx * ah * s, v: tip.v + ay * ah - wy * ah * s }; addLine([{ u: tip.u, v: tip.v }, A], green.clone()); addLine([{ u: tip.u, v: tip.v }, B], green.clone()); };
-  arrow(u0, v0, -1); arrow(u1, v1, -1);
+  // Opposed arrows pointing towards the measurement span
+  arrow(u0, v0, +1); arrow(u1, v1, -1);
 }
 
 export function dimRadius3D(inst, pc, pr, cid, color = 0x69a8ff) {
@@ -571,6 +611,15 @@ export function dimAngle3D(inst, p0, p1, p2, p3, cid, I, color = 0x69a8ff, value
   const blue = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
   const g = new THREE.BufferGeometry().setFromPoints(uvs.map(q => P(q.u, q.v)));
   const ln = new THREE.Line(g, blue); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; try { ln.layers.set(31); } catch { } inst._dim3D.add(ln);
+
+  // Persist geometry info for label centering at arc midpoint
+  try {
+    const midAng = aStart + d * 0.5;
+    const midU = cx + Math.cos(midAng) * r;
+    const midV = cy + Math.sin(midAng) * r;
+    if (!inst._dimAngleGeom) inst._dimAngleGeom = new Map();
+    inst._dimAngleGeom.set(cid, { cx, cy, r, aStart, d, midU, midV });
+  } catch {}
 
   // Arrowheads at both arc ends (tangential). Make them face the arc span
   // so the two arrowheads are oriented towards each other.
