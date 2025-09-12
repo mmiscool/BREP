@@ -13,6 +13,7 @@ export class SelectionFilterWidget {
     }
 
     initUI() {
+        this.uiElement.innerHTML = ""; // Clear existing UI
 
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape') {
@@ -129,15 +130,24 @@ export class SelectionFilterWidget {
         `;
         document.head.appendChild(style);
 
+        this.uiElement.innerHTML = ""; // Clear existing UI
+
         // Create the main UI container
         this.uiElement.classList.add("selection-filter-widget");
         if (this.options.inline) this.uiElement.classList.add('inline');
         const mount = this.options.mountEl || (this.options.inline ? null : document.body);
-        if (mount) mount.appendChild(this.uiElement);
+        // If mounting inline, remove any prior instance inside the mount to avoid duplicates
+        if (mount) {
+            try {
+                const prior = mount.querySelector('.selection-filter-widget');
+                if (prior && prior !== this.uiElement) prior.remove();
+            } catch (_) { /* no-op */ }
+            mount.appendChild(this.uiElement);
+        }
 
         // Set the callback to update the UI when selection filter changes
         SelectionFilter.uiCallback = () => this.updateUI();
-        this.updateUI();
+
 
 
         // Event-driven selection updates (no polling)
@@ -177,14 +187,13 @@ export class SelectionFilterWidget {
             }
         };
         window.addEventListener('selection-changed', onSelectionChanged);
-
+        this.updateUI();
 
     }
 
 
     updateUI() { // Update the UI based on the current selection
         this.uiElement.innerHTML = ""; // Clear existing UI
-
         // Build a single-select dropdown with only available types
         const wrap = document.createElement('div');
         wrap.className = 'sfw-row';
@@ -231,6 +240,7 @@ export class SelectionFilterWidget {
         hint.className = 'sfw-kbd';
         hint.textContent = 'Esc: clear';
         wrap.appendChild(hint);
+        this.uiElement.innerHTML = ""; // Clear existing UI
         this.uiElement.appendChild(wrap);
     }
 

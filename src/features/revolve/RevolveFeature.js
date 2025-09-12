@@ -75,18 +75,43 @@ export class RevolveFeature {
         let A = new THREE.Vector3(0, 0, 0), B = new THREE.Vector3(0, 1, 0);
         if (axisObj) {
             const mat = axisObj.matrixWorld;
-            const aStart = axisObj?.geometry?.attributes?.instanceStart;
-            const aEnd = axisObj?.geometry?.attributes?.instanceEnd;
-            if (aStart && aEnd && aStart.count >= 1) {
-                const s = new THREE.Vector3(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(mat);
-                const e = new THREE.Vector3(aEnd.getX(0), aEnd.getY(0), aEnd.getZ(0)).applyMatrix4(mat);
-                A.copy(s); B.copy(e);
+            // 1) Prefer cached polyline from visualize() payload
+            const cached = axisObj?.userData?.polylineLocal;
+            const isWorld = !!(axisObj?.userData?.polylineWorld);
+            if (Array.isArray(cached) && cached.length >= 2) {
+                // Pick the first two distinct points
+                const pick = [];
+                for (let i = 0; i < cached.length && pick.length < 2; i++) {
+                    const p = cached[i];
+                    if (!pick.length) { pick.push(p); continue; }
+                    const q = pick[0];
+                    if (Math.abs(p[0]-q[0])>1e-12 || Math.abs(p[1]-q[1])>1e-12 || Math.abs(p[2]-q[2])>1e-12) pick.push(p);
+                }
+                if (pick.length >= 2) {
+                    if (isWorld) {
+                        A.set(pick[0][0], pick[0][1], pick[0][2]);
+                        B.set(pick[1][0], pick[1][1], pick[1][2]);
+                    } else {
+                        A.set(pick[0][0], pick[0][1], pick[0][2]).applyMatrix4(mat);
+                        B.set(pick[1][0], pick[1][1], pick[1][2]).applyMatrix4(mat);
+                    }
+                }
             } else {
-                const pos = axisObj?.geometry?.getAttribute?.('position');
-                if (pos && pos.count >= 2) {
-                    const s = new THREE.Vector3(pos.getX(0), pos.getY(0), pos.getZ(0)).applyMatrix4(mat);
-                    const e = new THREE.Vector3(pos.getX(pos.count - 1), pos.getY(pos.count - 1), pos.getZ(pos.count - 1)).applyMatrix4(mat);
+                // 2) Try fat-line instanceStart/instanceEnd (LineSegments2/Geometry)
+                const aStart = axisObj?.geometry?.attributes?.instanceStart;
+                const aEnd = axisObj?.geometry?.attributes?.instanceEnd;
+                if (aStart && aEnd && aStart.count >= 1) {
+                    const s = new THREE.Vector3(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(mat);
+                    const e = new THREE.Vector3(aEnd.getX(0), aEnd.getY(0), aEnd.getZ(0)).applyMatrix4(mat);
                     A.copy(s); B.copy(e);
+                } else {
+                    // 3) Fallback: BufferGeometry positions
+                    const pos = axisObj?.geometry?.getAttribute?.('position');
+                    if (pos && pos.count >= 2) {
+                        const s = new THREE.Vector3(pos.getX(0), pos.getY(0), pos.getZ(0)).applyMatrix4(mat);
+                        const e = new THREE.Vector3(pos.getX(pos.count - 1), pos.getY(pos.count - 1), pos.getZ(pos.count - 1)).applyMatrix4(mat);
+                        A.copy(s); B.copy(e);
+                    }
                 }
             }
         }
@@ -167,7 +192,7 @@ export class RevolveFeature {
             }
         }
 
-        // Side walls using boundary loops
+        // Side walls using boundary loops (preferred) or edges (fallback)
         const boundaryLoops = Array.isArray(faceObj?.userData?.boundaryLoopsWorld) ? faceObj.userData.boundaryLoopsWorld : null;
         if (boundaryLoops && boundaryLoops.length) {
             const key = (p) => `${p[0].toFixed(6)},${p[1].toFixed(6)},${p[2].toFixed(6)}`;
@@ -224,6 +249,78 @@ export class RevolveFeature {
                         } else {
                             solid.addTriangle(fname, a0, b0, b1);
                             solid.addTriangle(fname, a0, b1, a1);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Fallback: build side walls by revolving per-edge polylines
+            const edges = Array.isArray(faceObj?.edges) ? faceObj.edges : [];
+            for (const edge of edges) {
+                const name = `${edge?.name || 'EDGE'}_RV`;
+                const pts = [];
+                const w = new THREE.Vector3();
+
+                // 1) Prefer cached polyline
+                const cached = edge?.userData?.polylineLocal;
+                const isWorld = !!(edge?.userData?.polylineWorld);
+                if (Array.isArray(cached) && cached.length >= 2) {
+                    if (isWorld) {
+                        for (const p of cached) pts.push([p[0], p[1], p[2]]);
+                    } else {
+                        for (const p of cached) { w.set(p[0], p[1], p[2]).applyMatrix4(edge.matrixWorld); pts.push([w.x, w.y, w.z]); }
+                    }
+                } else {
+                    // 2) BufferGeometry position attribute
+                    const posAttr = edge?.geometry?.getAttribute?.('position');
+                    if (posAttr && posAttr.itemSize === 3 && posAttr.count >= 2) {
+                        for (let i = 0; i < posAttr.count; i++) {
+                            w.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(edge.matrixWorld);
+                            pts.push([w.x, w.y, w.z]);
+                        }
+                    } else {
+                        // 3) LineSegments-style fat lines
+                        const aStart = edge?.geometry?.attributes?.instanceStart;
+                        const aEnd = edge?.geometry?.attributes?.instanceEnd;
+                        if (aStart && aEnd && aStart.itemSize === 3 && aEnd.itemSize === 3 && aStart.count === aEnd.count && aStart.count >= 1) {
+                            w.set(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(edge.matrixWorld);
+                            pts.push([w.x, w.y, w.z]);
+                            for (let i = 0; i < aEnd.count; i++) {
+                                w.set(aEnd.getX(i), aEnd.getY(i), aEnd.getZ(i)).applyMatrix4(edge.matrixWorld);
+                                pts.push([w.x, w.y, w.z]);
+                            }
+                        }
+                    }
+                }
+
+                // Remove consecutive duplicates
+                for (let i = pts.length - 2; i >= 0; i--) {
+                    const a = pts[i], b = pts[i + 1];
+                    if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pts.splice(i + 1, 1);
+                }
+
+                if (pts.length < 2) continue;
+                const isHole = !!(edge && edge.userData && edge.userData.isHole);
+
+                // Revolve each segment by angular steps
+                for (let i = 0; i < pts.length - 1; i++) {
+                    const a = pts[i];
+                    const b = pts[i + 1];
+                    if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+
+                    let ang0 = 0;
+                    for (let s = 0; s < steps; s++, ang0 += dA) {
+                        const ang1 = (s === steps - 1) ? sweepRad : ang0 + dA;
+                        const a0 = rotateP(new THREE.Vector3(a[0], a[1], a[2]), ang0);
+                        const a1 = rotateP(new THREE.Vector3(a[0], a[1], a[2]), ang1);
+                        const b0 = rotateP(new THREE.Vector3(b[0], b[1], b[2]), ang0);
+                        const b1 = rotateP(new THREE.Vector3(b[0], b[1], b[2]), ang1);
+                        if (isHole) {
+                            solid.addTriangle(name, a0, b1, b0);
+                            solid.addTriangle(name, a0, a1, b1);
+                        } else {
+                            solid.addTriangle(name, a0, b0, b1);
+                            solid.addTriangle(name, a0, b1, a1);
                         }
                     }
                 }

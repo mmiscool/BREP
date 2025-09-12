@@ -1066,6 +1066,14 @@ export class SketchMode3D {
       b.set(pts[pts.length - 1][0], pts[pts.length - 1][1], pts[pts.length - 1][2]);
       return { a: toWorld(a), b: toWorld(b) };
     }
+    // Try fat-line geometry (Line2/LineSegments2) endpoints
+    const aStart = edge?.geometry?.attributes?.instanceStart;
+    const aEnd = edge?.geometry?.attributes?.instanceEnd;
+    if (aStart && aEnd && aStart.count >= 1) {
+      a.set(aStart.getX(0), aStart.getY(0), aStart.getZ(0));
+      b.set(aEnd.getX(0), aEnd.getY(0), aEnd.getZ(0));
+      return { a: toWorld(a), b: toWorld(b) };
+    }
     const pos = edge?.geometry?.getAttribute?.("position");
     if (pos && pos.itemSize === 3 && pos.count >= 2) {
       a.set(pos.getX(0), pos.getY(0), pos.getZ(0));
@@ -1121,8 +1129,10 @@ export class SketchMode3D {
     const nextPointId = () => Math.max(0, ...s.points.map((p) => +p.id || 0)) + 1;
 
     if (!ref) {
+      // Generate two unique point IDs for the edge endpoints.
+      // Note: calling nextPointId() twice without pushing in between would return the same value.
       const id0 = nextPointId();
-      const id1 = nextPointId();
+      const id1 = id0 + 1;
       const p0 = { id: id0, x: uvA.u, y: uvA.v, fixed: true };
       const p1 = { id: id1, x: uvB.u, y: uvB.v, fixed: true };
       s.points.push(p0, p1);
@@ -1138,8 +1148,21 @@ export class SketchMode3D {
       ref = { edgeId: edge.id, edgeName: edge.name || null, solidName: edge.parent?.name || null, p0: p0.id, p1: p1.id };
       refs.push(ref);
     } else {
-      const pt0 = s.points.find((p) => p.id === ref.p0);
-      const pt1 = s.points.find((p) => p.id === ref.p1);
+      // Ensure referenced points exist and are distinct; repair legacy refs if needed
+      let pt0 = s.points.find((p) => p.id === ref.p0);
+      let pt1 = s.points.find((p) => p.id === ref.p1);
+      if (!pt0) {
+        const nid = nextPointId();
+        pt0 = { id: nid, x: uvA.u, y: uvA.v, fixed: true };
+        s.points.push(pt0);
+        ref.p0 = nid;
+      }
+      if (!pt1 || ref.p1 === ref.p0) {
+        const nid = Math.max(nextPointId(), pt0.id + 1);
+        pt1 = { id: nid, x: uvB.u, y: uvB.v, fixed: true };
+        s.points.push(pt1);
+        ref.p1 = nid;
+      }
       // Ensure stored name metadata stays fresh
       try { ref.edgeName = edge.name || ref.edgeName || null; } catch {}
       try { ref.solidName = edge.parent?.name || ref.solidName || null; } catch {}
@@ -1194,8 +1217,25 @@ export class SketchMode3D {
         if (!ends) continue;
         const uvA = this.#projectWorldToUV(ends.a);
         const uvB = this.#projectWorldToUV(ends.b);
-        const pt0 = s.points.find((p) => p.id === ref.p0);
-        const pt1 = s.points.find((p) => p.id === ref.p1);
+        let pt0 = s.points.find((p) => p.id === ref.p0);
+        let pt1 = s.points.find((p) => p.id === ref.p1);
+        // Repair legacy refs with missing/duplicate endpoint IDs
+        if (!pt0) {
+          const nid = Math.max(0, ...s.points.map((p) => +p.id || 0)) + 1;
+          pt0 = { id: nid, x: uvA.u, y: uvA.v, fixed: true };
+          s.points.push(pt0);
+          ref.p0 = nid;
+          changed = true;
+        }
+        if (!pt1 || ref.p1 === ref.p0) {
+          const nid = Math.max(0, ...s.points.map((p) => +p.id || 0)) + 1;
+          // Ensure pt1 ID is distinct from pt0
+          const id1 = (nid === pt0.id) ? nid + 1 : nid;
+          pt1 = { id: id1, x: uvB.u, y: uvB.v, fixed: true };
+          s.points.push(pt1);
+          ref.p1 = id1;
+          changed = true;
+        }
         if (pt0 && (pt0.x !== uvA.u || pt0.y !== uvA.v)) { pt0.x = uvA.u; pt0.y = uvA.v; pt0.fixed = true; changed = true; }
         if (pt1 && (pt1.x !== uvB.u || pt1.y !== uvB.v)) { pt1.x = uvB.u; pt1.y = uvB.v; pt1.fixed = true; changed = true; }
         const ensureGround = (pid) => {

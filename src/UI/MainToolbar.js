@@ -6,6 +6,11 @@ import { SelectionFilterWidget } from './selectionFilterWidget.js';
 export class MainToolbar {
   constructor(viewer) {
     this.viewer = viewer;
+    // Guard against duplicate toolbars if constructed twice (e.g., hot reloads)
+    try {
+      const existing = document.getElementById('main-toolbar');
+      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    } catch { /* ignore */ }
     this.root = document.createElement('div');
     this.root.id = 'main-toolbar';
     this._ensureStyles();
