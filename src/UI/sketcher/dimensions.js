@@ -174,19 +174,25 @@ export function renderDimensions(inst) {
 
 // Lightweight redraw of only the 3D leaders/arrows without touching HTML labels.
 // Used during drag so pointer capture on the label is not lost.
-function _redrawDim3D(inst) {
+function _redrawDim3D(inst, onlyCid = null) {
   try {
     if (!inst || !inst._solver || !inst._lock || !inst._dim3D) return;
-    // Clear existing 3D primitives
-    while (inst._dim3D.children.length) {
-      const ch = inst._dim3D.children.pop();
-      try { ch.geometry?.dispose(); ch.material?.dispose?.(); } catch {}
+    // Clear existing 3D primitives for either all dims or one cid
+    for (let i = inst._dim3D.children.length - 1; i >= 0; i--) {
+      const ch = inst._dim3D.children[i];
+      const isDim = ch && ch.userData && ch.userData.kind === 'dim';
+      const match = onlyCid == null || (isDim && ch.userData.cid === onlyCid);
+      if (isDim && match) {
+        inst._dim3D.remove(ch);
+        try { ch.geometry?.dispose(); ch.material?.dispose?.(); } catch {}
+      }
     }
     const s = inst._solver.sketchObject || {};
     const P = (id) => (s.points || []).find((p) => p.id === id);
     const selSet = new Set(Array.from(inst._selection || []).filter(it => it.type === 'constraint').map(it => it.id));
     const hovId = (inst._hover && inst._hover.type === 'constraint') ? inst._hover.id : null;
     for (const c of (s.constraints || [])) {
+      if (onlyCid != null && c?.id !== onlyCid) continue;
       const sel = selSet.has(c?.id);
       const hov = (hovId === c?.id);
       const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
@@ -393,7 +399,7 @@ function attachDimLabelEvents(inst, el, c, world) {
       const toLabel = { du: radRx*dr + radNx*dp, dv: radRy*dr + radNy*dp };
       updateOneDimPosition(inst, el, world, toLabel, true);
       dbg('preview-radius', { cid: c.id, dr, dp, toLabel });
-      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst); } catch {}
+      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst, c.id); } catch {}
     } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
       const deltaN = du * distNx + dv * distNy;
       const deltaT = du * distTx + dv * distTy;
@@ -404,13 +410,13 @@ function attachDimLabelEvents(inst, el, c, world) {
       const toLabel = { du: distTx*newT + distNx*(base + newD), dv: distTy*newT + distNy*(base + newD) };
       updateOneDimPosition(inst, el, world, toLabel, true);
       dbg('preview-distance', { cid: c.id, d: newD, t: newT, toLabel });
-      try { inst._dimOffsets.set(c.id, { du: toLabel.du, dv: toLabel.dv }); _redrawDim3D(inst); } catch {}
+      try { inst._dimOffsets.set(c.id, { du: toLabel.du, dv: toLabel.dv }); _redrawDim3D(inst, c.id); } catch {}
     } else if (c.type === '∠') {
       const toLabel = { du: angStartDU + du, dv: angStartDV + dv };
       pendingOff = { ...toLabel };
       updateOneDimPosition(inst, el, world, toLabel, true);
       dbg('preview-angle', { cid: c.id, toLabel });
-      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst); } catch {}
+      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst, c.id); } catch {}
     }
     e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
   });
@@ -539,20 +545,36 @@ export function dimAngle3D(inst, p0,p1,p2,p3,cid,I, color = 0x69a8ff, valueDeg =
   // Screen-scaled radius and arrow size so it stays visible at any zoom
   const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
   const wpp = worldPerPixel(inst.viewer.camera, rect.width, rect.height);
-  const r = Math.max(0.3, wpp * 24);
+  const baseR = Math.max(0.3, wpp * 24);
   const ah = Math.max(0.06, wpp * 6);
-  const cx=I.x+off.du, cy=I.y+off.dv;
+  // Keep arc centered at the lines' intersection; use label offset magnitude to set radius
+  const du = Number(off.du)||0, dv = Number(off.dv)||0;
+  const r = baseR + Math.hypot(du, dv);
+  const cx = I.x, cy = I.y;
+
+  // Choose the arc side so the arc (+ arrows) are on the same side as the label.
+  // Compare label direction with the arc bisector; if it's closer to the opposite
+  // bisector, flip the start by PI which mirrors the arc side while preserving span.
+  const labelAng = Math.atan2(dv, du); // direction from center to label offset
+  const angNorm = (a)=>{ const t=2*Math.PI; a%=t; return a<0?a+t:a; };
+  const angDiff = (a,b)=>{ let x=angNorm(a-b); if (x>Math.PI) x=2*Math.PI-x; return Math.abs(x); };
+  let aStart = a0; // base start
+  const bisector = aStart + d*0.5;
+  const bisectorOpp = bisector + Math.PI;
+  if (angDiff(labelAng, bisectorOpp) + 1e-6 < angDiff(labelAng, bisector)) {
+    aStart += Math.PI; // flip arc side
+  }
 
   // Author the arc polyline
   const segs=48; // smoother arc
-  const uvs=[]; for(let i=0;i<=segs;i++){ const t=a0+d*(i/segs); uvs.push({u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}); }
+  const uvs=[]; for(let i=0;i<=segs;i++){ const t=aStart+d*(i/segs); uvs.push({u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}); }
   const blue=new THREE.LineBasicMaterial({color, depthTest:false, depthWrite:false, transparent:true});
   const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v)));
   const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln);
 
   // Arrowheads at both arc ends (tangential)
   const s=0.6; const addArrowUV=(t)=>{ const tx=-Math.sin(t), ty=Math.cos(t); const wx=-ty, wy=tx; const tip={u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}; const A={u:tip.u+tx*ah+wx*ah*s, v:tip.v+ty*ah+wy*ah*s}; const B={u:tip.u+tx*ah-wx*ah*s, v:tip.v+ty*ah-wy*ah*s}; const gg1=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(A.u,A.v)]); const gg2=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(B.u,B.v)]); const la=new THREE.Line(gg1, blue.clone()); const lb=new THREE.Line(gg2, blue.clone()); la.renderOrder = 10020; lb.renderOrder = 10020; try { la.layers.set(31); lb.layers.set(31); } catch {} inst._dim3D.add(la); inst._dim3D.add(lb); };
-  addArrowUV(a0); addArrowUV(a0+d);
+  addArrowUV(aStart); addArrowUV(aStart+d);
 }
 
 function worldPerPixel(camera, width, height) {

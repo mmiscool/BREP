@@ -400,12 +400,9 @@ export default class ConstraintSolver {
             }
             if (type === "∥") return this.createAndPushNewConstraint(newConstraint);
             if (type === "∠") {
-                let line1Angle = calculateAngle(selected[0], selected[1]);
-                let line2Angle = calculateAngle(selected[2], selected[3]);
-                line1Angle = (line1Angle + 180) % 360 - 180;
-                line2Angle = (line2Angle + 180) % 360 - 180;
-                let diff = (line1Angle - line2Angle + 360) % 360;
-                newConstraint.value = diff;
+                // Do NOT set a value on creation. The solver initializes the
+                // constraint to the current angle on first evaluation, and the
+                // renderer will display the interior arc by default.
                 return this.createAndPushNewConstraint(newConstraint);
             }
             if (type === "⇌") return this.createAndPushNewConstraint(newConstraint);
