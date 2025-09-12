@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { drawConstraintGlyphs } from './glyphs.js';
 
+// Debug switch for dimension label interactions
+// Toggle at runtime via: window.__SKETCH_DIM_DEBUG = true/false
+const DIM_DEBUG = false;
+const dbg = (...args) => { try { if (DIM_DEBUG || window.__SKETCH_DIM_DEBUG) console.log('[DIM]', ...args); } catch {} };
+
 // Unified dimension colors
 const DIM_COLOR_DEFAULT = 0x69a8ff;   // blue
 const DIM_COLOR_HOVER   = 0xffd54a;   // yellow
@@ -17,6 +22,11 @@ export function mountDimRoot(inst) {
   el.style.right = '0';
   el.style.bottom = '0';
   el.style.pointerEvents = 'none';
+  // Prevent any text selection within the overlay while dragging labels
+  el.style.userSelect = 'none';
+  el.style.webkitUserSelect = 'none';
+  el.style.MozUserSelect = 'none';
+  el.style.touchAction = 'none';
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', '100%');
   svg.setAttribute('height', '100%');
@@ -45,6 +55,12 @@ export function clearDims(inst) {
 
 export function renderDimensions(inst) {
   if (!inst._dimRoot || !inst._solver || !inst._lock) return;
+  // If a label drag is active, avoid tearing down/rebuilding HTML labels which
+  // would drop pointer capture and prematurely end the drag. Only refresh 3D leaders.
+  if (inst._suspendDimLabelRebuild) {
+    try { _redrawDim3D(inst); } catch {}
+    return;
+  }
   clearDims(inst);
   const s = inst._solver.sketchObject;
   const to3 = (u, v) => new THREE.Vector3()
@@ -56,6 +72,7 @@ export function renderDimensions(inst) {
   const mk = (c, text, world, planeOffOverride = null) => {
     const d = document.createElement('div');
     d.className = 'dim-label';
+    try { d.dataset.cid = String(c.id); } catch {}
     d.style.position = 'absolute';
     d.style.padding = '2px 6px';
     d.style.border = '1px solid #364053';
@@ -64,6 +81,12 @@ export function renderDimensions(inst) {
     d.style.color = '#e6e6e6';
     d.style.font = '12px system-ui,sans-serif';
     d.style.pointerEvents = 'auto';
+    d.style.userSelect = 'none';
+    d.style.webkitUserSelect = 'none';
+    d.style.MozUserSelect = 'none';
+    d.style.touchAction = 'none';
+    d.setAttribute('draggable', 'false');
+    d.onselectstart = () => false;
     d.textContent = text;
 
     // Selection/hover styling for labels
@@ -77,147 +100,8 @@ export function renderDimensions(inst) {
       d.style.background = 'rgba(255,213,74,.12)';
     }
 
-    // Drag + click-to-select support with small-move threshold
-    let dragging = false, moved = false, sx = 0, sy = 0, start = {};
-    let sClientX = 0, sClientY = 0;
-    // Precomputed helpers for distance/radius modes
-    let distNx = 0, distNy = 0, distStartD = 0;
-    let radRx = 0, radRy = 0, radNx = 0, radNy = 0, radStartDr = 0, radStartDp = 0;
-    d.addEventListener('pointerdown', (e) => {
-      dragging = true; moved = false;
-      const uv = pointerToPlaneUV(inst, e);
-      sx = uv?.u || 0; sy = uv?.v || 0;
-      start = { ...(inst._dimOffsets.get(c.id) || {}) };
-      sClientX = e.clientX || 0; sClientY = e.clientY || 0;
-      // Prepare mode-specific baselines
-      if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
-        const sObj = inst._solver.sketchObject;
-        const pc = sObj.points.find((p) => p.id === c.points[0]);
-        const pr = sObj.points.find((p) => p.id === c.points[1]);
-        if (pc && pr) {
-          const vx = pr.x - pc.x, vy = pr.y - pc.y; const L = Math.hypot(vx, vy) || 1;
-          radRx = vx / L; radRy = vy / L; radNx = -radRy; radNy = radRx;
-          radStartDr = Number(start.dr) || 0; radStartDp = Number(start.dp) || 0;
-        }
-      } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
-        const sObj = inst._solver.sketchObject;
-        const p0 = sObj.points.find((p) => p.id === c.points[0]);
-        const p1 = sObj.points.find((p) => p.id === c.points[1]);
-        if (p0 && p1) {
-          const dx = p1.x - p0.x, dy = p1.y - p0.y; const L = Math.hypot(dx, dy) || 1;
-          distNx = -(dy / L); distNy = dx / L;
-          // If previous offset was vector {du,dv}, project onto normal to get scalar d
-          const du0 = Number(start.du) || 0, dv0 = Number(start.dv) || 0;
-          distStartD = (typeof start.d === 'number') ? Number(start.d) : (du0 * distNx + dv0 * distNy);
-        }
-      }
-      // Prevent camera from starting a spin while interacting with dimensions
-      try { if (inst.viewer?.controls) inst.viewer.controls.enabled = false; } catch {}
-      try { d.setPointerCapture(e.pointerId); } catch {}
-      // Do not prevent default here so click/dblclick can still fire
-    });
-    d.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const uv = pointerToPlaneUV(inst, e); if (!uv) return;
-      // Activate drag only after a small pixel threshold to keep click reliable
-      const pxThreshold = 3;
-      const pxDx = Math.abs((e.clientX || 0) - sClientX);
-      const pxDy = Math.abs((e.clientY || 0) - sClientY);
-      if (!moved && (pxDx + pxDy) < pxThreshold) return;
-      moved = true;
-      if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
-        // Radius/diameter: track along radial (dr) and perpendicular (dp)
-        // Compute change from pointerdown so live label moves relative to the
-        // original rendered position (world already includes start dr/dp).
-        const du = uv.u - sx;
-        const dv = uv.v - sy;
-        const dr = (Number(radStartDr)||0) + (du*radRx + dv*radRy);
-        const dp = (Number(radStartDp)||0) + (du*radNx + dv*radNy);
-        inst._dimOffsets.set(c.id, { dr, dp });
-        const ddr = dr - (Number(radStartDr)||0);
-        const ddp = dp - (Number(radStartDp)||0);
-        const labelOff = { du: radRx*ddr + radNx*ddp, dv: radRy*ddr + radNy*ddp };
-        updateOneDimPosition(inst, d, world, labelOff);
-      } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
-        // Distance between two points: store scalar offset along normal (d)
-        const deltaN = (uv.u - sx) * distNx + (uv.v - sy) * distNy;
-        const newD = distStartD + deltaN;
-        inst._dimOffsets.set(c.id, { d: newD });
-        // Live position of label using current camera scale factor (base)
-        const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
-        const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
-        updateOneDimPosition(inst, d, world, { du: distNx*(base + newD), dv: distNy*(base + newD) });
-      }
-      // Consume during drag to avoid text selection; suppress click
-      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
-    });
-    d.addEventListener('pointerup', (e) => {
-      const wasDragging = dragging; dragging = false;
-      try { d.releasePointerCapture(e.pointerId); } catch {}
-      // Re-enable camera controls after finishing interaction
-      try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch {}
-      if (wasDragging && moved) {
-        // Finalize by re-rendering leaders + label
-        try { renderDimensions(inst); } catch {}
-        // Prevent generating a click when we dragged
-        e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
-      }
-      // If it was a click (not moved), let the click/dblclick handlers run
-    });
-
-    // Hover should reflect in the sidebar and 3D overlays
-    d.addEventListener('pointerenter', () => {
-      try { inst.hoverConstraintFromLabel?.(c.id); } catch {}
-    });
-    d.addEventListener('pointerleave', () => {
-      try { inst.clearHoverFromLabel?.(c.id); } catch {}
-    });
-
-    d.addEventListener('dblclick', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      const v = prompt('Enter value', String(c.value ?? ''));
-      if (v == null) return;
-      const ph = inst?.viewer?.partHistory;
-      const exprSrc = ph?.expressions || '';
-
-      // Evaluate using the same approach as feature dialogs
-      const runExpr = (expressions, equation) => {
-        try {
-          const fn = `${expressions}; return ${equation} ;`;
-          let result = Function(fn)();
-          if (typeof result === 'string') {
-            const num = Number(result);
-            if (!Number.isNaN(num)) return num;
-          }
-          return result;
-        } catch (err) {
-          console.log('Expression eval failed:', err?.message || err);
-          return null;
-        }
-      };
-
-      // If it's a plain number, store numeric. Otherwise store both expr and numeric.
-      const plainNumberRe = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?\s*$/i;
-      let numeric = null;
-      if (plainNumberRe.test(v)) {
-        numeric = parseFloat(v);
-        c.valueExpr = undefined;
-      } else {
-        numeric = runExpr(exprSrc, v);
-        if (numeric == null || !Number.isFinite(numeric)) return;
-        c.valueExpr = String(v);
-      }
-      c.value = Number(numeric);
-      try { inst._solver.solveSketch('full'); } catch {}
-      try { inst._solver?.hooks?.updateCanvas?.(); } catch {}
-    });
-
-    // Click toggles constraint selection; ignore the second click in a double-click (detail>1)
-    d.addEventListener('click', (e) => {
-      if (e.detail > 1) return; // let dblclick handle editing
-      try { inst.toggleSelectConstraint?.(c.id); } catch {}
-      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
-    });
+    // Centralized event hookup for drag/edit/hover/click
+    attachDimLabelEvents(inst, d, c, world);
 
     inst._dimRoot.appendChild(d);
     const saved = inst._dimOffsets.get(c.id) || { du: 0, dv: 0 };
@@ -246,28 +130,37 @@ export function renderDimensions(inst) {
         const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
         dimRadius3D(inst, pc, pr, c.id, col);
         const v = new THREE.Vector2(pr.x - pc.x, pr.y - pc.y); const L = v.length() || 1; const rx = v.x/L, ry = v.y/L; const nx = -ry, ny = rx;
-        const offSaved = inst._dimOffsets.get(c.id) || {}; const dr = Number(offSaved.dr)||0; const dp = Number(offSaved.dp)||0;
+        const offSaved = inst._dimOffsets.get(c.id) || {};
+        const dr = (offSaved.dr !== undefined || offSaved.dp !== undefined)
+          ? (Number(offSaved.dr)||0)
+          : ((Number(offSaved.du)||0)*rx + (Number(offSaved.dv)||0)*ry);
+        const dp = (offSaved.dr !== undefined || offSaved.dp !== undefined)
+          ? (Number(offSaved.dp)||0)
+          : ((Number(offSaved.du)||0)*nx + (Number(offSaved.dv)||0)*ny);
         const label = to3(pr.x + rx*dr + nx*dp, pr.y + ry*dr + ny*dp);
         const val = Number(c.value) ?? 0;
         const txt = c.displayStyle === 'diameter' ? `⌀${(2*val).toFixed(3)}     Diameter` : `R${val.toFixed(3)}     Radius`;
         mk(c, txt, label, { du: 0, dv: 0 });
       } else if (c.points?.length >= 2) {
         const p0 = P(c.points[0]), p1 = P(c.points[1]); if (!p0 || !p1) continue;
-        const nxny = (()=>{ const dx=p1.x-p0.x, dy=p1.y-p0.y; const L=Math.hypot(dx,dy)||1; const tx=dx/L, ty=dy/L; return { nx:-ty, ny:tx }; })();
+        const basis = (()=>{ const dx=p1.x-p0.x, dy=p1.y-p0.y; const L=Math.hypot(dx,dy)||1; const tx=dx/L, ty=dy/L; return { tx, ty, nx:-ty, ny:tx }; })();
         const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
         const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
         const offSaved = inst._dimOffsets.get(c.id) || { du:0, dv:0 };
-        const d = typeof offSaved.d === 'number' ? offSaved.d : (offSaved.du||0)*nxny.nx + (offSaved.dv||0)*nxny.ny;
+        const d = typeof offSaved.d === 'number' ? offSaved.d : (offSaved.du||0)*basis.nx + (offSaved.dv||0)*basis.ny;
+        const t = typeof offSaved.t === 'number' ? offSaved.t : (offSaved.du||0)*basis.tx + (offSaved.dv||0)*basis.ty;
         const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
         dimDistance3D(inst, p0, p1, c.id, col);
-        mk(c, String((Number(c.value) ?? 0).toFixed(3)), to3((p0.x+p1.x)/2, (p0.y+p1.y)/2), { du: nxny.nx*(base+d), dv: nxny.ny*(base+d) });
+        mk(c, String((Number(c.value) ?? 0).toFixed(3)), to3((p0.x+p1.x)/2, (p0.y+p1.y)/2), { du: basis.tx*t + basis.nx*(base+d), dv: basis.ty*t + basis.ny*(base+d) });
       }
     }
     if (c.type === '∠' && c.points?.length >= 4) {
       const p0=P(c.points[0]), p1=P(c.points[1]), p2=P(c.points[2]), p3=P(c.points[3]); if (!p0||!p1||!p2||!p3) continue;
       const I = intersect(p0,p1,p2,p3);
       const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
-      dimAngle3D(inst, p0,p1,p2,p3,c.id,I, col);
+      // Pass current numeric value to renderer so the arc length matches the annotation
+      const angleValueDeg = (typeof c.value === 'number' && Number.isFinite(c.value)) ? Number(c.value) : null;
+      dimAngle3D(inst, p0,p1,p2,p3,c.id,I, col, angleValueDeg);
       mk(c, String(c.value ?? ''), to3(I.x, I.y));
     } else {
       // Non-dimension constraints: collect for grouped glyph rendering
@@ -279,8 +172,46 @@ export function renderDimensions(inst) {
   try { drawConstraintGlyphs(inst, glyphConstraints); } catch {}
 }
 
+// Lightweight redraw of only the 3D leaders/arrows without touching HTML labels.
+// Used during drag so pointer capture on the label is not lost.
+function _redrawDim3D(inst) {
+  try {
+    if (!inst || !inst._solver || !inst._lock || !inst._dim3D) return;
+    // Clear existing 3D primitives
+    while (inst._dim3D.children.length) {
+      const ch = inst._dim3D.children.pop();
+      try { ch.geometry?.dispose(); ch.material?.dispose?.(); } catch {}
+    }
+    const s = inst._solver.sketchObject || {};
+    const P = (id) => (s.points || []).find((p) => p.id === id);
+    const selSet = new Set(Array.from(inst._selection || []).filter(it => it.type === 'constraint').map(it => it.id));
+    const hovId = (inst._hover && inst._hover.type === 'constraint') ? inst._hover.id : null;
+    for (const c of (s.constraints || [])) {
+      const sel = selSet.has(c?.id);
+      const hov = (hovId === c?.id);
+      const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
+      if (!c) continue;
+      if (c.type === '⟺') {
+        if (c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
+          const pc = P(c.points[0]); const pr = P(c.points[1]);
+          if (pc && pr) dimRadius3D(inst, pc, pr, c.id, col);
+        } else if (Array.isArray(c.points) && c.points.length >= 2) {
+          const p0 = P(c.points[0]); const p1 = P(c.points[1]);
+          if (p0 && p1) dimDistance3D(inst, p0, p1, c.id, col);
+        }
+      } else if (c.type === '∠' && Array.isArray(c.points) && c.points.length >= 4) {
+        const p0 = P(c.points[0]), p1 = P(c.points[1]), p2 = P(c.points[2]), p3 = P(c.points[3]);
+        if (!p0 || !p1 || !p2 || !p3) continue;
+        const I = intersect(p0, p1, p2, p3);
+        const angleValueDeg = (typeof c.value === 'number' && Number.isFinite(c.value)) ? Number(c.value) : null;
+        dimAngle3D(inst, p0, p1, p2, p3, c.id, I, col, angleValueDeg);
+      }
+    }
+  } catch {}
+}
+
 // Helpers (module-local)
-function updateOneDimPosition(inst, el, world, off) {
+function updateOneDimPosition(inst, el, world, off, noNudge = false) {
   const du = Number(off?.du) || 0; const dv = Number(off?.dv) || 0;
   const O = inst._lock.basis.origin, X = inst._lock.basis.x, Y = inst._lock.basis.y;
   // Base world position for the label
@@ -290,24 +221,31 @@ function updateOneDimPosition(inst, el, world, off) {
     const d = w.clone().sub(O);
     let u = d.dot(X.clone().normalize());
     let v = d.dot(Y.clone().normalize());
-    // Nudge away from nearby sketch points to avoid overlap
-    const pts = (inst._solver && Array.isArray(inst._solver.sketchObject?.points)) ? inst._solver.sketchObject.points : [];
-    const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
-    const wpp = worldPerPixel(inst.viewer.camera, rect.width, rect.height);
-    const handleR = Math.max(0.02, wpp * 8 * 0.5);
-    const minDist = handleR * 1.2;
-    let iter = 0;
-    while (iter++ < 4) {
-      let nearest = null, nd = Infinity;
-      for (const p of pts) {
-        const dd = Math.hypot(u - p.x, v - p.y);
-        if (dd < nd) { nd = dd; nearest = p; }
+    const u0 = u, v0 = v;
+    if (!noNudge) {
+      // Nudge away from nearby sketch points to avoid overlap
+      const pts = (inst._solver && Array.isArray(inst._solver.sketchObject?.points)) ? inst._solver.sketchObject.points : [];
+      const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
+      const wpp = worldPerPixel(inst.viewer.camera, rect.width, rect.height);
+      const handleR = Math.max(0.02, wpp * 8 * 0.5);
+      const minDist = handleR * 1.2;
+      let iter = 0;
+      while (iter++ < 4) {
+        let nearest = null, nd = Infinity;
+        for (const p of pts) {
+          const dd = Math.hypot(u - p.x, v - p.y);
+          if (dd < nd) { nd = dd; nearest = p; }
+        }
+        if (!nearest || nd >= minDist) break;
+        const dx = u - nearest.x, dy = v - nearest.y; const L = Math.hypot(dx, dy) || 1e-6;
+        const push = (minDist - nd) + (0.15 * minDist);
+        u = nearest.x + (dx / L) * (nd + push);
+        v = nearest.y + (dy / L) * (nd + push);
       }
-      if (!nearest || nd >= minDist) break;
-      const dx = u - nearest.x, dy = v - nearest.y; const L = Math.hypot(dx, dy) || 1e-6;
-      const push = (minDist - nd) + (0.15 * minDist);
-      u = nearest.x + (dx / L) * (nd + push);
-      v = nearest.y + (dy / L) * (nd + push);
+    }
+    if (!noNudge && inst && inst._debugDragCID != null && String(inst._debugDragCID) === String(el?.dataset?.cid)) {
+      const duN = u - u0, dvN = v - v0; const moved = Math.hypot(duN, dvN);
+      if (moved > 1e-6) dbg('label-nudged', { cid: el?.dataset?.cid, from: {u:u0,v:v0}, to: {u,v}, delta:{du:duN,dv:dvN} });
     }
     // Rebuild world position from nudged (u,v)
     w = new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
@@ -316,6 +254,10 @@ function updateOneDimPosition(inst, el, world, off) {
   const rect2 = inst.viewer.renderer.domElement.getBoundingClientRect();
   const x = (pt.x * 0.5 + 0.5) * rect2.width; const y = (-pt.y * 0.5 + 0.5) * rect2.height;
   el.style.left = `${Math.round(x)}px`; el.style.top = `${Math.round(y)}px`;
+  // Only log label placement for the dimension actively being dragged
+  if (inst && inst._debugDragCID != null && String(inst._debugDragCID) === String(el?.dataset?.cid)) {
+    dbg('label-place', { cid: el?.dataset?.cid, world: { x: w.x, y: w.y, z: w.z }, screen: { x: Math.round(x), y: Math.round(y) }, off: {du,dv}, noNudge });
+  }
 }
 
 function pointerToPlaneUV(inst, e) {
@@ -331,7 +273,201 @@ function pointerToPlaneUV(inst, e) {
   const bx = inst._lock.basis.x; const by = inst._lock.basis.y;
   const u = hit.clone().sub(o).dot(bx.clone().normalize());
   const v2 = hit.clone().sub(o).dot(by.clone().normalize());
-  return { u, v: v2 };
+  const out = { u, v: v2 };
+  // Only log during active drag to avoid spam
+  if (inst && inst._debugDragCID != null) dbg('pointer->uv', { x: e.clientX, y: e.clientY }, out);
+  return out;
+}
+
+// Centralized event wiring for dimension labels (drag, click, hover, edit)
+function attachDimLabelEvents(inst, el, c, world) {
+  // Click: toggle constraint selection (dblclick handled separately)
+  el.addEventListener('click', (e) => {
+    if (e.detail > 1) return;
+    try { inst.toggleSelectConstraint?.(c.id); } catch {}
+    e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+    dbg('click', { cid: c.id, type: c.type });
+  });
+
+  // Hover reflects in overlays/sidebar
+  el.addEventListener('pointerenter', () => { try { inst.hoverConstraintFromLabel?.(c.id); } catch {} });
+  el.addEventListener('pointerleave', () => { try { inst.clearHoverFromLabel?.(c.id); } catch {} });
+
+  // Edit on double click (value expression support preserved)
+  el.addEventListener('dblclick', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dbg('dblclick-edit', { cid: c.id, type: c.type, value: c.value });
+    const v = prompt('Enter value', String(c.value ?? ''));
+    if (v == null) return;
+    const ph = inst?.viewer?.partHistory;
+    const exprSrc = ph?.expressions || '';
+    const runExpr = (expressions, equation) => {
+      try {
+        const fn = `${expressions}; return ${equation} ;`;
+        let result = Function(fn)();
+        if (typeof result === 'string') {
+          const num = Number(result);
+          if (!Number.isNaN(num)) return num;
+        }
+        return result;
+      } catch (err) {
+        console.log('Expression eval failed:', err?.message || err);
+        return null;
+      }
+    };
+    const plainNumberRe = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?\s*$/i;
+    let numeric = null;
+    if (plainNumberRe.test(v)) {
+      numeric = parseFloat(v);
+      c.valueExpr = undefined;
+    } else {
+      numeric = runExpr(exprSrc, v);
+      if (numeric == null || !Number.isFinite(numeric)) return;
+      c.valueExpr = String(v);
+    }
+    c.value = Number(numeric);
+    try { inst._solver.solveSketch('full'); } catch {}
+    try { inst._solver?.hooks?.updateCanvas?.(); } catch {}
+  });
+
+  // Drag handling with commit-on-drop
+  let dragging = false, moved = false, sx = 0, sy = 0, start = {};
+  let sClientX = 0, sClientY = 0;
+  let distNx = 0, distNy = 0, distTx = 0, distTy = 0, distStartD = 0, distStartT = 0;
+  let radRx = 0, radRy = 0, radNx = 0, radNy = 0, radStartDr = 0, radStartDp = 0;
+  let angStartDU = 0, angStartDV = 0;
+  let pendingOff = null;
+
+  el.addEventListener('pointerdown', (e) => {
+    dragging = true; moved = false; pendingOff = null;
+    try { inst._suspendDimLabelRebuild = true; inst._activeDimLabelDragId = c.id; } catch {}
+    try { inst._debugDragCID = c.id; } catch {}
+    const uv = pointerToPlaneUV(inst, e);
+    sx = uv?.u || 0; sy = uv?.v || 0;
+    start = { ...(inst._dimOffsets.get(c.id) || {}) };
+    sClientX = e.clientX || 0; sClientY = e.clientY || 0;
+    dbg('pointerdown', { cid: c.id, type: c.type, startUV: { u: sx, v: sy }, startOffset: start });
+    if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
+      const sObj = inst._solver.sketchObject;
+      const pc = sObj.points.find((p) => p.id === c.points[0]);
+      const pr = sObj.points.find((p) => p.id === c.points[1]);
+      if (pc && pr) {
+        const vx = pr.x - pc.x, vy = pr.y - pc.y; const L = Math.hypot(vx, vy) || 1;
+        radRx = vx / L; radRy = vy / L; radNx = -radRy; radNy = radRx;
+        radStartDr = Number(start.dr) || 0; radStartDp = Number(start.dp) || 0;
+      }
+    } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
+      const sObj = inst._solver.sketchObject;
+      const p0 = sObj.points.find((p) => p.id === c.points[0]);
+      const p1 = sObj.points.find((p) => p.id === c.points[1]);
+      if (p0 && p1) {
+        const dx = p1.x - p0.x, dy = p1.y - p0.y; const L = Math.hypot(dx, dy) || 1;
+        const tx = dx / L, ty = dy / L; distTx = tx; distTy = ty;
+        distNx = -ty; distNy = tx;
+        const du0 = Number(start.du) || 0, dv0 = Number(start.dv) || 0;
+        distStartD = (typeof start.d === 'number') ? Number(start.d) : (du0 * distNx + dv0 * distNy);
+        distStartT = (typeof start.t === 'number') ? Number(start.t) : (du0 * distTx + dv0 * distTy);
+      }
+    } else if (c.type === '∠') {
+      angStartDU = Number(start.du) || 0; angStartDV = Number(start.dv) || 0;
+    }
+    try { if (inst.viewer?.controls) inst.viewer.controls.enabled = false; } catch {}
+    try { el.setPointerCapture(e.pointerId); } catch {}
+  });
+
+  el.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const uv = pointerToPlaneUV(inst, e); if (!uv) return;
+    const pxThreshold = 3;
+    const pxDx = Math.abs((e.clientX || 0) - sClientX);
+    const pxDy = Math.abs((e.clientY || 0) - sClientY);
+    if (!moved && (pxDx + pxDy) < pxThreshold) return;
+    moved = true;
+    dbg('pointermove', { cid: c.id, type: c.type, uv, pxDx, pxDy });
+    const du = uv.u - sx; const dv = uv.v - sy;
+    if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
+      const dr = (Number(radStartDr)||0) + (du*radRx + dv*radRy);
+      const dp = (Number(radStartDp)||0) + (du*radNx + dv*radNy);
+      pendingOff = { dr, dp };
+      // live label preview without committing
+      const toLabel = { du: radRx*dr + radNx*dp, dv: radRy*dr + radNy*dp };
+      updateOneDimPosition(inst, el, world, toLabel, true);
+      dbg('preview-radius', { cid: c.id, dr, dp, toLabel });
+      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst); } catch {}
+    } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
+      const deltaN = du * distNx + dv * distNy;
+      const deltaT = du * distTx + dv * distTy;
+      const newD = distStartD + deltaN; const newT = distStartT + deltaT;
+      pendingOff = { d: newD, t: newT };
+      const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
+      const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
+      const toLabel = { du: distTx*newT + distNx*(base + newD), dv: distTy*newT + distNy*(base + newD) };
+      updateOneDimPosition(inst, el, world, toLabel, true);
+      dbg('preview-distance', { cid: c.id, d: newD, t: newT, toLabel });
+      try { inst._dimOffsets.set(c.id, { du: toLabel.du, dv: toLabel.dv }); _redrawDim3D(inst); } catch {}
+    } else if (c.type === '∠') {
+      const toLabel = { du: angStartDU + du, dv: angStartDV + dv };
+      pendingOff = { ...toLabel };
+      updateOneDimPosition(inst, el, world, toLabel, true);
+      dbg('preview-angle', { cid: c.id, toLabel });
+      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst); } catch {}
+    }
+    e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+  });
+
+  const computePendingFromEvent = (e) => {
+    const uv = pointerToPlaneUV(inst, e); if (!uv) return null;
+    if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
+      const du = uv.u - sx; const dv = uv.v - sy;
+      const dr = (Number(radStartDr)||0) + (du*radRx + dv*radRy);
+      const dp = (Number(radStartDp)||0) + (du*radNx + dv*radNy);
+      return { dr, dp };
+    } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
+      const du = uv.u - sx; const dv = uv.v - sy;
+      const deltaN = du * distNx + dv * distNy;
+      const deltaT = du * distTx + dv * distTy;
+      const newD = distStartD + deltaN; const newT = distStartT + deltaT;
+      return { d: newD, t: newT };
+    } else if (c.type === '∠') {
+      const du = uv.u - sx; const dv = uv.v - sy;
+      return { du: angStartDU + du, dv: angStartDV + dv };
+    }
+    return null;
+  };
+
+  const commitAndRefresh = () => {
+    if (pendingOff) { try { inst._dimOffsets.set(c.id, pendingOff); dbg('commit', { cid: c.id, off: pendingOff }); } catch {} pendingOff = null; }
+    try { inst._solver?.hooks?.updateCanvas?.(); } catch {}
+    try { renderDimensions(inst); dbg('renderDimensions'); } catch {}
+  };
+
+  el.addEventListener('pointerup', (e) => {
+    let hadPending = !!pendingOff;
+    dragging = false;
+    try { el.releasePointerCapture(e.pointerId); } catch {}
+    try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch {}
+    if (!hadPending) { pendingOff = computePendingFromEvent(e); hadPending = !!pendingOff; dbg('pointerup-computed', { cid: c.id, pendingOff }); }
+    if (hadPending) {
+      commitAndRefresh();
+      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+    }
+    try { inst._suspendDimLabelRebuild = false; inst._activeDimLabelDragId = null; } catch {}
+    try { inst._debugDragCID = null; } catch {}
+  });
+
+  el.addEventListener('pointercancel', (e) => {
+    let hadPending = !!pendingOff;
+    dragging = false;
+    try { el.releasePointerCapture(e.pointerId); } catch {}
+    try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch {}
+    if (!hadPending) { pendingOff = computePendingFromEvent(e); hadPending = !!pendingOff; dbg('pointercancel-computed', { cid: c.id, pendingOff }); }
+    if (hadPending) {
+      commitAndRefresh();
+      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+    }
+    try { inst._suspendDimLabelRebuild = false; inst._activeDimLabelDragId = null; } catch {}
+    try { inst._debugDragCID = null; } catch {}
+  });
 }
 
 export function dimDistance3D(inst, p0, p1, cid, color = 0x67e667) {
@@ -359,21 +495,63 @@ export function dimRadius3D(inst, pc, pr, cid, color = 0x69a8ff) {
   const P=(u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
   const blue=new THREE.LineBasicMaterial({ color, depthTest:false, depthWrite:false, transparent:true });
   const add=(uvs)=>{ const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln); };
-  const vx=pr.x-pc.x, vy=pr.y-pc.y; const L=Math.hypot(vx,vy)||1; const rx=vx/L, ry=vy/L; const nx=-ry, ny=rx; const dr=Number(off.dr)||0; const dp=Number(off.dp)||0;
+  const vx=pr.x-pc.x, vy=pr.y-pc.y; const L=Math.hypot(vx,vy)||1; const rx=vx/L, ry=vy/L; const nx=-ry, ny=rx;
+  // Support both {dr,dp} and generic {du,dv}
+  let dr = 0, dp = 0;
+  if (off && (off.dr !== undefined || off.dp !== undefined)) {
+    dr = Number(off.dr)||0; dp = Number(off.dp)||0;
+  } else {
+    const du = Number(off.du)||0; const dv = Number(off.dv)||0;
+    dr = du*rx + dv*ry; dp = du*nx + dv*ny;
+  }
   const elbow={u: pr.x + rx*dr, v: pr.y + ry*dr}; const dogleg={u: elbow.u + nx*dp, v: elbow.v + ny*dp};
   add([{u:pc.x,v:pc.y},{u:pr.x,v:pr.y}]); add([{u:pr.x,v:pr.y}, elbow]); add([elbow, dogleg]);
   const ah = 0.06; const s=0.6; const tip={u:pr.x, v:pr.y}; const A={u: tip.u - rx*ah + nx*ah*0.6, v: tip.v - ry*ah + ny*ah*0.6}; const B={u: tip.u - rx*ah - nx*ah*0.6, v: tip.v - ry*ah - ny*ah*0.6};
   add([tip, A]); add([tip, B]);
 }
 
-export function dimAngle3D(inst, p0,p1,p2,p3,cid,I, color = 0x69a8ff) {
+export function dimAngle3D(inst, p0,p1,p2,p3,cid,I, color = 0x69a8ff, valueDeg = null) {
+  // Offset for label drag: translates the arc center together with the label
   const off = inst._dimOffsets.get(cid) || { du:0, dv:0 };
   const X=inst._lock.basis.x, Y=inst._lock.basis.y, O=inst._lock.basis.origin; const P=(u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
-  const d1=new THREE.Vector2(p1.x-p0.x, p1.y-p0.y).normalize(); const d2=new THREE.Vector2(p3.x-p2.x, p3.y-p2.y).normalize();
-  let a0=Math.atan2(d1.y,d1.x), a1=Math.atan2(d2.y,d2.x); let d=a1-a0; while(d<=-Math.PI)d+=2*Math.PI; while(d>Math.PI)d-=2*Math.PI;
-  const r=0.6; const cx=I.x+off.du, cy=I.y+off.dv; const segs=32; const uvs=[]; for(let i=0;i<=segs;i++){ const t=a0+d*(i/segs); uvs.push({u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}); }
-  const blue=new THREE.LineBasicMaterial({color, depthTest:false, depthWrite:false, transparent:true}); const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln);
-  const ah=0.06, s=0.6; const addArrowUV=(t)=>{ const tx=-Math.sin(t), ty=Math.cos(t); const wx=-ty, wy=tx; const tip={u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}; const A={u:tip.u+tx*ah+wx*ah*s, v:tip.v+ty*ah+wy*ah*s}; const B={u:tip.u+tx*ah-wx*ah*s, v:tip.v+ty*ah-wy*ah*s}; const gg1=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(A.u,A.v)]); const gg2=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(B.u,B.v)]); const la=new THREE.Line(gg1, blue.clone()); const lb=new THREE.Line(gg2, blue.clone()); la.renderOrder = 10020; lb.renderOrder = 10020; try { la.layers.set(31); lb.layers.set(31); } catch {} inst._dim3D.add(la); inst._dim3D.add(lb); };
+
+  // Unit direction of both lines
+  const d1=new THREE.Vector2(p1.x-p0.x, p1.y-p0.y);
+  const d2=new THREE.Vector2(p3.x-p2.x, p3.y-p2.y);
+  if (d1.lengthSq() < 1e-12 || d2.lengthSq() < 1e-12) return; // degenerate
+  d1.normalize(); d2.normalize();
+
+  // Base orientation from first line; arc direction sign from the raw difference
+  let a0=Math.atan2(d1.y,d1.x), a1=Math.atan2(d2.y,d2.x);
+  let signedDelta=a1-a0; while(signedDelta<=-Math.PI)signedDelta+=2*Math.PI; while(signedDelta>Math.PI)signedDelta-=2*Math.PI;
+  const sgn = signedDelta>=0 ? 1 : -1;
+
+  // Use the constraint's numeric value when provided; otherwise draw the minor angle
+  let mag = Math.abs(signedDelta);
+  if (typeof valueDeg === 'number' && Number.isFinite(valueDeg)) {
+    mag = (Math.abs(valueDeg) % 360) * (Math.PI/180);
+    if (mag < 1e-6) mag = 1e-6; // ensure visible
+  }
+  let d = sgn * mag;
+  // Clamp to [0, 2π]
+  const twoPi = Math.PI*2; if (Math.abs(d) > twoPi) d = sgn * (twoPi - 1e-6);
+
+  // Screen-scaled radius and arrow size so it stays visible at any zoom
+  const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
+  const wpp = worldPerPixel(inst.viewer.camera, rect.width, rect.height);
+  const r = Math.max(0.3, wpp * 24);
+  const ah = Math.max(0.06, wpp * 6);
+  const cx=I.x+off.du, cy=I.y+off.dv;
+
+  // Author the arc polyline
+  const segs=48; // smoother arc
+  const uvs=[]; for(let i=0;i<=segs;i++){ const t=a0+d*(i/segs); uvs.push({u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}); }
+  const blue=new THREE.LineBasicMaterial({color, depthTest:false, depthWrite:false, transparent:true});
+  const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v)));
+  const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln);
+
+  // Arrowheads at both arc ends (tangential)
+  const s=0.6; const addArrowUV=(t)=>{ const tx=-Math.sin(t), ty=Math.cos(t); const wx=-ty, wy=tx; const tip={u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}; const A={u:tip.u+tx*ah+wx*ah*s, v:tip.v+ty*ah+wy*ah*s}; const B={u:tip.u+tx*ah-wx*ah*s, v:tip.v+ty*ah-wy*ah*s}; const gg1=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(A.u,A.v)]); const gg2=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(B.u,B.v)]); const la=new THREE.Line(gg1, blue.clone()); const lb=new THREE.Line(gg2, blue.clone()); la.renderOrder = 10020; lb.renderOrder = 10020; try { la.layers.set(31); lb.layers.set(31); } catch {} inst._dim3D.add(la); inst._dim3D.add(lb); };
   addArrowUV(a0); addArrowUV(a0+d);
 }
 
@@ -389,9 +567,13 @@ function worldPerPixel(camera, width, height) {
   return (2 * Math.tan(fovRad / 2) * dist) / height;
 }
 
-function intersect(A,B,C,D){
-  const den=(A.x-B.x)*(C.y-D.y)-(A.y-B.y)*(C.x-D.x); if(Math.abs(den)<1e-9) return {x:B.x,y:B.y};
-  const x=((A.x*A.y-B.x*B.y)*(C.x-D.x)-(A.x-B.x)*(C.x*C.y-D.x*D.y))/den;
-  const y=((A.x*A.y-B.x*B.y)*(C.y-D.y)-(A.y-B.y)*(C.x*C.y-D.x*D.y))/den;
-  return {x,y};
+// Robust 2D infinite-line intersection (returns point even if segments don't overlap)
+function intersect(A, B, C, D) {
+  const r = { x: B.x - A.x, y: B.y - A.y };
+  const s = { x: D.x - C.x, y: D.y - C.y };
+  const rxs = r.x * s.y - r.y * s.x;
+  // Parallel or nearly parallel: fall back to A to avoid NaNs
+  if (Math.abs(rxs) < 1e-12) return { x: A.x, y: A.y };
+  const t = ((C.x - A.x) * s.y - (C.y - A.y) * s.x) / rxs;
+  return { x: A.x + t * r.x, y: A.y + t * r.y };
 }

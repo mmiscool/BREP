@@ -32,6 +32,12 @@ export function drawConstraintGlyphs(inst, constraints) {
       el.style.top = `${Math.round(y)}px`;
       el.style.transform = 'translate(-50%, -50%)';
       el.style.pointerEvents = 'auto';
+      // Prevent selecting glyph text while dragging/hovering
+      el.style.userSelect = 'none';
+      el.style.webkitUserSelect = 'none';
+      el.style.MozUserSelect = 'none';
+      el.setAttribute('draggable', 'false');
+      el.onselectstart = () => false;
       el.style.font = '14px system-ui,sans-serif';
       el.style.lineHeight = '1';
       el.style.color = '#e6e6e6';
@@ -49,21 +55,21 @@ export function drawConstraintGlyphs(inst, constraints) {
 
       // Interactions: click to toggle selection; hover to reflect
       el.addEventListener('pointerdown', (e) => {
-        try { if (inst.viewer?.controls) inst.viewer.controls.enabled = false; } catch {}
-        try { el.setPointerCapture(e.pointerId); } catch {}
+        try { if (inst.viewer?.controls) inst.viewer.controls.enabled = false; } catch { }
+        try { el.setPointerCapture(e.pointerId); } catch { }
         e.preventDefault(); e.stopPropagation();
       });
       el.addEventListener('pointerup', (e) => {
-        try { el.releasePointerCapture(e.pointerId); } catch {}
-        try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch {}
-        try { inst.toggleSelectConstraint?.(c.id); } catch {}
+        try { el.releasePointerCapture(e.pointerId); } catch { }
+        try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch { }
+        try { inst.toggleSelectConstraint?.(c.id); } catch { }
         e.preventDefault(); e.stopPropagation();
       });
-      el.addEventListener('pointerenter', () => { try { inst.hoverConstraintFromLabel?.(c.id); } catch {} });
-      el.addEventListener('pointerleave', () => { try { inst.clearHoverFromLabel?.(c.id); } catch {} });
+      el.addEventListener('pointerenter', () => { try { inst.hoverConstraintFromLabel?.(c.id); } catch { } });
+      el.addEventListener('pointerleave', () => { try { inst.clearHoverFromLabel?.(c.id); } catch { } });
 
       inst._dimRoot.appendChild(el);
-    } catch {}
+    } catch { }
   };
   const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
   const wpp = worldPerPixel(inst.viewer.camera, rect.width, rect.height);
@@ -126,7 +132,7 @@ export function drawConstraintGlyphs(inst, constraints) {
   const groups = new Map();
   for (const c of (constraints || [])) {
     if (!c || c.type === '⟺' || c.type === '∠') continue;
-    const ids = Array.from(new Set((c.points || []).map(Number))).sort((a,b)=>a-b);
+    const ids = Array.from(new Set((c.points || []).map(Number))).sort((a, b) => a - b);
     if (!ids.length) continue;
     const key = ids.join(',');
     const arr = groups.get(key) || []; arr.push(c); groups.set(key, arr);
@@ -168,9 +174,9 @@ export function drawConstraintGlyphs(inst, constraints) {
       }
     }
     // Default: centroid of unique points, nudged slightly for visibility
-    let sx=0, sy=0, n=0;
+    let sx = 0, sy = 0, n = 0;
     for (const id of ids) { const p = P(id); if (p) { sx += p.x; sy += p.y; n++; } }
-    if (!n) return { u:0, v:0 };
+    if (!n) return { u: 0, v: 0 };
     const u = sx / n, v = sy / n;
     const off = nudgeFromPoints(u, v);
     return { u: off.u, v: off.v };
@@ -191,7 +197,7 @@ export function drawConstraintGlyphs(inst, constraints) {
       const cx = startU + i * spacing;
       const adj = avoidAll(cx, y);
       // Record for hit-testing
-      try { inst._glyphCenters.set(c.id, { u: adj.u, v: adj.v }); } catch {}
+      try { inst._glyphCenters.set(c.id, { u: adj.u, v: adj.v }); } catch { }
       placedIcons.push({ u: adj.u, v: adj.v });
       // Small pick radius disk (invisible) for selection
       try {
@@ -206,16 +212,16 @@ export function drawConstraintGlyphs(inst, constraints) {
         const mesh = new THREE.Mesh(g, mat);
         mesh.applyMatrix4(m);
         mesh.renderOrder = 10030;
-        try { mesh.layers.set(31); } catch {}
+        try { mesh.layers.set(31); } catch { }
         mesh.userData = { kind: 'glyphHit', cid: c.id };
         inst._dim3D.add(mesh);
-      } catch {}
+      } catch { }
 
       // Draw the glyph symbol itself as unicode character from constraint.type
       try {
         const color = selSet.has(c.id) ? COLOR_SELECTED : (hovId === c.id ? COLOR_HOVER : COLOR_DEFAULT);
         placeGlyphLabel(c, c.type || '?', adj.u, adj.v, color);
-      } catch {}
+      } catch { }
     }
   }
 }
