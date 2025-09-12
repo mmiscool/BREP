@@ -4,12 +4,12 @@ import { drawConstraintGlyphs } from './glyphs.js';
 // Debug switch for dimension label interactions
 // Toggle at runtime via: window.__SKETCH_DIM_DEBUG = true/false
 const DIM_DEBUG = false;
-const dbg = (...args) => { try { if (DIM_DEBUG || window.__SKETCH_DIM_DEBUG) console.log('[DIM]', ...args); } catch {} };
+const dbg = (...args) => { try { if (DIM_DEBUG || window.__SKETCH_DIM_DEBUG) console.log('[DIM]', ...args); } catch { } };
 
 // Unified dimension colors
 const DIM_COLOR_DEFAULT = 0x69a8ff;   // blue
-const DIM_COLOR_HOVER   = 0xffd54a;   // yellow
-const DIM_COLOR_SELECTED= 0x6fe26f;   // green
+const DIM_COLOR_HOVER = 0xffd54a;   // yellow
+const DIM_COLOR_SELECTED = 0x6fe26f;   // green
 
 export function mountDimRoot(inst) {
   const host = inst.viewer?.container;
@@ -48,7 +48,7 @@ export function clearDims(inst) {
   if (inst._dim3D) {
     while (inst._dim3D.children.length) {
       const ch = inst._dim3D.children.pop();
-      try { ch.geometry?.dispose(); ch.material?.dispose?.(); } catch {}
+      try { ch.geometry?.dispose(); ch.material?.dispose?.(); } catch { }
     }
   }
 }
@@ -58,7 +58,7 @@ export function renderDimensions(inst) {
   // If a label drag is active, avoid tearing down/rebuilding HTML labels which
   // would drop pointer capture and prematurely end the drag. Only refresh 3D leaders.
   if (inst._suspendDimLabelRebuild) {
-    try { _redrawDim3D(inst); } catch {}
+    try { _redrawDim3D(inst); } catch { }
     return;
   }
   clearDims(inst);
@@ -72,7 +72,7 @@ export function renderDimensions(inst) {
   const mk = (c, text, world, planeOffOverride = null) => {
     const d = document.createElement('div');
     d.className = 'dim-label';
-    try { d.dataset.cid = String(c.id); } catch {}
+    try { d.dataset.cid = String(c.id); } catch { }
     d.style.position = 'absolute';
     d.style.padding = '2px 6px';
     d.style.border = '1px solid #364053';
@@ -118,7 +118,7 @@ export function renderDimensions(inst) {
       minDist: baseGlyph * 0.9,
       step: baseGlyph * 0.3,
     };
-  } catch {}
+  } catch { }
 
   const glyphConstraints = [];
   for (const c of s.constraints || []) {
@@ -129,38 +129,38 @@ export function renderDimensions(inst) {
         const pc = P(c.points[0]), pr = P(c.points[1]); if (!pc || !pr) continue;
         const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
         dimRadius3D(inst, pc, pr, c.id, col);
-        const v = new THREE.Vector2(pr.x - pc.x, pr.y - pc.y); const L = v.length() || 1; const rx = v.x/L, ry = v.y/L; const nx = -ry, ny = rx;
+        const v = new THREE.Vector2(pr.x - pc.x, pr.y - pc.y); const L = v.length() || 1; const rx = v.x / L, ry = v.y / L; const nx = -ry, ny = rx;
         const offSaved = inst._dimOffsets.get(c.id) || {};
         const dr = (offSaved.dr !== undefined || offSaved.dp !== undefined)
-          ? (Number(offSaved.dr)||0)
-          : ((Number(offSaved.du)||0)*rx + (Number(offSaved.dv)||0)*ry);
+          ? (Number(offSaved.dr) || 0)
+          : ((Number(offSaved.du) || 0) * rx + (Number(offSaved.dv) || 0) * ry);
         const dp = (offSaved.dr !== undefined || offSaved.dp !== undefined)
-          ? (Number(offSaved.dp)||0)
-          : ((Number(offSaved.du)||0)*nx + (Number(offSaved.dv)||0)*ny);
-        const label = to3(pr.x + rx*dr + nx*dp, pr.y + ry*dr + ny*dp);
+          ? (Number(offSaved.dp) || 0)
+          : ((Number(offSaved.du) || 0) * nx + (Number(offSaved.dv) || 0) * ny);
+        const label = to3(pr.x + rx * dr + nx * dp, pr.y + ry * dr + ny * dp);
         const val = Number(c.value) ?? 0;
-        const txt = c.displayStyle === 'diameter' ? `⌀${(2*val).toFixed(3)}     Diameter` : `R${val.toFixed(3)}     Radius`;
+        const txt = c.displayStyle === 'diameter' ? `⌀${(2 * val).toFixed(3)}     Diameter` : `R${val.toFixed(3)}     Radius`;
         mk(c, txt, label, { du: 0, dv: 0 });
       } else if (c.points?.length >= 2) {
         const p0 = P(c.points[0]), p1 = P(c.points[1]); if (!p0 || !p1) continue;
-        const basis = (()=>{ const dx=p1.x-p0.x, dy=p1.y-p0.y; const L=Math.hypot(dx,dy)||1; const tx=dx/L, ty=dy/L; return { tx, ty, nx:-ty, ny:tx }; })();
+        const basis = (() => { const dx = p1.x - p0.x, dy = p1.y - p0.y; const L = Math.hypot(dx, dy) || 1; const tx = dx / L, ty = dy / L; return { tx, ty, nx: -ty, ny: tx }; })();
         const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
         const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
-        const offSaved = inst._dimOffsets.get(c.id) || { du:0, dv:0 };
-        const d = typeof offSaved.d === 'number' ? offSaved.d : (offSaved.du||0)*basis.nx + (offSaved.dv||0)*basis.ny;
-        const t = typeof offSaved.t === 'number' ? offSaved.t : (offSaved.du||0)*basis.tx + (offSaved.dv||0)*basis.ty;
+        const offSaved = inst._dimOffsets.get(c.id) || { du: 0, dv: 0 };
+        const d = typeof offSaved.d === 'number' ? offSaved.d : (offSaved.du || 0) * basis.nx + (offSaved.dv || 0) * basis.ny;
+        const t = typeof offSaved.t === 'number' ? offSaved.t : (offSaved.du || 0) * basis.tx + (offSaved.dv || 0) * basis.ty;
         const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
         dimDistance3D(inst, p0, p1, c.id, col);
-        mk(c, String((Number(c.value) ?? 0).toFixed(3)), to3((p0.x+p1.x)/2, (p0.y+p1.y)/2), { du: basis.tx*t + basis.nx*(base+d), dv: basis.ty*t + basis.ny*(base+d) });
+        mk(c, String((Number(c.value) ?? 0).toFixed(3)), to3((p0.x + p1.x) / 2, (p0.y + p1.y) / 2), { du: basis.tx * t + basis.nx * (base + d), dv: basis.ty * t + basis.ny * (base + d) });
       }
     }
     if (c.type === '∠' && c.points?.length >= 4) {
-      const p0=P(c.points[0]), p1=P(c.points[1]), p2=P(c.points[2]), p3=P(c.points[3]); if (!p0||!p1||!p2||!p3) continue;
-      const I = intersect(p0,p1,p2,p3);
+      const p0 = P(c.points[0]), p1 = P(c.points[1]), p2 = P(c.points[2]), p3 = P(c.points[3]); if (!p0 || !p1 || !p2 || !p3) continue;
+      const I = intersect(p0, p1, p2, p3);
       const col = sel ? DIM_COLOR_SELECTED : (hov ? DIM_COLOR_HOVER : DIM_COLOR_DEFAULT);
       // Pass current numeric value to renderer so the arc length matches the annotation
       const angleValueDeg = (typeof c.value === 'number' && Number.isFinite(c.value)) ? Number(c.value) : null;
-      dimAngle3D(inst, p0,p1,p2,p3,c.id,I, col, angleValueDeg);
+      dimAngle3D(inst, p0, p1, p2, p3, c.id, I, col, angleValueDeg);
       mk(c, String(c.value ?? ''), to3(I.x, I.y));
     } else {
       // Non-dimension constraints: collect for grouped glyph rendering
@@ -169,7 +169,7 @@ export function renderDimensions(inst) {
   }
 
   // Render grouped glyphs (non-dimension constraints)
-  try { drawConstraintGlyphs(inst, glyphConstraints); } catch {}
+  try { drawConstraintGlyphs(inst, glyphConstraints); } catch { }
 }
 
 // Lightweight redraw of only the 3D leaders/arrows without touching HTML labels.
@@ -184,7 +184,7 @@ function _redrawDim3D(inst, onlyCid = null) {
       const match = onlyCid == null || (isDim && ch.userData.cid === onlyCid);
       if (isDim && match) {
         inst._dim3D.remove(ch);
-        try { ch.geometry?.dispose(); ch.material?.dispose?.(); } catch {}
+        try { ch.geometry?.dispose(); ch.material?.dispose?.(); } catch { }
       }
     }
     const s = inst._solver.sketchObject || {};
@@ -213,7 +213,7 @@ function _redrawDim3D(inst, onlyCid = null) {
         dimAngle3D(inst, p0, p1, p2, p3, c.id, I, col, angleValueDeg);
       }
     }
-  } catch {}
+  } catch { }
 }
 
 // Helpers (module-local)
@@ -251,25 +251,25 @@ function updateOneDimPosition(inst, el, world, off, noNudge = false) {
     }
     if (!noNudge && inst && inst._debugDragCID != null && String(inst._debugDragCID) === String(el?.dataset?.cid)) {
       const duN = u - u0, dvN = v - v0; const moved = Math.hypot(duN, dvN);
-      if (moved > 1e-6) dbg('label-nudged', { cid: el?.dataset?.cid, from: {u:u0,v:v0}, to: {u,v}, delta:{du:duN,dv:dvN} });
+      if (moved > 1e-6) dbg('label-nudged', { cid: el?.dataset?.cid, from: { u: u0, v: v0 }, to: { u, v }, delta: { du: duN, dv: dvN } });
     }
     // Rebuild world position from nudged (u,v)
     w = new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
-  } catch {}
+  } catch { }
   const pt = w.project(inst.viewer.camera);
   const rect2 = inst.viewer.renderer.domElement.getBoundingClientRect();
   const x = (pt.x * 0.5 + 0.5) * rect2.width; const y = (-pt.y * 0.5 + 0.5) * rect2.height;
   el.style.left = `${Math.round(x)}px`; el.style.top = `${Math.round(y)}px`;
   // Only log label placement for the dimension actively being dragged
   if (inst && inst._debugDragCID != null && String(inst._debugDragCID) === String(el?.dataset?.cid)) {
-    dbg('label-place', { cid: el?.dataset?.cid, world: { x: w.x, y: w.y, z: w.z }, screen: { x: Math.round(x), y: Math.round(y) }, off: {du,dv}, noNudge });
+    dbg('label-place', { cid: el?.dataset?.cid, world: { x: w.x, y: w.y, z: w.z }, screen: { x: Math.round(x), y: Math.round(y) }, off: { du, dv }, noNudge });
   }
 }
 
 function pointerToPlaneUV(inst, e) {
   const v = inst.viewer; if (!v || !inst._lock) return null;
   const rect = v.renderer.domElement.getBoundingClientRect();
-  const ndc = new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -(((e.clientY-rect.top)/rect.height)*2-1));
+  const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -(((e.clientY - rect.top) / rect.height) * 2 - 1));
   inst._raycaster.setFromCamera(ndc, v.camera);
   const n = inst._lock?.basis?.z?.clone();
   const o = inst._lock?.basis?.origin?.clone();
@@ -290,14 +290,14 @@ function attachDimLabelEvents(inst, el, c, world) {
   // Click: toggle constraint selection (dblclick handled separately)
   el.addEventListener('click', (e) => {
     if (e.detail > 1) return;
-    try { inst.toggleSelectConstraint?.(c.id); } catch {}
-    e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+    try { inst.toggleSelectConstraint?.(c.id); } catch { }
+    e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch { }
     dbg('click', { cid: c.id, type: c.type });
   });
 
   // Hover reflects in overlays/sidebar
-  el.addEventListener('pointerenter', () => { try { inst.hoverConstraintFromLabel?.(c.id); } catch {} });
-  el.addEventListener('pointerleave', () => { try { inst.clearHoverFromLabel?.(c.id); } catch {} });
+  el.addEventListener('pointerenter', () => { try { inst.hoverConstraintFromLabel?.(c.id); } catch { } });
+  el.addEventListener('pointerleave', () => { try { inst.clearHoverFromLabel?.(c.id); } catch { } });
 
   // Edit on double click (value expression support preserved)
   el.addEventListener('dblclick', (e) => {
@@ -332,8 +332,8 @@ function attachDimLabelEvents(inst, el, c, world) {
       c.valueExpr = String(v);
     }
     c.value = Number(numeric);
-    try { inst._solver.solveSketch('full'); } catch {}
-    try { inst._solver?.hooks?.updateCanvas?.(); } catch {}
+    try { inst._solver.solveSketch('full'); } catch { }
+    try { inst._solver?.hooks?.updateCanvas?.(); } catch { }
   });
 
   // Drag handling with commit-on-drop
@@ -346,8 +346,8 @@ function attachDimLabelEvents(inst, el, c, world) {
 
   el.addEventListener('pointerdown', (e) => {
     dragging = true; moved = false; pendingOff = null;
-    try { inst._suspendDimLabelRebuild = true; inst._activeDimLabelDragId = c.id; } catch {}
-    try { inst._debugDragCID = c.id; } catch {}
+    try { inst._suspendDimLabelRebuild = true; inst._activeDimLabelDragId = c.id; } catch { }
+    try { inst._debugDragCID = c.id; } catch { }
     const uv = pointerToPlaneUV(inst, e);
     sx = uv?.u || 0; sy = uv?.v || 0;
     start = { ...(inst._dimOffsets.get(c.id) || {}) };
@@ -377,8 +377,8 @@ function attachDimLabelEvents(inst, el, c, world) {
     } else if (c.type === '∠') {
       angStartDU = Number(start.du) || 0; angStartDV = Number(start.dv) || 0;
     }
-    try { if (inst.viewer?.controls) inst.viewer.controls.enabled = false; } catch {}
-    try { el.setPointerCapture(e.pointerId); } catch {}
+    try { if (inst.viewer?.controls) inst.viewer.controls.enabled = false; } catch { }
+    try { el.setPointerCapture(e.pointerId); } catch { }
   });
 
   el.addEventListener('pointermove', (e) => {
@@ -392,14 +392,14 @@ function attachDimLabelEvents(inst, el, c, world) {
     dbg('pointermove', { cid: c.id, type: c.type, uv, pxDx, pxDy });
     const du = uv.u - sx; const dv = uv.v - sy;
     if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
-      const dr = (Number(radStartDr)||0) + (du*radRx + dv*radRy);
-      const dp = (Number(radStartDp)||0) + (du*radNx + dv*radNy);
+      const dr = (Number(radStartDr) || 0) + (du * radRx + dv * radRy);
+      const dp = (Number(radStartDp) || 0) + (du * radNx + dv * radNy);
       pendingOff = { dr, dp };
       // live label preview without committing
-      const toLabel = { du: radRx*dr + radNx*dp, dv: radRy*dr + radNy*dp };
+      const toLabel = { du: radRx * dr + radNx * dp, dv: radRy * dr + radNy * dp };
       updateOneDimPosition(inst, el, world, toLabel, true);
       dbg('preview-radius', { cid: c.id, dr, dp, toLabel });
-      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst, c.id); } catch {}
+      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst, c.id); } catch { }
     } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
       const deltaN = du * distNx + dv * distNy;
       const deltaT = du * distTx + dv * distTy;
@@ -407,26 +407,26 @@ function attachDimLabelEvents(inst, el, c, world) {
       pendingOff = { d: newD, t: newT };
       const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
       const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
-      const toLabel = { du: distTx*newT + distNx*(base + newD), dv: distTy*newT + distNy*(base + newD) };
+      const toLabel = { du: distTx * newT + distNx * (base + newD), dv: distTy * newT + distNy * (base + newD) };
       updateOneDimPosition(inst, el, world, toLabel, true);
       dbg('preview-distance', { cid: c.id, d: newD, t: newT, toLabel });
-      try { inst._dimOffsets.set(c.id, { du: toLabel.du, dv: toLabel.dv }); _redrawDim3D(inst, c.id); } catch {}
+      try { inst._dimOffsets.set(c.id, { du: toLabel.du, dv: toLabel.dv }); _redrawDim3D(inst, c.id); } catch { }
     } else if (c.type === '∠') {
       const toLabel = { du: angStartDU + du, dv: angStartDV + dv };
       pendingOff = { ...toLabel };
       updateOneDimPosition(inst, el, world, toLabel, true);
       dbg('preview-angle', { cid: c.id, toLabel });
-      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst, c.id); } catch {}
+      try { inst._dimOffsets.set(c.id, toLabel); _redrawDim3D(inst, c.id); } catch { }
     }
-    e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+    e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch { }
   });
 
   const computePendingFromEvent = (e) => {
     const uv = pointerToPlaneUV(inst, e); if (!uv) return null;
     if (c.type === '⟺' && c.displayStyle === 'radius' && Array.isArray(c.points) && c.points.length >= 2) {
       const du = uv.u - sx; const dv = uv.v - sy;
-      const dr = (Number(radStartDr)||0) + (du*radRx + dv*radRy);
-      const dp = (Number(radStartDp)||0) + (du*radNx + dv*radNy);
+      const dr = (Number(radStartDr) || 0) + (du * radRx + dv * radRy);
+      const dp = (Number(radStartDp) || 0) + (du * radNx + dv * radNy);
       return { dr, dp };
     } else if (c.type === '⟺' && Array.isArray(c.points) && c.points.length >= 2) {
       const du = uv.u - sx; const dv = uv.v - sy;
@@ -442,105 +442,105 @@ function attachDimLabelEvents(inst, el, c, world) {
   };
 
   const commitAndRefresh = () => {
-    if (pendingOff) { try { inst._dimOffsets.set(c.id, pendingOff); dbg('commit', { cid: c.id, off: pendingOff }); } catch {} pendingOff = null; }
-    try { inst._solver?.hooks?.updateCanvas?.(); } catch {}
-    try { renderDimensions(inst); dbg('renderDimensions'); } catch {}
+    if (pendingOff) { try { inst._dimOffsets.set(c.id, pendingOff); dbg('commit', { cid: c.id, off: pendingOff }); } catch { } pendingOff = null; }
+    try { inst._solver?.hooks?.updateCanvas?.(); } catch { }
+    try { renderDimensions(inst); dbg('renderDimensions'); } catch { }
   };
 
   el.addEventListener('pointerup', (e) => {
     let hadPending = !!pendingOff;
     dragging = false;
-    try { el.releasePointerCapture(e.pointerId); } catch {}
-    try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch {}
+    try { el.releasePointerCapture(e.pointerId); } catch { }
+    try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch { }
     if (!hadPending) { pendingOff = computePendingFromEvent(e); hadPending = !!pendingOff; dbg('pointerup-computed', { cid: c.id, pendingOff }); }
     if (hadPending) {
       commitAndRefresh();
-      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch { }
     }
-    try { inst._suspendDimLabelRebuild = false; inst._activeDimLabelDragId = null; } catch {}
-    try { inst._debugDragCID = null; } catch {}
+    try { inst._suspendDimLabelRebuild = false; inst._activeDimLabelDragId = null; } catch { }
+    try { inst._debugDragCID = null; } catch { }
   });
 
   el.addEventListener('pointercancel', (e) => {
     let hadPending = !!pendingOff;
     dragging = false;
-    try { el.releasePointerCapture(e.pointerId); } catch {}
-    try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch {}
+    try { el.releasePointerCapture(e.pointerId); } catch { }
+    try { if (inst.viewer?.controls) inst.viewer.controls.enabled = true; } catch { }
     if (!hadPending) { pendingOff = computePendingFromEvent(e); hadPending = !!pendingOff; dbg('pointercancel-computed', { cid: c.id, pendingOff }); }
     if (hadPending) {
       commitAndRefresh();
-      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch {}
+      e.preventDefault(); e.stopPropagation(); try { e.stopImmediatePropagation(); } catch { }
     }
-    try { inst._suspendDimLabelRebuild = false; inst._activeDimLabelDragId = null; } catch {}
-    try { inst._debugDragCID = null; } catch {}
+    try { inst._suspendDimLabelRebuild = false; inst._activeDimLabelDragId = null; } catch { }
+    try { inst._debugDragCID = null; } catch { }
   });
 }
 
 export function dimDistance3D(inst, p0, p1, cid, color = 0x67e667) {
-  const off = inst._dimOffsets.get(cid) || { du:0, dv:0 };
+  const off = inst._dimOffsets.get(cid) || { du: 0, dv: 0 };
   const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin;
-  const u0=p0.x, v0=p0.y, u1=p1.x, v1=p1.y; const dx=u1-u0, dy=v1-v0; const L=Math.hypot(dx,dy)||1; const tx=dx/L, ty=dy/L; const nx=-ty, ny=tx;
+  const u0 = p0.x, v0 = p0.y, u1 = p1.x, v1 = p1.y; const dx = u1 - u0, dy = v1 - v0; const L = Math.hypot(dx, dy) || 1; const tx = dx / L, ty = dy / L; const nx = -ty, ny = tx;
   const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
   const base = Math.max(0.1, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 20);
-  const d = typeof off.d === 'number' ? off.d : (off.du||0)*nx + (off.dv||0)*ny;
-  const ou = nx*(base+d), ov = ny*(base+d);
-  const P = (u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
-  const addLine=(pts,mat)=>{ const g=new THREE.BufferGeometry().setFromPoints(pts.map(p=>P(p.u,p.v))); const ln=new THREE.Line(g,mat); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln); };
-  const green=new THREE.LineBasicMaterial({color, depthTest:false, depthWrite:false, transparent:true});
-  addLine([{u:u0+ou,v:v0+ov},{u:u1+ou,v:v1+ov}], green);
-  addLine([{u:u0,v:v0},{u:u0+ou,v:v0+ov}], green.clone());
-  addLine([{u:u1,v:v1},{u:u1+ou,v:v1+ov}], green.clone());
+  const d = typeof off.d === 'number' ? off.d : (off.du || 0) * nx + (off.dv || 0) * ny;
+  const ou = nx * (base + d), ov = ny * (base + d);
+  const P = (u, v) => new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
+  const addLine = (pts, mat) => { const g = new THREE.BufferGeometry().setFromPoints(pts.map(p => P(p.u, p.v))); const ln = new THREE.Line(g, mat); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; try { ln.layers.set(31); } catch { } inst._dim3D.add(ln); };
+  const green = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
+  addLine([{ u: u0 + ou, v: v0 + ov }, { u: u1 + ou, v: v1 + ov }], green);
+  addLine([{ u: u0, v: v0 }, { u: u0 + ou, v: v0 + ov }], green.clone());
+  addLine([{ u: u1, v: v1 }, { u: u1 + ou, v: v1 + ov }], green.clone());
   const ah = Math.max(0.06, worldPerPixel(inst.viewer.camera, rect.width, rect.height) * 6);
-  const s = 0.6; const arrow=(ux,vy,dir)=>{ const tip={u:ux+ou,v:vy+ov}; const ax=dir*tx, ay=dir*ty; const wx=-ay, wy=ax; const A={u:tip.u+ax*ah+wx*ah*s,v:tip.v+ay*ah+wy*ah*s}; const B={u:tip.u+ax*ah-wx*ah*s,v:tip.v+ay*ah-wy*ah*s}; addLine([{u:tip.u,v:tip.v},A], green.clone()); addLine([{u:tip.u,v:tip.v},B], green.clone()); };
-  arrow(u0,v0,1); arrow(u1,v1,-1);
+  const s = 0.6; const arrow = (ux, vy, dir) => { const tip = { u: ux + ou, v: vy + ov }; const ax = dir * tx, ay = dir * ty; const wx = -ay, wy = ax; const A = { u: tip.u + ax * ah + wx * ah * s, v: tip.v + ay * ah + wy * ah * s }; const B = { u: tip.u + ax * ah - wx * ah * s, v: tip.v + ay * ah - wy * ah * s }; addLine([{ u: tip.u, v: tip.v }, A], green.clone()); addLine([{ u: tip.u, v: tip.v }, B], green.clone()); };
+  arrow(u0, v0, -1); arrow(u1, v1, -1);
 }
 
 export function dimRadius3D(inst, pc, pr, cid, color = 0x69a8ff) {
   const off = inst._dimOffsets.get(cid) || {};
   const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin;
-  const P=(u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
-  const blue=new THREE.LineBasicMaterial({ color, depthTest:false, depthWrite:false, transparent:true });
-  const add=(uvs)=>{ const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v))); const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln); };
-  const vx=pr.x-pc.x, vy=pr.y-pc.y; const L=Math.hypot(vx,vy)||1; const rx=vx/L, ry=vy/L; const nx=-ry, ny=rx;
+  const P = (u, v) => new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
+  const blue = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
+  const add = (uvs) => { const g = new THREE.BufferGeometry().setFromPoints(uvs.map(q => P(q.u, q.v))); const ln = new THREE.Line(g, blue); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; try { ln.layers.set(31); } catch { } inst._dim3D.add(ln); };
+  const vx = pr.x - pc.x, vy = pr.y - pc.y; const L = Math.hypot(vx, vy) || 1; const rx = vx / L, ry = vy / L; const nx = -ry, ny = rx;
   // Support both {dr,dp} and generic {du,dv}
   let dr = 0, dp = 0;
   if (off && (off.dr !== undefined || off.dp !== undefined)) {
-    dr = Number(off.dr)||0; dp = Number(off.dp)||0;
+    dr = Number(off.dr) || 0; dp = Number(off.dp) || 0;
   } else {
-    const du = Number(off.du)||0; const dv = Number(off.dv)||0;
-    dr = du*rx + dv*ry; dp = du*nx + dv*ny;
+    const du = Number(off.du) || 0; const dv = Number(off.dv) || 0;
+    dr = du * rx + dv * ry; dp = du * nx + dv * ny;
   }
-  const elbow={u: pr.x + rx*dr, v: pr.y + ry*dr}; const dogleg={u: elbow.u + nx*dp, v: elbow.v + ny*dp};
-  add([{u:pc.x,v:pc.y},{u:pr.x,v:pr.y}]); add([{u:pr.x,v:pr.y}, elbow]); add([elbow, dogleg]);
-  const ah = 0.06; const s=0.6; const tip={u:pr.x, v:pr.y}; const A={u: tip.u - rx*ah + nx*ah*0.6, v: tip.v - ry*ah + ny*ah*0.6}; const B={u: tip.u - rx*ah - nx*ah*0.6, v: tip.v - ry*ah - ny*ah*0.6};
+  const elbow = { u: pr.x + rx * dr, v: pr.y + ry * dr }; const dogleg = { u: elbow.u + nx * dp, v: elbow.v + ny * dp };
+  add([{ u: pc.x, v: pc.y }, { u: pr.x, v: pr.y }]); add([{ u: pr.x, v: pr.y }, elbow]); add([elbow, dogleg]);
+  const ah = 0.06; const s = 0.6; const tip = { u: pr.x, v: pr.y }; const A = { u: tip.u - rx * ah + nx * ah * 0.6, v: tip.v - ry * ah + ny * ah * 0.6 }; const B = { u: tip.u - rx * ah - nx * ah * 0.6, v: tip.v - ry * ah - ny * ah * 0.6 };
   add([tip, A]); add([tip, B]);
 }
 
-export function dimAngle3D(inst, p0,p1,p2,p3,cid,I, color = 0x69a8ff, valueDeg = null) {
+export function dimAngle3D(inst, p0, p1, p2, p3, cid, I, color = 0x69a8ff, valueDeg = null) {
   // Offset for label drag: translates the arc center together with the label
-  const off = inst._dimOffsets.get(cid) || { du:0, dv:0 };
-  const X=inst._lock.basis.x, Y=inst._lock.basis.y, O=inst._lock.basis.origin; const P=(u,v)=> new THREE.Vector3().copy(O).addScaledVector(X,u).addScaledVector(Y,v);
+  const off = inst._dimOffsets.get(cid) || { du: 0, dv: 0 };
+  const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin; const P = (u, v) => new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
 
   // Unit direction of both lines
-  const d1=new THREE.Vector2(p1.x-p0.x, p1.y-p0.y);
-  const d2=new THREE.Vector2(p3.x-p2.x, p3.y-p2.y);
+  const d1 = new THREE.Vector2(p1.x - p0.x, p1.y - p0.y);
+  const d2 = new THREE.Vector2(p3.x - p2.x, p3.y - p2.y);
   if (d1.lengthSq() < 1e-12 || d2.lengthSq() < 1e-12) return; // degenerate
   d1.normalize(); d2.normalize();
 
   // Base orientation from first line; arc direction sign from the raw difference
-  let a0=Math.atan2(d1.y,d1.x), a1=Math.atan2(d2.y,d2.x);
-  let signedDelta=a1-a0; while(signedDelta<=-Math.PI)signedDelta+=2*Math.PI; while(signedDelta>Math.PI)signedDelta-=2*Math.PI;
-  const sgn = signedDelta>=0 ? 1 : -1;
+  let a0 = Math.atan2(d1.y, d1.x), a1 = Math.atan2(d2.y, d2.x);
+  let signedDelta = a1 - a0; while (signedDelta <= -Math.PI) signedDelta += 2 * Math.PI; while (signedDelta > Math.PI) signedDelta -= 2 * Math.PI;
+  const sgn = signedDelta >= 0 ? 1 : -1;
 
   // Use the constraint's numeric value when provided; otherwise draw the minor angle
   let mag = Math.abs(signedDelta);
   if (typeof valueDeg === 'number' && Number.isFinite(valueDeg)) {
-    mag = (Math.abs(valueDeg) % 360) * (Math.PI/180);
+    mag = (Math.abs(valueDeg) % 360) * (Math.PI / 180);
     if (mag < 1e-6) mag = 1e-6; // ensure visible
   }
   let d = sgn * mag;
   // Clamp to [0, 2π]
-  const twoPi = Math.PI*2; if (Math.abs(d) > twoPi) d = sgn * (twoPi - 1e-6);
+  const twoPi = Math.PI * 2; if (Math.abs(d) > twoPi) d = sgn * (twoPi - 1e-6);
 
   // Screen-scaled radius and arrow size so it stays visible at any zoom
   const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
@@ -548,7 +548,7 @@ export function dimAngle3D(inst, p0,p1,p2,p3,cid,I, color = 0x69a8ff, valueDeg =
   const baseR = Math.max(0.3, wpp * 24);
   const ah = Math.max(0.06, wpp * 6);
   // Keep arc centered at the lines' intersection; use label offset magnitude to set radius
-  const du = Number(off.du)||0, dv = Number(off.dv)||0;
+  const du = Number(off.du) || 0, dv = Number(off.dv) || 0;
   const r = baseR + Math.hypot(du, dv);
   const cx = I.x, cy = I.y;
 
@@ -556,25 +556,41 @@ export function dimAngle3D(inst, p0,p1,p2,p3,cid,I, color = 0x69a8ff, valueDeg =
   // Compare label direction with the arc bisector; if it's closer to the opposite
   // bisector, flip the start by PI which mirrors the arc side while preserving span.
   const labelAng = Math.atan2(dv, du); // direction from center to label offset
-  const angNorm = (a)=>{ const t=2*Math.PI; a%=t; return a<0?a+t:a; };
-  const angDiff = (a,b)=>{ let x=angNorm(a-b); if (x>Math.PI) x=2*Math.PI-x; return Math.abs(x); };
+  const angNorm = (a) => { const t = 2 * Math.PI; a %= t; return a < 0 ? a + t : a; };
+  const angDiff = (a, b) => { let x = angNorm(a - b); if (x > Math.PI) x = 2 * Math.PI - x; return Math.abs(x); };
   let aStart = a0; // base start
-  const bisector = aStart + d*0.5;
+  const bisector = aStart + d * 0.5;
   const bisectorOpp = bisector + Math.PI;
   if (angDiff(labelAng, bisectorOpp) + 1e-6 < angDiff(labelAng, bisector)) {
     aStart += Math.PI; // flip arc side
   }
 
   // Author the arc polyline
-  const segs=48; // smoother arc
-  const uvs=[]; for(let i=0;i<=segs;i++){ const t=aStart+d*(i/segs); uvs.push({u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}); }
-  const blue=new THREE.LineBasicMaterial({color, depthTest:false, depthWrite:false, transparent:true});
-  const g=new THREE.BufferGeometry().setFromPoints(uvs.map(q=>P(q.u,q.v)));
-  const ln=new THREE.Line(g, blue); ln.userData={kind:'dim',cid}; ln.renderOrder = 10020; try { ln.layers.set(31); } catch {} inst._dim3D.add(ln);
+  const segs = 48; // smoother arc
+  const uvs = []; for (let i = 0; i <= segs; i++) { const t = aStart + d * (i / segs); uvs.push({ u: cx + Math.cos(t) * r, v: cy + Math.sin(t) * r }); }
+  const blue = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
+  const g = new THREE.BufferGeometry().setFromPoints(uvs.map(q => P(q.u, q.v)));
+  const ln = new THREE.Line(g, blue); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; try { ln.layers.set(31); } catch { } inst._dim3D.add(ln);
 
-  // Arrowheads at both arc ends (tangential)
-  const s=0.6; const addArrowUV=(t)=>{ const tx=-Math.sin(t), ty=Math.cos(t); const wx=-ty, wy=tx; const tip={u:cx+Math.cos(t)*r, v:cy+Math.sin(t)*r}; const A={u:tip.u+tx*ah+wx*ah*s, v:tip.v+ty*ah+wy*ah*s}; const B={u:tip.u+tx*ah-wx*ah*s, v:tip.v+ty*ah-wy*ah*s}; const gg1=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(A.u,A.v)]); const gg2=new THREE.BufferGeometry().setFromPoints([P(tip.u,tip.v),P(B.u,B.v)]); const la=new THREE.Line(gg1, blue.clone()); const lb=new THREE.Line(gg2, blue.clone()); la.renderOrder = 10020; lb.renderOrder = 10020; try { la.layers.set(31); lb.layers.set(31); } catch {} inst._dim3D.add(la); inst._dim3D.add(lb); };
-  addArrowUV(aStart); addArrowUV(aStart+d);
+  // Arrowheads at both arc ends (tangential). Make them face the arc span
+  // so the two arrowheads are oriented towards each other.
+  const s = 0.6; const addArrowUV = (t, dir = 1) => {
+    const tx = (-Math.sin(t)) * dir, ty = (Math.cos(t)) * dir;
+    const wx = -ty, wy = tx;
+    const tip = { u: cx + Math.cos(t) * r, v: cy + Math.sin(t) * r };
+    const A = { u: tip.u + tx * ah + wx * ah * s, v: tip.v + ty * ah + wy * ah * s };
+    const B = { u: tip.u + tx * ah - wx * ah * s, v: tip.v + ty * ah - wy * ah * s };
+    const gg1 = new THREE.BufferGeometry().setFromPoints([P(tip.u, tip.v), P(A.u, A.v)]);
+    const gg2 = new THREE.BufferGeometry().setFromPoints([P(tip.u, tip.v), P(B.u, B.v)]);
+    const la = new THREE.Line(gg1, blue.clone()); const lb = new THREE.Line(gg2, blue.clone());
+    la.renderOrder = 10020; lb.renderOrder = 10020; try { la.layers.set(31); lb.layers.set(31); } catch { }
+    inst._dim3D.add(la); inst._dim3D.add(lb);
+  };
+  // Orient arrowheads to face each other along the drawn arc
+  const dirStart = d >= 0 ? +1 : -1;
+  const dirEnd = -dirStart;
+  addArrowUV(aStart, dirStart);
+  addArrowUV(aStart + d, dirEnd);
 }
 
 function worldPerPixel(camera, width, height) {
