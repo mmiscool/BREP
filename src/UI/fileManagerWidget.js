@@ -165,6 +165,12 @@ export class FileManagerWidget {
     this.nameInput.value = this.currentName;
     this.nameInput.className = 'fm-input fm-grow';
     header.appendChild(this.nameInput);
+    
+    // View toggle: list ↔ icons-only
+    this.viewToggleBtn = document.createElement('button');
+    this.viewToggleBtn.className = 'fm-btn';
+    this.viewToggleBtn.addEventListener('click', () => this.toggleViewMode());
+    header.appendChild(this.viewToggleBtn);
 
     const saveBtn = document.createElement('button');
     saveBtn.textContent = 'Save';
@@ -172,11 +178,7 @@ export class FileManagerWidget {
     saveBtn.addEventListener('click', () => this.saveCurrent());
     header.appendChild(saveBtn);
 
-    // View toggle: list ↔ icons-only
-    this.viewToggleBtn = document.createElement('button');
-    this.viewToggleBtn.className = 'fm-btn';
-    this.viewToggleBtn.addEventListener('click', () => this.toggleViewMode());
-    header.appendChild(this.viewToggleBtn);
+
 
     const newBtn = document.createElement('button');
     newBtn.textContent = 'New';
@@ -379,7 +381,7 @@ export class FileManagerWidget {
   _updateViewToggleUI() {
     if (!this.viewToggleBtn) return;
     if (this._iconsOnly) {
-      this.viewToggleBtn.textContent = '📋';
+      this.viewToggleBtn.textContent = '☰';
       this.viewToggleBtn.title = 'Switch to list view';
     } else {
       this.viewToggleBtn.textContent = '🔳';
