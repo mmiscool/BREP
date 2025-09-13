@@ -114,6 +114,37 @@ export class Edge extends Line2 {
 
         return 0;
     }
+
+    points(applyWorld = true) {
+        // Return an array of {x,y,z} points along the polyline.
+        // Prefer polylineLocal from userData (installed by visualize), else fallback to geometry positions.
+        const tmp = new THREE.Vector3();
+        const out = [];
+
+        const pts = this.userData && Array.isArray(this.userData.polylineLocal)
+            ? this.userData.polylineLocal
+            : null;
+
+        if (pts && pts.length) {
+            for (let i = 0; i < pts.length; i++) {
+                const p = pts[i];
+                tmp.set(p[0], p[1], p[2]);
+                if (applyWorld) tmp.applyMatrix4(this.matrixWorld);
+                out.push({ x: tmp.x, y: tmp.y, z: tmp.z });
+            }
+            return out;
+        }
+
+        const pos = this.geometry && this.geometry.getAttribute && this.geometry.getAttribute('position');
+        if (pos && pos.itemSize === 3 && pos.count >= 1) {
+            for (let i = 0; i < pos.count; i++) {
+                tmp.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+                if (applyWorld) tmp.applyMatrix4(this.matrixWorld);
+                out.push({ x: tmp.x, y: tmp.y, z: tmp.z });
+            }
+        }
+        return out;
+    }
 }
 
 export class Face extends THREE.Mesh {
@@ -215,6 +246,22 @@ export class Face extends THREE.Mesh {
         }
         return area;
     }
+
+    async points() {
+        // return an array of point objects {x,y,z} in world space
+        const tmp = new THREE.Vector3();
+        const arr = [];
+        const pos = this.geometry && this.geometry.getAttribute && this.geometry.getAttribute('position');
+        if (pos && pos.itemSize === 3 && pos.count >= 2) {
+            for (let i = 0; i < pos.count; i++) {
+                tmp.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+                if (applyWorld) tmp.applyMatrix4(this.matrixWorld);
+                arr.push({ x: tmp.x, y: tmp.y, z: tmp.z });
+            }
+        }
+        return arr;
+    }
+
 }
 
 /**
@@ -295,6 +342,235 @@ export class Solid extends THREE.Group {
         this._dirty = true;
         this._faceIndex = null;
         return this;
+    }
+
+    /**
+     * Remove small disconnected triangle islands relative to the largest shell.
+     *
+     * - Components are connected by shared edges (undirected) in triangle graph.
+     * - The largest component is considered the main shell.
+     * - Internal: components whose representative point is inside the main shell.
+     * - External: components whose representative point is outside the main shell.
+     * - Components with triangle count <= maxTriangles can be removed according to flags.
+     *
+     * @param {{maxTriangles?:number, removeInternal?:boolean, removeExternal?:boolean}} options
+     * @returns {number} Number of triangles removed.
+     */
+    removeSmallIslands({ maxTriangles = 30, removeInternal = true, removeExternal = true } = {}) {
+        const tv = this._triVerts;
+        const vp = this._vertProperties;
+        const triCount = (tv.length / 3) | 0;
+        if (triCount === 0) return 0;
+
+        // Build undirected edge -> triangle uses to define adjacency
+        const nv = (vp.length / 3) | 0;
+        const NV = BigInt(Math.max(1, nv));
+        const eKey = (a, b) => {
+            const A = BigInt(a), B = BigInt(b);
+            return (A < B) ? (A * NV + B) : (B * NV + A);
+        };
+
+        const edgeToTris = new Map(); // key -> [tri indices]
+        for (let t = 0; t < triCount; t++) {
+            const b = t * 3;
+            const i0 = tv[b + 0] >>> 0;
+            const i1 = tv[b + 1] >>> 0;
+            const i2 = tv[b + 2] >>> 0;
+            const edges = [ [i0, i1], [i1, i2], [i2, i0] ];
+            for (let k = 0; k < 3; k++) {
+                const a = edges[k][0], c = edges[k][1];
+                const key = eKey(a, c);
+                let arr = edgeToTris.get(key);
+                if (!arr) { arr = []; edgeToTris.set(key, arr); }
+                arr.push(t);
+            }
+        }
+
+        // Build triangle adjacency via shared edges used by exactly two triangles
+        const adj = new Array(triCount);
+        for (let t = 0; t < triCount; t++) adj[t] = [];
+        for (const [, arr] of edgeToTris.entries()) {
+            if (arr.length === 2) {
+                const a = arr[0], b = arr[1];
+                adj[a].push(b);
+                adj[b].push(a);
+            }
+        }
+
+        // Connected components over triangle graph (edge-adjacent)
+        const compId = new Int32Array(triCount);
+        for (let i = 0; i < triCount; i++) compId[i] = -1;
+        const comps = [];
+        let compIdx = 0;
+        const stack = [];
+        for (let seed = 0; seed < triCount; seed++) {
+            if (compId[seed] !== -1) continue;
+            compId[seed] = compIdx;
+            stack.length = 0;
+            stack.push(seed);
+            const tris = [];
+            while (stack.length) {
+                const t = stack.pop();
+                tris.push(t);
+                const nbrs = adj[t];
+                for (let j = 0; j < nbrs.length; j++) {
+                    const u = nbrs[j];
+                    if (compId[u] !== -1) continue;
+                    compId[u] = compIdx;
+                    stack.push(u);
+                }
+            }
+            comps.push(tris);
+            compIdx++;
+        }
+
+        if (comps.length <= 1) return 0; // single shell, nothing to remove
+
+        // Find the largest component (by triangle count) as main
+        let mainIdx = 0;
+        for (let i = 1; i < comps.length; i++) {
+            if (comps[i].length > comps[mainIdx].length) mainIdx = i;
+        }
+        const mainTris = comps[mainIdx];
+
+        // Pre-extract main triangles as points for ray casting
+        const mainFaces = new Array(mainTris.length);
+        for (let k = 0; k < mainTris.length; k++) {
+            const t = mainTris[k];
+            const b = t * 3;
+            const i0 = tv[b + 0] * 3, i1 = tv[b + 1] * 3, i2 = tv[b + 2] * 3;
+            mainFaces[k] = [
+                [vp[i0 + 0], vp[i0 + 1], vp[i0 + 2]],
+                [vp[i1 + 0], vp[i1 + 1], vp[i1 + 2]],
+                [vp[i2 + 0], vp[i2 + 1], vp[i2 + 2]],
+            ];
+        }
+
+        // Simple Moller–Trumbore ray/triangle intersection. Returns t or null.
+        const rayTri = (orig, dir, tri) => {
+            const EPS = 1e-12;
+            const ax = tri[0][0], ay = tri[0][1], az = tri[0][2];
+            const bx = tri[1][0], by = tri[1][1], bz = tri[1][2];
+            const cx = tri[2][0], cy = tri[2][1], cz = tri[2][2];
+            const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+            const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+            const px = dir[1] * e2z - dir[2] * e2y;
+            const py = dir[2] * e2x - dir[0] * e2z;
+            const pz = dir[0] * e2y - dir[1] * e2x;
+            const det = e1x * px + e1y * py + e1z * pz;
+            if (Math.abs(det) < EPS) return null; // parallel or nearly so
+            const invDet = 1.0 / det;
+            const tvecx = orig[0] - ax, tvecy = orig[1] - ay, tvecz = orig[2] - az;
+            const u = (tvecx * px + tvecy * py + tvecz * pz) * invDet;
+            if (u < 0 || u > 1) return null;
+            const qx = tvecy * e1z - tvecz * e1y;
+            const qy = tvecz * e1x - tvecx * e1z;
+            const qz = tvecx * e1y - tvecy * e1x;
+            const v = (dir[0] * qx + dir[1] * qy + dir[2] * qz) * invDet;
+            if (v < 0 || u + v > 1) return null;
+            const tHit = (e2x * qx + e2y * qy + e2z * qz) * invDet;
+            return tHit > EPS ? tHit : null;
+        };
+
+        // Compute a simple point-in-main test by ray parity (cast +X)
+        const pointInsideMain = (p) => {
+            const dir = [1, 0, 0];
+            let hits = 0;
+            for (let i = 0; i < mainFaces.length; i++) {
+                const th = rayTri(p, dir, mainFaces[i]);
+                if (th !== null) hits++;
+            }
+            return (hits % 2) === 1;
+        };
+
+        // Helper to compute centroid of a triangle
+        const triCentroid = (t) => {
+            const b = t * 3;
+            const i0 = tv[b + 0] * 3, i1 = tv[b + 1] * 3, i2 = tv[b + 2] * 3;
+            const x = (vp[i0 + 0] + vp[i1 + 0] + vp[i2 + 0]) / 3;
+            const y = (vp[i0 + 1] + vp[i1 + 1] + vp[i2 + 1]) / 3;
+            const z = (vp[i0 + 2] + vp[i1 + 2] + vp[i2 + 2]) / 3;
+            return [x + 1e-8, y + 1e-8, z + 1e-8]; // small bias to avoid exact coplanarity
+        };
+
+        // Mark components to remove based on inside/outside and size threshold
+        const removeComp = new Array(comps.length).fill(false);
+        for (let i = 0; i < comps.length; i++) {
+            if (i === mainIdx) continue;
+            const tris = comps[i];
+            if (tris.length === 0 || tris.length > maxTriangles) continue;
+            const probe = triCentroid(tris[0]);
+            const inside = pointInsideMain(probe);
+            if ((inside && removeInternal) || (!inside && removeExternal)) {
+                removeComp[i] = true;
+            }
+        }
+
+        // Build keep mask for triangles
+        const keepTri = new Uint8Array(triCount);
+        for (let t = 0; t < triCount; t++) keepTri[t] = 1;
+        let removed = 0;
+        for (let i = 0; i < comps.length; i++) {
+            if (!removeComp[i]) continue;
+            const tris = comps[i];
+            for (let k = 0; k < tris.length; k++) {
+                const t = tris[k];
+                if (keepTri[t]) { keepTri[t] = 0; removed++; }
+            }
+        }
+        if (removed === 0) return 0;
+
+        // Compact triangles and vertices, remapping indices
+        const usedVert = new Uint8Array(nv);
+        const newTriVerts = [];
+        const newTriIDs = [];
+        for (let t = 0; t < triCount; t++) {
+            if (!keepTri[t]) continue;
+            const b = t * 3;
+            const a = tv[b + 0] >>> 0;
+            const b1 = tv[b + 1] >>> 0;
+            const c = tv[b + 2] >>> 0;
+            newTriVerts.push(a, b1, c);
+            newTriIDs.push(this._triIDs[t]);
+            usedVert[a] = 1; usedVert[b1] = 1; usedVert[c] = 1;
+        }
+
+        const oldToNew = new Int32Array(nv);
+        for (let i = 0; i < nv; i++) oldToNew[i] = -1;
+        const newVerts = [];
+        let write = 0;
+        for (let i = 0; i < nv; i++) {
+            if (!usedVert[i]) continue;
+            oldToNew[i] = write++;
+            newVerts.push(vp[i * 3 + 0], vp[i * 3 + 1], vp[i * 3 + 2]);
+        }
+        for (let k = 0; k < newTriVerts.length; k++) newTriVerts[k] = oldToNew[newTriVerts[k]];
+
+        // Commit
+        this._vertProperties = newVerts;
+        this._triVerts = newTriVerts;
+        this._triIDs = newTriIDs;
+        // Rebuild vertex key map for exact-key lookups
+        this._vertKeyToIndex = new Map();
+        for (let i = 0; i < this._vertProperties.length; i += 3) {
+            const x = this._vertProperties[i], y = this._vertProperties[i + 1], z = this._vertProperties[i + 2];
+            this._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
+        }
+        this._dirty = true;
+        this._faceIndex = null;
+
+        // Ensure triangle windings are still coherent after edits
+        this.fixTriangleWindingsByAdjacency();
+        return removed;
+    }
+
+    /**
+     * Backwards-compatible wrapper that removes only internal small islands.
+     * @param {number} maxTriangles
+     * @returns {number}
+     */
+    removeSmallInternalIslands(maxTriangles = 30) {
+        return this.removeSmallIslands({ maxTriangles, removeInternal: true, removeExternal: false });
     }
 
     /**
@@ -1314,7 +1590,7 @@ export class Solid extends THREE.Group {
                     ]);
                     const closed = chain.length >= 3 && chain[0] === chain[chain.length - 1];
                     polylines.push({ name: `${faceA}|${faceB}[${idx++}]`, faceA, faceB, indices: chain, positions, closedLoop: closed });
-                }
+                    }
             }
         }
 

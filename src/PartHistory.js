@@ -150,7 +150,10 @@ export class PartHistory {
         for (const child of artifact.children) {
           child.onClick = () => {
 
-            // console.debug("Child clicked:", child?.name || child);
+            console.debug("Child clicked:", child?.name, child);
+            console.log("these are the points", child.points());
+            // toggle selection of the parent artifact
+
             if (!SelectionFilter.toggleSelection(child.parent)) SelectionFilter.toggleSelection(child);
           };
         }
@@ -163,7 +166,7 @@ export class PartHistory {
       const flaggedAfter = this.scene.children.slice().filter(ch => ch?.remove === true);
       if (flaggedAfter.length) {
         // console.debug(`[PartHistory] Post-add removal of ${flaggedAfter.length} flagged child(ren)`);
-        for (const ch of flaggedAfter) { 
+        for (const ch of flaggedAfter) {
           try {
             this.scene.remove(ch);
           }
@@ -303,3 +306,71 @@ export function extractDefaultValues(schema) {
 
 
 
+function logGeometryPoints(input, { deindex = true, applyWorld = true, unique = false, epsilon = 1e-8 } = {}) {
+  const isMesh = !!(input && input.isMesh);
+  const geometry = isMesh ? input.geometry : input;
+
+  if (!geometry || !(geometry.isBufferGeometry || geometry.isGeometry)) {
+    console.error("Input must be a THREE.Mesh or THREE.(Buffer)Geometry");
+    return [];
+  }
+
+  // Normalize to BufferGeometry. NOTE: old THREE.Geometry only has its unique vertex list (e.g., 8 for a box).
+  let geom;
+  if (geometry.isBufferGeometry) {
+    geom = geometry;
+  } else {
+    // Fallback: minimal conversion for legacy THREE.Geometry (positions only).
+    // This preserves only the vertex list (no face splitting), so consider upgrading to BufferGeometry.
+    const pos = new Float32Array(geometry.vertices.length * 3);
+    for (let i = 0; i < geometry.vertices.length; i++) {
+      const v = geometry.vertices[i];
+      pos[i * 3 + 0] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+    }
+    geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  }
+
+  // Optionally expand indexed geometry so each triangle corner is a separate point (e.g., box => 24)
+  let workGeom = geom;
+  if (deindex && workGeom.index) {
+    workGeom = workGeom.toNonIndexed(); // creates a clone
+  }
+
+  const position = workGeom.attributes.position;
+  if (!position) {
+    console.warn("Geometry has no position attribute.");
+    return [];
+  }
+
+  const out = [];
+  const seen = unique ? new Set() : null;
+  const v = new THREE.Vector3();
+
+  for (let i = 0; i < position.count; i++) {
+    v.set(position.getX(i), position.getY(i), position.getZ(i));
+
+    if (applyWorld && isMesh) {
+      v.applyMatrix4(input.matrixWorld);
+    }
+
+    if (unique) {
+      const kx = Math.round(v.x / epsilon) * epsilon;
+      const ky = Math.round(v.y / epsilon) * epsilon;
+      const kz = Math.round(v.z / epsilon) * epsilon;
+      const key = `${kx}|${ky}|${kz}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ x: kx, y: ky, z: kz });
+    } else {
+      out.push({ x: v.x, y: v.y, z: v.z });
+    }
+  }
+
+  console.log(out);
+  return out;
+}
+
+// Example usage:
+// logAllPoints(mesh); // Mesh -> world-space, deindexed (more than 8 for a box)
+// logAllPoints(mesh.geometry, { deindex: true, applyWorld: false }); // geometry only, local space

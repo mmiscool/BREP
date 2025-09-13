@@ -101,8 +101,10 @@ export class FilletSolid extends Solid {
         const radialHints = []; // vector from center toward edge (for ring orientation)
         const signedAngles = [];
         const railP = [];   // original edge samples p[i]
-        const railA = [];   // tangency along faceA direction
-        const railB = [];   // tangency along faceB direction
+        const railA_tang = [];   // analytic tangency point along faceA direction
+        const railB_tang = [];   // analytic tangency point along faceB direction
+        const railA_proj = [];   // projected contact point on faceA triangles
+        const railB_proj = [];   // projected contact point on faceB triangles
         const sectorDefs = []; // per-sample arc definition: {C,t,r0,angle}
         // Effective fillet arc radius (do not include inflate here).
         // Inflation is applied later as a uniform offset of the entire solid.
@@ -168,8 +170,9 @@ export class FilletSolid extends Solid {
             const outwardAvg = nA.clone().add(nB);
             if (outwardAvg.lengthSq() > 0) outwardAvg.normalize();
 
-            const C_in  = solveCenterFromOffsetPlanesSigned(p, t, nA, -1, nB, -1, rEff); // inside
-            const C_out = solveCenterFromOffsetPlanesSigned(p, t, nA, +1, nB, +1, rEff); // outside
+            // Initial centers using normals sampled at the edge point p
+            let C_in  = solveCenterFromOffsetPlanesSigned(p, t, nA, -1, nB, -1, rEff); // inside
+            let C_out = solveCenterFromOffsetPlanesSigned(p, t, nA, +1, nB, +1, rEff); // outside
 
             // Determine preferred side
             let pick = 'in'; // default to inset
@@ -180,24 +183,53 @@ export class FilletSolid extends Solid {
             let center = (pick === 'in') ? (C_in || C_out) : (C_out || C_in);
             if (!center) continue;
 
-            // Exact tangency points from plane offsets: tA = C - sA*r*nA, tB = C - sB*r*nB
+            // Signs for inward/outward with respect to the faces
             const sA = (pick === 'in') ? -1 : +1;
             const sB = sA; // same sign for both faces
-            const tA = center.clone().addScaledVector(nA, -sA * rEff);
-            const tB = center.clone().addScaledVector(nB, -sB * rEff);
+
+            // Refine tangency by alternating between:
+            // 1) projecting the tentative contact points onto the full face mesh
+            // 2) recomputing the center using the offset planes defined by the
+            //    triangle planes at those contacts, and the section plane.
+            // This makes each cross-section arc tangent to the actual face,
+            // not just the nearest/first triangle, and keeps the radius exact.
+            let nA_it = nA.clone();
+            let nB_it = nB.clone();
+            let tA = center.clone().addScaledVector(nA_it, -sA * rEff);
+            let tB = center.clone().addScaledVector(nB_it, -sB * rEff);
+            let qA_final = null, qB_final = null;
+            for (let it = 0; it < 3; it++) {
+                // project tentative contacts to the entire face triangle set
+                const qA = projectPointOntoFaceTriangles(solid.getFace(faceA.name), tA);
+                const qB = projectPointOntoFaceTriangles(solid.getFace(faceB.name), tB);
+                qA_final = qA; qB_final = qB;
+                const nA_new = normalFromFaceTriangles(solid.getFace(faceA.name), qA) || nA_it;
+                const nB_new = normalFromFaceTriangles(solid.getFace(faceB.name), qB) || nB_it;
+
+                // Recompute exact center from contact planes + section plane
+                const cNew = solveCenterFromOffsetPlanesThroughContacts(p, t, qA, nA_new, sA, qB, nB_new, sB, rEff) || center;
+                const moved = cNew.distanceTo(center);
+                center = cNew;
+                nA_it.copy(nA_new); nB_it.copy(nB_new);
+                tA = center.clone().addScaledVector(nA_it, -sA * rEff);
+                tB = center.clone().addScaledVector(nB_it, -sB * rEff);
+                if (moved < 1e-6) break;
+            }
 
             centers.push(center.clone());
             radialHints.push(new THREE.Vector3().subVectors(p, center).normalize());
             railP.push(p.clone());
-            railA.push(tA.clone());
-            railB.push(tB.clone());
+            railA_tang.push(tA.clone());
+            railB_tang.push(tB.clone());
+            railA_proj.push((qA_final || tA).clone());
+            railB_proj.push((qB_final || tB).clone());
 
             // Store arc definition (3D) for later sector-solid build.
             // IMPORTANT: The fillet arc lies in the cross-section plane
             // perpendicular to `t`. Use the projections of the face normals
             // into that plane (with signs sA/sB) as the radius directions.
-            const r0 = projectPerp(nA.clone(), t).multiplyScalar(-sA).normalize();
-            const r1 = projectPerp(nB.clone(), t).multiplyScalar(-sB).normalize();
+            const r0 = projectPerp(nA_it.clone(), t).multiplyScalar(-sA).normalize();
+            const r1 = projectPerp(nB_it.clone(), t).multiplyScalar(-sB).normalize();
             // Signed angle from r0 to r1 around t
             const cross = new THREE.Vector3().crossVectors(r0, r1);
             const dot = clamp(r0.dot(r1), -1, 1);
@@ -243,27 +275,45 @@ export class FilletSolid extends Solid {
         this._triVerts = [];
         this._triIDs = [];
         this._vertKeyToIndex = new Map();
-        // Snap arc seams to lie exactly on the original faces by projecting
-        // the per-section tangency points onto the face triangle meshes.
+        // Decide how to realize the seam between the curved fillet and the
+        // source faces.
+        // For closed loops (and optionally open edges when enabled), we build
+        // side strips that lie on the original faces; in that case we also
+        // project the tangency points onto the face triangle meshes so the
+        // seams match exactly.
+        // For open edges (default), we keep the analytically correct tangency
+        // points computed from the offset-plane intersection. This preserves
+        // perfect G1 tangency in the cross-section (important on cones), and
+        // avoids introducing small off-plane errors from a nearest-point
+        // projection.
         const trisA = solid.getFace(faceA.name);
         const trisB = solid.getFace(faceB.name);
-        let seamA = railA.map(p => projectPointOntoFaceTriangles(trisA, p));
-        let seamB = railB.map(p => projectPointOntoFaceTriangles(trisB, p));
-
-        // Bias seams slightly into the source solid to prevent coincident
-        // surfaces from leaving sliver shards after subtraction. For open
-        // (non-closed) edges, keep inset = 0 unless forceSeamInset is true
-        // to avoid creating gaps that can lead to a non-manifold tool.
-        const seamInset = ((isClosed || this.forceSeamInset) ? Math.max(1e-9, this.seamInsetScale * rEff) : 0);
-        if (seamInset > 0) {
-            seamA = insetPolylineAlongFaceNormals(trisA, seamA, +seamInset); // into face A
-            seamB = insetPolylineAlongFaceNormals(trisB, seamB, +seamInset); // into face B
+        const useFaceProjectedStrips = (isClosed || this.projectStripsOpenEdges);
+        let seamA, seamB;
+        if (useFaceProjectedStrips) {
+            // Use the projected contacts so the side strips can lie exactly on
+            // the original faces; also nudge slightly inside to avoid overlap.
+            seamA = railA_proj.slice();
+            seamB = railB_proj.slice();
+            const seamInset = Math.max(1e-9, this.seamInsetScale * rEff);
+            if (seamInset > 0) {
+                seamA = insetPolylineAlongFaceNormals(trisA, seamA, +seamInset);
+                seamB = insetPolylineAlongFaceNormals(trisB, seamB, +seamInset);
+            }
+        } else {
+            // Use the analytic tangency points to maximize G1 continuity.
+            seamA = railA_tang.slice();
+            seamB = railB_tang.slice();
+            if (this.forceSeamInset) {
+                const seamInset = Math.max(1e-9, this.seamInsetScale * rEff);
+                seamA = insetPolylineAlongFaceNormals(trisA, seamA, +seamInset);
+                seamB = insetPolylineAlongFaceNormals(trisB, seamB, +seamInset);
+            }
         }
 
         const baseName = `FILLET_${faceA.name}|${faceB.name}`;
         // Use face‑projected side strips for closed loops by default; allow
         // enabling them for open edges via option.
-        const useFaceProjectedStrips = (isClosed || this.projectStripsOpenEdges);
 
         // Build curved fillet; snap ring endpoints to seamA/seamB
         buildWedgeDirect(this, baseName,
@@ -950,6 +1000,28 @@ function solveCenterFromOffsetPlanes(p, t, nA, nB, r) {
 function solveCenterFromOffsetPlanesSigned(p, t, nA, sA, nB, sB, r) {
     const dA = nA.dot(p) + sA * r;
     const dB = nB.dot(p) + sB * r;
+    const dT = t.dot(p);
+    const A = [
+        [nA.x, nA.y, nA.z],
+        [nB.x, nB.y, nB.z],
+        [t.x,  t.y,  t.z ],
+    ];
+    const b = [dA, dB, dT];
+    const x = solve3(A, b);
+    if (!x) return null;
+    return new THREE.Vector3(x[0], x[1], x[2]);
+}
+
+// Solve center using contact points on each face:
+// Given qA on face A with normal nA (unit), and qB on face B with normal nB,
+// and signs sA/sB selecting INSET/OUTSET, find C such that
+//   nA·C = nA·qA + sA*r
+//   nB·C = nB·qB + sB*r
+//   t ·C = t ·p
+// Returns THREE.Vector3 or null
+function solveCenterFromOffsetPlanesThroughContacts(p, t, qA, nA, sA, qB, nB, sB, r) {
+    const dA = nA.dot(qA) + sA * r;
+    const dB = nB.dot(qB) + sB * r;
     const dT = t.dot(p);
     const A = [
         [nA.x, nA.y, nA.z],

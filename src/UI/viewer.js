@@ -472,7 +472,6 @@ export class Viewer {
                 else return null;
             }
         }
-
         return target;
     }
 
