@@ -315,6 +315,24 @@ export class SketchFeature {
                 const flat=[]; const worldPts=[]; for(const p of pts){ const v=toWorld(p[0],p[1]); flat.push(v.x,v.y,v.z); worldPts.push([v.x,v.y,v.z]); }
                 const lg = new LineGeometry(); lg.setPositions(flat);
                 const e = new Edge(lg); e.name = `G${g.id}`; e.userData = { polylineLocal: worldPts, polylineWorld:true }; edges.push(e); edgeBySegId.set(g.id, e);
+            } else if (g.type==='bezier' && g.points?.length===4) {
+                const p0 = pointById.get(g.points[0]);
+                const p1 = pointById.get(g.points[1]);
+                const p2 = pointById.get(g.points[2]);
+                const p3 = pointById.get(g.points[3]);
+                if (!p0 || !p1 || !p2 || !p3) continue;
+                const n = Math.max(8, curveRes);
+                const pts = [];
+                for (let i=0;i<=n;i++){
+                    const t = i/n; const mt = 1 - t;
+                    const bx = mt*mt*mt*p0.x + 3*mt*mt*t*p1.x + 3*mt*t*t*p2.x + t*t*t*p3.x;
+                    const by = mt*mt*mt*p0.y + 3*mt*mt*t*p1.y + 3*mt*t*t*p2.y + t*t*t*p3.y;
+                    pts.push([bx, by]);
+                }
+                segs.push({ id:g.id, pts });
+                const flat=[]; const worldPts=[]; for(const p of pts){ const v=toWorld(p[0],p[1]); flat.push(v.x,v.y,v.z); worldPts.push([v.x,v.y,v.z]); }
+                const lg = new LineGeometry(); lg.setPositions(flat);
+                const e = new Edge(lg); e.name = `G${g.id}`; e.userData = { polylineLocal: worldPts, polylineWorld:true }; edges.push(e); edgeBySegId.set(g.id, e);
             }
         }
 

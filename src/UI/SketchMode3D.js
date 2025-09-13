@@ -574,6 +574,36 @@ export class SketchMode3D {
             this.#refreshLists();
             this.#refreshContextBar();
           }
+        } else if (this._tool === "bezier") {
+          // Cubic Bezier: end0, ctrl0, ctrl1, end1 (4 points)
+          this._bezierSel = this._bezierSel || [];
+          this._bezierSel.push(pid);
+          this.#toggleSelection({ type: "point", id: pid });
+          if (this._bezierSel.length === 4) {
+            const [p0, p1, p2, p3] = this._bezierSel;
+            // Create the curve
+            this._solver.createGeometry("bezier", [p0, p1, p2, p3]);
+            // Also create construction guide lines so they can be constrained
+            try {
+              const sObj = this._solver.sketchObject;
+              const maxIdBefore = Math.max(0, ...sObj.geometries.map(g => +g.id || 0));
+              // end0 -> ctrl0
+              this._solver.createGeometry("line", [p0, p1]);
+              const gid1 = Math.max(0, ...sObj.geometries.map(g => +g.id || 0));
+              const g1 = sObj.geometries.find(g => g.id === gid1);
+              if (g1) g1.construction = true;
+              // end1 -> ctrl1
+              this._solver.createGeometry("line", [p3, p2]);
+              const gid2 = Math.max(0, ...sObj.geometries.map(g => +g.id || 0));
+              const g2 = sObj.geometries.find(g => g.id === gid2);
+              if (g2) g2.construction = true;
+            } catch { }
+            this._bezierSel = null;
+            this._selection.clear();
+            this.#rebuildSketchGraphics();
+            this.#refreshLists();
+            this.#refreshContextBar();
+          }
         }
       }
       if (e.button === 0) {
@@ -1382,6 +1412,7 @@ export class SketchMode3D {
     bar.appendChild(mk("Rectangle", "rect"));
     bar.appendChild(mk("Circle", "circle"));
     bar.appendChild(mk("Arc", "arc"));
+    bar.appendChild(mk("Bezier", "bezier"));
     bar.appendChild(mk("Pick Edges", "pickEdges"));
     this._topbar = bar;
     host.appendChild(bar);
@@ -1391,6 +1422,9 @@ export class SketchMode3D {
 
   #setTool(tool) {
     this._tool = tool;
+    // Clear any pending creation state when switching tools
+    try { this._arcSel = null; } catch {}
+    try { this._bezierSel = null; } catch {}
     this.#refreshTopToolbarActive();
   }
 
@@ -1879,6 +1913,23 @@ export class SketchMode3D {
           const d = Math.hypot(uv.u - px, uv.v - py);
           if (d < bestDist) { bestDist = d; best = { id: geo.id, type: 'arc' }; }
         }
+      } else if (geo.type === 'bezier' && Array.isArray(geo.points) && geo.points.length >= 4) {
+        const p0 = s.points.find(p => p.id === geo.points[0]);
+        const p1 = s.points.find(p => p.id === geo.points[1]);
+        const p2 = s.points.find(p => p.id === geo.points[2]);
+        const p3 = s.points.find(p => p.id === geo.points[3]);
+        if (!p0 || !p1 || !p2 || !p3) continue;
+        const segs = 64;
+        let prevx = p0.x, prevy = p0.y;
+        for (let i = 1; i <= segs; i++) {
+          const t = i / segs;
+          const mt = 1 - t;
+          const bx = mt*mt*mt*p0.x + 3*mt*mt*t*p1.x + 3*mt*t*t*p2.x + t*t*t*p3.x;
+          const by = mt*mt*mt*p0.y + 3*mt*mt*t*p1.y + 3*mt*t*t*p2.y + t*t*t*p3.y;
+          const d = distToSeg(prevx, prevy, bx, by, uv.u, uv.v);
+          if (d < bestDist) { bestDist = d; best = { id: geo.id, type: 'bezier' }; }
+          prevx = bx; prevy = by;
+        }
       }
     }
 
@@ -2124,6 +2175,39 @@ export class SketchMode3D {
         try { ln.layers.set(31); } catch { }
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
+      } else if (geo.type === "bezier") {
+        const ids = geo.points || [];
+        const p0 = s.points.find((p) => p.id === ids[0]);
+        const p1 = s.points.find((p) => p.id === ids[1]);
+        const p2 = s.points.find((p) => p.id === ids[2]);
+        const p3 = s.points.find((p) => p.id === ids[3]);
+        if (!p0 || !p1 || !p2 || !p3) continue;
+        const segs = 64;
+        const pts = [];
+        for (let i = 0; i <= segs; i++) {
+          const t = i / segs;
+          const mt = 1 - t;
+          const bx = mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x;
+          const by = mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y;
+          pts.push(to3(bx, by));
+        }
+        const bg = new THREE.BufferGeometry().setFromPoints(pts);
+        const sel = Array.from(this._selection).some(
+          (it) => it.type === "geometry" && it.id === geo.id,
+        );
+        const mat = (geo.construction ? dashedMatBase.clone() : lineMat.clone());
+        if (geo.construction) {
+          try { mat.dashSize = Math.max(0.02, 8 * wpp); mat.gapSize = Math.max(0.01, 6 * wpp); } catch { }
+        }
+        try { mat.color.set(sel ? 0x6fe26f : 0xffff88); } catch { }
+        const ln = new THREE.Line(bg, mat);
+        if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
+        ln.renderOrder = 10000;
+        try { ln.layers.set(31); } catch { }
+        ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
+        grp.add(ln);
+
+        // No explicit guide rendering here: actual construction lines are created on curve creation
       }
     }
     const { width, height } = this.#canvasClientSize(
