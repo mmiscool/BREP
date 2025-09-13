@@ -287,6 +287,8 @@ export class SketchFeature {
 
         const edgeBySegId = new Map();
         for (const g of (sketch.geometries||[])) {
+            // Skip construction geometry: used only for constraints, not model edges
+            if (g && g.construction) continue;
             if (g.type==='line' && g.points?.length===2) {
                 const a = pointById.get(g.points[0]); const b = pointById.get(g.points[1]); if(!a||!b) continue;
                 segs.push({ id:g.id, pts:[[a.x,a.y],[b.x,b.y]] });

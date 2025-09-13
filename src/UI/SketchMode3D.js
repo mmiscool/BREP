@@ -95,7 +95,7 @@ export class SketchMode3D {
             refName: refName || undefined,
           };
         }
-      } catch {}
+      } catch { }
     }
 
     // Basis used for projecting points to/from world; also align camera now
@@ -118,7 +118,7 @@ export class SketchMode3D {
         }
       }
     } catch { }
-    const currentDist = v.camera.position.distanceTo(pivotLook)*(-1); // read-only
+    const currentDist = v.camera.position.distanceTo(pivotLook) * (-1); // read-only
     this._lock = { basis, distance: currentDist || 20 };
 
     // Reposition and orient camera to face the sketch plane head-on.
@@ -133,15 +133,15 @@ export class SketchMode3D {
       cam.lookAt(pivotLook);
       cam.updateMatrixWorld(true);
       // Align Arcball target/pivot to the face center so first drag won't jump
-      try { if (v.controls) v.controls.target.copy(pivotLook); } catch {}
-      try { v.controls && v.controls._gizmos && v.controls._gizmos.position && v.controls._gizmos.position.copy(pivotLook); } catch {}
+      try { if (v.controls) v.controls.target.copy(pivotLook); } catch { }
+      try { v.controls && v.controls._gizmos && v.controls._gizmos.position && v.controls._gizmos.position.copy(pivotLook); } catch { }
       // Sync internal control matrices and gizmo size/state
-      try { v.controls && v.controls.update && v.controls.update(); } catch {}
+      try { v.controls && v.controls.update && v.controls.update(); } catch { }
       // Ensure gizmo matrices are current before snapshotting state (prevents first-pan jump)
-      try { v.controls && v.controls._gizmos && v.controls._gizmos.updateMatrixWorld && v.controls._gizmos.updateMatrixWorld(true); } catch {}
-      try { v.controls && v.controls.updateMatrixState && v.controls.updateMatrixState(); } catch {}
-      try { v.render && v.render(); } catch {}
-    } catch {}
+      try { v.controls && v.controls._gizmos && v.controls._gizmos.updateMatrixWorld && v.controls._gizmos.updateMatrixWorld(true); } catch { }
+      try { v.controls && v.controls.updateMatrixState && v.controls.updateMatrixState(); } catch { }
+      try { v.render && v.render(); } catch { }
+    } catch { }
 
     // Hide any existing SKETCH groups in the scene to avoid overlaying
     try {
@@ -231,7 +231,7 @@ export class SketchMode3D {
     this.#rebuildSketchGraphics();
 
     // Refresh external reference points to current model projection
-    try { this.#refreshExternalPointsPositions(true); } catch {}
+    try { this.#refreshExternalPointsPositions(true); } catch { }
 
     // Removed debug vectors (camera ray + triangle normals)
 
@@ -276,9 +276,9 @@ export class SketchMode3D {
       if (k === 'Escape' || k === 'Esc') {
         if (this._selection.size) {
           this._selection.clear();
-          try { this.#refreshContextBar(); } catch {}
-          try { this.#rebuildSketchGraphics(); } catch {}
-          try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+          try { this.#refreshContextBar(); } catch { }
+          try { this.#rebuildSketchGraphics(); } catch { }
+          try { ev.preventDefault(); ev.stopPropagation(); } catch { }
         }
         return;
       }
@@ -286,12 +286,12 @@ export class SketchMode3D {
         // Remove selected constraints
         const cons = Array.from(this._selection).filter(i => i.type === 'constraint');
         if (cons.length && this._solver) {
-          try { for (const it of cons) this._solver.removeConstraintById?.(parseInt(it.id)); } catch {}
-          try { this._solver.solveSketch('full'); } catch {}
+          try { for (const it of cons) this._solver.removeConstraintById?.(parseInt(it.id)); } catch { }
+          try { this._solver.solveSketch('full'); } catch { }
           this._selection.clear();
           this.#rebuildSketchGraphics();
           this.#refreshContextBar();
-          try { ev.preventDefault(); ev.stopPropagation(); } catch {}
+          try { ev.preventDefault(); ev.stopPropagation(); } catch { }
         }
       }
     };
@@ -352,7 +352,7 @@ export class SketchMode3D {
     try {
       window.removeEventListener("pointerup", this._onUp, true);
     } catch { }
-    try { window.removeEventListener('keydown', this._onKeyDown); } catch {}
+    try { window.removeEventListener('keydown', this._onKeyDown); } catch { }
     this._lock = null;
     try {
       cancelAnimationFrame(this._sizeRAF);
@@ -498,7 +498,7 @@ export class SketchMode3D {
           this.#refreshContextBar();
           this.#renderExternalRefsList();
         }
-        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
+        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
         consumed = true;
         return;
       }
@@ -588,7 +588,7 @@ export class SketchMode3D {
     if (hit != null) {
       // Disable camera controls immediately when pressing on a sketch point
       if (e.button === 0) {
-        try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch {}
+        try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch { }
       }
       // Prevent dragging of external reference points; allow selection only
       try {
@@ -599,7 +599,7 @@ export class SketchMode3D {
             this.#toggleSelection({ type: "point", id: hit });
             this.#refreshContextBar();
             this.#rebuildSketchGraphics();
-            try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
+            try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
           }
           consumed = true;
           return;
@@ -613,12 +613,12 @@ export class SketchMode3D {
             this.#toggleSelection({ type: "point", id: hit });
             this.#refreshContextBar();
             this.#rebuildSketchGraphics();
-            try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
+            try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
           }
           consumed = true;
           return;
         }
-      } catch {}
+      } catch { }
       this._pendingDrag.pointId = hit;
       this._pendingDrag.x = e.clientX;
       this._pendingDrag.y = e.clientY;
@@ -651,19 +651,19 @@ export class SketchMode3D {
       // Then try dimension leaders/graphics selection in canvas
       const dhit = this.#hitTestDim(e);
       if (dhit && e.button === 0) {
-        try { this.toggleSelectConstraint?.(dhit.cid); } catch {}
+        try { this.toggleSelectConstraint?.(dhit.cid); } catch { }
         // Re-render dimension styling to reflect selection state
-        try { this.#renderDimensions(); } catch {}
-        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
+        try { this.#renderDimensions(); } catch { }
+        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
         consumed = true;
         return;
       }
       // Finally, constraint glyph selection (non-dimension symbols)
       const ghit2 = this.#hitTestGlyph(e);
       if (ghit2 && e.button === 0) {
-        try { this.toggleSelectConstraint?.(ghit2.cid); } catch {}
-        try { this.#renderDimensions(); } catch {}
-        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
+        try { this.toggleSelectConstraint?.(ghit2.cid); } catch { }
+        try { this.#renderDimensions(); } catch { }
+        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
         consumed = true;
         return;
       } else {
@@ -694,8 +694,8 @@ export class SketchMode3D {
         this._drag.pointId = this._pendingDrag.pointId;
         this._pendingDrag.started = true;
         // Disable camera controls while dragging sketch points
-        try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch {}
-        try { e.target.setPointerCapture?.(e.pointerId); } catch {}
+        try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch { }
+        try { e.target.setPointerCapture?.(e.pointerId); } catch { }
       }
     }
 
@@ -713,10 +713,10 @@ export class SketchMode3D {
             const p = this._solver?.getPointById?.(pid);
             if (p) this._dragGeo.pointsStart.set(pid, { x: p.x, y: p.y });
           }
-        } catch {}
+        } catch { }
         this._pendingGeo.started = true;
-        try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch {}
-        try { e.target.setPointerCapture?.(e.pointerId); } catch {}
+        try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch { }
+        try { e.target.setPointerCapture?.(e.pointerId); } catch { }
       }
     }
 
@@ -727,7 +727,7 @@ export class SketchMode3D {
       if (p) {
         if (p.fixed) {
           // Do not move fixed points
-          try { e.preventDefault(); e.stopPropagation(); } catch {}
+          try { e.preventDefault(); e.stopPropagation(); } catch { }
           this._drag.active = false;
           this._drag.pointId = null;
           return;
@@ -751,11 +751,11 @@ export class SketchMode3D {
             const st = this._dragGeo.pointsStart?.get?.(pid);
             if (p && st) { p.x = st.x + du; p.y = st.y + dv; }
           }
-        } catch {}
-        try { this._solver.solveSketch("full"); } catch {}
+        } catch { }
+        try { this._solver.solveSketch("full"); } catch { }
         this.#rebuildSketchGraphics();
       }
-      try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch {}
+      try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
       return;
     }
     if (this._dragDim?.active) {
@@ -768,7 +768,7 @@ export class SketchMode3D {
       // Edge picking cursor hint
       if (this._tool === 'pickEdges') {
         const h = this.#hitTestSceneEdge(e);
-        try { this.viewer.renderer.domElement.style.cursor = h ? 'crosshair' : ''; } catch {}
+        try { this.viewer.renderer.domElement.style.cursor = h ? 'crosshair' : ''; } catch { }
       }
       const pid = this.#hitTestPoint(e);
       if (pid != null) this.#setHover({ type: "point", id: pid });
@@ -831,11 +831,11 @@ export class SketchMode3D {
       this._dragGeo.active = false;
       this._dragGeo.ids = [];
       this._dragGeo.pointsStart = null;
-      try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch {}
+      try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch { }
     }
     // Re-enable camera controls after any sketch drag
-    try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch {}
-    try { this.#notifyControlsEnd(e); } catch {}
+    try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch { }
+    try { this.#notifyControlsEnd(e); } catch { }
     this._drag.active = false;
     this._drag.pointId = null;
     this._pendingDrag.pointId = null;
@@ -938,7 +938,7 @@ export class SketchMode3D {
           const box = new THREE.Box3().setFromObject(solid);
           if (!box.isEmpty()) solidCenter = box.getCenter(new THREE.Vector3());
         }
-      } catch {}
+      } catch { }
 
       // If we know a center, align normal to point from center -> face (outward)
       let flipped = false;
@@ -970,7 +970,7 @@ export class SketchMode3D {
     return { x, y, z, origin, rawNormal: n.clone() };
   }
 
-  
+
 
   // ---------- UI + Drawing ----------
   #mountSketchSidebar() {
@@ -1173,8 +1173,8 @@ export class SketchMode3D {
         ref.p1 = nid;
       }
       // Ensure stored name metadata stays fresh
-      try { ref.edgeName = edge.name || ref.edgeName || null; } catch {}
-      try { ref.solidName = edge.parent?.name || ref.solidName || null; } catch {}
+      try { ref.edgeName = edge.name || ref.edgeName || null; } catch { }
+      try { ref.solidName = edge.parent?.name || ref.solidName || null; } catch { }
       if (pt0) { pt0.x = uvA.u; pt0.y = uvA.v; pt0.fixed = true; }
       if (pt1) { pt1.x = uvB.u; pt1.y = uvB.v; pt1.fixed = true; }
       const ensureGround = (pid) => {
@@ -1490,7 +1490,7 @@ export class SketchMode3D {
         } catch { }
         this.#rebuildSketchGraphics();
         this.#refreshContextBar();
-        try { updateListHighlights(this); } catch {}
+        try { updateListHighlights(this); } catch { }
         return;
       }
       const act = t.getAttribute("data-act");
@@ -1519,11 +1519,11 @@ export class SketchMode3D {
     this._acc.uiElement.onmouseleave = () => this.#setHover(null);
 
     // Immediately style with selection/hover states
-    try { updateListHighlights(this); } catch {}
+    try { updateListHighlights(this); } catch { }
   }
 
-  #updateListHighlights() { try { updateListHighlights(this); } catch {} }
-  #applyHoverAndSelectionColors() { try { applyHoverAndSelectionColors(this); } catch {} }
+  #updateListHighlights() { try { updateListHighlights(this); } catch { } }
+  #applyHoverAndSelectionColors() { try { applyHoverAndSelectionColors(this); } catch { } }
 
   #refreshContextBar() {
     if (!this._ctxBar || !this._solver) return;
@@ -1559,6 +1559,27 @@ export class SketchMode3D {
       };
       return b;
     };
+
+    // Construction toggle for selected geometry
+    if (geos.length > 0) {
+      const allCons = geos.every((g) => !!g.construction);
+      const btn = document.createElement("button");
+      btn.textContent = allCons ? "Make Regular" : "Make Construction";
+      btn.title = "Toggle construction on selected curves";
+      btn.style.color = "#ddd";
+      btn.style.background = "transparent";
+      btn.style.border = "1px solid #364053";
+      btn.style.borderRadius = "6px";
+      btn.style.padding = "4px 8px";
+      btn.onclick = () => {
+        try { this._solver.toggleConstruction(); } catch { }
+        try { this._solver.solveSketch("full"); } catch { }
+        this.#rebuildSketchGraphics();
+        this.#refreshLists();
+        this.#refreshContextBar();
+      };
+      this._ctxBar.appendChild(btn);
+    }
 
     // Arc/Circle → Radius / Diameter
     const oneArc =
@@ -1708,12 +1729,12 @@ export class SketchMode3D {
     );
     if (existing) this._selection.delete(existing);
     else this._selection.add(item);
-    try { updateListHighlights(this); } catch {}
-    try { applyHoverAndSelectionColors(this); } catch {}
+    try { updateListHighlights(this); } catch { }
+    try { applyHoverAndSelectionColors(this); } catch { }
     // Keep dimension visuals in sync with constraint selection state
-    try { this.#renderDimensions(); } catch {}
+    try { this.#renderDimensions(); } catch { }
     // Ensure the corresponding list section is visible and the row is in view
-    try { this.revealListForItem?.(item.type, item.id); } catch {}
+    try { this.revealListForItem?.(item.type, item.id); } catch { }
   }
 
   #setHover(item) {
@@ -1721,18 +1742,18 @@ export class SketchMode3D {
     const next = item ? item.type + ":" + item.id : null;
     if (prev === next) return;
     this._hover = item;
-    try { updateListHighlights(this); } catch {}
-    try { applyHoverAndSelectionColors(this); } catch {}
+    try { updateListHighlights(this); } catch { }
+    try { applyHoverAndSelectionColors(this); } catch { }
     // Auto-expand and reveal hovered item in the list
     if (item && item.type && (item.id != null)) {
-      try { this.revealListForItem?.(item.type, item.id); } catch {}
+      try { this.revealListForItem?.(item.type, item.id); } catch { }
     }
   }
 
   // Public: allow external UI (e.g., dim labels) to set hover on constraints
   hoverConstraintFromLabel(cid) {
     this.#setHover({ type: 'constraint', id: cid });
-    try { this.revealListForItem?.('constraint', cid); } catch {}
+    try { this.revealListForItem?.('constraint', cid); } catch { }
   }
   clearHoverFromLabel(_cid) {
     // Only clear if we're not dragging a dimension
@@ -1754,7 +1775,7 @@ export class SketchMode3D {
       const title = kind === 'point' ? 'Points' : (kind === 'geometry' ? 'Curves' : (kind === 'constraint' ? 'Constraints' : null));
       if (!title) return;
       // Expand the section
-      try { await acc.expandSection(title); } catch {}
+      try { await acc.expandSection(title); } catch { }
       // Find and scroll the row into view
       const root = acc.uiElement; if (!root) return;
       const key = (kind === 'point') ? `p:${id}` : (kind === 'geometry') ? `g:${id}` : `c:${id}`;
@@ -1888,7 +1909,7 @@ export class SketchMode3D {
     const edgeObjects = [];
     try {
       v.scene.traverse((obj) => { if (obj && obj.type === 'EDGE' && obj.visible !== false) edgeObjects.push(obj); });
-    } catch {}
+    } catch { }
     const hits = edgeObjects.length ? this._raycaster.intersectObjects(edgeObjects, true) : [];
     if (hits && hits.length) return hits[0];
     return null;
@@ -1968,7 +1989,7 @@ export class SketchMode3D {
         const d = Math.hypot((uv.u - pt.u), (uv.v - pt.v));
         if (d < bestD) { bestD = d; best = cid; }
       }
-    } catch {}
+    } catch { }
     return (best != null && bestD <= tol) ? { cid: best } : null;
   }
 
@@ -1998,6 +2019,20 @@ export class SketchMode3D {
       depthWrite: false,
       transparent: true,
     });
+    const dashedMatBase = new THREE.LineDashedMaterial({
+      color: 0xffff88,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      dashSize: 0.1, // placeholder; scaled per viewport below
+      gapSize: 0.08,
+    });
+    // Determine world-per-pixel to scale dash size for consistent screen appearance
+    let wpp = 0.05;
+    try {
+      const { width, height } = this.#canvasClientSize(this.viewer.renderer.domElement);
+      wpp = this.#worldPerPixel(this.viewer.camera, width, height);
+    } catch { }
     for (const geo of s.geometries || []) {
       if (geo.type === "line" && geo.points?.length === 2) {
         const p0 = s.points.find((p) => p.id === geo.points[0]);
@@ -2009,13 +2044,17 @@ export class SketchMode3D {
         const sel = Array.from(this._selection).some(
           (it) => it.type === "geometry" && it.id === geo.id,
         );
-        const mat = lineMat.clone();
+        const mat = (geo.construction ? dashedMatBase.clone() : lineMat.clone());
+        if (geo.construction) {
+          try { mat.dashSize = Math.max(0.02, 8 * wpp); mat.gapSize = Math.max(0.01, 6 * wpp); } catch { }
+        }
         try {
           mat.color.set(sel ? 0x6fe26f : 0xffff88);
         } catch { }
         const ln = new THREE.Line(bg, mat);
+        if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        try { ln.layers.set(31); } catch {}
+        try { ln.layers.set(31); } catch { }
         ln.userData = { kind: "geometry", id: geo.id, type: "line" };
         grp.add(ln);
       } else if (geo.type === "circle") {
@@ -2034,13 +2073,17 @@ export class SketchMode3D {
         const sel = Array.from(this._selection).some(
           (it) => it.type === "geometry" && it.id === geo.id,
         );
-        const mat = lineMat.clone();
+        const mat = (geo.construction ? dashedMatBase.clone() : lineMat.clone());
+        if (geo.construction) {
+          try { mat.dashSize = Math.max(0.02, 8 * wpp); mat.gapSize = Math.max(0.01, 6 * wpp); } catch { }
+        }
         try {
           mat.color.set(sel ? 0x6fe26f : 0xffff88);
         } catch { }
         const ln = new THREE.Line(bg, mat);
+        if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        try { ln.layers.set(31); } catch {}
+        try { ln.layers.set(31); } catch { }
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
       } else if (geo.type === "arc") {
@@ -2068,13 +2111,17 @@ export class SketchMode3D {
         const sel = Array.from(this._selection).some(
           (it) => it.type === "geometry" && it.id === geo.id,
         );
-        const mat = lineMat.clone();
+        const mat = (geo.construction ? dashedMatBase.clone() : lineMat.clone());
+        if (geo.construction) {
+          try { mat.dashSize = Math.max(0.02, 8 * wpp); mat.gapSize = Math.max(0.01, 6 * wpp); } catch { }
+        }
         try {
           mat.color.set(sel ? 0x6fe26f : 0xffff88);
         } catch { }
         const ln = new THREE.Line(bg, mat);
+        if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        try { ln.layers.set(31); } catch {}
+        try { ln.layers.set(31); } catch { }
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
       }
@@ -2082,7 +2129,7 @@ export class SketchMode3D {
     const { width, height } = this.#canvasClientSize(
       this.viewer.renderer.domElement,
     );
-    const wpp = this.#worldPerPixel(this.viewer.camera, width, height);
+    wpp = this.#worldPerPixel(this.viewer.camera, width, height);
     const r = Math.max(0.02, wpp * 8 * 0.5);
     for (const p of s.points || []) {
       const selected = Array.from(this._selection).some(
@@ -2096,7 +2143,7 @@ export class SketchMode3D {
       });
       const m = new THREE.Mesh(this._handleGeom, mat);
       m.renderOrder = 10001;
-      try { m.layers.set(31); } catch {}
+      try { m.layers.set(31); } catch { }
       m.position.copy(to3(p.x, p.y));
       m.userData = { kind: "point", id: p.id };
       m.scale.setScalar(r);
@@ -2152,21 +2199,21 @@ export class SketchMode3D {
     this._dimRoot = el;
   }
 
-  
 
-  #renderDimensions() { try { dimsRender(this); } catch {} }
+
+  #renderDimensions() { try { dimsRender(this); } catch { } }
 
   // Public: called by Viewer when camera or viewport changes
   onCameraChanged() {
-    try { this.#renderDimensions(); } catch {}
+    try { this.#renderDimensions(); } catch { }
   }
 
 
-  
 
-  
 
-  
+
+
+
 
   // Lookup a constraint by id from the current sketch
   #getConstraintById(id) {
@@ -2176,9 +2223,9 @@ export class SketchMode3D {
     return (s.constraints || []).find((c) => parseInt(c.id) === cid) || null;
   }
 
-  
 
-  
+
+
 
   #startDimDrag(cid, e) {
     this._dragDim.active = true;
@@ -2202,9 +2249,9 @@ export class SketchMode3D {
       e.target.setPointerCapture?.(e.pointerId);
     } catch { }
     // Disable camera controls during dimension drag
-    try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch {}
+    try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch { }
     e.preventDefault();
-    try { e.stopImmediatePropagation(); } catch {}
+    try { e.stopImmediatePropagation(); } catch { }
     e.stopPropagation();
   }
   #moveDimDrag(e) {
@@ -2261,14 +2308,14 @@ export class SketchMode3D {
     e.preventDefault();
     e.stopPropagation();
     // Notify controls that interaction ended (no lock/unlock)
-    try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch {}
+    try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch { }
     setTimeout(() => { this.#notifyControlsEnd(e); }, 30);
   }
 
   #notifyControlsEnd(e) {
     // Notify controls the interaction ended without synthesizing DOM events,
     // to avoid re-entering our own pointerup handler.
-    try { this.viewer?.controls?.dispatchEvent?.({ type: "end" }); } catch {}
+    try { this.viewer?.controls?.dispatchEvent?.({ type: "end" }); } catch { }
   }
   // Controls locking removed
 }

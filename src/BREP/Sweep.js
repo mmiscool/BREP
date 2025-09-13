@@ -219,6 +219,8 @@ export class Sweep extends FacesSolid {
     };
 
     // Build a single combined path from multiple selected edges by chaining
+    // Matches both start and end points with tolerance and orders edges into
+    // a continuous polyline (prefers endpoints with degree 1 when available).
     const combinePathPolylines = (edges, tol = 1e-5) => {
       if (!Array.isArray(edges) || edges.length === 0) return [];
       const polys = [];
@@ -228,80 +230,170 @@ export class Sweep extends FacesSolid {
       }
       if (polys.length === 0) return [];
 
-      // Helper for endpoint distance
-      const d2 = (a, b) => {
-        const dx = a[0]-b[0], dy = a[1]-b[1], dz = a[2]-b[2];
-        return dx*dx + dy*dy + dz*dz;
-      };
-      const tol2 = tol*tol;
-
-      // Greedily chain polylines by matching endpoints
-      const used = new Array(polys.length).fill(false);
-      // Start with the first polyline
-      let chain = polys[0].slice();
-      used[0] = true;
-      let extended = true;
-      while (extended) {
-        extended = false;
-        for (let i = 1; i < polys.length; i++) {
-          if (used[i]) continue;
-          const curStart = chain[0];
-          const curEnd = chain[chain.length-1];
-          const p = polys[i];
-          const pStart = p[0];
-          const pEnd = p[p.length-1];
-          if (d2(curEnd, pStart) <= tol2) {
-            // append forward
-            chain.push(...p.slice(1));
-            used[i] = true; extended = true; continue;
-          }
-          if (d2(curEnd, pEnd) <= tol2) {
-            // append reversed
-            const rev = p.slice().reverse();
-            chain.push(...rev.slice(1));
-            used[i] = true; extended = true; continue;
-          }
-          if (d2(curStart, pEnd) <= tol2) {
-            // prepend forward
-            chain.unshift(...p.slice(0, p.length-1));
-            used[i] = true; extended = true; continue;
-          }
-          if (d2(curStart, pStart) <= tol2) {
-            // prepend reversed
-            const rev = p.slice().reverse();
-            chain.unshift(...rev.slice(0, rev.length-1));
-            used[i] = true; extended = true; continue;
+      // Derive an adaptive tolerance based on scale if caller used default
+      if (tol === 1e-5) {
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        const segLens = [];
+        for (const p of polys) {
+          for (let i = 0; i < p.length; i++) {
+            const v = p[i];
+            if (v[0] < minX) minX = v[0]; if (v[0] > maxX) maxX = v[0];
+            if (v[1] < minY) minY = v[1]; if (v[1] > maxY) maxY = v[1];
+            if (v[2] < minZ) minZ = v[2]; if (v[2] > maxZ) maxZ = v[2];
+            if (i > 0) {
+              const a = p[i - 1]; const b = v;
+              const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+              segLens.push(Math.hypot(dx, dy, dz));
+            }
           }
         }
+        const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+        const diag = Math.hypot(dx, dy, dz) || 1;
+        segLens.sort((a,b)=>a-b);
+        const med = segLens.length ? segLens[(segLens.length>>1)] : diag;
+        // Allow up to 0.1% of diag, capped to 10% of median segment length
+        const adaptive = Math.min(Math.max(1e-5, diag * 1e-3), med * 0.1);
+        tol = adaptive;
       }
 
-      // If some remain unused (disconnected), prefer returning the longest chain rather than concatenating gaps.
-      // Attempt to find other chains and return the longest.
-      let best = chain;
-      for (let i = 1; i < polys.length; i++) {
-        if (used[i]) continue;
-        let c = polys[i].slice();
-        const locUsed = new Array(polys.length).fill(false); locUsed[i] = true;
+      const tol2 = tol * tol;
+      const d2 = (a, b) => {
+        const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+        return dx * dx + dy * dy + dz * dz;
+      };
+      const q = (v) => [
+        Math.round(v[0] / tol) * tol,
+        Math.round(v[1] / tol) * tol,
+        Math.round(v[2] / tol) * tol,
+      ];
+      const k = (v) => `${v[0]},${v[1]},${v[2]}`;
+
+      // Build endpoint graph: node key -> { p:[x,y,z], edges: Set(index) }
+      const nodes = new Map();
+      const endpoints = []; // [{sKey,eKey} per poly]
+      const addNode = (pt) => {
+        const qp = q(pt);
+        const key = k(qp);
+        if (!nodes.has(key)) nodes.set(key, { p: qp, edges: new Set() });
+        return key;
+      };
+      for (let i = 0; i < polys.length; i++) {
+        const p = polys[i];
+        const sKey = addNode(p[0]);
+        const eKey = addNode(p[p.length - 1]);
+        nodes.get(sKey).edges.add(i);
+        nodes.get(eKey).edges.add(i);
+        endpoints.push({ sKey, eKey });
+      }
+
+      // Pick a start: prefer a node with odd degree (open chain); else any
+      let startNodeKey = null;
+      for (const [key, val] of nodes.entries()) {
+        if ((val.edges.size % 2) === 1) { startNodeKey = key; break; }
+      }
+      if (!startNodeKey) startNodeKey = nodes.keys().next().value;
+
+      const used = new Array(polys.length).fill(false);
+      const chain = [];
+
+      // Helper to append a polyline ensuring joints aren’t duplicated
+      const appendPoly = (poly, reverse = false) => {
+        const pts = reverse ? poly.slice().reverse() : poly;
+        if (chain.length === 0) { chain.push(...pts); return; }
+        // remove duplicated joint
+        const last = chain[chain.length - 1];
+        const first = pts[0];
+        if (d2(last, first) <= tol2) chain.push(...pts.slice(1));
+        else chain.push(...pts);
+      };
+
+      // Grow forward from chosen start
+      let cursorKey = startNodeKey;
+      // If multiple edges at the start node, just pick one arbitrarily and then greedily continue
+      const tryConsumeFromNode = (nodeKey) => {
+        const node = nodes.get(nodeKey);
+        if (!node) return false;
+        for (const ei of Array.from(node.edges)) {
+          if (used[ei]) continue;
+          const { sKey, eKey } = endpoints[ei];
+          const forward = (sKey === nodeKey);
+          used[ei] = true;
+          // Remove this edge index from both endpoint sets for cleanliness
+          nodes.get(sKey)?.edges.delete(ei);
+          nodes.get(eKey)?.edges.delete(ei);
+          appendPoly(polys[ei], !forward); // if we enter at end, reverse to keep continuity
+          cursorKey = forward ? eKey : sKey;
+          return true;
+        }
+        return false;
+      };
+
+      // Seed chain: if start node has no edges (deg 0), bail
+      if (!tryConsumeFromNode(cursorKey)) {
+        // Fall back to simple greedy merge of all polylines
+        const simple = polys[0].slice();
+        const used2 = new Array(polys.length).fill(false); used2[0] = true;
+        let extended = true;
+        while (extended) {
+          extended = false;
+          for (let i = 1; i < polys.length; i++) {
+            if (used2[i]) continue;
+            const curStart = simple[0];
+            const curEnd = simple[simple.length - 1];
+            const p = polys[i];
+            const pStart = p[0];
+            const pEnd = p[p.length - 1];
+            if (d2(curEnd, pStart) <= tol2) { simple.push(...p.slice(1)); used2[i] = true; extended = true; continue; }
+            if (d2(curEnd, pEnd) <= tol2) { const rev = p.slice().reverse(); simple.push(...rev.slice(1)); used2[i] = true; extended = true; continue; }
+            if (d2(curStart, pEnd) <= tol2) { simple.unshift(...p.slice(0, p.length - 1)); used2[i] = true; extended = true; continue; }
+            if (d2(curStart, pStart) <= tol2) { const rev = p.slice().reverse(); simple.unshift(...rev.slice(0, rev.length - 1)); used2[i] = true; extended = true; continue; }
+          }
+        }
+        // de-dupe consecutive
+        for (let i = simple.length - 2; i >= 0; i--) { const a = simple[i], b = simple[i + 1]; if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) simple.splice(i + 1, 1); }
+        return simple;
+      }
+
+      // Continue consuming until stuck
+      while (tryConsumeFromNode(cursorKey)) {}
+
+      // If some edges remain unused (disconnected components), return the longest chain across components
+      let best = chain.slice();
+      for (let s = 0; s < polys.length; s++) {
+        if (used[s]) continue;
+        // Build a local chain from this unused edge
+        const localUsed = new Array(polys.length).fill(false);
+        const localChain = [];
+        const sEnds = endpoints[s];
+        const startForward = true; // arbitrary orientation
+        localUsed[s] = true;
+        const append = (poly, reverse = false) => {
+          const pts = reverse ? poly.slice().reverse() : poly;
+          if (localChain.length === 0) { localChain.push(...pts); return; }
+          const last = localChain[localChain.length - 1];
+          const first = pts[0];
+          if (d2(last, first) <= tol2) localChain.push(...pts.slice(1)); else localChain.push(...pts);
+        };
+        append(polys[s], !startForward);
+        let head = k(q(localChain[0]));
+        let tail = k(q(localChain[localChain.length - 1]));
         let grew = true;
         while (grew) {
           grew = false;
-          for (let j = 0; j < polys.length; j++) {
-            if (locUsed[j]) continue;
-            const curStart = c[0];
-            const curEnd = c[c.length-1];
-            const p = polys[j];
-            const pStart = p[0];
-            const pEnd = p[p.length-1];
-            if (d2(curEnd, pStart) <= tol2) { c.push(...p.slice(1)); locUsed[j] = true; grew = true; continue; }
-            if (d2(curEnd, pEnd) <= tol2) { const rev = p.slice().reverse(); c.push(...rev.slice(1)); locUsed[j] = true; grew = true; continue; }
-            if (d2(curStart, pEnd) <= tol2) { c.unshift(...p.slice(0, p.length-1)); locUsed[j] = true; grew = true; continue; }
-            if (d2(curStart, pStart) <= tol2) { const rev = p.slice().reverse(); c.unshift(...rev.slice(0, rev.length-1)); locUsed[j] = true; grew = true; continue; }
+          for (let i = 0; i < polys.length; i++) {
+            if (localUsed[i]) continue;
+            const { sKey, eKey } = endpoints[i];
+            if (sKey === tail) { append(polys[i], false); tail = eKey; localUsed[i] = true; grew = true; continue; }
+            if (eKey === tail) { append(polys[i], true); tail = sKey; localUsed[i] = true; grew = true; continue; }
+            if (eKey === head) { const pts = polys[i].slice(); localChain.unshift(...pts.slice(0, pts.length - 1)); head = sKey; localUsed[i] = true; grew = true; continue; }
+            if (sKey === head) { const pts = polys[i].slice().reverse(); localChain.unshift(...pts.slice(0, pts.length - 1)); head = eKey; localUsed[i] = true; grew = true; continue; }
           }
         }
-        if (c.length > best.length) best = c;
+        if (localChain.length > best.length) best = localChain;
       }
 
-      // Remove duplicate consecutive points
+      // Remove duplicate consecutive points in final result
       for (let i = best.length - 2; i >= 0; i--) {
         const a = best[i], b = best[i + 1];
         if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) best.splice(i + 1, 1);
