@@ -159,7 +159,6 @@ export class FilletFeature {
         }
 
         finalSolid.name = `${targetSolid.name}`;
-        finalSolid.setTolerance(0.001)
         finalSolid.removeSmallInternalIslands(100);
         finalSolid.simplify(.01);
         finalSolid.visualize();
