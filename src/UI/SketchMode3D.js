@@ -526,7 +526,6 @@ export class SketchMode3D {
           ) {
             this._solver.geometryCreateLine();
             this._selection.clear();
-            this._tool = "select";
             this.#rebuildSketchGraphics();
             this.#refreshLists();
             this.#refreshContextBar();
@@ -539,7 +538,6 @@ export class SketchMode3D {
           ) {
             this._solver.geometryCreateCircle();
             this._selection.clear();
-            this._tool = "select";
             this.#rebuildSketchGraphics();
             this.#refreshLists();
             this.#refreshContextBar();
@@ -552,7 +550,6 @@ export class SketchMode3D {
           ) {
             this._solver.geometryCreateRectangle();
             this._selection.clear();
-            this._tool = "select";
             this.#rebuildSketchGraphics();
             this.#refreshLists();
             this.#refreshContextBar();
@@ -573,7 +570,6 @@ export class SketchMode3D {
             this._solver.createGeometry("arc", [c, a, b]);
             this._arcSel = null;
             this._selection.clear();
-            this._tool = "select";
             this.#rebuildSketchGraphics();
             this.#refreshLists();
             this.#refreshContextBar();
@@ -1363,6 +1359,11 @@ export class SketchMode3D {
     bar.style.border = "1px solid #262b36";
     bar.style.borderRadius = "8px";
     bar.style.padding = "6px";
+    bar.style.zIndex = "5000";
+    bar.style.userSelect = "none";
+    // Track buttons to reflect active tool
+    this._toolButtons = this._toolButtons || new Map();
+
     const mk = (label, tool) => {
       const b = document.createElement("button");
       b.textContent = label;
@@ -1371,9 +1372,9 @@ export class SketchMode3D {
       b.style.border = "1px solid #364053";
       b.style.borderRadius = "6px";
       b.style.padding = "4px 8px";
-      b.onclick = () => {
-        this._tool = tool;
-      };
+      b.setAttribute("data-tool", tool);
+      b.onclick = () => { this.#setTool(tool); };
+      this._toolButtons.set(tool, b);
       return b;
     };
     bar.appendChild(mk("Select", "select"));
@@ -1384,6 +1385,24 @@ export class SketchMode3D {
     bar.appendChild(mk("Pick Edges", "pickEdges"));
     this._topbar = bar;
     host.appendChild(bar);
+
+    this.#refreshTopToolbarActive();
+  }
+
+  #setTool(tool) {
+    this._tool = tool;
+    this.#refreshTopToolbarActive();
+  }
+
+  #refreshTopToolbarActive() {
+    if (!this._toolButtons) return;
+    for (const [tool, btn] of this._toolButtons.entries()) {
+      const active = (tool === this._tool);
+      btn.style.background = active ? "linear-gradient(180deg, rgba(110,168,254,.25), rgba(110,168,254,.15))" : "transparent";
+      btn.style.borderColor = active ? "#6ea8fe" : "#364053";
+      btn.style.color = active ? "#e9f0ff" : "#ddd";
+      btn.style.boxShadow = active ? "0 0 0 1px rgba(110,168,254,.2) inset" : "none";
+    }
   }
 
   #mountContextBar() {
