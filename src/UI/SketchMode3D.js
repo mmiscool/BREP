@@ -544,6 +544,19 @@ export class SketchMode3D {
             this.#refreshLists();
             this.#refreshContextBar();
           }
+        } else if (this._tool === "rect") {
+          this.#toggleSelection({ type: "point", id: pid });
+          if (
+            Array.from(this._selection).filter((i) => i.type === "point")
+              .length === 2
+          ) {
+            this._solver.geometryCreateRectangle();
+            this._selection.clear();
+            this._tool = "select";
+            this.#rebuildSketchGraphics();
+            this.#refreshLists();
+            this.#refreshContextBar();
+          }
         } else if (this._tool === "arc") {
           // Center -> start -> end ordering
           this._arcSel = this._arcSel || { c: null, a: null };
@@ -1365,6 +1378,7 @@ export class SketchMode3D {
     };
     bar.appendChild(mk("Select", "select"));
     bar.appendChild(mk("Line", "line"));
+    bar.appendChild(mk("Rectangle", "rect"));
     bar.appendChild(mk("Circle", "circle"));
     bar.appendChild(mk("Arc", "arc"));
     bar.appendChild(mk("Pick Edges", "pickEdges"));

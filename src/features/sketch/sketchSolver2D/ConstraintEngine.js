@@ -262,6 +262,99 @@ export default class ConstraintSolver {
         this.createGeometry("arc");
     }
 
+    // Create rectangle from two selected points (opposite corners in UV plane)
+    // Produces 4 line geometries, 4 coincident constraints (one per corner), and 3 perpendicular constraints
+    geometryCreateRectangle() {
+        this.appState.mode = "createGeometry";
+        this.appState.type = "rectangle";
+        this.appState.requiredSelections = 2;
+
+        // Collect two points from selection
+        const items = this.hooks.getSelectionItems();
+        const selPoints = [];
+        for (const it of items || []) {
+            if (it.type === "point") {
+                const p = this.sketchObject.points.find(x => x.id === parseInt(it.id));
+                if (p) selPoints.push(p);
+            }
+        }
+        if (selPoints.length !== 2) return false;
+
+        const pA = selPoints[0]; // one corner
+        const pC = selPoints[1]; // opposite corner
+
+        const u1 = pA.x, v1 = pA.y;
+        const u2 = pC.x, v2 = pC.y;
+
+        const nextPointId = () => Math.max(0, ...this.sketchObject.points.map(p => +p.id || 0)) + 1;
+        const nextGeoId = () => Math.max(0, ...this.sketchObject.geometries.map(g => +g.id || 0)) + 1;
+        const nextConId = () => Math.max(0, ...this.sketchObject.constraints.map(c => +c.id || 0)) + 1;
+
+        // Create additional corner points at axis-aligned positions
+        // We intentionally duplicate endpoints per edge and tie with coincident constraints.
+        // Corners: C1(u1,v1)=pA vs pA_other, C2(u2,v1)=c2a,c2b, C3(u2,v2)=pC vs pC_other, C4(u1,v2)=c4a,c4b
+        const pA_other = { id: nextPointId(), x: u1, y: v1, fixed: false };
+        const c2a = { id: pA_other.id + 1, x: u2, y: v1, fixed: false };
+        const c2b = { id: c2a.id + 1, x: u2, y: v1, fixed: false };
+        const pC_other = { id: c2b.id + 1, x: u2, y: v2, fixed: false };
+        const c4a = { id: pC_other.id + 1, x: u1, y: v2, fixed: false };
+        const c4b = { id: c4a.id + 1, x: u1, y: v2, fixed: false };
+
+        this.sketchObject.points.push(pA_other, c2a, c2b, pC_other, c4a, c4b);
+
+        // Build 4 line geometries with distinct endpoints per adjacent edge
+        const gIds = [];
+        const pushLine = (a, b) => {
+            const gid = nextGeoId();
+            this.sketchObject.geometries.push({ id: gid, type: "line", points: [a, b], construction: false });
+            gIds.push(gid);
+        };
+
+        // L1: bottom (C1 -> C2): pA -> c2a
+        pushLine(pA.id, c2a.id);
+        // L2: right (C2 -> C3): c2b -> pC
+        pushLine(c2b.id, pC.id);
+        // L3: top (C3 -> C4): pC_other -> c4a
+        pushLine(pC_other.id, c4a.id);
+        // L4: left (C4 -> C1): c4b -> pA_other
+        pushLine(c4b.id, pA_other.id);
+
+        // Coincident constraints at all four corners
+        const pushCoincident = (p1, p2) => {
+            const cid = nextConId();
+            this.sketchObject.constraints.push({ id: cid, type: "≡", points: [p1, p2] });
+        };
+        // C1: pA with pA_other
+        pushCoincident(pA.id, pA_other.id);
+        // C2: c2a with c2b
+        pushCoincident(c2a.id, c2b.id);
+        // C3: pC with pC_other
+        pushCoincident(pC.id, pC_other.id);
+        // C4: c4a with c4b
+        pushCoincident(c4a.id, c4b.id);
+
+        // Perpendicular constraints between adjacent sides (3 of them; the 4th is implied)
+        const pushPerp = (a, b, c, d) => {
+            const cid = nextConId();
+            this.sketchObject.constraints.push({ id: cid, type: "⟂", points: [a, b, c, d] });
+        };
+        // Use endpoints that define each line direction
+        // L1(pA,c2a) ⟂ L2(c2b,pC)
+        pushPerp(pA.id, c2a.id, c2b.id, pC.id);
+        // L2(c2b,pC) ⟂ L3(pC_other,c4a)
+        pushPerp(c2b.id, pC.id, pC_other.id, c4a.id);
+        // L3(pC_other,c4a) ⟂ L4(c4b,pA_other)
+        pushPerp(pC_other.id, c4a.id, c4b.id, pA_other.id);
+
+        // Solve and update
+        this.sketchObject = this.solveSketch("full");
+        this.hooks.updateCanvas();
+        this.appState.mode = "";
+        this.appState.type = "";
+        this.appState.requiredSelections = 0;
+        return true;
+    }
+
     createGeometry(type, points = []) {
         // Use selection if not provided
         if (points.length === 0) {
