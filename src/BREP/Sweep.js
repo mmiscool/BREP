@@ -158,7 +158,7 @@ export class Sweep extends FacesSolid {
   }
 
   generate() {
-    const { face, distance } = this.params;
+    const { face, distance, sweepPathEdges } = this.params;
     if (!face || !face.geometry) return;
 
     // Clear any existing children (visualization) and reset authoring arrays
@@ -175,9 +175,197 @@ export class Sweep extends FacesSolid {
     this._manifold = null;
     this._faceIndex = null;
 
-    // Determine sweep vector
+    // Helper to extract world-space polyline from an edge-like object
+    const extractPathPolylineWorld = (edgeObj) => {
+      const pts = [];
+      const cached = edgeObj?.userData?.polylineLocal;
+      const isWorld = !!(edgeObj?.userData?.polylineWorld);
+      const v = new THREE.Vector3();
+      if (Array.isArray(cached) && cached.length >= 2) {
+        if (isWorld) {
+          for (const p of cached) pts.push([p[0], p[1], p[2]]);
+        } else {
+          for (const p of cached) {
+            v.set(p[0], p[1], p[2]).applyMatrix4(edgeObj.matrixWorld);
+            pts.push([v.x, v.y, v.z]);
+          }
+        }
+      } else {
+        const posAttr = edgeObj?.geometry?.getAttribute?.('position');
+        if (posAttr && posAttr.itemSize === 3 && posAttr.count >= 2) {
+          for (let i = 0; i < posAttr.count; i++) {
+            v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(edgeObj.matrixWorld);
+            pts.push([v.x, v.y, v.z]);
+          }
+        } else {
+          const aStart = edgeObj?.geometry?.attributes?.instanceStart;
+          const aEnd = edgeObj?.geometry?.attributes?.instanceEnd;
+          if (aStart && aEnd && aStart.itemSize === 3 && aEnd.itemSize === 3 && aStart.count === aEnd.count && aStart.count >= 1) {
+            v.set(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(edgeObj.matrixWorld);
+            pts.push([v.x, v.y, v.z]);
+            for (let i = 0; i < aEnd.count; i++) {
+              v.set(aEnd.getX(i), aEnd.getY(i), aEnd.getZ(i)).applyMatrix4(edgeObj.matrixWorld);
+              pts.push([v.x, v.y, v.z]);
+            }
+          }
+        }
+      }
+      // remove consecutive duplicates
+      for (let i = pts.length - 2; i >= 0; i--) {
+        const a = pts[i], b = pts[i + 1];
+        if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pts.splice(i + 1, 1);
+      }
+      return pts;
+    };
+
+    // Build a single combined path from multiple selected edges by chaining
+    const combinePathPolylines = (edges, tol = 1e-5) => {
+      if (!Array.isArray(edges) || edges.length === 0) return [];
+      const polys = [];
+      for (const e of edges) {
+        const p = extractPathPolylineWorld(e);
+        if (p.length >= 2) polys.push(p);
+      }
+      if (polys.length === 0) return [];
+
+      // Helper for endpoint distance
+      const d2 = (a, b) => {
+        const dx = a[0]-b[0], dy = a[1]-b[1], dz = a[2]-b[2];
+        return dx*dx + dy*dy + dz*dz;
+      };
+      const tol2 = tol*tol;
+
+      // Greedily chain polylines by matching endpoints
+      const used = new Array(polys.length).fill(false);
+      // Start with the first polyline
+      let chain = polys[0].slice();
+      used[0] = true;
+      let extended = true;
+      while (extended) {
+        extended = false;
+        for (let i = 1; i < polys.length; i++) {
+          if (used[i]) continue;
+          const curStart = chain[0];
+          const curEnd = chain[chain.length-1];
+          const p = polys[i];
+          const pStart = p[0];
+          const pEnd = p[p.length-1];
+          if (d2(curEnd, pStart) <= tol2) {
+            // append forward
+            chain.push(...p.slice(1));
+            used[i] = true; extended = true; continue;
+          }
+          if (d2(curEnd, pEnd) <= tol2) {
+            // append reversed
+            const rev = p.slice().reverse();
+            chain.push(...rev.slice(1));
+            used[i] = true; extended = true; continue;
+          }
+          if (d2(curStart, pEnd) <= tol2) {
+            // prepend forward
+            chain.unshift(...p.slice(0, p.length-1));
+            used[i] = true; extended = true; continue;
+          }
+          if (d2(curStart, pStart) <= tol2) {
+            // prepend reversed
+            const rev = p.slice().reverse();
+            chain.unshift(...rev.slice(0, rev.length-1));
+            used[i] = true; extended = true; continue;
+          }
+        }
+      }
+
+      // If some remain unused (disconnected), prefer returning the longest chain rather than concatenating gaps.
+      // Attempt to find other chains and return the longest.
+      let best = chain;
+      for (let i = 1; i < polys.length; i++) {
+        if (used[i]) continue;
+        let c = polys[i].slice();
+        const locUsed = new Array(polys.length).fill(false); locUsed[i] = true;
+        let grew = true;
+        while (grew) {
+          grew = false;
+          for (let j = 0; j < polys.length; j++) {
+            if (locUsed[j]) continue;
+            const curStart = c[0];
+            const curEnd = c[c.length-1];
+            const p = polys[j];
+            const pStart = p[0];
+            const pEnd = p[p.length-1];
+            if (d2(curEnd, pStart) <= tol2) { c.push(...p.slice(1)); locUsed[j] = true; grew = true; continue; }
+            if (d2(curEnd, pEnd) <= tol2) { const rev = p.slice().reverse(); c.push(...rev.slice(1)); locUsed[j] = true; grew = true; continue; }
+            if (d2(curStart, pEnd) <= tol2) { c.unshift(...p.slice(0, p.length-1)); locUsed[j] = true; grew = true; continue; }
+            if (d2(curStart, pStart) <= tol2) { const rev = p.slice().reverse(); c.unshift(...rev.slice(0, rev.length-1)); locUsed[j] = true; grew = true; continue; }
+          }
+        }
+        if (c.length > best.length) best = c;
+      }
+
+      // Remove duplicate consecutive points
+      for (let i = best.length - 2; i >= 0; i--) {
+        const a = best[i], b = best[i + 1];
+        if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) best.splice(i + 1, 1);
+      }
+      return best;
+    };
+
+    // Determine whether to sweep along a path edge
+    let pathPts = [];
+    if (Array.isArray(sweepPathEdges) && sweepPathEdges.length > 0) {
+      const edges = sweepPathEdges.filter(Boolean);
+      if (edges.length > 0) pathPts = combinePathPolylines(edges);
+    }
+
+    // Orient path so it starts near the profile face centroid (if available)
+    if (pathPts.length >= 2) {
+      let centroid = null;
+      const loops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
+      if (loops && loops.length) {
+        // use first outer loop (isHole !== true)
+        const outer = loops.find(l => !l.isHole) || loops[0];
+        const pts = Array.isArray(outer?.pts) ? outer.pts : outer;
+        if (Array.isArray(pts) && pts.length >= 3) {
+          centroid = new THREE.Vector3();
+          for (const p of pts) centroid.add(new THREE.Vector3(p[0], p[1], p[2]));
+          centroid.multiplyScalar(1 / pts.length);
+        }
+      }
+      if (!centroid) {
+        // fallback to face geometry centroid
+        const posAttr = face?.geometry?.getAttribute?.('position');
+        if (posAttr) {
+          centroid = new THREE.Vector3();
+          const v = new THREE.Vector3();
+          for (let i = 0; i < posAttr.count; i++) {
+            v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(face.matrixWorld);
+            centroid.add(v);
+          }
+          centroid.multiplyScalar(1 / Math.max(1, posAttr.count));
+        }
+      }
+      if (centroid) {
+        const d2 = (a, b) => { const dx = a[0]-b.x, dy = a[1]-b.y, dz = a[2]-b.z; return dx*dx + dy*dy + dz*dz; };
+        const startD = d2(pathPts[0], centroid);
+        const endD = d2(pathPts[pathPts.length-1], centroid);
+        if (endD < startD) pathPts.reverse();
+      }
+    }
+
+    // Build offsets along path (relative to first point)
+    let offsets = [];
+    if (pathPts.length >= 2) {
+      const p0 = pathPts[0];
+      for (let i = 0; i < pathPts.length; i++) {
+        const p = pathPts[i];
+        offsets.push(new THREE.Vector3(p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]));
+      }
+    }
+
+    // Determine sweep vector for cap translation only (single-shot extrude or end cap of path)
     let dir = null;
-    if (distance instanceof THREE.Vector3) {
+    if (offsets.length >= 2) {
+      dir = offsets[offsets.length - 1].clone();
+    } else if (distance instanceof THREE.Vector3) {
       dir = distance.clone();
     } else if (typeof distance === 'number') {
       const n = typeof face.getAverageNormal === 'function'
@@ -259,6 +447,7 @@ export class Sweep extends FacesSolid {
     // This avoids T-junctions and ensures a watertight manifold. If loops are
     // unavailable (legacy faces), fall back to per-edge polylines.
     const boundaryLoops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
+    const doPathSweep = offsets.length >= 2;
     if (boundaryLoops && boundaryLoops.length) {
       // Build a quick lookup from boundary points to their originating sketch edge(s)
       // so we can label side walls per curve while still using cap-matching vertices.
@@ -297,39 +486,63 @@ export class Sweep extends FacesSolid {
       for (const loop of boundaryLoops) {
         const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
         const isHole = !!(loop && loop.isHole);
-        const pA = pts.slice();
+        const base = pts.slice();
         // ensure closed
-        if (pA.length >= 2) {
-          const first = pA[0];
-          const last = pA[pA.length - 1];
-          if (!(first[0] === last[0] && first[1] === last[1] && first[2] === last[2])) pA.push([first[0], first[1], first[2]]);
+        if (base.length >= 2) {
+          const first = base[0];
+          const last = base[base.length - 1];
+          if (!(first[0] === last[0] && first[1] === last[1] && first[2] === last[2])) base.push([first[0], first[1], first[2]]);
         }
         // remove consecutive duplicates if any
-        for (let i = pA.length - 2; i >= 0; i--) {
-          const a = pA[i], b = pA[i + 1];
-          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pA.splice(i + 1, 1);
+        for (let i = base.length - 2; i >= 0; i--) {
+          const a = base[i], b = base[i + 1];
+          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) base.splice(i + 1, 1);
         }
-        // build side quads around the loop using exact cap boundary vertices
-        for (let i = 0; i < pA.length - 1; i++) {
-          const a = pA[i];
-          const b = pA[i + 1];
-          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
-          const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
-          const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
-          // Pick face label by matching endpoints to originating edge; fallback to face-level label
-          const setA = pointToEdgeNames.get(key(a));
-          const setB = pointToEdgeNames.get(key(b));
-          let name = `${face.name || 'FACE'}_SW`;
-          if (setA && setB) {
-            for (const n of setA) { if (setB.has(n)) { name = n; break; } }
+
+        if (!doPathSweep) {
+          // single-vector extrude (original behavior)
+          for (let i = 0; i < base.length - 1; i++) {
+            const a = base[i];
+            const b = base[i + 1];
+            if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+            const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
+            const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
+            const setA = pointToEdgeNames.get(key(a));
+            const setB = pointToEdgeNames.get(key(b));
+            let name = `${face.name || 'FACE'}_SW`;
+            if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+            if (isHole) {
+              this.addTriangle(name, a, b2, b);
+              this.addTriangle(name, a, a2, b2);
+            } else {
+              this.addTriangle(name, a, b, b2);
+              this.addTriangle(name, a, b2, a2);
+            }
           }
-          if (isHole) {
-            // reverse winding for hole walls to maintain outward orientation
-            this.addTriangle(name, a, b2, b);
-            this.addTriangle(name, a, a2, b2);
-          } else {
-            this.addTriangle(name, a, b, b2);
-            this.addTriangle(name, a, b2, a2);
+        } else {
+          // path-based sweep: connect each loop segment across successive path offsets
+          for (let seg = 0; seg < offsets.length - 1; seg++) {
+            const off0 = offsets[seg], off1 = offsets[seg + 1];
+            for (let i = 0; i < base.length - 1; i++) {
+              const a = base[i];
+              const b = base[i + 1];
+              if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+              const A0 = [a[0] + off0.x, a[1] + off0.y, a[2] + off0.z];
+              const B0 = [b[0] + off0.x, b[1] + off0.y, b[2] + off0.z];
+              const A1 = [a[0] + off1.x, a[1] + off1.y, a[2] + off1.z];
+              const B1 = [b[0] + off1.x, b[1] + off1.y, b[2] + off1.z];
+              const setA = pointToEdgeNames.get(key(a));
+              const setB = pointToEdgeNames.get(key(b));
+              let name = `${face.name || 'FACE'}_SW`;
+              if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+              if (isHole) {
+                this.addTriangle(name, A0, B1, B0);
+                this.addTriangle(name, A0, A1, B1);
+              } else {
+                this.addTriangle(name, A0, B0, B1);
+                this.addTriangle(name, A0, B1, A1);
+              }
+            }
           }
         }
       }
@@ -340,45 +553,27 @@ export class Sweep extends FacesSolid {
         for (const edge of edges) {
           const name = `${edge.name || 'EDGE'}_SW`;
 
-          // Helper: robustly extract world-space polyline points from Line, Line2, or cached polyline
+          // Robustly extract world-space polyline points
           const pA = [];
           const wv = new THREE.Vector3();
-
-          // 1) Prefer cached polyline provided during visualize
           const cached = edge?.userData?.polylineLocal;
           const isWorld = !!(edge?.userData?.polylineWorld);
           if (Array.isArray(cached) && cached.length >= 2) {
             if (isWorld) {
-              for (let i = 0; i < cached.length; i++) {
-                const p = cached[i];
-                pA.push([p[0], p[1], p[2]]);
-              }
+              for (let i = 0; i < cached.length; i++) { const p = cached[i]; pA.push([p[0], p[1], p[2]]); }
             } else {
-              for (let i = 0; i < cached.length; i++) {
-                const p = cached[i];
-                wv.set(p[0], p[1], p[2]).applyMatrix4(edge.matrixWorld);
-                pA.push([wv.x, wv.y, wv.z]);
-              }
+              for (let i = 0; i < cached.length; i++) { const p = cached[i]; wv.set(p[0], p[1], p[2]).applyMatrix4(edge.matrixWorld); pA.push([wv.x, wv.y, wv.z]); }
             }
           } else {
-            // 2) Try Buffer/LineGeometry position attribute
             const posAttr = edge?.geometry?.getAttribute?.('position');
             if (posAttr && posAttr.itemSize === 3 && posAttr.count >= 2) {
-              for (let i = 0; i < posAttr.count; i++) {
-                wv.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(edge.matrixWorld);
-                pA.push([wv.x, wv.y, wv.z]);
-              }
+              for (let i = 0; i < posAttr.count; i++) { wv.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(edge.matrixWorld); pA.push([wv.x, wv.y, wv.z]); }
             } else {
-              // 3) Fallback for LineSegments-based fat lines
               const aStart = edge?.geometry?.attributes?.instanceStart;
               const aEnd = edge?.geometry?.attributes?.instanceEnd;
               if (aStart && aEnd && aStart.itemSize === 3 && aEnd.itemSize === 3 && aStart.count === aEnd.count && aStart.count >= 1) {
-                wv.set(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(edge.matrixWorld);
-                pA.push([wv.x, wv.y, wv.z]);
-                for (let i = 0; i < aEnd.count; i++) {
-                  wv.set(aEnd.getX(i), aEnd.getY(i), aEnd.getZ(i)).applyMatrix4(edge.matrixWorld);
-                  pA.push([wv.x, wv.y, wv.z]);
-                }
+                wv.set(aStart.getX(0), aStart.getY(0), aStart.getZ(0)).applyMatrix4(edge.matrixWorld); pA.push([wv.x, wv.y, wv.z]);
+                for (let i = 0; i < aEnd.count; i++) { wv.set(aEnd.getX(i), aEnd.getY(i), aEnd.getZ(i)).applyMatrix4(edge.matrixWorld); pA.push([wv.x, wv.y, wv.z]); }
               }
             }
           }
@@ -392,19 +587,33 @@ export class Sweep extends FacesSolid {
           const n = pA.length;
           if (n < 2) continue;
           const isHole = !!(edge && edge.userData && edge.userData.isHole);
-          for (let i = 0; i < n - 1; i++) {
-            const a = pA[i];
-            const b = pA[i + 1];
-            if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue; // guard
-            const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
-            const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
-            // two triangles; reverse winding for hole walls to maintain outward orientation
-            if (isHole) {
-              this.addTriangle(name, a, b2, b);
-              this.addTriangle(name, a, a2, b2);
-            } else {
-              this.addTriangle(name, a, b, b2);
-              this.addTriangle(name, a, b2, a2);
+
+          if (!doPathSweep) {
+            // Single-vector extrude
+            for (let i = 0; i < n - 1; i++) {
+              const a = pA[i];
+              const b = pA[i + 1];
+              if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue; // guard
+              const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
+              const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
+              if (isHole) { this.addTriangle(name, a, b2, b); this.addTriangle(name, a, a2, b2); }
+              else { this.addTriangle(name, a, b, b2); this.addTriangle(name, a, b2, a2); }
+            }
+          } else {
+            // Path-based
+            for (let seg = 0; seg < offsets.length - 1; seg++) {
+              const off0 = offsets[seg], off1 = offsets[seg + 1];
+              for (let i = 0; i < n - 1; i++) {
+                const a = pA[i];
+                const b = pA[i + 1];
+                if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue;
+                const A0 = [a[0] + off0.x, a[1] + off0.y, a[2] + off0.z];
+                const B0 = [b[0] + off0.x, b[1] + off0.y, b[2] + off0.z];
+                const A1 = [a[0] + off1.x, a[1] + off1.y, a[2] + off1.z];
+                const B1 = [b[0] + off1.x, b[1] + off1.y, b[2] + off1.z];
+                if (isHole) { this.addTriangle(name, A0, B1, B0); this.addTriangle(name, A0, A1, B1); }
+                else { this.addTriangle(name, A0, B0, B1); this.addTriangle(name, A0, B1, A1); }
+              }
             }
           }
         }

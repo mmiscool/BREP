@@ -18,14 +18,9 @@ const inputParamsSchema = {
   path: {
     type: "reference_selection",
     selectionFilter: ["EDGE"],
-    multiple: false,
+    multiple: true,
     default_value: null,
-    hint: "Select the path to sweep along",
-  },
-  distance: {
-    type: "number",
-    default_value: 1,
-    hint: "Extrude distance when no path is provided",
+    hint: "Select one or more edges to define the sweep path (connected edges are chained)",
   },
   twistAngle: {
     type: "number",
@@ -52,7 +47,13 @@ export class SweepFeature {
 
   async run(partHistory) {
     // actual code to create the sweep feature.
-    const { profile, path, distance, twistAngle } = this.inputParams;
+    const { profile, path, twistAngle } = this.inputParams;
+
+    // Require a valid path edge; sweep now only follows a path
+    const pathArr = Array.isArray(path) ? path.filter(Boolean) : (path ? [path] : []);
+    if (!pathArr.length) {
+      throw new Error('Sweep requires a path edge selection. Please select an EDGE to sweep along.');
+    }
 
     // Resolve profile object: accept FACE or SKETCH group object
     const obj = Array.isArray(profile) ? (profile[0] || null) : (profile || null);
@@ -67,8 +68,7 @@ export class SweepFeature {
     // Create the sweep solid
     const sweep = new BREP.Sweep({
       face: faceObj,
-      sweepPathEdges: Array.isArray(path) && path[0] ? [path[0]] : [],
-      distance,
+      sweepPathEdges: pathArr,
       name: this.inputParams.featureID
     });
     sweep.visualize();
