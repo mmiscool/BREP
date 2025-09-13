@@ -451,6 +451,15 @@ export class Sweep extends FacesSolid {
         const p = pathPts[i];
         offsets.push(new THREE.Vector3(p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]));
       }
+      // Collapse near-duplicate steps to avoid zero-area side faces
+      const filtered = [offsets[0]];
+      for (let i = 1; i < offsets.length; i++) {
+        const prev = filtered[filtered.length - 1];
+        const cur = offsets[i];
+        const d2 = cur.clone().sub(prev).lengthSq();
+        if (d2 > 1e-14) filtered.push(cur);
+      }
+      offsets = filtered;
     }
 
     // Determine sweep vector for cap translation only (single-shot extrude or end cap of path)
@@ -615,6 +624,8 @@ export class Sweep extends FacesSolid {
           // path-based sweep: connect each loop segment across successive path offsets
           for (let seg = 0; seg < offsets.length - 1; seg++) {
             const off0 = offsets[seg], off1 = offsets[seg + 1];
+            // Skip degenerate steps
+            if (off1.x === off0.x && off1.y === off0.y && off1.z === off0.z) continue;
             for (let i = 0; i < base.length - 1; i++) {
               const a = base[i];
               const b = base[i + 1];
@@ -693,9 +704,11 @@ export class Sweep extends FacesSolid {
             }
           } else {
             // Path-based
-            for (let seg = 0; seg < offsets.length - 1; seg++) {
-              const off0 = offsets[seg], off1 = offsets[seg + 1];
-              for (let i = 0; i < n - 1; i++) {
+          for (let seg = 0; seg < offsets.length - 1; seg++) {
+            const off0 = offsets[seg], off1 = offsets[seg + 1];
+            // Skip degenerate steps
+            if (off1.x === off0.x && off1.y === off0.y && off1.z === off0.z) continue;
+            for (let i = 0; i < n - 1; i++) {
                 const a = pA[i];
                 const b = pA[i + 1];
                 if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue;
