@@ -42,14 +42,13 @@ export class PrimitivePyramidFeature {
     static featureName = "Primitive Pyramid";
     static inputParamsSchema = inputParamsSchema;
 
-    constructor(partHistory) {
-        this.partHistory = partHistory;
+    constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
         
         this.persistentData = {};
     }
 
-    async run() {
+    async run(partHistory) {
         const { baseSideLength, sides, height, featureID } = this.inputParams;
 
         const pyramid = await new BREP.Pyramid({
@@ -60,6 +59,6 @@ export class PrimitivePyramidFeature {
         });
         pyramid.visualize();
 
-        return await applyBooleanOperation(this.partHistory || {}, pyramid, this.inputParams.boolean, featureID);
+        return await applyBooleanOperation(partHistory || {}, pyramid, this.inputParams.boolean, featureID);
     }
 }

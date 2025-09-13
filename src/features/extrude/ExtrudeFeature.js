@@ -22,7 +22,7 @@ const inputParamsSchema = {
   },
   boolean: {
     type: "boolean_operation",
-    default_value: { targets: [], operation: 'NONE', opperation: 'NONE' },
+    default_value: { targets: [], operation: 'NONE' },
     hint: "Optional boolean operation with selected solids"
   }
 };
@@ -42,8 +42,8 @@ export class ExtrudeFeature {
     // actual code to create the extrude feature.
     const { profile, distance } = this.inputParams;
 
-    // Resolve profile: accept FACE name or a SKETCH group name
-    const obj = partHistory.scene.getObjectByName(profile);
+    // Resolve profile object: accept FACE object or a SKETCH group object
+    const obj = Array.isArray(profile) ? (profile[0] || null) : (profile || null);
     let faceObj = obj;
     if (obj && obj.type === 'SKETCH') {
       // Find child FACE named PROFILE (or any FACE child)

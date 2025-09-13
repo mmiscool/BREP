@@ -69,8 +69,8 @@ export class FilletFeature {
         this.persistentData = {};
     }
     async run(partHistory) {
-        // check if all the edges belong to the same solid
-        const inputObjects = partHistory.getObjectsByName(this.inputParams.edges);
+        // Accept resolved objects from sanitizeInputParams
+        const inputObjects = Array.isArray(this.inputParams.edges) ? this.inputParams.edges.filter(Boolean) : [];
 
         //console.log("FilletFeature input objects:", inputObjects);
 
@@ -114,7 +114,7 @@ export class FilletFeature {
             return [];
         }
 
-        const targetSolid = edgeObjs[0].parent;
+        const targetSolid = edgeObjs[0].parentSolid || edgeObjs[0].parent;
 
         // Create the fillet solid for each edge
         const objectsForBoolean = [];

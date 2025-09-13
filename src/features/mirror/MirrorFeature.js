@@ -36,8 +36,7 @@ export class MirrorFeature {
 
     static inputParamsSchema = inputParamsSchema;
 
-    constructor(partHistory) {
-        this.partHistory = partHistory;
+    constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
         this.persistentData = {};
     }
@@ -45,13 +44,14 @@ export class MirrorFeature {
         const scene = partHistory.scene;
         const featureID = this.inputParams.featureID || 'MIRROR';
 
-        // Resolve targets
-        const solidNames = Array.isArray(this.inputParams.solids) ? this.inputParams.solids.filter(Boolean) : [];
-        if (!solidNames.length) return [];
+        // Resolve targets as objects
+        const solidObjs = Array.isArray(this.inputParams.solids) ? this.inputParams.solids.filter(Boolean) : [];
+        if (!solidObjs.length) return [];
 
-        // Resolve mirror reference (face or plane mesh)
-        const refName = this.inputParams.mirrorPlane ? String(this.inputParams.mirrorPlane) : '';
-        const refObj = refName ? scene.getObjectByName(refName) : null;
+        // Resolve mirror reference (face or plane mesh) as object
+        const refObj = Array.isArray(this.inputParams.mirrorPlane)
+            ? (this.inputParams.mirrorPlane[0] || null)
+            : (this.inputParams.mirrorPlane || null);
         if (!refObj) return [];
 
         // Compute plane origin and normal
@@ -59,8 +59,7 @@ export class MirrorFeature {
         if (!plane) return [];
 
         const outputs = [];
-        for (const nm of solidNames) {
-            const src = scene.getObjectByName(nm);
+        for (const src of solidObjs) {
             if (!src || src.type !== 'SOLID') continue;
             const mirrored = src.mirrorAcrossPlane(plane.point, plane.normal);
             // mutate face names so they are distinct for this feature

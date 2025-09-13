@@ -47,8 +47,7 @@ export class SketchFeature {
     static featureName = "Sketch";
     static inputParamsSchema = inputParamsSchema;
 
-    constructor(partHistory) {
-        this.partHistory = partHistory;
+    constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
 
         // Persisted between edits: { basis, sketch }
@@ -59,12 +58,19 @@ export class SketchFeature {
     // Always recompute from the current referenced object transform if available,
     // so the sketch follows moves/updates of the face/plane.
     // basis = { origin: [x,y,z], x: [x,y,z], y: [x,y,z], z: [x,y,z], refName?: string }
-    _getOrCreateBasis() {
+    _getOrCreateBasis(partHistory) {
         const currentRef = this.inputParams?.sketchPlane || null;
         const pdBasis = this.persistentData?.basis || null;
-        const ph = this.partHistory;
-        const refName = currentRef;
-        const refObj = refName ? ph?.scene?.getObjectByName(refName) : null;
+        const ph = partHistory;
+        // Accept object (preferred, from sanitizeInputParams) or fallback to name
+        let refObj = null;
+        if (Array.isArray(currentRef)) {
+            refObj = currentRef[0] || null;
+        } else if (currentRef && typeof currentRef === 'object') {
+            refObj = currentRef;
+        } else if (currentRef) {
+            refObj = ph?.scene?.getObjectByName(currentRef);
+        }
 
         const x = new THREE.Vector3(1,0,0);
         const y = new THREE.Vector3(0,1,0);
@@ -110,7 +116,7 @@ export class SketchFeature {
             x: [x.x, x.y, x.z],
             y: [y.x, y.y, y.z],
             z: [z.x, z.y, z.z],
-            refName: refName || undefined,
+            refName: (refObj?.name) || undefined,
         };
         this.persistentData = this.persistentData || {};
         this.persistentData.basis = basis;
@@ -119,14 +125,14 @@ export class SketchFeature {
 
     // Visualize sketch curves and points as a Group for selection (type='SKETCH').
     // Returns [group]
-    async run() {
+    async run(partHistory) {
         const sceneGroup = new THREE.Group();
         sceneGroup.name = this.inputParams.featureID || 'Sketch';
         sceneGroup.type = 'SKETCH';
         // Provide a harmless onClick so Scene Manager rows don't error
         sceneGroup.onClick = () => {};
 
-        const basis = this._getOrCreateBasis();
+        const basis = this._getOrCreateBasis(partHistory);
         const bO = new THREE.Vector3().fromArray(basis.origin);
         const bX = new THREE.Vector3().fromArray(basis.x);
         const bY = new THREE.Vector3().fromArray(basis.y);
@@ -136,7 +142,7 @@ export class SketchFeature {
 
         // Evaluate any expression-backed values on points/constraints using global expressions
         try {
-            const exprSrc = this.partHistory?.expressions || '';
+            const exprSrc = partHistory?.expressions || '';
             const runExpr = (expressions, equation) => {
                 try {
                     const fn = `${expressions}; return ${equation} ;`;
@@ -181,7 +187,7 @@ export class SketchFeature {
         } catch {}
         // Update external reference points by projecting selected model edge endpoints
         try {
-            const scene = this.partHistory?.scene;
+            const scene = partHistory?.scene;
             const refs = Array.isArray(this.persistentData?.externalRefs) ? this.persistentData.externalRefs : [];
             if (scene && refs.length) {
                 const toUV = (w)=>{ const d = new THREE.Vector3().copy(w).sub(bO); return { u: d.dot(bX), v: d.dot(bY) }; };
@@ -212,7 +218,7 @@ export class SketchFeature {
                         if (!edge || edge.type !== 'EDGE') {
                             // Fallback by solidName + edgeName, then global by edgeName
                             if (r.solidName) {
-                                const solid = this.partHistory?.scene?.getObjectByName(r.solidName);
+                                const solid = scene?.getObjectByName(r.solidName);
                                 if (solid) {
                                     let found = null;
                                     solid.traverse((obj) => { if (!found && obj.type === 'EDGE' && obj.name === r.edgeName) found = obj; });
@@ -221,7 +227,7 @@ export class SketchFeature {
                             }
                             if ((!edge || edge.type !== 'EDGE') && r.edgeName) {
                                 let found = null;
-                                this.partHistory?.scene?.traverse((obj) => { if (!found && obj.type === 'EDGE' && obj.name === r.edgeName) found = obj; });
+                                scene?.traverse((obj) => { if (!found && obj.type === 'EDGE' && obj.name === r.edgeName) found = obj; });
                                 if (found) edge = found;
                             }
                             if (edge && edge.type === 'EDGE') {

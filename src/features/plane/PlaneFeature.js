@@ -40,8 +40,7 @@ export class PlaneFeature {
     static featureName = "Plane";
     static inputParamsSchema = inputParamsSchema;
 
-    constructor(partHistory) {
-        this.partHistory = partHistory;
+    constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
         
         this.persistentData = {};

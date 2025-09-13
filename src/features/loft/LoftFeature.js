@@ -41,14 +41,12 @@ export class LoftFeature {
   static featureName = "Loft";
   static inputParamsSchema = inputParamsSchema;
 
-  constructor(partHistory) {
-    this.partHistory = partHistory;
+  constructor() {
     this.inputParams = extractDefaultValues(inputParamsSchema);
     this.persistentData = {};
   }
 
-  async run() {
-    const partHistory = this.partHistory;
+  async run(partHistory) {
     const { profiles } = this.inputParams;
     if (!Array.isArray(profiles) || profiles.length < 2) {
       console.warn("LoftFeature: select at least two profiles (faces or sketches)");
@@ -57,8 +55,7 @@ export class LoftFeature {
 
     // Resolve input names to FACE objects; allow SKETCH that contains a FACE
     const faces = [];
-    for (const ref of profiles) {
-      const obj = partHistory.scene.getObjectByName(ref);
+    for (const obj of profiles) {
       if (!obj) continue;
       let faceObj = obj;
       if (obj && obj.type === 'SKETCH') {

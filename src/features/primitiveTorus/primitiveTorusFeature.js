@@ -46,14 +46,13 @@ export class PrimitiveTorusFeature {
     static featureName = "Primitive Torus";
     static inputParamsSchema = inputParamsSchema;
 
-    constructor(partHistory) {
-        this.partHistory = partHistory;
+    constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
         
         this.persistentData = {};
     }
 
-    async run() {
+    async run(partHistory) {
         let {
             majorRadius,
             tubeRadius,
@@ -71,6 +70,6 @@ export class PrimitiveTorusFeature {
         });
         torus.visualize();
 
-        return await applyBooleanOperation(this.partHistory || {}, torus, this.inputParams.boolean, featureID);
+        return await applyBooleanOperation(partHistory || {}, torus, this.inputParams.boolean, featureID);
     }
 }

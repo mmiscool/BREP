@@ -40,18 +40,16 @@ export class RevolveFeature {
     static featureName = "Revolve";
     static inputParamsSchema = inputParamsSchema;
 
-    constructor(partHistory) {
-        this.partHistory = partHistory;
+    constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
         this.persistentData = {};
     }
 
-    async run() {
-        const partHistory = this.partHistory;
+    async run(partHistory) {
         const { profile, axis, angle } = this.inputParams;
 
-        // Resolve profile: accept FACE or SKETCH group name
-        const obj = partHistory.scene.getObjectByName(profile);
+        // Resolve profile object: accept FACE or SKETCH group object
+        const obj = Array.isArray(profile) ? (profile[0] || null) : (profile || null);
         let faceObj = obj;
         if (obj && obj.type === 'SKETCH') {
             faceObj = obj.children.find(ch => ch.type === 'FACE') || obj.children.find(ch => ch.userData?.faceName);
@@ -71,7 +69,7 @@ export class RevolveFeature {
         if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') faceObj.parent.remove = true;
 
         // Resolve axis edge → world-space origin+direction
-        const axisObj = partHistory.scene.getObjectByName(axis);
+        const axisObj = Array.isArray(axis) ? (axis[0] || null) : (axis || null);
         let A = new THREE.Vector3(0, 0, 0), B = new THREE.Vector3(0, 1, 0);
         if (axisObj) {
             const mat = axisObj.matrixWorld;

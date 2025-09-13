@@ -49,7 +49,7 @@ export class ChamferFeature {
         this.persistentData = {};
     }
     async run(partHistory) {
-        const inputObjects = partHistory.getObjectsByName(this.inputParams.edges);
+        const inputObjects = Array.isArray(this.inputParams.edges) ? this.inputParams.edges.filter(Boolean) : [];
 
         const edgeObjs = [];
         inputObjects.forEach(obj => {
@@ -77,7 +77,7 @@ export class ChamferFeature {
             return [];
         }
 
-        const targetSolid = edgeObjs[0].parent;
+        const targetSolid = edgeObjs[0].parentSolid || edgeObjs[0].parent;
 
         const objectsForBoolean = [];
         for (const edgeObj of edgeObjs) {

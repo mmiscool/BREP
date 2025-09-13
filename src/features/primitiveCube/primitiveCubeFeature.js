@@ -39,14 +39,13 @@ export class PrimitiveCubeFeature {
     static featureName = "Primitive Cube";
     static inputParamsSchema = inputParamsSchema;
 
-    constructor(partHistory) {
-        this.partHistory = partHistory;
+    constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
         
         this.persistentData = {};
     }
 
-    async run() {
+    async run(partHistory) {
         const { sizeX, sizeY, sizeZ, featureID } = this.inputParams;
 
         const cube = await new BREP.Cube({
@@ -58,6 +57,6 @@ export class PrimitiveCubeFeature {
         cube.visualize();
 
         // Apply optional boolean operation
-        return await applyBooleanOperation(this.partHistory || {}, cube, this.inputParams.boolean, featureID);
+        return await applyBooleanOperation(partHistory || {}, cube, this.inputParams.boolean, featureID);
     }
 }

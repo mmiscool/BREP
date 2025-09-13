@@ -34,14 +34,13 @@ export class PrimitiveSphereFeature {
     static featureName = "Primitive Sphere";
     static inputParamsSchema = inputParamsSchema;
 
-    constructor(partHistory) {
-        this.partHistory = partHistory;
+    constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
         
         this.persistentData = {};
     }
 
-    async run() {
+    async run(partHistory) {
         const { radius, resolution, featureID } = this.inputParams;
 
         const sphere = await new BREP.Sphere({
@@ -51,6 +50,6 @@ export class PrimitiveSphereFeature {
         });
         sphere.visualize();
 
-        return await applyBooleanOperation(this.partHistory || {}, sphere, this.inputParams.boolean, featureID);
+        return await applyBooleanOperation(partHistory || {}, sphere, this.inputParams.boolean, featureID);
     }
 }

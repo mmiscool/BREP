@@ -31,8 +31,7 @@ export class DatiumFeature {
     static featureName = "Datium";
     static inputParamsSchema = inputParamsSchema;
 
-    constructor(partHistory) {
-        this.partHistory = partHistory;
+    constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
         
     }

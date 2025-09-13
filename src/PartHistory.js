@@ -86,7 +86,7 @@ export class PartHistory {
         await this.callbacks.run(feature.inputParams.featureID);
       }
       const FeatureClass = await this.featureRegistry.get(feature.type);
-      const instance = new FeatureClass(this);
+      const instance = new FeatureClass();
 
 
 
@@ -275,24 +275,77 @@ export class PartHistory {
         if (schema[key].type === "number") {
           // if it is a string use the eval() function to do some math and return it as a number
           sanitized[key] = runCodeAndGetNumber(this.expressions, inputParams[key]);
+        } else if (schema[key].type === "reference_selection") {
+          // Resolve references: accept objects directly or look up by name
+          const val = inputParams[key];
+          if (Array.isArray(val)) {
+            const arr = [];
+            for (const it of val) {
+              if (!it) continue;
+              if (typeof it === 'object') { arr.push(it); continue; }
+              const obj = this.getObjectByName(String(it));
+              if (obj) arr.push(obj);
+            }
+            sanitized[key] = arr;
+          } else {
+            if (!val) { sanitized[key] = []; }
+            else if (typeof val === 'object') { sanitized[key] = [val]; }
+            else {
+              const obj = this.getObjectByName(String(val));
+              sanitized[key] = obj ? [obj] : [];
+            }
+          }
+
+        } else if (schema[key].type === "boolean_operation") {
+          // If it's a boolean operation, normalize op key and resolve targets to objects
+          const raw = inputParams[key] || {};
+          const op = (raw.operation != null) ? raw.operation : raw.opperation;
+          const items = Array.isArray(raw.targets) ? raw.targets : [];
+          const targets = [];
+          for (const it of items) {
+            if (!it) continue;
+            if (typeof it === 'object') { targets.push(it); continue; }
+            const obj = this.getObjectByName(String(it));
+            if (obj) targets.push(obj);
+          }
+          sanitized[key] = { operation: op ?? 'NONE', targets };
         } else {
           sanitized[key] = inputParams[key];
         }
       } else {
-        sanitized[key] = schema[key].default_value;
+        // Clone structured defaults to avoid shared references across features
+        sanitized[key] = __deepClone(schema[key].default_value);
       }
     }
 
-    //console.log("Sanitized input params:", sanitized);
+    console.log("Sanitized input params:", sanitized);
     return sanitized;
   }
+}
+
+// Shallow-safe deep clone for plain objects/arrays used in schema defaults
+function __deepClone(value) {
+  if (value == null) return value;
+  const t = typeof value;
+  if (t !== 'object') return value;
+  // Arrays
+  if (Array.isArray(value)) return value.map(v => __deepClone(v));
+  // Plain objects only; leave class instances as-is
+  const proto = Object.getPrototypeOf(value);
+  if (proto === Object.prototype || proto === null) {
+    const out = {};
+    for (const k of Object.keys(value)) out[k] = __deepClone(value[k]);
+    return out;
+  }
+  return value; // fallback: do not clone exotic instances
 }
 
 export function extractDefaultValues(schema) {
   const result = {};
   for (const key in schema) {
-    if (schema.hasOwnProperty(key)) {
-      result[key] = schema[key].default_value;
+    if (Object.prototype.hasOwnProperty.call(schema, key)) {
+      const def = schema[key] ? schema[key].default_value : undefined;
+      result[key] = __deepClone(def);
     }
   }
   return result;

@@ -35,27 +35,35 @@ export class BooleanFeature {
 
     async run(partHistory) {
         const scene = partHistory.scene;
-        const targetName = this.inputParams.targetSolid;
-        const target = targetName ? await scene.getObjectByName(targetName) : null;
-        if (!target) throw new Error(`Target solid not found: ${targetName}`);
+        const targetObj = Array.isArray(this.inputParams.targetSolid) ? (this.inputParams.targetSolid[0] || null) : (this.inputParams.targetSolid || null);
+        const target = (targetObj && typeof targetObj === 'object') ? targetObj : (targetObj ? await scene.getObjectByName(String(targetObj)) : null);
+        if (!target) throw new Error(`Target solid not found`);
 
         const bool = this.inputParams.boolean || { targets: [], operation: 'NONE', opperation: 'NONE' };
         const op = String((bool.operation ?? bool.opperation ?? 'NONE')).toUpperCase();
-        const toolNames = Array.isArray(bool.targets) ? bool.targets.filter(Boolean) : [];
-        if (op === 'NONE' || toolNames.length === 0) {
+        const toolEntries = Array.isArray(bool.targets) ? bool.targets.filter(Boolean) : [];
+        if (op === 'NONE' || toolEntries.length === 0) {
             // No-op: leave scene unchanged
             return [];
         }
 
-        // Collect tool solids
+        // Collect tool solids (objects preferred, fallback to names)
         const seen = new Set();
         const tools = [];
-        for (const name of toolNames) {
-            const key = String(name);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            const obj = await scene.getObjectByName(key);
-            if (obj) tools.push(obj);
+        for (const entry of toolEntries) {
+            if (!entry) continue;
+            if (typeof entry === 'object') {
+                const key = entry.uuid || entry.id || entry.name || `${tools.length}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                tools.push(entry);
+            } else {
+                const key = String(entry);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                const obj = await scene.getObjectByName(key);
+                if (obj) tools.push(obj);
+            }
         }
         if (tools.length === 0) return [];
 
@@ -69,10 +77,10 @@ export class BooleanFeature {
             for (let i = 1; i < tools.length; i++) toolUnion = toolUnion.union(tools[i]);
             // Remove the original tools (the helper removes only the baseUnion and target)
             for (const t of tools) t.remove = true;
-            const param = { operation: 'SUBTRACT', opperation: 'SUBTRACT', targets: [targetName] };
+            const param = { operation: 'SUBTRACT', opperation: 'SUBTRACT', targets: [target] };
             outputs = await applyBooleanOperation(partHistory, toolUnion, param, this.inputParams.featureID);
         } else {
-            const param = { operation: op, opperation: op, targets: toolNames };
+            const param = { operation: op, opperation: op, targets: tools };
             outputs = await applyBooleanOperation(partHistory, target, param, this.inputParams.featureID);
             // Ensure original target is removed to avoid duplication
             try { target.remove = true; } catch (_) { }

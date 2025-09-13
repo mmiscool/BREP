@@ -12,24 +12,33 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
     // Back-compat: accept both `operation` and misspelled `opperation`
     const opRaw = (booleanParam.operation != null) ? booleanParam.operation : booleanParam.opperation;
     const op = String(opRaw || 'NONE').toUpperCase();
-    const names = Array.isArray(booleanParam.targets) ? booleanParam.targets.filter(Boolean) : [];
+    const tgt = Array.isArray(booleanParam.targets) ? booleanParam.targets.filter(Boolean) : [];
 
-    if (op === 'NONE' || names.length === 0) {
+    if (op === 'NONE' || tgt.length === 0) {
       return [baseSolid];
     }
 
     const scene = partHistory && partHistory.scene ? partHistory.scene : null;
     if (!scene) return [baseSolid];
 
-    // Collect unique tool solids by name
+    // Collect unique tool solids: support either objects or names for back-compat
     const seen = new Set();
     const tools = [];
-    for (const n of names) {
-      const key = String(n);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const obj = await scene.getObjectByName(key);
-      if (obj) tools.push(obj);
+    for (const entry of tgt) {
+      if (!entry) continue;
+      if (typeof entry === 'object') {
+        const obj = entry;
+        const key = obj.uuid || obj.id || obj.name || `${Date.now()}_${tools.length}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        tools.push(obj);
+      } else {
+        const key = String(entry);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const obj = await scene.getObjectByName(key);
+        if (obj) tools.push(obj);
+      }
     }
 
     if (tools.length === 0) return [baseSolid];

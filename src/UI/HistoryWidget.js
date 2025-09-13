@@ -316,41 +316,7 @@ export class HistoryWidget {
         body.className = "acc-body";
         content.appendChild(body);
 
-        // Build UI for params
-        const ui = new genFeatureUI(schema, feature.inputParams, {
-            onChange: (featureID) => {
-                const ph2 = this._getPartHistory();
-                if (!ph2) return;
-                ph2.currentHistoryStepId = featureID;
-                if (ph2.runHistory && typeof ph2.runHistory === "function") {
-                    try { ph2.runHistory(); } catch (_e) { }
-                }
-            },
-            onAction: (featureID, actionKey) => {
-                try {
-                    const v = this.viewer;
-                    if (!v) return;
-                    if (actionKey === 'editSketch' && typeof v.startSketchMode === 'function') {
-                        v.startSketchMode(featureID);
-                    }
-                } catch (_) { }
-            },
-            onReferenceChipRemove: (name) => {
-                try {
-                    const ph2 = this._getPartHistory();
-                    const scene = ph2 && ph2.scene ? ph2.scene : null;
-                    if (scene) {
-                        SelectionFilter.deselectItem(scene, name);
-                    }
-                } catch (_) { }
-            },
-            // Provide richer context for schema-driven button actions
-            scene: ph && ph.scene ? ph.scene : null,
-            viewer: this.viewer || null,
-            partHistory: this._getPartHistory() || null,
-            featureRef: feature || null,
-        });
-        body.appendChild(ui.uiElement);
+        // Do not build UI yet; lazy-mount when expanded
 
         // Mount
         item.appendChild(headerRow);
@@ -364,7 +330,10 @@ export class HistoryWidget {
             headerBtn,
             titleText,
             content,
-            ui,
+            // Lazy UI mount/destroy
+            ui: null,
+            body,
+            schema,
             isOpen: false,
             paramsSig: this._computeParamsSig(feature.inputParams),
             type: feature.type
@@ -381,9 +350,12 @@ export class HistoryWidget {
 
     _destroyEntry(entry) {
         // Best-effort destroy hook if UI had one
-        if (entry.ui && typeof entry.ui.destroy === "function") {
-            try { entry.ui.destroy(); } catch (_e) { }
+        if (entry.ui) {
+            try { typeof entry.ui._stopActiveReferenceSelection === 'function' && entry.ui._stopActiveReferenceSelection(); } catch (_) { }
+            try { typeof entry.ui.destroy === "function" && entry.ui.destroy(); } catch (_e) { }
+            entry.ui = null;
         }
+        try { entry.body && (entry.body.textContent = ""); } catch (_) { }
         if (entry.root && entry.root.parentNode) {
             entry.root.parentNode.removeChild(entry.root);
         }
@@ -415,9 +387,11 @@ export class HistoryWidget {
             const newSig = this._computeParamsSig(f.inputParams);
             if (newSig !== entry.paramsSig) {
                 entry.paramsSig = newSig;
-                // Update the genFeatureUI's params reference and refresh views
-                entry.ui.params = f.inputParams;
-                try { entry.ui.refreshFromParams(); } catch (_e) { }
+                // Update only if UI is mounted
+                if (entry.ui) {
+                    entry.ui.params = f.inputParams;
+                    try { entry.ui.refreshFromParams(); } catch (_e) { }
+                }
             }
         }
     }
@@ -444,6 +418,62 @@ export class HistoryWidget {
         entry.root.classList.toggle("open", entry.isOpen);
         entry.content.hidden = !entry.isOpen;
 
+        // Mount UI on open, unmount on close
+        if (entry.isOpen) {
+            if (!entry.ui) {
+                try {
+                    const ph = this._getPartHistory();
+                    const features = this._safeFeatures(ph);
+                    const feature = features.find(f => f && f.inputParams && String(f.inputParams.featureID) === String(entry.id));
+                    const fr = ph && ph.featureRegistry ? ph.featureRegistry : null;
+                    const def = fr && feature ? fr.get(feature.type) : null;
+                    const schema = def && def.inputParamsSchema ? def.inputParamsSchema : (entry.schema || {});
+                    const ui = new genFeatureUI(schema, feature ? feature.inputParams : {}, {
+                        onChange: (featureID) => {
+                            const ph2 = this._getPartHistory();
+                            if (!ph2) return;
+                            ph2.currentHistoryStepId = featureID;
+                            if (ph2.runHistory && typeof ph2.runHistory === "function") {
+                                try { ph2.runHistory(); } catch (_e) { }
+                            }
+                        },
+                        onAction: (featureID, actionKey) => {
+                            try {
+                                const v = this.viewer;
+                                if (!v) return;
+                                if (actionKey === 'editSketch' && typeof v.startSketchMode === 'function') {
+                                    v.startSketchMode(featureID);
+                                }
+                            } catch (_) { }
+                        },
+                        onReferenceChipRemove: (name) => {
+                            try {
+                                const ph2 = this._getPartHistory();
+                                const scene = ph2 && ph2.scene ? ph2.scene : null;
+                                if (scene) {
+                                    SelectionFilter.deselectItem(scene, name);
+                                }
+                            } catch (_) { }
+                        },
+                        scene: ph && ph.scene ? ph.scene : null,
+                        viewer: this.viewer || null,
+                        partHistory: this._getPartHistory() || null,
+                        featureRef: feature || null,
+                    });
+                    entry.body.appendChild(ui.uiElement);
+                    entry.ui = ui;
+                } catch (_) { }
+            }
+        } else {
+            // closing
+            try { entry.ui && typeof entry.ui._stopActiveReferenceSelection === 'function' && entry.ui._stopActiveReferenceSelection(); } catch (_) { }
+            if (entry.ui) {
+                try { typeof entry.ui.destroy === 'function' && entry.ui.destroy(); } catch (_) { }
+                try { entry.body.textContent = ""; } catch (_) { }
+                entry.ui = null;
+            }
+        }
+
         if (exclusive && entry.isOpen) {
             // Close others
             for (const [, e] of this._sections) {
@@ -455,6 +485,12 @@ export class HistoryWidget {
                     e.content.hidden = true;
                     // Ensure any active reference selection is stopped when a section closes
                     try { e.ui && typeof e.ui._stopActiveReferenceSelection === 'function' && e.ui._stopActiveReferenceSelection(); } catch (_) { }
+                    // Destroy UI for closed sections
+                    if (e.ui) {
+                        try { typeof e.ui.destroy === 'function' && e.ui.destroy(); } catch (_) { }
+                        try { e.body && (e.body.textContent = ""); } catch (_) { }
+                        e.ui = null;
+                    }
                 }
             }
             // Do not auto-activate reference selection; only activate on explicit user click
@@ -904,8 +940,8 @@ class genFeatureUI {
             // If another input was active, clear its visual + attribute
             const prev = genFeatureUI.__activeRefInput;
             if (prev && prev !== el) {
-                try { prev.style.filter = 'none'; } catch (_) {}
-                try { prev.removeAttribute('active-reference-selection'); } catch (_) {}
+                try { prev.style.filter = 'none'; } catch (_) { }
+                try { prev.removeAttribute('active-reference-selection'); } catch (_) { }
             }
         } catch (_) { }
         genFeatureUI.__activeRefInput = el || null;
@@ -979,7 +1015,7 @@ class genFeatureUI {
                 const row = this._fieldsWrap.querySelector(`[data-key="${key}"]`);
                 const select = row ? row.querySelector('select[data-role="bool-op"]') : null;
                 if (select) {
-                    const opVal = (v && typeof v === 'object') ? (v.operation ?? v.opperation) : null;
+                    const opVal = (v && typeof v === 'object') ? (v.operation) : null;
                     select.value = opVal ? String(opVal) : 'NONE';
                 }
                 const chips = row ? row.querySelector('.ref-chips') : null;
@@ -1008,8 +1044,8 @@ class genFeatureUI {
             const def = this.schema[key];
             if (this._excludedKeys.has(key)) continue;
             if (!(key in this.params)) {
-                const v = ('default_value' in def) ? def.default_value : this._defaultForType(def.type);
-                this.params[key] = v;
+                const raw = ('default_value' in def) ? def.default_value : this._defaultForType(def.type);
+                this.params[key] = this._cloneDefault(raw);
             }
         }
 
@@ -1190,10 +1226,10 @@ class genFeatureUI {
                 case 'boolean_operation': {
                     // Ensure default object exists
                     if (!this.params[key] || typeof this.params[key] !== 'object') {
-                        this.params[key] = { targets: [], operation: 'NONE', opperation: 'NONE' };
+                        this.params[key] = { targets: [], operation: 'NONE', operation: 'NONE' };
                     } else {
                         if (!Array.isArray(this.params[key].targets)) this.params[key].targets = [];
-                        if (!this.params[key].operation && !this.params[key].opperation) this.params[key].operation = 'NONE';
+                        if (!this.params[key].operation && !this.params[key].operation) this.params[key].operation = 'NONE';
                     }
 
                     const wrap = document.createElement('div');
@@ -1210,12 +1246,12 @@ class genFeatureUI {
                         opt.textContent = String(op);
                         sel.appendChild(opt);
                     }
-                    sel.value = String((this.params[key].operation ?? this.params[key].opperation) || 'NONE');
+                    sel.value = String((this.params[key].operation ?? this.params[key].operation) || 'NONE');
                     sel.addEventListener('change', () => {
                         if (!this.params[key] || typeof this.params[key] !== 'object') this.params[key] = { targets: [], operation: 'NONE' };
                         // Keep both keys in sync for backward compatibility
                         this.params[key].operation = sel.value;
-                        this.params[key].opperation = sel.value;
+                        this.params[key].operation = sel.value;
                         this._emitParamsChange(key, this.params[key]);
                     });
                     wrap.appendChild(sel);
@@ -1453,6 +1489,20 @@ class genFeatureUI {
         }
     }
 
+    _cloneDefault(val) {
+        if (val == null) return val;
+        if (Array.isArray(val)) return val.map(v => this._cloneDefault(v));
+        if (typeof val === 'object') {
+            const proto = Object.getPrototypeOf(val);
+            if (proto === Object.prototype || proto === null) {
+                const out = {};
+                for (const k of Object.keys(val)) out[k] = this._cloneDefault(val[k]);
+                return out;
+            }
+        }
+        return val;
+    }
+
     // Public: Activate the first reference_selection input in this form (if any)
     activateFirstReferenceSelection() {
         try {
@@ -1480,8 +1530,8 @@ class genFeatureUI {
             if (!root || typeof root.querySelectorAll !== 'function') return;
             root.querySelectorAll('[active-reference-selection="true"],[active-reference-selection=true]').forEach(el => {
                 if (el !== inputEl) {
-                    try { el.style.filter = 'none'; } catch (_) {}
-                    try { el.removeAttribute('active-reference-selection'); } catch (_) {}
+                    try { el.style.filter = 'none'; } catch (_) { }
+                    try { el.removeAttribute('active-reference-selection'); } catch (_) { }
                 }
             });
         };
@@ -1502,8 +1552,8 @@ class genFeatureUI {
         // Clear global active if it belongs to this instance
         try {
             if (genFeatureUI.__activeRefInput) {
-                try { genFeatureUI.__activeRefInput.style.filter = 'none'; } catch (_) {}
-                try { genFeatureUI.__activeRefInput.removeAttribute('active-reference-selection'); } catch (_) {}
+                try { genFeatureUI.__activeRefInput.style.filter = 'none'; } catch (_) { }
+                try { genFeatureUI.__activeRefInput.removeAttribute('active-reference-selection'); } catch (_) { }
             }
         } catch (_) { }
         genFeatureUI.__activeRefInput = null;
