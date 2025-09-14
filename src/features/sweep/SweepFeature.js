@@ -75,8 +75,7 @@ export class SweepFeature {
     const sweep = new BREP.Sweep({
       face: faceObj,
       sweepPathEdges: pathArr,
-      // pathAlign temporarily disabled in Sweep.js; fallback to translate
-      mode: (orientationMode === 'pathAlign') ? 'translate' : 'translate',
+      mode: (orientationMode === 'pathAlign') ? 'pathAlign' : 'translate',
       name: this.inputParams.featureID
     });
     // Build and show the solid. Let errors surface so we can debug if needed.

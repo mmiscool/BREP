@@ -54,7 +54,9 @@ export class PlaneFeature {
     }
 
     async createPlaneMesh() {
-        if (this.inputParams.datum) {
+        // When sanitized, reference_selection becomes an array; treat empty as no datum
+        const hasDatum = Array.isArray(this.inputParams.datum) ? this.inputParams.datum.length > 0 : !!this.inputParams.datum;
+        if (hasDatum) {
             // Create the plane mesh with reference to the datum
             // Add your async logic here if needed
         } else {

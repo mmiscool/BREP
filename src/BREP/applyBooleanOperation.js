@@ -43,14 +43,23 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
 
     if (tools.length === 0) return [baseSolid];
 
+    // Bias distance (nudge magnitude) from UI; fallback to 0.1 if missing
+    const biasDistanceRaw = (booleanParam && typeof booleanParam === 'object') ? (booleanParam.biasDistance ?? booleanParam.bias ?? booleanParam.epsilon) : undefined;
+    const biasDistance = Number.isFinite(Number(biasDistanceRaw)) ? Number(biasDistanceRaw) : 0.00001;
+
     // Apply selected boolean
     if (op === 'SUBTRACT') {
       // Inverted semantics for subtract: subtract the new baseSolid (tool)
-      // FROM each selected target solid. Return all resulting target solids.
+      // FROM each selected target solid. Before subtracting, bias the TARGET
+      // slightly OUTSIDE along planes coplanar with the tool to break ties.
       const results = [];
       let idx = 0;
       for (const target of tools) {
-        const out = target.subtract(baseSolid);
+        // Move points of the target that are nearly coplanar with tool faces
+        // slightly OUTSIDE the target, per requested bias for SUBTRACT.
+        const targetBiased = target.clone();
+        try { targetBiased.nudgeCoplanarAgainst(baseSolid, { mode: 'INSIDE', epsilon: biasDistance }); } catch (_) {}
+        const out = targetBiased.subtract(baseSolid);
         out.visualize();
         // Remove the original target; also remove the tool (base) after processing
         target.remove = true;
@@ -65,9 +74,16 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
     // UNION / INTERSECT keep original semantics: fold tools into the new baseSolid
     let result = baseSolid;
     for (const tool of tools) {
-      if (op === 'UNION') result = result.union(tool);
-      else if (op === 'INTERSECT') result = result.intersect(tool);
-      else {
+      // For UNION, bias the target/result toward INSIDE so nearly-coplanar
+      // points move into the solid and guarantee positive overlap.
+      if (op === 'UNION') {
+        const resultBiased = result.clone();
+        try { resultBiased.nudgeCoplanarAgainst(tool, { mode: 'OUTSIDE', epsilon: biasDistance }); } catch (_) {}
+        result = resultBiased.union(tool);
+      } else if (op === 'INTERSECT') {
+        // Keep INTERSECT unchanged unless requested otherwise
+        result = result.intersect(tool);
+      } else {
         // Unknown op → pass through
         return [baseSolid];
       }

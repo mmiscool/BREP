@@ -1004,6 +1004,36 @@ export class Solid extends THREE.Group {
         return this;
     }
 
+    /**
+     * Create a lightweight clone of this Solid that copies geometry arrays and
+     * face maps, but not children or any THREE resources. The clone is marked
+     * dirty so its Manifold is rebuilt lazily on first use.
+     * @returns {Solid}
+     */
+    clone() {
+        const s = new Solid();
+        s._numProp = this._numProp;
+        s._vertProperties = this._vertProperties.slice();
+        s._triVerts = this._triVerts.slice();
+        s._triIDs = this._triIDs.slice();
+        s._vertKeyToIndex = new Map();
+        for (let i = 0; i < s._vertProperties.length; i += 3) {
+            const x = s._vertProperties[i], y = s._vertProperties[i + 1], z = s._vertProperties[i + 2];
+            s._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
+        }
+        // Copy face name maps
+        try {
+            s._idToFaceName = new Map(this._idToFaceName);
+            s._faceNameToID = new Map(this._faceNameToID);
+        } catch (_) {}
+        s._dirty = true;
+        s._manifold = null;
+        s._faceIndex = null;
+        s.type = 'SOLID';
+        s.renderOrder = this.renderOrder;
+        return s;
+    }
+
     _weldVerticesByEpsilon(eps) {
         const vp = this._vertProperties;
         const nv = (vp.length / 3) | 0;
@@ -1086,6 +1116,167 @@ export class Solid extends THREE.Group {
         }
         this._dirty = true;
         this._faceIndex = null;
+    }
+
+    /**
+     * Nudge vertices that lie on planes coplanar with faces from `other` by a tiny
+     * amount along this solid's outward face normals to break exact coplanarity
+     * for robust boolean operations.
+     *
+     * The algorithm:
+     *  - Build a set of unique planes from `other` by quantizing plane normals and
+     *    distances with small tolerances.
+     *  - For each such plane, find triangles of `this` whose normals are nearly
+     *    parallel and whose vertices lie within `planeTol` distance of the plane;
+     *    accumulate their outward normals to define a consistent push direction.
+     *  - Move vertices of `this` within `planeTol` of any matched plane by
+     *    `epsilon` along the accumulated outward direction, either INSIDE or
+     *    OUTSIDE this solid.
+     *
+     * @param {Solid} other The solid to compare against for coplanar faces.
+     * @param {{epsilon?:number, planeTol?:number, angleTol?:number, mode?:'INSIDE'|'OUTSIDE'}} [opts]
+     * @returns {this}
+     */
+    nudgeCoplanarAgainst(other, opts = {}) {
+        try {
+            // Build meshes (ensures orientation/outward normals are consistent)
+            const meshA = this.getMesh();
+            const meshB = other.getMesh();
+
+            const vpA = meshA.vertProperties;
+            const tvA = meshA.triVerts;
+            const vpB = meshB.vertProperties;
+            const tvB = meshB.triVerts;
+
+            // Compute scale from bounding box of this solid
+            let minX = Infinity, minY = Infinity, minZ = Infinity;
+            let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+            for (let i = 0; i < vpA.length; i += 3) {
+                const x = vpA[i], y = vpA[i + 1], z = vpA[i + 2];
+                if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
+                if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
+            }
+            const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+            const diag = Math.hypot(dx, dy, dz) || 1;
+
+            // Slightly larger default bias to better avoid artifacts at coplanar contacts
+            const epsilon = (opts.epsilon != null) ? Number(opts.epsilon) : (5e-6 * diag);
+            // Default plane tolerance: scale-aware OR a small fraction of epsilon
+            const planeTol = (opts.planeTol != null) ? Number(opts.planeTol) : Math.max(1e-6 * diag, 0.02 * epsilon);
+            const angleTol = (opts.angleTol != null) ? Number(opts.angleTol) : 1e-6; // radians, small
+            const mode = (opts.mode === 'OUTSIDE') ? 'OUTSIDE' : 'INSIDE';
+
+            if (!(epsilon > 0) || !(planeTol >= 0)) return this;
+
+            // Utility: normalize vector, return length
+            const normalize = (v) => {
+                const len = Math.hypot(v[0], v[1], v[2]) || 0;
+                if (len > 0) { v[0] /= len; v[1] /= len; v[2] /= len; }
+                return len;
+            };
+
+            // Canonicalize plane orientation (n,d) so that (n,d) and (-n,-d) map to one rep
+            const canonicalize = (n, d) => {
+                const nx = n[0], ny = n[1], nz = n[2];
+                if (nz < 0 || (nz === 0 && (ny < 0 || (ny === 0 && nx < 0)))) {
+                    return [[-nx, -ny, -nz], -d];
+                }
+                return [[nx, ny, nz], d];
+            };
+
+            // Quantize helper
+            const q = (x, tol) => Math.round(x / tol) * tol;
+
+            // Build unique planes from B
+            const nTol = 1e-6; // normal component quantization
+            const planesB = new Map(); // key -> { n:[x,y,z], d:number }
+            for (let t = 0; t < tvB.length; t += 3) {
+                const i0 = tvB[t] * 3, i1 = tvB[t + 1] * 3, i2 = tvB[t + 2] * 3;
+                const ax = vpB[i0], ay = vpB[i0 + 1], az = vpB[i0 + 2];
+                const bx = vpB[i1], by = vpB[i1 + 1], bz = vpB[i1 + 2];
+                const cx = vpB[i2], cy = vpB[i2 + 1], cz = vpB[i2 + 2];
+                const ux = bx - ax, uy = by - ay, uz = bz - az;
+                const vx = cx - ax, vy = cy - ay, vz = cz - az;
+                let nx = uy * vz - uz * vy;
+                let ny = uz * vx - ux * vz;
+                let nz = ux * vy - uy * vx;
+                const len = Math.hypot(nx, ny, nz);
+                if (!(len > 0)) continue; // degenerate
+                nx /= len; ny /= len; nz /= len;
+                let d = -(nx * ax + ny * ay + nz * az);
+                let [nC, dC] = canonicalize([nx, ny, nz], d);
+                const k = `${q(nC[0], nTol)},${q(nC[1], nTol)},${q(nC[2], nTol)},${q(dC, planeTol)}`;
+                if (!planesB.has(k)) planesB.set(k, { n: nC, d: dC });
+            }
+
+            if (planesB.size === 0) return this;
+
+            // Accumulate per-vertex displacement directions from triangles that lie near any plane
+            const nvA = (vpA.length / 3) | 0;
+            const nAccum = new Float64Array(nvA * 3);
+            const used = new Uint8Array(nvA);
+            const cosThresh = Math.cos(angleTol);
+
+            for (const { n: nB, d: dB } of planesB.values()) {
+                for (let t = 0; t < tvA.length; t += 3) {
+                    const i0 = tvA[t] * 3, i1 = tvA[t + 1] * 3, i2 = tvA[t + 2] * 3;
+                    const ax = vpA[i0], ay = vpA[i0 + 1], az = vpA[i0 + 2];
+                    const bx = vpA[i1], by = vpA[i1 + 1], bz = vpA[i1 + 2];
+                    const cx = vpA[i2], cy = vpA[i2 + 1], cz = vpA[i2 + 2];
+                    const ux = bx - ax, uy = by - ay, uz = bz - az;
+                    const vx = cx - ax, vy = cy - ay, vz = cz - az;
+                    let nx = uy * vz - uz * vy;
+                    let ny = uz * vx - ux * vz;
+                    let nz = ux * vy - uy * vx;
+                    const nlen = Math.hypot(nx, ny, nz);
+                    if (!(nlen > 0)) continue;
+                    nx /= nlen; ny /= nlen; nz /= nlen; // outward tri normal for this solid
+
+                    // Require near-parallelism between triangle normal and plane normal
+                    const dot = nx * nB[0] + ny * nB[1] + nz * nB[2];
+                    if (Math.abs(dot) < cosThresh) continue;
+
+                    // For each vertex, if close to the plane, accumulate tri normal at that vertex
+                    const d0 = nB[0] * ax + nB[1] * ay + nB[2] * az + dB;
+                    const d1 = nB[0] * bx + nB[1] * by + nB[2] * bz + dB;
+                    const d2 = nB[0] * cx + nB[1] * cy + nB[2] * cz + dB;
+                    if (Math.abs(d0) <= planeTol) { nAccum[i0 + 0] += nx; nAccum[i0 + 1] += ny; nAccum[i0 + 2] += nz; used[(i0/3)|0] = 1; }
+                    if (Math.abs(d1) <= planeTol) { nAccum[i1 + 0] += nx; nAccum[i1 + 1] += ny; nAccum[i1 + 2] += nz; used[(i1/3)|0] = 1; }
+                    if (Math.abs(d2) <= planeTol) { nAccum[i2 + 0] += nx; nAccum[i2 + 1] += ny; nAccum[i2 + 2] += nz; used[(i2/3)|0] = 1; }
+                }
+            }
+
+            // Apply displacement
+            let any = false;
+            for (let i = 0; i < nvA; i++) {
+                if (!used[i]) continue;
+                const nx = nAccum[i * 3 + 0];
+                const ny = nAccum[i * 3 + 1];
+                const nz = nAccum[i * 3 + 2];
+                const len = Math.hypot(nx, ny, nz);
+                if (!(len > 0)) continue;
+                const s = (mode === 'OUTSIDE') ? (epsilon / len) : (-epsilon / len);
+                this._vertProperties[i * 3 + 0] += nx * s;
+                this._vertProperties[i * 3 + 1] += ny * s;
+                this._vertProperties[i * 3 + 2] += nz * s;
+                any = true;
+            }
+            if (!any) return this;
+
+            // Rebuild vertex key map and mark dirty
+            this._vertKeyToIndex = new Map();
+            for (let i = 0; i < this._vertProperties.length; i += 3) {
+                const x = this._vertProperties[i], y = this._vertProperties[i + 1], z = this._vertProperties[i + 2];
+                this._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
+            }
+            this._dirty = true;
+            this._faceIndex = null;
+            // Windings remain consistent; but run a quick fix in case of numeric quirks
+            this.fixTriangleWindingsByAdjacency();
+        } catch (err) {
+            console.warn('[Solid.nudgeCoplanarAgainst] skipped due to error:', err?.message || err);
+        }
+        return this;
     }
 
 

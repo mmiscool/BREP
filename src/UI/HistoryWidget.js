@@ -1312,6 +1312,8 @@ class genFeatureUI {
                     refWrap.appendChild(inputElTargets);
                     wrap.appendChild(refWrap);
 
+                    // No explicit bias UI; default applied in boolean helper
+
                     controlWrap.appendChild(wrap);
                     // Track the hidden input for refresh convenience
                     inputEl = inputElTargets;

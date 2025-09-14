@@ -1,6 +1,43 @@
 import { Solid } from './BetterSolid.js';
 import * as THREE from 'three';
-const DEBUG = false;
+const DEBUG = true;
+
+// Debug helper for sweep/pathAlign. Enable by setting window.BREP_DEBUG_SWEEP = 1
+// or adding '?sweepDebug=1' to the URL. Keeps logs grouped and throttled.
+function sweepDebugEnabled() {
+  try {
+    // Enabled by default; allow explicit opt-out
+    if (DEBUG) {
+      if (typeof window !== 'undefined') {
+        if (window.BREP_DEBUG_SWEEP === 0 || window.BREP_DEBUG_SWEEP === false) return false;
+        const q = (window.location && window.location.search) || '';
+        if (/[?&]sweepDebug=0/.test(q)) return false;
+      }
+      return true;
+    }
+    if (typeof window === 'undefined') return false;
+    if (window.BREP_DEBUG_SWEEP) return true;
+    const q = (window.location && window.location.search) || '';
+    return /[?&]sweepDebug=1/.test(q);
+  } catch (_) { return DEBUG; }
+}
+function dlog(group, msg, obj) {
+  if (!sweepDebugEnabled()) return;
+  try {
+    if (group) console.log(`[SweepDBG] ${group}: ${msg}`, obj || '');
+    else console.log(`[SweepDBG] ${msg}`, obj || '');
+  } catch (_) {}
+}
+function djson(tag, obj) {
+  if (!sweepDebugEnabled()) return;
+  try {
+    console.log(`[SweepDBG-JSON] ${tag} ` + JSON.stringify(obj));
+  } catch (e) {
+    try { console.log(`[SweepDBG-JSON] ${tag} (stringify failed)`, obj); } catch(_) {}
+  }
+}
+const _round = (n)=> Math.abs(n) < 1e-12 ? 0 : Number(n.toFixed(6));
+const _v3 = (v)=> (v && typeof v.x === 'number') ? [_round(v.x), _round(v.y), _round(v.z)] : v;
 
 export class FacesSolid extends Solid {
   constructor({ name = 'FromFaces' } = {}) {
@@ -216,6 +253,35 @@ export class Sweep extends FacesSolid {
         if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pts.splice(i + 1, 1);
       }
       return pts;
+    };
+
+    // Helper: robustly split a quad into two triangles choosing the better diagonal.
+    // Keeps outward orientation for non-holes and reverses for holes.
+    const addQuad = (faceName, A0, B0, B1, A1, isHole) => {
+      const v = (p, q) => new THREE.Vector3(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+      const areaTri = (a, b, c) => v(a, b).cross(v(a, c)).length();
+      // Two possible diagonals: d1 = A0-B1, d2 = A0-B0
+      const areaD1 = areaTri(A0, B0, B1) + areaTri(A0, B1, A1);
+      const areaD2 = areaTri(A0, B0, A1) + areaTri(B0, B1, A1);
+      const epsA = 1e-18;
+      if (!(areaD1 > epsA || areaD2 > epsA)) return; // fully degenerate
+      if (areaD2 > areaD1) {
+        if (isHole) {
+          this.addTriangle(faceName, A0, A1, B0);
+          this.addTriangle(faceName, B0, A1, B1);
+        } else {
+          this.addTriangle(faceName, A0, B0, A1);
+          this.addTriangle(faceName, B0, B1, A1);
+        }
+      } else {
+        if (isHole) {
+          this.addTriangle(faceName, A0, B1, B0);
+          this.addTriangle(faceName, A0, A1, B1);
+        } else {
+          this.addTriangle(faceName, A0, B0, B1);
+          this.addTriangle(faceName, A0, B1, A1);
+        }
+      }
     };
 
     // Build a single combined path from multiple selected edges by chaining
@@ -438,6 +504,7 @@ export class Sweep extends FacesSolid {
 
       // Soften sharp joints by inserting small offsets around the corner
       const softened = [];
+      const MAX_TURN_DEG = 12; // ensure <= ~12° per corner step
       softened.push(out[0]);
       for (let i = 1; i < out.length - 1; i++) {
         const p0 = out[i - 1], p1 = out[i], p2 = out[i + 1];
@@ -445,19 +512,29 @@ export class Sweep extends FacesSolid {
         const v1 = N(V(p1, p2));
         const dot = v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2];
         const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
-        // Corner if turning more than ~35 degrees
-        if (ang > (35 * Math.PI / 180)) {
-          const d0 = L(V(p0, p1));
-          const d1 = L(V(p1, p2));
-          const s = 0.12 * Math.min(d0, d1);
-          const pre = [p1[0] - v0[0] * s, p1[1] - v0[1] * s, p1[2] - v0[2] * s];
-          const post = [p1[0] - v1[0] * s, p1[1] - v1[1] * s, p1[2] - v1[2] * s];
-          // Only keep if not degenerate
-          const nearEq = (A, B) => Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) < 1e-8;
-          const last = softened[softened.length - 1];
-          if (!nearEq(last, pre)) softened.push(pre);
+        const d0 = L(V(p0, p1));
+        const d1 = L(V(p1, p2));
+        const s = 0.12 * Math.min(d0, d1);
+        // Number of extra easing points based on turn angle
+        const maxTurn = MAX_TURN_DEG * Math.PI / 180;
+        const m = Math.max(0, Math.min(6, Math.ceil(ang / maxTurn) - 1));
+        const nearEq = (A, B) => Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) < 1e-8;
+
+        if (ang > (10 * Math.PI / 180)) {
+          // m pre points along incoming direction
+          for (let k = m; k >= 1; k--) {
+            const t = (k / (m + 1)) * s;
+            const pre = [p1[0] - v0[0] * t, p1[1] - v0[1] * t, p1[2] - v0[2] * t];
+            const last = softened[softened.length - 1];
+            if (!nearEq(last, pre)) softened.push(pre);
+          }
           softened.push(p1);
-          if (!nearEq(p1, post)) softened.push(post);
+          // m post points along outgoing direction
+          for (let k = 1; k <= m; k++) {
+            const t = (k / (m + 1)) * s;
+            const post = [p1[0] - v1[0] * t, p1[1] - v1[1] * t, p1[2] - v1[2] * t];
+            if (!nearEq(p1, post)) softened.push(post);
+          }
         } else {
           softened.push(p1);
         }
@@ -471,10 +548,10 @@ export class Sweep extends FacesSolid {
       return softened;
     };
     // Translate mode should only place cross sections at segment joints.
-    // For pathAlign we may refine to improve frame stability.
+    // For pathAlign we keep user's direction and joints; translate may simplify.
     if (pathPts.length >= 2) {
       if (mode === 'pathAlign') {
-        pathPts = refinePath(pathPts);
+        // no automatic reversal or heavy refinement here
       } else {
         // Simplify by removing collinear interior points
         const isCollinear = (a, b, c, eps = 1e-12) => {
@@ -505,8 +582,8 @@ export class Sweep extends FacesSolid {
       }
     }
 
-    // Orient path so it starts near the profile face centroid (if available)
-    if (pathPts.length >= 2) {
+    // Orient path to start near face centroid (only for translate). PathAlign respects selection order.
+    if (pathPts.length >= 2 && mode !== 'pathAlign') {
       let centroid = null;
       const loops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
       if (loops && loops.length) {
@@ -583,7 +660,7 @@ export class Sweep extends FacesSolid {
     // identical boundary vertices with side walls.
     const groups = Array.isArray(face?.userData?.profileGroups) ? face.userData.profileGroups : null;
     if (groups && groups.length) {
-      // Translate-only caps
+      // Start cap: always uses original profile orientation (reverse winding)
       for (const g of groups) {
         const contour2D = g.contour2D || [];
         const holes2D = g.holes2D || [];
@@ -597,13 +674,15 @@ export class Sweep extends FacesSolid {
         const allW = contourW.concat(...holesW);
         for (const t of tris) {
           const p0 = allW[t[0]], p1 = allW[t[1]], p2 = allW[t[2]];
-          // Start cap reversed
-          this.addTriangle(startName, p0, p2, p1);
-          // End cap: translate-only (pathAlign TODO)
-          const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
-          const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
-          const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
-          this.addTriangle(endName, q0, q1, q2);
+          // Start cap reversed (skip in pathAlign; built later)
+          if (mode !== 'pathAlign') this.addTriangle(startName, p0, p2, p1);
+          // End cap:
+          if (mode !== 'pathAlign') {
+            const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
+            const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
+            const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
+            this.addTriangle(endName, q0, q1, q2);
+          }
         }
       }
     } else {
@@ -624,11 +703,13 @@ export class Sweep extends FacesSolid {
 
       const addCapTris = (i0, i1, i2) => {
         const p0 = faceWorld[i0], p1 = faceWorld[i1], p2 = faceWorld[i2];
-        this.addTriangle(startName, p0, p2, p1);
-        const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
-        const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
-        const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
-        this.addTriangle(endName, q0, q1, q2);
+        if (mode !== 'pathAlign') {
+          this.addTriangle(startName, p0, p2, p1);
+          const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
+          const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
+          const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
+          this.addTriangle(endName, q0, q1, q2);
+        }
       };
       if (hasIndex) {
         for (let t = 0; t < idxAttr.count; t += 3) {
@@ -649,9 +730,52 @@ export class Sweep extends FacesSolid {
     // Side faces: Prefer boundary loops to ensure vertex matching with caps.
     // This avoids T-junctions and ensures a watertight manifold. If loops are
     // unavailable (legacy faces), fall back to per-edge polylines.
-    const boundaryLoops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
+    // Try boundary loops from sketch metadata; otherwise reconstruct from face triangles
+    let boundaryLoops = Array.isArray(face?.userData?.boundaryLoopsWorld) ? face.userData.boundaryLoopsWorld : null;
+    const computeBoundaryLoopsFromFace = (faceObj) => {
+      const loops = [];
+      const geom = faceObj?.geometry; if (!geom) return loops;
+      const pos = geom.getAttribute && geom.getAttribute('position'); if (!pos) return loops;
+      const idx = geom.getIndex && geom.getIndex();
+      // Build world-space vertex list
+      const world = new Array(pos.count);
+      const v = new THREE.Vector3();
+      for (let i = 0; i < pos.count; i++) { v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(faceObj.matrixWorld); world[i] = [v.x, v.y, v.z]; }
+      // Collect boundary edges with orientation from triangles
+      const undirected = new Map(); // key min,max -> {count, dir:[a,b]}
+      const triIter = (cb)=>{
+        if (idx) { for (let t=0;t<idx.count;t+=3){ cb(idx.getX(t+0)>>>0, idx.getX(t+1)>>>0, idx.getX(t+2)>>>0); } }
+        else { const triCount=(pos.count/3)|0; for(let t=0;t<triCount;t++){ cb(3*t+0,3*t+1,3*t+2); } }
+      };
+      const addEdge = (a,b)=>{
+        const i = Math.min(a,b), j = Math.max(a,b); const k = `${i},${j}`; let rec = undirected.get(k); if(!rec){ rec={count:0,dir:[a,b]}; undirected.set(k,rec);} rec.count++;
+      };
+      triIter((i0,i1,i2)=>{ addEdge(i0,i1); addEdge(i1,i2); addEdge(i2,i0); });
+      const edges = [];
+      for (const rec of undirected.values()) if (rec.count===1) edges.push(rec.dir.slice());
+      if (!edges.length) return loops;
+      // Build adjacency by start index
+      const startToEdges = new Map();
+      const push = (k, ei)=>{ let arr = startToEdges.get(k); if(!arr){ arr=[]; startToEdges.set(k,arr);} arr.push(ei); };
+      edges.forEach(([a,b],ei)=> push(a,ei));
+      const used = new Array(edges.length).fill(false);
+      for (let s=0;s<edges.length;s++){
+        if (used[s]) continue;
+        let loopIdx=[]; let [a,b] = edges[s]; used[s]=true; loopIdx.push(a); let cur=b;
+        while(true){ loopIdx.push(cur); const list = startToEdges.get(cur)||[]; let nextEi=-1; for (const ei of list){ if (!used[ei]){ nextEi=ei; break; } } if (nextEi<0) break; used[nextEi]=true; cur = edges[nextEi][1]; if (cur===loopIdx[0]){ break; } }
+        if (loopIdx.length>=3){
+          const pts=[]; for (let k=0;k<loopIdx.length;k++){ const p=world[loopIdx[k]]; if (pts.length){ const q=pts[pts.length-1]; if (q[0]===p[0]&&q[1]===p[1]&&q[2]===p[2]) continue; } pts.push([p[0],p[1],p[2]]); }
+          if (pts.length>=3) loops.push({ pts, isHole:false });
+        }
+      }
+      return loops;
+    };
+    if (!boundaryLoops || !boundaryLoops.length) boundaryLoops = computeBoundaryLoopsFromFace(face);
     const doPathSweep = offsets.length >= 2;
     if (boundaryLoops && boundaryLoops.length) {
+      const _inputDbg = { mode, pathCount: pathPts.length, loops: boundaryLoops.length, face: face?.name };
+      dlog('Input', 'pathAlign params', _inputDbg);
+      djson('Input', _inputDbg);
       // Build a quick lookup from boundary points to their originating sketch edge(s)
       // so we can label side walls per curve while still using cap-matching vertices.
       const key = (p) => `${p[0].toFixed(6)},${p[1].toFixed(6)},${p[2].toFixed(6)}`;
@@ -686,8 +810,203 @@ export class Sweep extends FacesSolid {
         }
       }
 
-      // pathAlign removed: no frame alignment
-      const frames = null;
+      // Compute face basis and path-aligned frames (for pathAlign mode)
+      let frames = null;
+      let baseOriginW = null, baseX = null, baseY = null, baseZ = null;
+      if (doPathSweep && mode === 'pathAlign') {
+        const P = pathPts.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+        // Face basis from profile itself
+        baseZ = (typeof face.getAverageNormal === 'function') ? face.getAverageNormal().clone() : new THREE.Vector3(0, 0, 1);
+        if (!baseZ || !isFinite(baseZ.x) || baseZ.lengthSq() < 1e-20) baseZ = new THREE.Vector3(0, 0, 1);
+        baseZ.normalize();
+        // Choose origin as centroid of outer loop (world)
+        const outerLoop0 = boundaryLoops.find(l => !l.isHole) || boundaryLoops[0];
+        const outerPts0 = Array.isArray(outerLoop0?.pts) ? outerLoop0.pts : outerLoop0;
+        if (Array.isArray(outerPts0) && outerPts0.length) {
+          baseOriginW = new THREE.Vector3();
+          for (const p of outerPts0) baseOriginW.add(new THREE.Vector3(p[0], p[1], p[2]));
+          baseOriginW.multiplyScalar(1 / outerPts0.length);
+        } else {
+          baseOriginW = new THREE.Vector3(P[0].x, P[0].y, P[0].z);
+        }
+        // Determine anchor point in world nearest to P0 before defining axes
+        const P0 = P[0].clone();
+        let anchorWorld = null;
+        if (Array.isArray(outerPts0) && outerPts0.length) {
+          let bestD2 = Infinity; let best = outerPts0[0];
+          for (const p of outerPts0){ const dx=p[0]-P0.x, dy=p[1]-P0.y, dz=p[2]-P0.z; const d2=dx*dx+dy*dy+dz*dz; if (d2<bestD2){ bestD2=d2; best=p; } }
+          anchorWorld = new THREE.Vector3(best[0], best[1], best[2]);
+        } else {
+          anchorWorld = P0.clone();
+        }
+
+        // Choose baseX toward anchor (projected into face plane)
+        const toAnchor = anchorWorld.clone().sub(baseOriginW);
+        baseX = toAnchor.clone().sub(baseZ.clone().multiplyScalar(toAnchor.dot(baseZ)));
+        if (baseX.lengthSq() < 1e-12) baseX.set(1,0,0); // fallback
+        baseX.normalize();
+        baseY = new THREE.Vector3().crossVectors(baseZ, baseX).normalize();
+        baseX = new THREE.Vector3().crossVectors(baseY, baseZ).normalize();
+        // Tangents along path
+        const T = P.map((_, i) => {
+          if (i < P.length - 1) {
+            const t = P[i + 1].clone().sub(P[i]);
+            return (t.lengthSq() < 1e-20) ? new THREE.Vector3(0,0,1) : t.normalize();
+          } else {
+            const t = P[i].clone().sub(P[i - 1] || P[i]);
+            return (t.lengthSq() < 1e-20) ? new THREE.Vector3(0,0,1) : t.normalize();
+          }
+        });
+        // Reference world vector: prefer P0->anchor; if zero/near-zero, fall back to baseX
+        let ref = anchorWorld.clone().sub(P[0]);
+        if (ref.lengthSq() < 1e-12) ref = baseX.clone();
+        const Xs = []; const Ys = []; const Zs = [];
+        const dbgFrames = [];
+        const EPS = 1e-12;
+        for (let i = 0; i < P.length; i++) {
+          const z = T[i].clone().normalize();
+          // Project reference to plane orthogonal to z
+          let xProj = ref.clone().sub(z.clone().multiplyScalar(ref.dot(z)));
+          let xLen2 = xProj.lengthSq();
+          // If projection is ill-conditioned, fall back to face upRef cross z
+          if (xLen2 < EPS) {
+            const alt = new THREE.Vector3().crossVectors(z, baseZ);
+            if (alt.lengthSq() > EPS) xProj = alt; else if (i > 0) xProj = Xs[i - 1].clone();
+            else xProj = (Math.abs(z.x) < 0.9 ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,1,0)).sub(z.clone().multiplyScalar(z.x)).normalize();
+          }
+          let x = xProj.normalize();
+          // Choose sign to maximize alignment with both previous X and target baseX projection
+          let score = 0;
+          if (i > 0) score += x.dot(Xs[i - 1]);
+          const t = baseX.clone().sub(z.clone().multiplyScalar(baseX.dot(z)));
+          if (t.lengthSq() > EPS) { const tn = t.normalize(); score += x.dot(tn); }
+          const flipped = (score < 0); if (flipped) x.multiplyScalar(-1);
+          const y = new THREE.Vector3().crossVectors(z, x).normalize();
+          Xs[i] = x; Ys[i] = y; Zs[i] = z;
+          if (sweepDebugEnabled()) {
+            dbgFrames.push({
+              i,
+              projLen: +Math.sqrt(xLen2).toExponential(3),
+              z: [ +z.x.toFixed(5), +z.y.toFixed(5), +z.z.toFixed(5) ],
+              x: [ +x.x.toFixed(5), +x.y.toFixed(5), +x.z.toFixed(5) ],
+              y: [ +y.x.toFixed(5), +y.y.toFixed(5), +y.z.toFixed(5) ],
+              alignedScore: +score.toFixed(5),
+              flipped
+            });
+          }
+        }
+        // Bias rotation: align start frame to face's baseX projected into the start normal plane
+        const target = baseX.clone().sub(Zs[0].clone().multiplyScalar(baseX.dot(Zs[0])));
+        if (target.lengthSq() > 1e-14) {
+          const t = target.normalize();
+          const c = Xs[0].dot(t);
+          const s = Ys[0].dot(t);
+          const bias = Math.atan2(s, c);
+          if (Math.abs(bias) > 1e-8) {
+            const rotXY = (i) => {
+              const cx = Math.cos(bias), sx = Math.sin(bias);
+              const Xi = Xs[i], Yi = Ys[i];
+              const Xr = new THREE.Vector3(
+                Xi.x * cx + Yi.x * sx,
+                Xi.y * cx + Yi.y * sx,
+                Xi.z * cx + Yi.z * sx
+              );
+              const Yr = new THREE.Vector3(
+                -Xi.x * sx + Yi.x * cx,
+                -Xi.y * sx + Yi.y * cx,
+                -Xi.z * sx + Yi.z * cx
+              );
+              Xs[i] = Xr.normalize(); Ys[i] = Yr.normalize();
+            };
+            for (let i = 0; i < Xs.length; i++) rotXY(i);
+          }
+        }
+        // Enforce that start-frame Y points roughly along the original face normal
+        // (keeps the profile on the intended side at the path start and propagates along the path)
+        const y0dot = Ys[0].dot(baseZ);
+        if (y0dot < 0) {
+          for (let i = 0; i < Xs.length; i++) { Xs[i].multiplyScalar(-1); Ys[i].multiplyScalar(-1); }
+          dlog('Frames', 'flipped XY to align Y with face normal', { y0dot: _round(y0dot) });
+          djson('FramesAlignY', { y0dot: _round(y0dot) });
+        }
+        if (sweepDebugEnabled()) {
+          const pathDbg = P.map((v,i)=>({ i, p:[+v.x.toFixed(4),+v.y.toFixed(4),+v.z.toFixed(4)],
+            X:[+Xs[i].x.toFixed(4),+Xs[i].y.toFixed(4),+Xs[i].z.toFixed(4)],
+            Y:[+Ys[i].x.toFixed(4),+Ys[i].y.toFixed(4),+Ys[i].z.toFixed(4)],
+            Z:[+Zs[i].x.toFixed(4),+Zs[i].y.toFixed(4),+Zs[i].z.toFixed(4)] }));
+          const framesMeta = { anchorWorld: _v3(anchorWorld), baseOriginW: _v3(baseOriginW), baseX: _v3(baseX), baseY: _v3(baseY), flips: pathDbg.slice(1).filter((f,i)=> Xs[i].dot(Xs[i+1])<0).length };
+          dlog('Frames', 'computed frames', framesMeta);
+          console.table(pathDbg);
+          console.table(dbgFrames);
+          djson('Frames', { meta: framesMeta, rows: pathDbg });
+          djson('FramesDetail', dbgFrames);
+        }
+        // Frame origins sit on the path points so the path passes through the anchor
+        frames = P.map((_, i) => ({ origin: P[i].clone(), X: Xs[i], Y: Ys[i], Z: Zs[i] }));
+
+        // UV mapping from original profile basis at baseOriginW
+        const uvCache = new Map(); // key(point as string) -> [u,v]
+        const uvOf = (pArr) => {
+          const k = key(pArr);
+          const cached = uvCache.get(k);
+          if (cached) return cached;
+          const v = new THREE.Vector3(pArr[0] - baseOriginW.x, pArr[1] - baseOriginW.y, pArr[2] - baseOriginW.z);
+          const u = v.dot(baseX);
+          const w = v.dot(baseY);
+          const uv = [u, w];
+          uvCache.set(k, uv);
+          return uv;
+        };
+
+        // Anchor profile to the path start: pick the outer-loop point nearest to P0
+        let anchorU = 0, anchorV = 0;
+        const outerLoop = boundaryLoops.find(l => !l.isHole) || boundaryLoops[0];
+        const outerPts = Array.isArray(outerLoop?.pts) ? outerLoop.pts : outerLoop;
+        if (Array.isArray(outerPts) && outerPts.length) {
+          let bestD2 = Infinity; let best = outerPts[0];
+          const P0 = frames[0].origin;
+          for (const p of outerPts) {
+            const dx = p[0]-P0.x, dy=p[1]-P0.y, dz=p[2]-P0.z; const d2 = dx*dx + dy*dy + dz*dz;
+            if (d2 < bestD2) { bestD2 = d2; best = p; }
+          }
+          const aUV = uvOf(best); anchorU = aUV[0]; anchorV = aUV[1];
+          // If anchor is too close to base origin (ill-defined), choose farthest point instead
+          const mag2 = anchorU*anchorU + anchorV*anchorV;
+          if (mag2 < 1e-16) {
+            let farD = -1; let far = best;
+            for (const p of outerPts) { const uv = uvOf(p); const d = (uv[0]-anchorU)*(uv[0]-anchorU) + (uv[1]-anchorV)*(uv[1]-anchorV); if (d > farD) { farD = d; far = p; } }
+            const uvF = uvOf(far); anchorU = uvF[0]; anchorV = uvF[1];
+          }
+        }
+
+        // Side-of-path lock: use the anchor vector (non-zero by construction)
+        const lockU = anchorU, lockV = anchorV;
+        if ((lockU*lockU + lockV*lockV) > 1e-20) {
+          for (let i = 1; i < frames.length; i++) {
+            const prevVec = new THREE.Vector3().addScaledVector(frames[i - 1].X, lockU).addScaledVector(frames[i - 1].Y, lockV);
+            const currVec = new THREE.Vector3().addScaledVector(frames[i].X, lockU).addScaledVector(frames[i].Y, lockV);
+            const lp = prevVec.lengthSq(), lc = currVec.lengthSq();
+            if (lp > 1e-24 && lc > 1e-24) {
+              if (currVec.normalize().dot(prevVec.normalize()) < 0) { frames[i].X.multiplyScalar(-1); frames[i].Y.multiplyScalar(-1); }
+            }
+          }
+        }
+
+        // Helper to place a base boundary point at segment index
+        var placeAt = (pArr, segIndex) => {
+          const uv = uvOf(pArr);
+          const f = frames[segIndex];
+          const du = uv[0] - anchorU;
+          const dv = uv[1] - anchorV;
+          const x = f.origin.x + f.X.x * du + f.Y.x * dv;
+          const y = f.origin.y + f.X.y * du + f.Y.y * dv;
+          const z = f.origin.z + f.X.z * du + f.Y.z * dv;
+          return [x, y, z];
+        };
+        const f0 = frames[0];
+        dlog('Anchor', 'uv and start frame', { anchorU, anchorV, frame0: f0 });
+        djson('Anchor', { anchorU, anchorV, frame0: { origin: _v3(f0.origin), X: _v3(f0.X), Y: _v3(f0.Y), Z: _v3(f0.Z) } });
+      }
 
       for (const loop of boundaryLoops) {
         const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
@@ -726,33 +1045,119 @@ export class Sweep extends FacesSolid {
             }
           }
         } else {
-          // Path sweep: translate-only between successive offsets (pathAlign removed)
-          for (let seg = 0; seg < offsets.length - 1; seg++) {
-            const off0 = offsets[seg], off1 = offsets[seg + 1];
-            if (off1.x === off0.x && off1.y === off0.y && off1.z === off0.z) continue;
-            for (let i = 0; i < base.length - 1; i++) {
-              const a = base[i];
-              const b = base[i + 1];
-              if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
-              const A0 = [a[0] + off0.x, a[1] + off0.y, a[2] + off0.z];
-              const B0 = [b[0] + off0.x, b[1] + off0.y, b[2] + off0.z];
-              const A1 = [a[0] + off1.x, a[1] + off1.y, a[2] + off1.z];
-              const B1 = [b[0] + off1.x, b[1] + off1.y, b[2] + off1.z];
-              const setA = pointToEdgeNames.get(key(a));
-              const setB = pointToEdgeNames.get(key(b));
-              let name = `${face.name || 'FACE'}_SW`;
-              if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
-              if (isHole) { this.addTriangle(name, A0, B1, B0); this.addTriangle(name, A0, A1, B1); }
-              else { this.addTriangle(name, A0, B0, B1); this.addTriangle(name, A0, B1, A1); }
+          // Path sweep
+            if (mode === 'pathAlign' && frames) {
+              for (let seg = 0; seg < offsets.length - 1; seg++) {
+                for (let i = 0; i < base.length - 1; i++) {
+                const a = base[i];
+                const b = base[i + 1];
+                if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+                const A0 = placeAt(a, seg);
+                const B0 = placeAt(b, seg);
+                const A1 = placeAt(a, seg + 1);
+                const B1 = placeAt(b, seg + 1);
+                const setA = pointToEdgeNames.get(key(a));
+                const setB = pointToEdgeNames.get(key(b));
+                let name = `${face.name || 'FACE'}_SW`;
+                if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+                addQuad(name, A0, B0, B1, A1, isHole);
+              }
+            }
+          } else {
+            // Translate-only between successive offsets
+            for (let seg = 0; seg < offsets.length - 1; seg++) {
+              const off0 = offsets[seg], off1 = offsets[seg + 1];
+              if (off1.x === off0.x && off1.y === off0.y && off1.z === off0.z) continue;
+              for (let i = 0; i < base.length - 1; i++) {
+                const a = base[i];
+                const b = base[i + 1];
+                if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+                const A0 = [a[0] + off0.x, a[1] + off0.y, a[2] + off0.z];
+                const B0 = [b[0] + off0.x, b[1] + off0.y, b[2] + off0.z];
+                const A1 = [a[0] + off1.x, a[1] + off1.y, a[2] + off1.z];
+                const B1 = [b[0] + off1.x, b[1] + off1.y, b[2] + off1.z];
+                const setA = pointToEdgeNames.get(key(a));
+                const setB = pointToEdgeNames.get(key(b));
+                let name = `${face.name || 'FACE'}_SW`;
+                if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+                if (isHole) { this.addTriangle(name, A0, B1, B0); this.addTriangle(name, A0, A1, B1); }
+                else { this.addTriangle(name, A0, B0, B1); this.addTriangle(name, A0, B1, A1); }
+                if (sweepDebugEnabled() && seg===0 && i===0) {
+                  const walls0 = { A0, B0, B1, A1 };
+                  dlog('Walls','first quad', walls0);
+                  djson('WallsFirstQuad', walls0);
+                }
+              }
             }
           }
         }
+      }
+      // Build start/end caps for pathAlign using initial and final frames
+      if (doPathSweep && mode === 'pathAlign' && frames) {
+        const buildCap = (frameIndex, capName) => {
+          const frame = frames[frameIndex];
+          // Map loops using the same placeAt used for walls so vertices match exactly
+          const mapped = boundaryLoops.map(loop => {
+            const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
+            // Build open ring without duplicate last point
+            const arr = pts.map(p => placeAt(p, frameIndex));
+            // Drop closing duplicate if present (keep interior points as-is)
+            if (arr.length >= 2) {
+              const f = arr[0], l = arr[arr.length - 1];
+              if (f[0] === l[0] && f[1] === l[1] && f[2] === l[2]) arr.pop();
+            }
+            return { pts: arr, isHole: !!(loop && loop.isHole) };
+          });
+          const toXY = (P) => new THREE.Vector2((P[0] - frame.origin.x) * frame.X.x + (P[1] - frame.origin.y) * frame.X.y + (P[2] - frame.origin.z) * frame.X.z,
+                                                (P[0] - frame.origin.x) * frame.Y.x + (P[1] - frame.origin.y) * frame.Y.y + (P[2] - frame.origin.z) * frame.Y.z);
+          const area2 = (arr) => {
+            let a = 0;
+            for (let i = 0; i < arr.length; i++) { const p = arr[i], q = arr[(i + 1) % arr.length]; a += (p.x * q.y - q.x * p.y); }
+            return 0.5 * a;
+          };
+          const outer = mapped.find(l => !l.isHole) || mapped[0];
+          if (!outer || outer.pts.length < 3) return;
+          const holes = mapped.filter(l => l !== outer && l.isHole).map(l => {
+            const a = l.pts.slice();
+            if (a.length >= 2) {
+              const f = a[0], t = a[a.length - 1];
+              if (f[0] === t[0] && f[1] === t[1] && f[2] === t[2]) a.pop();
+            }
+            return a;
+          });
+          let contourV2 = outer.pts.map(p => toXY(p));
+          let holesV2 = holes.map(h => h.map(p => toXY(p)));
+          if (area2(contourV2) > 0) contourV2 = contourV2.reverse();
+          holesV2 = holesV2.map(h => (area2(h) < 0 ? h.reverse() : h));
+          let tris = THREE.ShapeUtils.triangulateShape(contourV2, holesV2);
+          // Fallback triangulation if library returns too few triangles (rare numeric degeneracy)
+          const need = Math.max(2, (contourV2.length - 2));
+          if (!Array.isArray(tris) || tris.length < need) {
+            const manual = [];
+            // Simple fan triangulation around vertex 0 (no holes); orientation already enforced above
+            for (let i = 1; i < contourV2.length - 1; i++) manual.push([0, i, i + 1]);
+            tris = manual;
+            dlog('Cap', 'fallback triangulation used', { capName, fanCount: manual.length });
+            djson('CapFallback', { capName, contour: contourV2.map(v=>[_round(v.x),_round(v.y)]), holes: holesV2.map(h=> h.map(v=>[_round(v.x),_round(v.y)])) });
+          }
+          const all = outer.pts.concat(...holes);
+          for (const t of tris) {
+            const q0 = all[t[0]], q1 = all[t[1]], q2 = all[t[2]];
+            if (capName.endsWith('_START')) this.addTriangle(capName, q0, q2, q1);
+            else this.addTriangle(capName, q0, q1, q2);
+          }
+          const capInfo = { capName, frameIndex, triCount: tris?.length||0, outerLen: outer?.pts?.length||0, holes: holes?.length||0 };
+          dlog('Cap', `built ${capName}`, capInfo);
+          djson('Cap', capInfo);
+        };
+        buildCap(0, startName);
+        buildCap(frames.length - 1, endName);
       }
     } else {
       // Fallback: build from per-edge polylines (may not match cap vertices exactly)
       const edges = Array.isArray(face.edges) ? face.edges : [];
       if (edges.length) {
-        // pathAlign removed: translate-only per-edge fallback
+        // Per-edge fallback; support translate and pathAlign
         for (const edge of edges) {
           const name = `${edge.name || 'EDGE'}_SW`;
 
@@ -804,23 +1209,132 @@ export class Sweep extends FacesSolid {
             }
           } else {
             // Path-based
-            for (let seg = 0; seg < offsets.length - 1; seg++) {
-              const off0 = offsets[seg], off1 = offsets[seg + 1];
-              // Skip degenerate steps
-              if (off1.x === off0.x && off1.y === off0.y && off1.z === off0.z) continue;
-              for (let i = 0; i < n - 1; i++) {
-                const a = pA[i];
-                const b = pA[i + 1];
-                if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue;
-                const A0 = [a[0] + off0.x, a[1] + off0.y, a[2] + off0.z];
-                const B0 = [b[0] + off0.x, b[1] + off0.y, b[2] + off0.z];
-                const A1 = [a[0] + off1.x, a[1] + off1.y, a[2] + off1.z];
-                const B1 = [b[0] + off1.x, b[1] + off1.y, b[2] + off1.z];
-                if (isHole) { this.addTriangle(name, A0, B1, B0); this.addTriangle(name, A0, A1, B1); }
-                else { this.addTriangle(name, A0, B0, B1); this.addTriangle(name, A0, B1, A1); }
+            if (mode === 'pathAlign' && doPathSweep) {
+              // Build frames aligned to path tangents and UV from initial frame
+              const P = pathPts.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+              const upRef = (typeof face.getAverageNormal === 'function') ? face.getAverageNormal().clone() : new THREE.Vector3(0,0,1);
+              if (upRef.lengthSq() < 1e-20) upRef.set(0,0,1);
+              upRef.normalize();
+              const T = P.map((_, i) => (i < P.length - 1 ? P[i + 1].clone().sub(P[i]).normalize() : P[i].clone().sub(P[i - 1] || P[i]).normalize()));
+              const ref = new THREE.Vector3(pA[best][0], pA[best][1], pA[best][2]).sub(P[0]);
+              const Xs = []; const Ys = []; const Zs = [];
+              for (let i = 0; i < P.length; i++) {
+                const z = T[i].clone().normalize();
+                let x = ref.clone().sub(z.clone().multiplyScalar(ref.dot(z)));
+                if (x.lengthSq() < 1e-14) {
+                  if (i > 0) x = Xs[i - 1].clone(); else x = new THREE.Vector3().crossVectors(upRef, z);
+                }
+                x.normalize();
+                const t = new THREE.Vector3(pA[Math.min(best+1, pA.length-1)][0]-pA[best][0], pA[Math.min(best+1, pA.length-1)][1]-pA[best][1], pA[Math.min(best+1, pA.length-1)][2]-pA[best][2]);
+                const tp = t.sub(z.clone().multiplyScalar(t.dot(z)));
+                if (tp.lengthSq() > 1e-14) {
+                  if (x.dot(tp.normalize()) < 0) x.multiplyScalar(-1);
+                } else if (i > 0 && x.dot(Xs[i - 1]) < 0) {
+                  x.multiplyScalar(-1);
+                }
+                const y = new THREE.Vector3().crossVectors(z, x).normalize();
+                Xs[i] = x; Ys[i] = y; Zs[i] = z;
+              }
+              // Bias rotation at start to align with base edge direction
+              const baseDir = new THREE.Vector3(pA[Math.min(best+1, pA.length-1)][0]-pA[best][0], pA[Math.min(best+1, pA.length-1)][1]-pA[best][1], pA[Math.min(best+1, pA.length-1)][2]-pA[best][2]).normalize();
+              const tgt = baseDir.sub(Zs[0].clone().multiplyScalar(baseDir.dot(Zs[0])));
+              if (tgt.lengthSq()>1e-14){
+                const t = tgt.normalize();
+                const c = Xs[0].dot(t), s = Ys[0].dot(t); const bias = Math.atan2(s,c);
+                if (Math.abs(bias)>1e-8){
+                  const cx=Math.cos(bias), sx=Math.sin(bias);
+                  for (let i=0;i<Xs.length;i++){
+                    const Xi=Xs[i], Yi=Ys[i];
+                    const Xr=new THREE.Vector3(Xi.x*cx+Yi.x*sx, Xi.y*cx+Yi.y*sx, Xi.z*cx+Yi.z*sx);
+                    const Yr=new THREE.Vector3(-Xi.x*sx+Yi.x*cx, -Xi.y*sx+Yi.y*cx, -Xi.z*sx+Yi.z*cx);
+                    Xs[i]=Xr.normalize(); Ys[i]=Yr.normalize();
+                  }
+                }
+              }
+              const framesE = P.map((_, i) => ({ origin: P[i].clone(), X: Xs[i], Y: Ys[i] }));
+              // Side-of-path lock using edge polyline centroid in initial frame
+              let refU = 0, refV = 0; const m = pA.length; if (m>0){
+                for (const p of pA){ const v = new THREE.Vector3(p[0]-framesE[0].origin.x, p[1]-framesE[0].origin.y, p[2]-framesE[0].origin.z); refU += v.dot(framesE[0].X); refV += v.dot(framesE[0].Y); }
+                refU/=m; refV/=m;
+                for (let i=1;i<framesE.length;i++){ const prev=new THREE.Vector3().addScaledVector(framesE[i-1].X,refU).addScaledVector(framesE[i-1].Y,refV).normalize(); const cur=new THREE.Vector3().addScaledVector(framesE[i].X,refU).addScaledVector(framesE[i].Y,refV).normalize(); if (cur.dot(prev)<0){ framesE[i].X.multiplyScalar(-1); framesE[i].Y.multiplyScalar(-1); } }
+              }
+              const uv = pA.map(p => {
+                const v = new THREE.Vector3(p[0] - framesE[0].origin.x, p[1] - framesE[0].origin.y, p[2] - framesE[0].origin.z);
+                return [v.dot(framesE[0].X), v.dot(framesE[0].Y)];
+              });
+              // Anchor to nearest polyline point to P0 so path passes through it
+              let aU = 0, aV = 0, best = 0, bestD2 = Infinity;
+              for (let i=0;i<pA.length;i++){
+                const dx = pA[i][0]-framesE[0].origin.x, dy=pA[i][1]-framesE[0].origin.y, dz=pA[i][2]-framesE[0].origin.z;
+                const d2 = dx*dx + dy*dy + dz*dz; if (d2 < bestD2){ bestD2 = d2; best = i; }
+              }
+              aU = uv[best][0]; aV = uv[best][1];
+              // Use anchor (aU,aV) as lock vector for side-of-path
+              for (let i=1;i<framesE.length;i++){
+                const prev = new THREE.Vector3().addScaledVector(framesE[i-1].X, aU).addScaledVector(framesE[i-1].Y, aV);
+                const curr = new THREE.Vector3().addScaledVector(framesE[i].X, aU).addScaledVector(framesE[i].Y, aV);
+                if (prev.lengthSq()>1e-24 && curr.lengthSq()>1e-24 && curr.normalize().dot(prev.normalize())<0){ framesE[i].X.multiplyScalar(-1); framesE[i].Y.multiplyScalar(-1); }
+              }
+              for (let seg = 0; seg < offsets.length - 1; seg++) {
+                for (let i = 0; i < n - 1; i++) {
+                  const A0 = [framesE[seg].origin.x + framesE[seg].X.x * (uv[i][0]-aU) + framesE[seg].Y.x * (uv[i][1]-aV), framesE[seg].origin.y + framesE[seg].X.y * (uv[i][0]-aU) + framesE[seg].Y.y * (uv[i][1]-aV), framesE[seg].origin.z + framesE[seg].X.z * (uv[i][0]-aU) + framesE[seg].Y.z * (uv[i][1]-aV)];
+                  const B0 = [framesE[seg].origin.x + framesE[seg].X.x * (uv[i+1][0]-aU) + framesE[seg].Y.x * (uv[i+1][1]-aV), framesE[seg].origin.y + framesE[seg].X.y * (uv[i+1][0]-aU) + framesE[seg].Y.y * (uv[i+1][1]-aV), framesE[seg].origin.z + framesE[seg].X.z * (uv[i+1][0]-aU) + framesE[seg].Y.z * (uv[i+1][1]-aV)];
+                  const A1 = [framesE[seg+1].origin.x + framesE[seg+1].X.x * (uv[i][0]-aU) + framesE[seg+1].Y.x * (uv[i][1]-aV), framesE[seg+1].origin.y + framesE[seg+1].X.y * (uv[i][0]-aU) + framesE[seg+1].Y.y * (uv[i][1]-aV), framesE[seg+1].origin.z + framesE[seg+1].X.z * (uv[i][0]-aU) + framesE[seg+1].Y.z * (uv[i][1]-aV)];
+                  const B1 = [framesE[seg+1].origin.x + framesE[seg+1].X.x * (uv[i+1][0]-aU) + framesE[seg+1].Y.x * (uv[i+1][1]-aV), framesE[seg+1].origin.y + framesE[seg+1].X.y * (uv[i+1][0]-aU) + framesE[seg+1].Y.y * (uv[i+1][1]-aV), framesE[seg+1].origin.z + framesE[seg+1].X.z * (uv[i+1][0]-aU) + framesE[seg+1].Y.z * (uv[i+1][1]-aV)];
+                  addQuad(name, A0, B0, B1, A1, isHole);
+                }
+              }
+            } else {
+              for (let seg = 0; seg < offsets.length - 1; seg++) {
+                const off0 = offsets[seg], off1 = offsets[seg + 1];
+                // Skip degenerate steps
+                if (off1.x === off0.x && off1.y === off0.y && off1.z === off0.z) continue;
+                for (let i = 0; i < n - 1; i++) {
+                  const a = pA[i];
+                  const b = pA[i + 1];
+                  if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue;
+                  const A0 = [a[0] + off0.x, a[1] + off0.y, a[2] + off0.z];
+                  const B0 = [b[0] + off0.x, b[1] + off0.y, b[2] + off0.z];
+                  const A1 = [a[0] + off1.x, a[1] + off1.y, a[2] + off1.z];
+                  const B1 = [b[0] + off1.x, b[1] + off1.y, b[2] + off1.z];
+                  if (isHole) { this.addTriangle(name, A0, B1, B0); this.addTriangle(name, A0, A1, B1); }
+                  else { this.addTriangle(name, A0, B0, B1); this.addTriangle(name, A0, B1, A1); }
+                }
               }
             }
           }
+        }
+      }
+      // If we are in pathAlign mode here, also build start/end caps from face geometry via frames
+      if (doPathSweep && mode === 'pathAlign') {
+        // Build frames aligned to path
+        const P = pathPts.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+        const upRef = (typeof face.getAverageNormal === 'function') ? face.getAverageNormal().clone() : new THREE.Vector3(0,0,1);
+        if (upRef.lengthSq() < 1e-20) upRef.set(0,0,1);
+        upRef.normalize();
+        const T = P.map((_, i) => (i < P.length - 1 ? P[i + 1].clone().sub(P[i]).normalize() : P[i].clone().sub(P[i - 1] || P[i]).normalize()));
+        const Z0 = T[0].clone().normalize();
+        let X0 = new THREE.Vector3().crossVectors(upRef, Z0); if (X0.lengthSq() < 1e-12) { const alt = Math.abs(Z0.z) < 0.9 ? new THREE.Vector3(0,0,1) : new THREE.Vector3(1,0,0); X0 = new THREE.Vector3().crossVectors(alt, Z0); }
+        X0.normalize(); const Y0 = new THREE.Vector3().crossVectors(Z0, X0).normalize();
+        const Xs=[X0], Ys=[Y0], Zs=[Z0];
+        for (let i=1;i<P.length;i++){ const z=T[i].clone().normalize(); let x=Xs[i-1].clone().sub(z.clone().multiplyScalar(Xs[i-1].dot(z))); if (x.lengthSq()<1e-14){ x=Ys[i-1].clone().sub(z.clone().multiplyScalar(Ys[i-1].dot(z))); if (x.lengthSq()<1e-14){ const tmp=Math.abs(z.z)<0.9? new THREE.Vector3(0,0,1): new THREE.Vector3(1,0,0); x=new THREE.Vector3().crossVectors(tmp,z);} } x.normalize(); const y=new THREE.Vector3().crossVectors(z,x).normalize(); Xs[i]=x; Ys[i]=y; Zs[i]=z; }
+        const framesF = P.map((_,i)=>({ origin:P[i].clone(), X: Xs[i], Y: Ys[i] }));
+        // Read face geometry world vertices once
+        const baseGeom = face.geometry; const posAttr = baseGeom && baseGeom.getAttribute && baseGeom.getAttribute('position'); if (posAttr){
+          const idxAttr = baseGeom.getIndex && baseGeom.getIndex(); const hasIndex = !!idxAttr;
+          const v = new THREE.Vector3(); const faceWorld = new Array(posAttr.count);
+          for (let i=0;i<posAttr.count;i++){ v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(face.matrixWorld); faceWorld[i] = [v.x,v.y,v.z]; }
+          const mapAt = (p, f)=>{ const d = new THREE.Vector3(p[0]-framesF[0].origin.x, p[1]-framesF[0].origin.y, p[2]-framesF[0].origin.z); const u = d.dot(framesF[0].X), w = d.dot(framesF[0].Y); return [f.origin.x + f.X.x*u + f.Y.x*w, f.origin.y + f.X.y*u + f.Y.y*w, f.origin.z + f.X.z*u + f.Y.z*w]; };
+          const addTriAt = (i0,i1,i2, fStart, fEnd)=>{
+            const p0=faceWorld[i0], p1=faceWorld[i1], p2=faceWorld[i2];
+            const s0 = mapAt(p0, fStart), s1 = mapAt(p1, fStart), s2 = mapAt(p2, fStart);
+            this.addTriangle(startName, s0, s2, s1);
+            const e0 = mapAt(p0, fEnd), e1 = mapAt(p1, fEnd), e2 = mapAt(p2, fEnd);
+            this.addTriangle(endName, e0, e1, e2);
+          };
+          const fStart = framesF[0], fEnd = framesF[framesF.length-1];
+          if (hasIndex) { for (let t=0;t<idxAttr.count;t+=3){ addTriAt(idxAttr.getX(t+0)>>>0, idxAttr.getX(t+1)>>>0, idxAttr.getX(t+2)>>>0, fStart, fEnd); } }
+          else { const triCount = (posAttr.count/3)|0; for (let t=0;t<triCount;t++){ addTriAt(3*t+0, 3*t+1, 3*t+2, fStart, fEnd); } }
         }
       }
 

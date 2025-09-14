@@ -297,7 +297,8 @@ export class PartHistory {
           }
 
         } else if (schema[key].type === "boolean_operation") {
-          // If it's a boolean operation, normalize op key and resolve targets to objects
+          // If it's a boolean operation, normalize op key and resolve targets to objects.
+          // Also pass through optional biasDistance (numeric) for pre-CSG nudging.
           const raw = inputParams[key] || {};
           const op = (raw.operation != null) ? raw.operation : raw.opperation;
           const items = Array.isArray(raw.targets) ? raw.targets : [];
@@ -308,7 +309,8 @@ export class PartHistory {
             const obj = this.getObjectByName(String(it));
             if (obj) targets.push(obj);
           }
-          sanitized[key] = { operation: op ?? 'NONE', targets };
+          const bias = Number(raw.biasDistance);
+          sanitized[key] = { operation: op ?? 'NONE', targets, biasDistance: Number.isFinite(bias) ? bias : 0.1 };
         } else {
           sanitized[key] = inputParams[key];
         }
