@@ -1378,7 +1378,35 @@ export class Solid extends THREE.Group {
         }
 
         const { showEdges = true } = options;
-        const faces = this.getFaces(false);
+        let faces; let usedFallback = false;
+        try {
+            faces = this.getFaces(false);
+        } catch (err) {
+            console.warn('[Solid.visualize] getFaces failed, falling back to raw arrays:', err?.message || err);
+            usedFallback = true;
+            // Fallback: group authored triangles by face name directly from arrays.
+            // This enables visualization even if manifoldization failed, which helps debugging.
+            const vp = this._vertProperties || [];
+            const tv = this._triVerts || [];
+            const ids = this._triIDs || [];
+            const nameOf = (id) => this._idToFaceName && this._idToFaceName.get ? this._idToFaceName.get(id) : String(id);
+            const nameToTris = new Map();
+            const triCount = (tv.length / 3) | 0;
+            for (let t = 0; t < triCount; t++) {
+                const id = ids[t];
+                const name = nameOf(id);
+                if (!name) continue;
+                let arr = nameToTris.get(name);
+                if (!arr) { arr = []; nameToTris.set(name, arr); }
+                const i0 = tv[t * 3 + 0], i1 = tv[t * 3 + 1], i2 = tv[t * 3 + 2];
+                const p0 = [vp[i0 * 3 + 0], vp[i0 * 3 + 1], vp[i0 * 3 + 2]];
+                const p1 = [vp[i1 * 3 + 0], vp[i1 * 3 + 1], vp[i1 * 3 + 2]];
+                const p2 = [vp[i2 * 3 + 0], vp[i2 * 3 + 1], vp[i2 * 3 + 2]];
+                arr.push({ faceName: name, indices: [i0, i1, i2], p1: p0, p2: p1, p3: p2 });
+            }
+            faces = [];
+            for (const [faceName, triangles] of nameToTris.entries()) faces.push({ faceName, triangles });
+        }
 
         // Build Face meshes and index by name
         const faceMap = new Map();
@@ -1407,7 +1435,7 @@ export class Solid extends THREE.Group {
             this.add(faceObj);
         }
 
-        if (showEdges) {
+        if (showEdges && !usedFallback) {
             const polylines = this.getBoundaryEdgePolylines();
             for (const e of polylines) {
                 const positions = new Float32Array(e.positions.length * 3);

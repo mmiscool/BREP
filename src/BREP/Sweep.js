@@ -151,14 +151,14 @@ export class FacesSolid extends Solid {
  *   and named `${edgeName}_SW`.
  */
 export class Sweep extends FacesSolid {
-  constructor({ face, sweepPathEdges = [], distance = 1, name = 'Sweep' } = {}) {
+  constructor({ face, sweepPathEdges = [], distance = 1, mode = 'translate', name = 'Sweep' } = {}) {
     super({ name });
-    this.params = { face, distance, sweepPathEdges, name };
+    this.params = { face, distance, sweepPathEdges, mode, name };
     this.generate();
   }
 
   generate() {
-    const { face, distance, sweepPathEdges } = this.params;
+    const { face, distance, sweepPathEdges, mode } = this.params;
     if (!face || !face.geometry) return;
 
     // Clear any existing children (visualization) and reset authoring arrays
@@ -250,8 +250,8 @@ export class Sweep extends FacesSolid {
         }
         const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
         const diag = Math.hypot(dx, dy, dz) || 1;
-        segLens.sort((a,b)=>a-b);
-        const med = segLens.length ? segLens[(segLens.length>>1)] : diag;
+        segLens.sort((a, b) => a - b);
+        const med = segLens.length ? segLens[(segLens.length >> 1)] : diag;
         // Allow up to 0.1% of diag, capped to 10% of median segment length
         const adaptive = Math.min(Math.max(1e-5, diag * 1e-3), med * 0.1);
         tol = adaptive;
@@ -356,7 +356,7 @@ export class Sweep extends FacesSolid {
       }
 
       // Continue consuming until stuck
-      while (tryConsumeFromNode(cursorKey)) {}
+      while (tryConsumeFromNode(cursorKey)) { }
 
       // If some edges remain unused (disconnected components), return the longest chain across components
       let best = chain.slice();
@@ -408,6 +408,103 @@ export class Sweep extends FacesSolid {
       if (edges.length > 0) pathPts = combinePathPolylines(edges);
     }
 
+    // Refine the path to avoid harsh kinks causing self-intersections.
+    // - Only used for pathAlign mode. Translate mode keeps only segment joints.
+    // - Subdivide long segments to a target length based on model scale.
+    // - Add small pre/post points around sharp corners to ease orientation.
+    const refinePath = (pts) => {
+      if (!Array.isArray(pts) || pts.length < 2) return pts || [];
+      // Compute scale
+      let minX = Infinity, minY = Infinity, minZ = Infinity;
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+      for (const p of pts) { if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0]; if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1]; if (p[2] < minZ) minZ = p[2]; if (p[2] > maxZ) maxZ = p[2]; }
+      const diag = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) || 1;
+      const target = Math.min(diag * 0.03, Math.max(diag * 0.005, 1e-4)); // 0.5%..3% of diag
+
+      const out = [];
+      const V = (a, b) => [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const L = (v) => Math.hypot(v[0], v[1], v[2]);
+      const N = (v) => { const l = L(v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+      const add = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+      out.push(pts[0]);
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const seg = V(a, b); const len = L(seg);
+        // Subdivide long segments
+        const n = Math.max(0, Math.min(20, Math.ceil(len / target) - 1));
+        for (let k = 1; k <= n; k++) out.push(add(a, b, k / (n + 1)));
+        out.push(b);
+      }
+
+      // Soften sharp joints by inserting small offsets around the corner
+      const softened = [];
+      softened.push(out[0]);
+      for (let i = 1; i < out.length - 1; i++) {
+        const p0 = out[i - 1], p1 = out[i], p2 = out[i + 1];
+        const v0 = N(V(p1, p0));
+        const v1 = N(V(p1, p2));
+        const dot = v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2];
+        const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+        // Corner if turning more than ~35 degrees
+        if (ang > (35 * Math.PI / 180)) {
+          const d0 = L(V(p0, p1));
+          const d1 = L(V(p1, p2));
+          const s = 0.12 * Math.min(d0, d1);
+          const pre = [p1[0] - v0[0] * s, p1[1] - v0[1] * s, p1[2] - v0[2] * s];
+          const post = [p1[0] - v1[0] * s, p1[1] - v1[1] * s, p1[2] - v1[2] * s];
+          // Only keep if not degenerate
+          const nearEq = (A, B) => Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) < 1e-8;
+          const last = softened[softened.length - 1];
+          if (!nearEq(last, pre)) softened.push(pre);
+          softened.push(p1);
+          if (!nearEq(p1, post)) softened.push(post);
+        } else {
+          softened.push(p1);
+        }
+      }
+      softened.push(out[out.length - 1]);
+      // Final pass: remove exact duplicates
+      for (let i = softened.length - 2; i >= 0; i--) {
+        const a = softened[i], b = softened[i + 1];
+        if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) softened.splice(i + 1, 1);
+      }
+      return softened;
+    };
+    // Translate mode should only place cross sections at segment joints.
+    // For pathAlign we may refine to improve frame stability.
+    if (pathPts.length >= 2) {
+      if (mode === 'pathAlign') {
+        pathPts = refinePath(pathPts);
+      } else {
+        // Simplify by removing collinear interior points
+        const isCollinear = (a, b, c, eps = 1e-12) => {
+          const abx = b[0] - a[0], aby = b[1] - a[1], abz = b[2] - a[2];
+          const bcx = c[0] - b[0], bcy = c[1] - b[1], bcz = c[2] - b[2];
+          const cx = aby * bcz - abz * bcy;
+          const cy = abz * bcx - abx * bcz;
+          const cz = abx * bcy - aby * bcx;
+          return (cx*cx + cy*cy + cz*cz) <= eps;
+        };
+        const simplified = [];
+        simplified.push(pathPts[0]);
+        for (let i = 1; i < pathPts.length - 1; i++) {
+          const prev = simplified[simplified.length - 1];
+          const cur = pathPts[i];
+          const next = pathPts[i + 1];
+          // Drop if exactly duplicated or strictly collinear between prev and next
+          if ((cur[0] === prev[0] && cur[1] === prev[1] && cur[2] === prev[2]) || isCollinear(prev, cur, next)) continue;
+          simplified.push(cur);
+        }
+        simplified.push(pathPts[pathPts.length - 1]);
+        // Remove any remaining consecutive duplicates
+        for (let i = simplified.length - 2; i >= 0; i--) {
+          const a = simplified[i], b = simplified[i + 1];
+          if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) simplified.splice(i + 1, 1);
+        }
+        pathPts = simplified;
+      }
+    }
+
     // Orient path so it starts near the profile face centroid (if available)
     if (pathPts.length >= 2) {
       let centroid = null;
@@ -436,9 +533,9 @@ export class Sweep extends FacesSolid {
         }
       }
       if (centroid) {
-        const d2 = (a, b) => { const dx = a[0]-b.x, dy = a[1]-b.y, dz = a[2]-b.z; return dx*dx + dy*dy + dz*dz; };
+        const d2 = (a, b) => { const dx = a[0] - b.x, dy = a[1] - b.y, dz = a[2] - b.z; return dx * dx + dy * dy + dz * dz; };
         const startD = d2(pathPts[0], centroid);
-        const endD = d2(pathPts[pathPts.length-1], centroid);
+        const endD = d2(pathPts[pathPts.length - 1], centroid);
         if (endD < startD) pathPts.reverse();
       }
     }
@@ -480,10 +577,13 @@ export class Sweep extends FacesSolid {
     const startName = `${face.name || 'Face'}_START`;
     const endName = `${face.name || 'Face'}_END`;
 
+    // Note: pathAlign support removed. If reintroducing, add helpers here.
+
     // Prefer rebuilding caps using 2D profile groups from the sketch to ensure
     // identical boundary vertices with side walls.
     const groups = Array.isArray(face?.userData?.profileGroups) ? face.userData.profileGroups : null;
     if (groups && groups.length) {
+      // Translate-only caps
       for (const g of groups) {
         const contour2D = g.contour2D || [];
         const holes2D = g.holes2D || [];
@@ -499,7 +599,7 @@ export class Sweep extends FacesSolid {
           const p0 = allW[t[0]], p1 = allW[t[1]], p2 = allW[t[2]];
           // Start cap reversed
           this.addTriangle(startName, p0, p2, p1);
-          // End cap translated
+          // End cap: translate-only (pathAlign TODO)
           const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
           const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
           const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
@@ -520,6 +620,8 @@ export class Sweep extends FacesSolid {
         v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(face.matrixWorld);
         faceWorld[i] = [v.x, v.y, v.z];
       }
+      // Translate-only caps; no path/frame alignment needed
+
       const addCapTris = (i0, i1, i2) => {
         const p0 = faceWorld[i0], p1 = faceWorld[i1], p2 = faceWorld[i2];
         this.addTriangle(startName, p0, p2, p1);
@@ -562,7 +664,7 @@ export class Sweep extends FacesSolid {
         if (Array.isArray(poly) && poly.length >= 2) {
           for (const p of poly) {
             const w = isWorld ? p : new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(e.matrixWorld),
-                  arr = Array.isArray(w) ? w : [w.x, w.y, w.z];
+              arr = Array.isArray(w) ? w : [w.x, w.y, w.z];
             const k = key(arr);
             let set = pointToEdgeNames.get(k);
             if (!set) { set = new Set(); pointToEdgeNames.set(k, set); }
@@ -583,6 +685,9 @@ export class Sweep extends FacesSolid {
           }
         }
       }
+
+      // pathAlign removed: no frame alignment
+      const frames = null;
 
       for (const loop of boundaryLoops) {
         const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
@@ -621,10 +726,9 @@ export class Sweep extends FacesSolid {
             }
           }
         } else {
-          // path-based sweep: connect each loop segment across successive path offsets
+          // Path sweep: translate-only between successive offsets (pathAlign removed)
           for (let seg = 0; seg < offsets.length - 1; seg++) {
             const off0 = offsets[seg], off1 = offsets[seg + 1];
-            // Skip degenerate steps
             if (off1.x === off0.x && off1.y === off0.y && off1.z === off0.z) continue;
             for (let i = 0; i < base.length - 1; i++) {
               const a = base[i];
@@ -638,13 +742,8 @@ export class Sweep extends FacesSolid {
               const setB = pointToEdgeNames.get(key(b));
               let name = `${face.name || 'FACE'}_SW`;
               if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
-              if (isHole) {
-                this.addTriangle(name, A0, B1, B0);
-                this.addTriangle(name, A0, A1, B1);
-              } else {
-                this.addTriangle(name, A0, B0, B1);
-                this.addTriangle(name, A0, B1, A1);
-              }
+              if (isHole) { this.addTriangle(name, A0, B1, B0); this.addTriangle(name, A0, A1, B1); }
+              else { this.addTriangle(name, A0, B0, B1); this.addTriangle(name, A0, B1, A1); }
             }
           }
         }
@@ -653,6 +752,7 @@ export class Sweep extends FacesSolid {
       // Fallback: build from per-edge polylines (may not match cap vertices exactly)
       const edges = Array.isArray(face.edges) ? face.edges : [];
       if (edges.length) {
+        // pathAlign removed: translate-only per-edge fallback
         for (const edge of edges) {
           const name = `${edge.name || 'EDGE'}_SW`;
 
@@ -704,11 +804,11 @@ export class Sweep extends FacesSolid {
             }
           } else {
             // Path-based
-          for (let seg = 0; seg < offsets.length - 1; seg++) {
-            const off0 = offsets[seg], off1 = offsets[seg + 1];
-            // Skip degenerate steps
-            if (off1.x === off0.x && off1.y === off0.y && off1.z === off0.z) continue;
-            for (let i = 0; i < n - 1; i++) {
+            for (let seg = 0; seg < offsets.length - 1; seg++) {
+              const off0 = offsets[seg], off1 = offsets[seg + 1];
+              // Skip degenerate steps
+              if (off1.x === off0.x && off1.y === off0.y && off1.z === off0.z) continue;
+              for (let i = 0; i < n - 1; i++) {
                 const a = pA[i];
                 const b = pA[i + 1];
                 if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue;
@@ -724,10 +824,45 @@ export class Sweep extends FacesSolid {
         }
       }
 
-      // Weld seams by a tiny epsilon to ensure caps and sides share vertices exactly
-      this.setEpsilon(1e-6);
-      // Build the manifold now so callers get a ready solid
-      try { this.getMesh(); } catch (_) { /* leave for caller to inspect if invalid */ }
+      // Weld seams by an adaptive epsilon to ensure caps and sides share
+      // vertices exactly without collapsing geometry at small scales.
+      // Use ~1e-6 of the overall diagonal, clamped to [1e-7, 1e-4].
+      let eps = 1e-6;
+      if (Array.isArray(this._vertProperties) && this._vertProperties.length >= 6) {
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        for (let i = 0; i < this._vertProperties.length; i += 3) {
+          const x = this._vertProperties[i + 0];
+          const y = this._vertProperties[i + 1];
+          const z = this._vertProperties[i + 2];
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+          if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        }
+        const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+        const diag = Math.hypot(dx, dy, dz) || 1;
+        eps = Math.min(1e-4, Math.max(1e-7, diag * 1e-6));
+      }
+      this.setEpsilon(eps);
+      // Prune tiny floating fragments that can appear at sharp corners.
+      try { this.removeSmallIslands({ maxTriangles: 12, removeInternal: true, removeExternal: true }); } catch (_) { }
+      // Build the manifold now so callers get a ready solid. If it fails due
+      // to borderline vertex mismatches, progressively increase epsilon and
+      // retry a few times.
+      let ok = false; let attempt = 0; let errLast = null;
+      while (!ok && attempt < 3) {
+        try {
+          this.getMesh();
+          ok = true;
+        } catch (err) {
+          errLast = err;
+          eps *= 2;
+          if (eps > 5e-4) break;
+          try { this.setEpsilon(eps); } catch (_) { }
+        }
+        attempt++;
+      }
+      if (!ok && errLast) { console.warn('[Sweep] Manifold build failed after retries:', errLast.message || errLast); }
     }
   }
 }

@@ -22,6 +22,12 @@ const inputParamsSchema = {
     default_value: null,
     hint: "Select one or more edges to define the sweep path (connected edges are chained)",
   },
+  orientationMode: {
+    type: "options",
+    options: ["translate", "pathAlign"],
+    default_value: "translate",
+    hint: "Sweep orientation mode: 'translate' (fixed) or 'pathAlign' (profile aligns and rotates with path)",
+  },
   twistAngle: {
     type: "number",
     default_value: 0,
@@ -41,13 +47,13 @@ export class SweepFeature {
 
   constructor() {
     this.inputParams = extractDefaultValues(inputParamsSchema);
-    
+
     this.persistentData = {};
   }
 
   async run(partHistory) {
     // actual code to create the sweep feature.
-    const { profile, path, twistAngle } = this.inputParams;
+    const { profile, path, twistAngle, orientationMode } = this.inputParams;
 
     // Require a valid path edge; sweep now only follows a path
     const pathArr = Array.isArray(path) ? path.filter(Boolean) : (path ? [path] : []);
@@ -69,8 +75,11 @@ export class SweepFeature {
     const sweep = new BREP.Sweep({
       face: faceObj,
       sweepPathEdges: pathArr,
+      // pathAlign temporarily disabled in Sweep.js; fallback to translate
+      mode: (orientationMode === 'pathAlign') ? 'translate' : 'translate',
       name: this.inputParams.featureID
     });
+    // Build and show the solid. Let errors surface so we can debug if needed.
     sweep.visualize();
 
     // Apply optional boolean operation via shared helper
