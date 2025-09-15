@@ -1,5 +1,6 @@
 import { extractDefaultValues } from "../../PartHistory.js";
 import { FilletSolid } from '../../BREP/fillet.js';
+import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
 
 const inputParamsSchema = {
     featureID: {
@@ -31,6 +32,11 @@ const inputParamsSchema = {
         default_value: false,
         hint: "Use face‑projected side strips even for open edges (safer but can affect INSET cases)",
     },
+    projectStripsClosedEdges: {
+        type: "boolean",
+        default_value: true,
+        hint: "Use face‑projected side strips for closed loops (disable to force analytic side strips)",
+    },
     forceSeamInset: {
         type: "boolean",
         default_value: false,
@@ -45,9 +51,9 @@ const inputParamsSchema = {
 
     direction: {
         type: "options",
-        options: ["INSET", "OUTSET"],
+        options: ["INSET", "OUTSET", "AUTO"],
         default_value: "INSET",
-        hint: "Prefer fillet inside (INSET) or outside (OUTSET)",
+        hint: "Prefer fillet inside (INSET), outside (OUTSET), or auto-pick (AUTO)",
     },
     debug: {
         type: "boolean",
@@ -69,6 +75,9 @@ export class FilletFeature {
         this.persistentData = {};
     }
     async run(partHistory) {
+        const dbg = !!this.inputParams.debug;
+        const fjson = (tag, obj) => { if (!dbg) return; try { console.log(`[FilletDBG-JSON] ${tag} ` + JSON.stringify(obj)); } catch { console.log(`[FilletDBG-JSON] ${tag}`, obj); } };
+        const safeVolume = (s) => { try { return s.volume(); } catch { return 0; } };
         // Accept resolved objects from sanitizeInputParams
         const inputObjects = Array.isArray(this.inputParams.edges) ? this.inputParams.edges.filter(Boolean) : [];
 
@@ -117,45 +126,70 @@ export class FilletFeature {
         const targetSolid = edgeObjs[0].parentSolid || edgeObjs[0].parent;
 
         // Create the fillet solid for each edge
+        fjson('FeatureStart', {
+            featureID: this.inputParams.featureID || null,
+            edgesSelected: edgeObjs.length,
+            radius: this.inputParams.radius,
+            inflate: this.inputParams.inflate,
+            direction: this.inputParams.direction,
+            projectStripsOpenEdges: this.inputParams.projectStripsOpenEdges,
+            forceSeamInset: this.inputParams.forceSeamInset,
+            seamInsetScale: this.inputParams.seamInsetScale
+        });
         const objectsForBoolean = [];
-        for (const edgeObj of edgeObjs) {
+        for (let idx = 0; idx < edgeObjs.length; idx++) {
+            const edgeObj = edgeObjs[idx];
+            const edgeName = (edgeObj && edgeObj.name) || null;
+            fjson('BuildToolStart', { idx, edge: edgeName });
             const filletSolid = makeSingleFilletSolid(edgeObj,
                 this.inputParams.radius,
                 this.inputParams.inflate,
                 this.inputParams.direction,
                 this.inputParams.debug,
                 this.inputParams.projectStripsOpenEdges,
+                this.inputParams.projectStripsClosedEdges,
                 this.inputParams.forceSeamInset,
                 this.inputParams.seamInsetScale);
             objectsForBoolean.push(filletSolid);
+            // Summarize tool mesh if available
+            try {
+                const mesh = filletSolid.getMesh();
+                const counts = {
+                    vertices: (mesh.vertProperties?.length || 0) / 3 | 0,
+                    triangles: (mesh.triVerts?.length || 0) / 3 | 0,
+                    faceLabels: (mesh.faceID?.length || 0) / 1 | 0
+                };
+                fjson('BuildToolDone', { idx, edge: edgeName, filletType: filletSolid.filletType || null, counts });
+            } catch (e) {
+                fjson('BuildToolError', { idx, edge: edgeName, message: e?.message || String(e) });
+            }
         }
 
-        // based on if the fillet direction is inset or outset, we either subtract or union the fillet solids
-        // we need to do each operation one by one to avoid issues with overlapping solids
+        // Apply booleans sequentially using shared helper; supports robust nudge behavior
         let finalSolid = targetSolid;
-        for (const obj of objectsForBoolean) {
-            if (this.inputParams.direction === "OUTSET") {
-                finalSolid = finalSolid.union(obj);
+        for (let idx = 0; idx < objectsForBoolean.length; idx++) {
+            const tool = objectsForBoolean[idx];
+            const dir = String(this.inputParams.direction || 'INSET').toUpperCase();
+            const op = (dir === 'AUTO') ? ((tool && tool.filletType) || 'SUBTRACT') : (dir === 'OUTSET' ? 'UNION' : 'SUBTRACT');
+            const beforeVol = safeVolume(finalSolid);
+            const params = { operation: op, opperation: op, targets: [] };
+            let outputs = [];
 
-            } else if (this.inputParams.direction === "INSET") {
-                finalSolid = finalSolid.subtract(obj);
-
-            } else { // AUTO
-                // try subtract first, if it fails, do union
-                try {
-                    finalSolid = finalSolid.subtract(obj);
-                } catch (e) {
-                    try {
-                        finalSolid = finalSolid.union(obj);
-                    } catch (e) {
-                        console.error("Failed to union object:", e);
-                    }
-                }
+            if (op === 'SUBTRACT') {
+                // base = tool, targets = [finalSolid]
+                params.targets = [finalSolid];
+                fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
+                outputs = await applyBooleanOperation(partHistory, tool, params, this.inputParams.featureID);
+                finalSolid = outputs[0] || finalSolid;
+            } else {
+                // UNION/INTERSECT: base = finalSolid, targets = [tool]
+                params.targets = [tool];
+                fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
+                outputs = await applyBooleanOperation(partHistory, finalSolid, params, this.inputParams.featureID);
+                finalSolid = outputs[0] || finalSolid;
             }
 
-
-
-
+            fjson('BooleanDone', { idx, op, after: safeVolume(finalSolid) });
         }
 
         finalSolid.name = `${targetSolid.name}`;
@@ -164,14 +198,10 @@ export class FilletFeature {
         finalSolid.visualize();
 
 
+        targetSolid.remove = true;
 
-
-        if (this.inputParams.debug) {
-            return [finalSolid, ...objectsForBoolean];
-        } else {
-            targetSolid.remove = true; // mark the original solid for removal
-            return [finalSolid];
-        }
+        if (this.inputParams.debug) return [finalSolid, ...objectsForBoolean];
+        return [finalSolid];
     }
 }
 
@@ -183,6 +213,7 @@ function makeSingleFilletSolid(edgeObj,
     direction = 'INSET',
     debug = false,
     projectStripsOpenEdges = false,
+    projectStripsClosedEdges = true,
     forceSeamInset = false,
     seamInsetScale = 1e-3) {
     const flipSide = false;
@@ -192,7 +223,26 @@ function makeSingleFilletSolid(edgeObj,
 
     //console.log("Creating fillet solid for edge:", edgeObj, radius, inflate, flipSide, direction, flipTangent, swapFaces, debug);
 
-    const tool = new FilletSolid({ edgeToFillet: edgeObj, radius, inflate, invert2D: false, reverseTangent: !!flipTangent, swapFaces: !!swapFaces, sideMode: direction, debug, projectStripsOpenEdges, forceSeamInset, seamInsetScale });
+    // Robust defaults: do NOT force face‑projected side strips on open edges.
+    // Leave projection opt‑in via projectStripsOpenEdges; still prefer seam inset for INSET.
+    const robustProjectOpen = projectStripsOpenEdges;
+    const robustProjectClosed = projectStripsClosedEdges;
+    const robustInset = forceSeamInset || (direction === 'INSET');
+
+    const tool = new FilletSolid({
+        edgeToFillet: edgeObj,
+        radius,
+        inflate,
+        invert2D: false,
+        reverseTangent: !!flipTangent,
+        swapFaces: !!swapFaces,
+        sideMode: direction,
+        debug,
+        projectStripsOpenEdges: robustProjectOpen,
+        projectStripsClosedEdges: robustProjectClosed,
+        forceSeamInset: robustInset,
+        seamInsetScale
+    });
     // tool.fixTriangleWindingsByAdjacency();
     // tool.invertNormals();
     tool.name = "FILLET_TOOL";
@@ -203,4 +253,8 @@ function makeSingleFilletSolid(edgeObj,
     //     tool.flip(); // flip the solid to make it suitable for union
     // }
     return tool;
+}
+
+function safeVolume(s) {
+    try { return s.volume(); } catch { return 0; }
 }

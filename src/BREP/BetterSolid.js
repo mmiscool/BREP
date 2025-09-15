@@ -1332,7 +1332,56 @@ export class Solid extends THREE.Group {
         // Fill mergeFromVert/mergeToVert; positions and indices stay intact.
         mesh.merge();
 
-        this._manifold = new Manifold(mesh);
+        try {
+            this._manifold = new Manifold(mesh);
+        } catch (err) {
+            // If this Solid is a FilletSolid (identified by presence of edgeToFillet),
+            // emit a structured JSON log with diagnostic context for debugging.
+            try {
+                if (this && Object.prototype.hasOwnProperty.call(this, 'edgeToFillet')) {
+                    const triCount = (this._triVerts?.length || 0) / 3 | 0;
+                    const vertCount = (this._vertProperties?.length || 0) / 3 | 0;
+                    const faces = [];
+                    try {
+                        if (this.edgeToFillet && Array.isArray(this.edgeToFillet.faces)) {
+                            for (const f of this.edgeToFillet.faces) if (f && f.name) faces.push(f.name);
+                        }
+                    } catch {}
+                    const failure = {
+                        type: 'FilletSolidManifoldFailure',
+                        message: (err && (err.message || String(err))) || 'unknown',
+                        params: {
+                            radius: this.radius,
+                            arcSegments: this.arcSegments,
+                            sampleCount: this.sampleCount,
+                            invert2D: this.invert2D,
+                            reverseTangent: this.reverseTangent,
+                            swapFaces: this.swapFaces,
+                            sideMode: this.sideMode,
+                            inflate: this.inflate,
+                            snapSeamToEdge: this.snapSeamToEdge,
+                            sideStripSubdiv: this.sideStripSubdiv,
+                            seamInsetScale: this.seamInsetScale,
+                            projectStripsOpenEdges: this.projectStripsOpenEdges,
+                            forceSeamInset: this.forceSeamInset,
+                        },
+                        edge: {
+                            name: this.edgeToFillet?.name || null,
+                            closedLoop: !!(this.edgeToFillet?.closedLoop || this.edgeToFillet?.userData?.closedLoop),
+                            faces,
+                        },
+                        counts: {
+                            vertices: vertCount,
+                            triangles: triCount,
+                            faceLabels: (this._faceNameToID && typeof this._faceNameToID.size === 'number') ? this._faceNameToID.size : undefined,
+                        },
+                    };
+                    // Use console.error to surface in dev tools; JSON.stringify ensures strict JSON format
+                    try { console.error(JSON.stringify(failure)); } catch { console.error('[FilletSolidManifoldFailure]', failure.message); }
+                }
+            } catch {}
+            throw err;
+        }
         this._dirty = false;
         this._faceIndex = null; // will rebuild on demand
         return this._manifold;
