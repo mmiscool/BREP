@@ -8,18 +8,18 @@
 
 export async function applyBooleanOperation(partHistory, baseSolid, booleanParam, featureID) {
   try {
-    if (!booleanParam || typeof booleanParam !== 'object') return [baseSolid];
+    if (!booleanParam || typeof booleanParam !== 'object') return { added: [baseSolid], removed: [] };
     // Back-compat: accept both `operation` and misspelled `opperation`
     const opRaw = (booleanParam.operation != null) ? booleanParam.operation : booleanParam.opperation;
     const op = String(opRaw || 'NONE').toUpperCase();
     const tgt = Array.isArray(booleanParam.targets) ? booleanParam.targets.filter(Boolean) : [];
 
     if (op === 'NONE' || tgt.length === 0) {
-      return [baseSolid];
+      return { added: [baseSolid], removed: [] };
     }
 
     const scene = partHistory && partHistory.scene ? partHistory.scene : null;
-    if (!scene) return [baseSolid];
+    if (!scene) return { added: [baseSolid], removed: [] };
 
     // Collect unique tool solids: support either objects or names for back-compat
     const seen = new Set();
@@ -41,7 +41,7 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
       }
     }
 
-    if (tools.length === 0) return [baseSolid];
+    if (tools.length === 0) return { added: [baseSolid], removed: [] };
 
     // Bias distance (nudge magnitude) from UI; fallback to 0.1 if missing
     const biasDistanceRaw = (booleanParam && typeof booleanParam === 'object') ? (booleanParam.biasDistance ?? booleanParam.bias ?? booleanParam.epsilon) : undefined;
@@ -50,31 +50,32 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
     // Apply selected boolean
     if (op === 'SUBTRACT') {
       // Inverted semantics for subtract: subtract the new baseSolid (tool)
-      // FROM each selected target solid. Before subtracting, bias the TARGET
-      // slightly OUTSIDE along planes coplanar with the tool to break ties.
+      // FROM each selected target solid.
+      // Robustness tweak: if tool points are near the target surface,
+      // nudge the TOOL slightly to the OUTSIDE to avoid exact coplanarity
+      // and sliver residue.
       const results = [];
       let idx = 0;
       for (const target of tools) {
-        // Move points of the target that are nearly coplanar with tool faces
-        // slightly OUTSIDE the target, per requested bias for SUBTRACT.
-        const targetBiased = target.clone();
-        try { targetBiased.nudgeCoplanarAgainst(baseSolid, { mode: 'INSIDE', epsilon: biasDistance }); } catch (_) {}
-        const out = targetBiased.subtract(baseSolid);
+        // Clone and bias the tool against this target only where close
+        const toolBiased = baseSolid.clone();
+        try { toolBiased.nudgeCoplanarAgainst(target, { mode: 'OUTSIDE', epsilon: biasDistance*10 }); } catch (_) {}
+
+        const out = target.subtract(toolBiased);
         out.visualize();
-        // Remove the original target; also remove the tool (base) after processing
-        target.remove = true;
         try { out.name = (featureID ? `${featureID}_${++idx}` : out.name || 'RESULT'); } catch (_) { }
         results.push(out);
       }
-      // Remove base tool solid as it served only as cutter
-      try { baseSolid.remove = true; } catch (_) { }
-      return results.length ? results : [baseSolid];
+      // In SUBTRACT: removed = [all targets, baseSolid]
+      const removed = [...tools];
+      if (baseSolid) removed.push(baseSolid);
+      return { added: results.length ? results : [baseSolid], removed };
     }
 
     // UNION / INTERSECT keep original semantics: fold tools into the new baseSolid
     let result = baseSolid;
     for (const tool of tools) {
-      // For UNION, bias the target/result toward INSIDE so nearly-coplanar
+      // For UNION, bias the target/result toward OUTSIDE so nearly-coplanar
       // points move into the solid and guarantee positive overlap.
       if (op === 'UNION') {
         const resultBiased = result.clone();
@@ -85,17 +86,16 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
         result = result.intersect(tool);
       } else {
         // Unknown op → pass through
-        return [baseSolid];
+        return { added: [baseSolid], removed: [] };
       }
     }
     result.visualize();
-    // Remove tool bodies (selected solids) after operation; keep the new result
-    for (const t of tools) t.remove = true;
     try { result.name = featureID || result.name || 'RESULT'; } catch (_) { }
-    return [result];
+    // UNION/INTERSECT: removed tools; base stays
+    return { added: [result], removed: tools.slice() };
   } catch (err) {
     // On failure, pass through original to avoid breaking the pipeline
     console.warn('[applyBooleanOperation] failed:', err?.message || err);
-    return [baseSolid];
+    return { added: [baseSolid], removed: [] };
   }
 }

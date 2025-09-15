@@ -83,7 +83,7 @@ export class FilletFeature {
 
         //console.log("FilletFeature input objects:", inputObjects);
 
-        const edgeObjs = [];
+        let edgeObjs = [];
 
         inputObjects.forEach(obj => {
             //console.log("Processing input object:", obj);
@@ -112,7 +112,7 @@ export class FilletFeature {
             console.warn("No edges selected for fillet");
             return [];
         }
-        const solids = new Set(edgeObjs.map(e => e.parentSolid));
+        const solids = new Set(edgeObjs.map(e => e.parentSolid || e.parent));
 
         if (solids.size === 0) {
             console.warn("Selected edges do not belong to any solid");
@@ -124,6 +124,101 @@ export class FilletFeature {
         }
 
         const targetSolid = edgeObjs[0].parentSolid || edgeObjs[0].parent;
+
+        // Pre-remesh the target solid for more regular triangles before
+        // constructing fillet tools. Use max edge length = radius / 2.
+        // Important: remeshing + visualize() rebuilds child Edge objects,
+        // so we must remap the selected edges to their new counterparts.
+        try {
+            const r = Number(this.inputParams.radius);
+            if (Number.isFinite(r) && r > 0) {
+                // Capture descriptors for currently selected edges
+                const toDesc = (edge) => {
+                    const ua = edge?.userData || {};
+                    const faceA = ua.faceA || (edge?.faces?.[0]?.name) || null;
+                    const faceB = ua.faceB || (edge?.faces?.[1]?.name) || null;
+                    const pair = (faceA && faceB) ? (faceA < faceB ? [faceA, faceB] : [faceB, faceA]) : null;
+                    const pts = Array.isArray(ua.polylineLocal) ? ua.polylineLocal : null;
+                    const center = (() => {
+                        if (!pts || pts.length === 0) return [0, 0, 0];
+                        let sx = 0, sy = 0, sz = 0;
+                        for (const p of pts) { sx += p[0]; sy += p[1]; sz += p[2]; }
+                        const inv = 1 / pts.length; return [sx * inv, sy * inv, sz * inv];
+                    })();
+                    const length = (() => {
+                        if (!pts || pts.length < 2) return 0;
+                        let L = 0;
+                        for (let i = 0; i < pts.length - 1; i++) {
+                            const a = pts[i], b = pts[i + 1];
+                            const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+                            L += Math.hypot(dx, dy, dz);
+                        }
+                        return L;
+                    })();
+                    return { pair, center, length, closed: !!edge?.closedLoop };
+                };
+                const oldDescs = edgeObjs.map(toDesc);
+
+                const maxEdge = Math.max(1e-6, r / 2);
+                targetSolid.remesh({ maxEdgeLength: maxEdge });
+                // Refresh edge polylines for visualization
+                try { targetSolid.visualize(); } catch (_) {}
+
+                // Remap to new Edge objects by matching face-pair and closest center
+                const allEdges = targetSolid.children.filter(o => o && o.type === 'EDGE');
+                const dist2 = (a, b) => {
+                    const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+                    return dx * dx + dy * dy + dz * dz;
+                };
+                const centerOf = (edge) => {
+                    const pts = edge?.userData?.polylineLocal;
+                    if (!Array.isArray(pts) || pts.length === 0) return [0, 0, 0];
+                    let sx = 0, sy = 0, sz = 0;
+                    for (const p of pts) { sx += p[0]; sy += p[1]; sz += p[2]; }
+                    const inv = 1 / pts.length; return [sx * inv, sy * inv, sz * inv];
+                };
+                const lengthOf = (edge) => {
+                    const pts = edge?.userData?.polylineLocal;
+                    if (!Array.isArray(pts) || pts.length < 2) return 0;
+                    let L = 0; for (let i = 0; i < pts.length - 1; i++) { const a = pts[i], b = pts[i + 1]; L += Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]); }
+                    return L;
+                };
+                const pairOf = (edge) => {
+                    const ua = edge?.userData || {};
+                    const faceA = ua.faceA || (edge?.faces?.[0]?.name) || null;
+                    const faceB = ua.faceB || (edge?.faces?.[1]?.name) || null;
+                    return (faceA && faceB) ? (faceA < faceB ? [faceA, faceB] : [faceB, faceA]) : null;
+                };
+
+                const remapped = [];
+                for (const desc of oldDescs) {
+                    if (!desc.pair) continue;
+                    let best = null; let bestCost = Infinity;
+                    for (const e of allEdges) {
+                        const pair = pairOf(e);
+                        if (!pair || pair[0] !== desc.pair[0] || pair[1] !== desc.pair[1]) continue;
+                        if (e.closedLoop !== desc.closed) continue;
+                        const c = centerOf(e);
+                        const L = lengthOf(e);
+                        const d2 = dist2(c, desc.center);
+                        const dL = Math.abs(L - desc.length);
+                        const cost = d2 + 0.01 * dL;
+                        if (cost < bestCost) { bestCost = cost; best = e; }
+                    }
+                    if (best) remapped.push(best);
+                }
+
+                if (remapped.length) {
+                    edgeObjs = remapped;
+                } else {
+                    console.warn('[FilletFeature] remesh edge remap failed; no matching edges found.');
+                    // If we continue, selected Edge parents are likely null; abort gracefully
+                    return [];
+                }
+            }
+        } catch (e) {
+            console.warn('[FilletFeature] remesh skipped:', e?.message || e);
+        }
 
         // Create the fillet solid for each edge
         fjson('FeatureStart', {

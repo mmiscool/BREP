@@ -345,6 +345,190 @@ export class Solid extends THREE.Group {
     }
 
     /**
+     * Remesh by splitting long edges to improve triangle regularity while
+     * preserving face labels. Performs global edge splits per pass so shared
+     * edges are split consistently on both sides, maintaining a watertight
+     * 2‑manifold.
+     *
+     * Strategy
+     * - Identify all undirected edges with length > maxEdgeLength.
+     * - Create a single midpoint vertex for each such edge.
+     * - For each triangle, re-triangulate using the available midpoints:
+     *   - 0 long edges: keep as-is.
+     *   - 1 long edge: split into 2 triangles.
+     *   - 2 long edges (adjacent): split into 3 triangles.
+     *   - 3 long edges: split into 4 triangles.
+     * - Repeat until no long edges remain or until maxIterations is reached.
+     *
+     * Notes
+     * - Face IDs are copied to the new triangles from their source triangle.
+     * - Orientation is preserved relative to the original triangle ordering.
+     * - After completion, arrays are marked dirty and triangle windings are
+     *   verified by fixTriangleWindingsByAdjacency().
+     *
+     * @param {object} options
+     * @param {number} options.maxEdgeLength Maximum allowed edge length.
+     * @param {number} [options.maxIterations=10] Safety cap on refinement passes.
+     * @returns {Solid} this
+     */
+    remesh({ maxEdgeLength, maxIterations = 10 } = {}) {
+        const Lmax = Number(maxEdgeLength);
+        if (!Number.isFinite(Lmax) || Lmax <= 0) return this;
+        const L2 = Lmax * Lmax;
+
+        // Local helpers on each pass
+        const pass = () => {
+            const vp = this._vertProperties;
+            const tv = this._triVerts;
+            const ids = this._triIDs;
+            const triCount = (tv.length / 3) | 0;
+            const nv = (vp.length / 3) | 0;
+            const NV = BigInt(Math.max(1, nv));
+            const ukey = (a, b) => {
+                const A = BigInt(a); const B = BigInt(b); return A < B ? A * NV + B : B * NV + A;
+            };
+            const len2 = (i, j) => {
+                const ax = vp[i * 3 + 0], ay = vp[i * 3 + 1], az = vp[i * 3 + 2];
+                const bx = vp[j * 3 + 0], by = vp[j * 3 + 1], bz = vp[j * 3 + 2];
+                const dx = ax - bx, dy = ay - by, dz = az - bz; return dx * dx + dy * dy + dz * dz;
+            };
+
+            // 1) Identify long edges globally
+            const longEdge = new Set(); // key -> true
+            for (let t = 0; t < triCount; t++) {
+                const b = t * 3;
+                const i0 = tv[b + 0] >>> 0;
+                const i1 = tv[b + 1] >>> 0;
+                const i2 = tv[b + 2] >>> 0;
+                if (len2(i0, i1) > L2) longEdge.add(ukey(i0, i1));
+                if (len2(i1, i2) > L2) longEdge.add(ukey(i1, i2));
+                if (len2(i2, i0) > L2) longEdge.add(ukey(i2, i0));
+            }
+
+            if (longEdge.size === 0) return false; // nothing to do
+
+            // 2) Build new vertex array and midpoint lookup for long edges
+            const newVP = vp.slice();
+            const edgeMid = new Map(); // key -> new vert index
+            const midpointIndex = (a, b) => {
+                const key = ukey(a, b);
+                let idx = edgeMid.get(key);
+                if (idx !== undefined) return idx;
+                const ax = vp[a * 3 + 0], ay = vp[a * 3 + 1], az = vp[a * 3 + 2];
+                const bx = vp[b * 3 + 0], by = vp[b * 3 + 1], bz = vp[b * 3 + 2];
+                const mx = 0.5 * (ax + bx), my = 0.5 * (ay + by), mz = 0.5 * (az + bz);
+                idx = (newVP.length / 3) | 0;
+                newVP.push(mx, my, mz);
+                edgeMid.set(key, idx);
+                return idx;
+            };
+
+            // 3) Re-triangulate with consistent splits
+            const newTV = [];
+            const newIDs = [];
+            const emit = (i, j, k, faceId) => { newTV.push(i, j, k); newIDs.push(faceId); };
+
+            for (let t = 0; t < triCount; t++) {
+                const base = t * 3;
+                const i0 = tv[base + 0] >>> 0;
+                const i1 = tv[base + 1] >>> 0;
+                const i2 = tv[base + 2] >>> 0;
+                const fid = ids[t];
+
+                const k01 = ukey(i0, i1), k12 = ukey(i1, i2), k20 = ukey(i2, i0);
+                const s01 = longEdge.has(k01);
+                const s12 = longEdge.has(k12);
+                const s20 = longEdge.has(k20);
+
+                const c = (cond) => cond ? 1 : 0;
+                const count = c(s01) + c(s12) + c(s20);
+
+                if (count === 0) {
+                    emit(i0, i1, i2, fid);
+                    continue;
+                }
+
+                if (count === 1) {
+                    if (s01) {
+                        const m01 = midpointIndex(i0, i1);
+                        emit(i0, m01, i2, fid);
+                        emit(m01, i1, i2, fid);
+                    } else if (s12) {
+                        const m12 = midpointIndex(i1, i2);
+                        emit(i1, m12, i0, fid);
+                        emit(m12, i2, i0, fid);
+                    } else /* s20 */ {
+                        const m20 = midpointIndex(i2, i0);
+                        emit(i2, m20, i1, fid);
+                        emit(m20, i0, i1, fid);
+                    }
+                    continue;
+                }
+
+                if (count === 2) {
+                    // Two adjacent splits; create 3 triangles.
+                    if (s01 && s12) {
+                        const m01 = midpointIndex(i0, i1);
+                        const m12 = midpointIndex(i1, i2);
+                        emit(i0, m01, i2, fid);
+                        emit(i1, m12, m01, fid);
+                        emit(m01, m12, i2, fid);
+                    } else if (s12 && s20) {
+                        const m12 = midpointIndex(i1, i2);
+                        const m20 = midpointIndex(i2, i0);
+                        emit(i1, m12, i0, fid);
+                        emit(i2, m20, m12, fid);
+                        emit(m12, m20, i0, fid);
+                    } else /* s20 && s01 */ {
+                        const m20 = midpointIndex(i2, i0);
+                        const m01 = midpointIndex(i0, i1);
+                        emit(i2, m20, i1, fid);
+                        emit(i0, m01, m20, fid);
+                        emit(m20, m01, i1, fid);
+                    }
+                    continue;
+                }
+
+                // count === 3: split all edges; 4 triangles
+                const m01 = midpointIndex(i0, i1);
+                const m12 = midpointIndex(i1, i2);
+                const m20 = midpointIndex(i2, i0);
+                emit(i0, m01, m20, fid);
+                emit(i1, m12, m01, fid);
+                emit(i2, m20, m12, fid);
+                emit(m01, m12, m20, fid);
+            }
+
+            // 4) Commit new arrays
+            this._vertProperties = newVP;
+            this._triVerts = newTV;
+            this._triIDs = newIDs;
+            // Rebuild vertex key map for exact-key lookups
+            this._vertKeyToIndex = new Map();
+            for (let i = 0; i < this._vertProperties.length; i += 3) {
+                const x = this._vertProperties[i], y = this._vertProperties[i + 1], z = this._vertProperties[i + 2];
+                this._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
+            }
+            this._dirty = true;
+            this._faceIndex = null;
+            return true;
+        };
+
+        let changed = false;
+        for (let it = 0; it < maxIterations; it++) {
+            const did = pass();
+            if (!did) break;
+            changed = true;
+        }
+
+        if (changed) {
+            // Ensure triangles are coherently oriented after edits
+            this.fixTriangleWindingsByAdjacency();
+        }
+        return this;
+    }
+
+    /**
      * Remove small disconnected triangle islands relative to the largest shell.
      *
      * - Components are connected by shared edges (undirected) in triangle graph.
@@ -1119,9 +1303,9 @@ export class Solid extends THREE.Group {
     }
 
     /**
-     * Nudge vertices that lie on planes coplanar with faces from `other` by a tiny
-     * amount along this solid's outward face normals to break exact coplanarity
-     * for robust boolean operations.
+     * Nudge vertices that lie on planes coplanar with faces from `other` by the
+     * minimum amount needed (capped by `epsilon`) along this solid's outward face
+     * normals to break exact coplanarity for robust boolean operations.
      *
      * The algorithm:
      *  - Build a set of unique planes from `other` by quantizing plane normals and
@@ -1129,9 +1313,10 @@ export class Solid extends THREE.Group {
      *  - For each such plane, find triangles of `this` whose normals are nearly
      *    parallel and whose vertices lie within `planeTol` distance of the plane;
      *    accumulate their outward normals to define a consistent push direction.
-     *  - Move vertices of `this` within `planeTol` of any matched plane by
-     *    `epsilon` along the accumulated outward direction, either INSIDE or
-     *    OUTSIDE this solid.
+     *  - For vertices of `this` within `planeTol` of any matched plane, compute
+     *    the minimal displacement along the accumulated outward direction needed
+     *    to exceed `planeTol` (with a tiny margin), and move by that amount,
+     *    capped at `epsilon`.
      *
      * @param {Solid} other The solid to compare against for coplanar faces.
      * @param {{epsilon?:number, planeTol?:number, angleTol?:number, mode?:'INSIDE'|'OUTSIDE'}} [opts]
@@ -1157,12 +1342,12 @@ export class Solid extends THREE.Group {
                 if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
             }
             const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
-            const diag = Math.hypot(dx, dy, dz) || 1;
+            const diag = Math.hypot(dx, dy, dz) || .0001;
 
             // Slightly larger default bias to better avoid artifacts at coplanar contacts
             const epsilon = (opts.epsilon != null) ? Number(opts.epsilon) : (5e-6 * diag);
             // Default plane tolerance: scale-aware OR a small fraction of epsilon
-            const planeTol = (opts.planeTol != null) ? Number(opts.planeTol) : Math.max(1e-6 * diag, 0.02 * epsilon);
+            const planeTol = (opts.planeTol != null) ? Number(opts.planeTol) : Math.max(1e-6 * diag, 0.002 * epsilon);
             const angleTol = (opts.angleTol != null) ? Number(opts.angleTol) : 1e-6; // radians, small
             const mode = (opts.mode === 'OUTSIDE') ? 'OUTSIDE' : 'INSIDE';
 
@@ -1246,19 +1431,64 @@ export class Solid extends THREE.Group {
                 }
             }
 
-            // Apply displacement
+            // Compute per-vertex minimal displacement needed to clear proximity to matched planes,
+            // capped by epsilon. This avoids moving vertices farther than necessary.
+            // Precompute move direction per used vertex (normalized accumulated normal; sign by mode)
+            const moveDir = new Float64Array(nvA * 3);
+            const need = new Float64Array(nvA); // required distance along moveDir
+            for (let i = 0; i < nvA; i++) {
+                if (!used[i]) continue;
+                let mx = nAccum[i * 3 + 0];
+                let my = nAccum[i * 3 + 1];
+                let mz = nAccum[i * 3 + 2];
+                const mlen = Math.hypot(mx, my, mz);
+                if (!(mlen > 0)) continue;
+                mx /= mlen; my /= mlen; mz /= mlen;
+                if (mode !== 'OUTSIDE') { mx = -mx; my = -my; mz = -mz; }
+                moveDir[i * 3 + 0] = mx;
+                moveDir[i * 3 + 1] = my;
+                moveDir[i * 3 + 2] = mz;
+            }
+
+            // Minimal clearance target: just past planeTol with a tiny margin
+            const margin = Math.max(1e-9 * diag, 1e-3 * planeTol);
+            const clear = planeTol + margin;
+
+            // For each used vertex, compute the minimal step along moveDir to exceed `clear`
+            // for all nearby planes from B.
+            const planeList = Array.from(planesB.values());
+            for (let i = 0; i < nvA; i++) {
+                if (!used[i]) continue;
+                const mx = moveDir[i * 3 + 0], my = moveDir[i * 3 + 1], mz = moveDir[i * 3 + 2];
+                if (mx === 0 && my === 0 && mz === 0) continue;
+                const px = vpA[i * 3 + 0], py = vpA[i * 3 + 1], pz = vpA[i * 3 + 2];
+                let tNeed = 0;
+                for (let k = 0; k < planeList.length; k++) {
+                    const nB = planeList[k].n; const dB = planeList[k].d;
+                    const d = nB[0] * px + nB[1] * py + nB[2] * pz + dB; // signed distance to plane
+                    const ad = Math.abs(d);
+                    if (ad > planeTol) continue; // only planes we are close to
+                    const g = nB[0] * mx + nB[1] * my + nB[2] * mz; // how moveDir changes plane distance
+                    if (g === 0) continue; // movement parallel to plane → no effect
+                    if (ad >= clear) continue; // already clear (rare due to tol checks)
+                    const sd = (d >= 0) ? 1 : -1; // sign of current distance
+                    const gg = g * sd;
+                    // If gg >= 0, moving along +moveDir increases |d|; else it decreases first then crosses.
+                    const t = (gg >= 0) ? ((clear - ad) / Math.abs(g)) : ((clear + ad) / Math.abs(g));
+                    if (t > tNeed) tNeed = t;
+                }
+                need[i] = tNeed;
+            }
+
+            // Apply the minimal required displacements, capped at epsilon
             let any = false;
             for (let i = 0; i < nvA; i++) {
                 if (!used[i]) continue;
-                const nx = nAccum[i * 3 + 0];
-                const ny = nAccum[i * 3 + 1];
-                const nz = nAccum[i * 3 + 2];
-                const len = Math.hypot(nx, ny, nz);
-                if (!(len > 0)) continue;
-                const s = (mode === 'OUTSIDE') ? (epsilon / len) : (-epsilon / len);
-                this._vertProperties[i * 3 + 0] += nx * s;
-                this._vertProperties[i * 3 + 1] += ny * s;
-                this._vertProperties[i * 3 + 2] += nz * s;
+                const t = Math.min(epsilon, need[i]);
+                if (!(t > 0)) continue;
+                this._vertProperties[i * 3 + 0] += moveDir[i * 3 + 0] * t;
+                this._vertProperties[i * 3 + 1] += moveDir[i * 3 + 1] * t;
+                this._vertProperties[i * 3 + 2] += moveDir[i * 3 + 2] * t;
                 any = true;
             }
             if (!any) return this;
@@ -1692,6 +1922,8 @@ export class Solid extends THREE.Group {
                 edgeObj.name = e.name;
                 edgeObj.closedLoop = !!e.closedLoop;
                 edgeObj.userData = { faceA: e.faceA, faceB: e.faceB, polylineLocal: e.positions, closedLoop: !!e.closedLoop };
+                // For convenience in feature code, mirror THREE's parent with an explicit handle
+                edgeObj.parentSolid = this;
                 const fa = faceMap.get(e.faceA);
                 const fb = faceMap.get(e.faceB);
                 if (fa) fa.edges.push(edgeObj);

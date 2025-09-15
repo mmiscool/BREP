@@ -16,6 +16,7 @@ import { RevolveFeature } from './features/revolve/RevolveFeature.js';
 import { SketchFeature } from './features/sketch/SketchFeature.js';
 import { stlImport } from './features/stlImport/stlImport.js';
 import { SweepFeature } from './features/sweep/SweepFeature.js';
+import { RemeshFeature } from './features/remesh/RemeshFeature.js';
 
 /* ========================================================================
    FeatureRegistry
@@ -44,6 +45,7 @@ export class FeatureRegistry {
     this.register(MirrorFeature);
     this.register(RevolveFeature);
     this.register(SweepFeature);
+    this.register(RemeshFeature);
   }
 
   register(FeatureClass) {
