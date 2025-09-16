@@ -331,14 +331,27 @@ function makeSingleFilletSolid(edgeObj,
 
     // Robust defaults: do NOT force face‑projected side strips on open edges.
     // Leave projection opt‑in via projectStripsOpenEdges; still prefer seam inset for INSET.
-    const robustProjectOpen = projectStripsOpenEdges;
+    // For outward/union fillets, ensure side strips lie exactly on faces by
+    // defaulting to projection for open edges as well. For inset/subtract,
+    // keep the user's choice to preserve legacy behavior.
+    const isOutset = String(direction).toUpperCase() === 'OUTSET';
+    // For OUTSET (union) fillets, prefer projecting side strips onto the
+    // original faces even for open edges. This keeps the fillet solid
+    // exactly tangent to both adjacent faces.
+    const robustProjectOpen = isOutset ? true : projectStripsOpenEdges;
     const robustProjectClosed = projectStripsClosedEdges;
-    const robustInset = forceSeamInset || (direction === 'INSET');
+    // For OUTSET we must keep seam points exactly on the faces to preserve
+    // tangency; do not inset seams even if the toggle is on.
+    const robustInset = isOutset ? false : (forceSeamInset || (direction === 'INSET'));
+
+    // Preserve tangency on OUTSET by default: avoid inflating side strips
+    // which would pull seam vertices off the face planes.
+    const effInflate = isOutset ? 0 : inflate;
 
     const tool = new FilletSolid({
         edgeToFillet: edgeObj,
         radius,
-        inflate,
+        inflate: effInflate,
         invert2D: false,
         reverseTangent: !!flipTangent,
         swapFaces: !!swapFaces,

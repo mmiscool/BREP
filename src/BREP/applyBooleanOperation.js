@@ -234,17 +234,98 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
       return { added: results.length ? results : [baseSolid], removed };
     }
 
+    // Helper: approximate scale from authoring arrays (avoids manifold build)
+    const approxScale = (solid) => {
+      try {
+        const vp = solid && solid._vertProperties;
+        if (!Array.isArray(vp) || vp.length < 3) return 1;
+        let minX = +Infinity, minY = +Infinity, minZ = +Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        for (let i = 0; i < vp.length; i += 3) {
+          const x = vp[i], y = vp[i + 1], z = vp[i + 2];
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+          if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        }
+        const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+        const diag = Math.hypot(dx, dy, dz);
+        return (diag > 0) ? diag : Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz), 1);
+      } catch { return 1; }
+    };
+
+    // Helper: light pre-clean in authoring space (no manifold build)
+    const preClean = (solid, eps) => {
+      try { if (typeof solid.setEpsilon === 'function') solid.setEpsilon(eps); } catch {}
+      try { if (typeof solid.fixTriangleWindingsByAdjacency === 'function') solid.fixTriangleWindingsByAdjacency(); } catch {}
+    };
+
+    // Helper: if tool looks like a FilletSolid built on an open edge with
+    // face-projected side strips, rebuild it without that option and force a
+    // small seam inset for robustness.
+    const maybeRegenerateFilletTool = (tool, opKind, scaleHint) => {
+      try {
+        const isFillet = tool && Object.prototype.hasOwnProperty.call(tool, 'edgeToFillet') && typeof tool.generate === 'function';
+        if (!isFillet) return false;
+        const edge = tool.edgeToFillet || {};
+        const isClosed = !!(edge.closedLoop || edge?.userData?.closedLoop);
+        if (isClosed) return false; // issue primarily seen on open edges
+        if (!tool.projectStripsOpenEdges) return false; // nothing to change
+
+        // Tweak options and rebuild
+        tool.projectStripsOpenEdges = false; // avoid face-projected side strips on open edges
+        tool.forceSeamInset = true;          // ensure slight inset to prevent coplanar overlap
+        // Nudge outward slightly for UNION so the tool clearly dominates at seam
+        if (String(opKind) === 'UNION') {
+          const mag = Math.max(1e-9, 1e-6 * (scaleHint || 1));
+          if (!Number.isFinite(tool.inflate) || tool.inflate <= 0) tool.inflate = mag;
+        }
+        tool.generate();
+        // Authoring-space tidy up
+        preClean(tool, Math.max(1e-9, 1e-6 * (scaleHint || 1)));
+        return true;
+      } catch { return false; }
+    };
+
     // UNION / INTERSECT: fold tools into the new baseSolid and replace base
     let result = baseSolid;
     for (const tool of tools) {
-      if (op === 'UNION') {
-        result = result.union(tool);
-      } else if (op === 'INTERSECT') {
-        // Keep INTERSECT unchanged unless requested otherwise
-        result = result.intersect(tool);
-      } else {
+      if (op !== 'UNION' && op !== 'INTERSECT') {
         // Unknown op → pass through
         return { added: [baseSolid], removed: [] };
+      }
+
+      const scale = Math.max(1, approxScale(result));
+      const eps = Math.max(1e-9, 1e-6 * scale);
+
+      try {
+        result = (op === 'UNION') ? result.union(tool) : result.intersect(tool);
+      } catch (e1) {
+        // Fallback A: try on welded clones with tiny epsilon
+        try {
+          const a = typeof result.clone === 'function' ? result.clone() : result;
+          const b = typeof tool.clone === 'function' ? tool.clone() : tool;
+          preClean(a, eps);
+          preClean(b, eps);
+          result = (op === 'UNION') ? a.union(b) : a.intersect(b);
+        } catch (e2) {
+          // Fallback B: if tool is a FilletSolid on an open edge with projected strips,
+          // rebuild it without projection and retry.
+          let retried = false;
+          try {
+            const changed = maybeRegenerateFilletTool(tool, op, scale);
+            if (changed) {
+              const a2 = typeof result.clone === 'function' ? result.clone() : result;
+              preClean(a2, eps);
+              preClean(tool, eps);
+              result = (op === 'UNION') ? a2.union(tool) : a2.intersect(tool);
+              retried = true;
+            }
+          } catch (e3) {
+            // Will fall through to outer catch
+            throw e3;
+          }
+          if (!retried) throw e2;
+        }
       }
     }
     result.visualize();

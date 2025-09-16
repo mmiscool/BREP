@@ -76,6 +76,11 @@ export class FilletSolid extends Solid {
         const nBavg = averageFaceNormalObjectSpace(solid, faceB.name);
         if (!isFiniteVec3(nAavg) || !isFiniteVec3(nBavg)) throw new Error('FilletSolid: invalid face normals.');
 
+        // Fetch triangle lists for both faces once; used for both per‑section
+        // normal sampling and later for seam projection.
+        const trisA = solid.getFace(faceA.name);
+        const trisB = solid.getFace(faceB.name);
+
         // Build the section samples along the edge.
         // When snapSeamToEdge is true, use the original edge vertices so
         // the P‑rail used by side strips matches the input edge exactly.
@@ -126,8 +131,12 @@ export class FilletSolid extends Solid {
             if (this.reverseTangent) t.multiplyScalar(-1);
 
             // Per-sample local normals from each adjacent face (handles curved faces)
-            const nA = localFaceNormalAtPoint(solid, faceA.name, p) || nAavg;
-            const nB = localFaceNormalAtPoint(solid, faceB.name, p) || nBavg;
+            // Use per-face normals near the projected points on each face to
+            // better approximate analytic curvature (important for cones).
+            const qA = projectPointOntoFaceTriangles(trisA, p);
+            const qB = projectPointOntoFaceTriangles(trisB, p);
+            const nA = localFaceNormalAtPoint(solid, faceA.name, qA) || nAavg;
+            const nB = localFaceNormalAtPoint(solid, faceB.name, qB) || nBavg;
 
             // Section frame and face trace directions ensure exact tangency
             // Face traces in the section plane: vA3 = normalize(nA x t), vB3 = normalize(nB x t)
@@ -169,8 +178,9 @@ export class FilletSolid extends Solid {
             const outwardAvg = nA.clone().add(nB);
             if (outwardAvg.lengthSq() > 0) outwardAvg.normalize();
 
-            const C_in  = solveCenterFromOffsetPlanesSigned(p, t, nA, -1, nB, -1, rEff); // inside
-            const C_out = solveCenterFromOffsetPlanesSigned(p, t, nA, +1, nB, +1, rEff); // outside
+            // Solve with offset planes anchored to the face triangles (n·x = n·q ± r)
+            const C_in  = solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, -1, nB, qB, -1, rEff); // inside
+            const C_out = solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, +1, nB, qB, +1, rEff); // outside
 
             // Determine preferred side
             let pick = 'in'; // default to inset
@@ -186,6 +196,22 @@ export class FilletSolid extends Solid {
             const sB = sA; // same sign for both faces
             let tA = center.clone().addScaledVector(nA, -sA * rEff);
             let tB = center.clone().addScaledVector(nB, -sB * rEff);
+
+            // Refine center using normals at the actual tangency points on the
+            // faces (projected). This improves accuracy on curved meshes where
+            // normals vary across the face near the edge.
+            try {
+                const qA1 = projectPointOntoFaceTriangles(trisA, tA);
+                const qB1 = projectPointOntoFaceTriangles(trisB, tB);
+                const nA1 = localFaceNormalAtPoint(solid, faceA.name, qA1) || nAavg;
+                const nB1 = localFaceNormalAtPoint(solid, faceB.name, qB1) || nBavg;
+                const C_ref = solveCenterFromOffsetPlanesAnchored(p, t, nA1, qA1, sA, nB1, qB1, sB, rEff);
+                if (C_ref) {
+                    center = C_ref;
+                    tA = center.clone().addScaledVector(nA1, -sA * rEff);
+                    tB = center.clone().addScaledVector(nB1, -sB * rEff);
+                }
+            } catch (_) { /* ignore refine errors */ }
 
             // Closed-loop robustness: if p→center distance is unreasonably large,
             // use a 2D bisector construction in the section plane.
@@ -214,19 +240,25 @@ export class FilletSolid extends Solid {
             railB.push(tB.clone());
 
             // Store arc definition (3D) for later sector-solid build.
-            // IMPORTANT: The fillet arc lies in the cross-section plane
-            // perpendicular to `t`. Use the projections of the face normals
-            // into that plane (with signs sA/sB) as the radius directions.
-            const r0 = projectPerp(nA.clone(), t).multiplyScalar(-sA).normalize();
-            const r1 = projectPerp(nB.clone(), t).multiplyScalar(-sB).normalize();
-            // Signed angle from r0 to r1 around t
-            const cross = new THREE.Vector3().crossVectors(r0, r1);
-            const dot = clamp(r0.dot(r1), -1, 1);
-            let ang = Math.atan2(cross.dot(t), dot);
-            // Ensure smallest magnitude (keep within -pi..pi)
-            if (ang > Math.PI) ang -= 2 * Math.PI;
-            if (ang < -Math.PI) ang += 2 * Math.PI;
-            sectorDefs.push({ C: center.clone(), t: t.clone(), r0: r0.clone(), angle: ang });
+            // Build the arc directly in the plane that contains the exact
+            // tangency points (tA, tB) and the center. This guarantees the
+            // generated arc passes through the true tangency points, making
+            // the fillet surface tangent to both faces at the seams.
+            // Radius directions from center to tangency points:
+            const r0 = tA.clone().sub(center).normalize();
+            const r1 = tB.clone().sub(center).normalize();
+            // Rotation axis = r0 x r1 (normal of the arc plane)
+            let axis = new THREE.Vector3().crossVectors(r0, r1);
+            let axisLen = axis.length();
+            if (axisLen < 1e-12) {
+                // Nearly colinear (faces almost parallel in section) —
+                // fall back to using section axis `t` for rotation.
+                axis = t.clone();
+                axisLen = axis.length();
+            }
+            axis.normalize();
+            const ang = Math.acos(clamp(r0.dot(r1), -1, 1)); // [0, pi]
+            sectorDefs.push({ C: center.clone(), axis, r0: r0.clone(), angle: ang });
 
             // --- Debug helpers (draw section vectors) ---
             if (this.debug && (i % this.debugStride === 0)) {
@@ -266,8 +298,6 @@ export class FilletSolid extends Solid {
         this._vertKeyToIndex = new Map();
         // Snap arc seams to lie exactly on the original faces by projecting
         // the per-section tangency points onto the face triangle meshes.
-        const trisA = solid.getFace(faceA.name);
-        const trisB = solid.getFace(faceB.name);
         let seamA = railA.map(p => projectPointOntoFaceTriangles(trisA, p));
         let seamB = railB.map(p => projectPointOntoFaceTriangles(trisB, p));
 
@@ -311,20 +341,62 @@ export class FilletSolid extends Solid {
             // Ensure global outward orientation so positive inflation expands the tool
             ensureOutwardOrientationAuthoring(this);
             this.fixTriangleWindingsByAdjacency();
+            // Light weld to collapse near-coincident verts created by projections
+            // and snapping. This reduces the chance of 3+ faces sharing a nearly
+            // duplicated edge which Manifold treats as non-manifold.
+            this._weldVerticesByEpsilon(Math.max(1e-9, 5e-6 * rEff));
         } catch {}
 
-        // Inflate only the two side-strip faces to avoid CSG slivers.
-        // Curved fillet surface remains uninflated; seam vertices shift as needed.
+        // Inflate only the side-strip faces for all modes (OUTSET/INSET).
+        // The curved fillet face remains at the exact geometric radius.
         if (Math.abs(this.inflate) > 0) {
             inflateSideFacesInPlace(this, this.inflate);
             try { this.fixTriangleWindingsByAdjacency(); } catch {}
         }
 
+        // Final clean: weld and drop any tiny degenerates created during inflation
+        try {
+            this._weldVerticesByEpsilon(Math.max(1e-9, 5e-6 * rEff));
+            removeDegenerateTrianglesAuthoring(this, Math.max(1e-12, 1e-8 * rEff * rEff));
+            this.fixTriangleWindingsByAdjacency();
+        } catch {}
 
 
+
+
+        // Proactive manifold check for OUTSET on open edges with face‑projected strips
+        // (conical or highly slanted faces can occasionally produce foldovers
+        // during projection). If the authored mesh fails to manifoldize, rebuild
+        // once with a safer recipe: analytic side strips and a tiny seam inset.
+        try {
+            // Quick probe; throws on failure
+            this.getMesh();
+        } catch (e) {
+            const isClosed = !!(this.edgeToFillet?.closedLoop || this.edgeToFillet?.userData?.closedLoop);
+            const isOutset = this.sideMode === 'OUTSET';
+            const mayRetry = isOutset && !isClosed && !this.__retryOnce;
+            if (mayRetry) {
+                this.__retryOnce = true;
+                // Reset authoring buffers
+                this._vertProperties = [];
+                this._triVerts = [];
+                this._triIDs = [];
+                this._vertKeyToIndex = new Map();
+                this._idToFaceName = new Map();
+                this._faceNameToID = new Map();
+                this._dirty = true;
+                this._manifold = null;
+                this._faceIndex = null;
+                // Safer rebuild: toggle projection mode and add a tiny inset
+                this.projectStripsOpenEdges = !this.projectStripsOpenEdges;
+                this.forceSeamInset = true;          // bias seams slightly into faces
+                this.seamInsetScale = Math.min(this.seamInsetScale || 1e-3, 2e-4);
+                // Re-run
+                return this.generate();
+            }
+        }
 
         // No manual Three.js mesh here; rely on Solid.visualize() for inspection
-
         return this;
     }
 }
@@ -874,11 +946,16 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
     // We align parameterization across rings first, then snap endpoints.
     const arcRings = new Array(n);
     for (let i = 0; i < n; i++) {
-        const { C, t, r0, angle } = sectorDefs[i];
+        const def = sectorDefs[i];
+        // Back-compat: allow {t} older field as axis
+        const C = def.C;
+        const axis = (def.axis ? def.axis.clone() : (def.t ? def.t.clone() : new THREE.Vector3(0, 0, 1))).normalize();
+        const r0 = def.r0.clone();
+        const angle = def.angle;
         const ring = new Array(arcSegments + 1);
         for (let j = 0; j <= arcSegments; j++) {
             const a = (j / arcSegments) * angle;
-            const dir = r0.clone().applyAxisAngle(t, a).normalize();
+            const dir = r0.clone().applyAxisAngle(axis, a).normalize();
             ring[j] = C.clone().addScaledVector(dir, radius);
         }
         arcRings[i] = ring;
@@ -1113,6 +1190,29 @@ function solveCenterFromOffsetPlanesSigned(p, t, nA, sA, nB, sB, r) {
     return new THREE.Vector3(x[0], x[1], x[2]);
 }
 
+// Variant anchored to points on each face. Uses plane constants from the
+// nearest triangle points qA and qB so the offset planes are parallel to the
+// actual face triangles, not merely translated through `p`. This improves
+// tangency against curved meshes (e.g., cones) where triangle planes differ
+// slightly around the edge.
+//   nA·C = nA·qA + sA*r
+//   nB·C = nB·qB + sB*r
+//   t ·C = t ·p
+function solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, sA, nB, qB, sB, r) {
+    const dA = nA.dot(qA) + sA * r;
+    const dB = nB.dot(qB) + sB * r;
+    const dT = t.dot(p);
+    const A = [
+        [nA.x, nA.y, nA.z],
+        [nB.x, nB.y, nB.z],
+        [t.x,  t.y,  t.z ],
+    ];
+    const b = [dA, dB, dT];
+    const x = solve3(A, b);
+    if (!x) return null;
+    return new THREE.Vector3(x[0], x[1], x[2]);
+}
+
 // Solve 3x3 linear system A x = b using Cramer's rule
 function solve3(A, b) {
     const detA = det3(A);
@@ -1312,5 +1412,13 @@ function inflateSideFacesInPlace(solid, distance) {
     return inflateSolidFacesInPlace(solid, distance, (name) => {
         if (typeof name !== 'string') return false;
         return name.includes('_SIDE_A') || name.includes('_SIDE_B');
+    });
+}
+
+// Convenience: inflate just the curved fillet arc faces ("..._ARC")
+function inflateArcFacesInPlace(solid, distance) {
+    return inflateSolidFacesInPlace(solid, distance, (name) => {
+        if (typeof name !== 'string') return false;
+        return name.endsWith('_ARC') || name.includes('_ARC');
     });
 }
