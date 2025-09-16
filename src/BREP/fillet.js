@@ -301,19 +301,24 @@ export class FilletSolid extends Solid {
         // Heuristic: decide union vs subtract based on bisector direction vs outward normals
         this.filletType = classifyFilletBoolean(nAavg, nBavg, polyLocal);
 
+        // Before inflating, ensure triangles are coherently oriented and pre-clean
+        // in authoring space to avoid requiring a Manifold build too early.
+        try {
+            this.fixTriangleWindingsByAdjacency();
+            const q = Math.max(1e-9, 1e-5 * rEff);
+            quantizeVerticesAuthoring(this, q);
+            removeDegenerateTrianglesAuthoring(this, Math.max(1e-12, 1e-8 * rEff * rEff));
+            // Ensure global outward orientation so positive inflation expands the tool
+            ensureOutwardOrientationAuthoring(this);
+            this.fixTriangleWindingsByAdjacency();
+        } catch {}
+
         // Inflate only the two side-strip faces to avoid CSG slivers.
         // Curved fillet surface remains uninflated; seam vertices shift as needed.
         if (Math.abs(this.inflate) > 0) {
             inflateSideFacesInPlace(this, this.inflate);
+            try { this.fixTriangleWindingsByAdjacency(); } catch {}
         }
-
-        // Final tool cleanup: weld near-coincident vertices and remove slivers.
-        // This improves manifold robustness, especially on closed loops.
-        try {
-            const q = Math.max(1e-9, 1e-5 * rEff);
-            quantizeVerticesAuthoring(this, q);
-            removeDegenerateTrianglesAuthoring(this, Math.max(1e-12, 1e-8 * rEff * rEff));
-        } catch {}
 
 
 
@@ -370,6 +375,38 @@ function chooseInteriorDirections(nAraw, nBraw, t) {
         return { d0: projectPerp(nAraw.clone().negate(), t).normalize(), d1: projectPerp(nBraw.clone(), t).normalize(), sA: -1, sB: +1 };
     }
     return { d0: best.d0, d1: best.d1, sA: best.sA, sB: best.sB };
+}
+
+// Signed volume of the authoring triangle soup (expects coherent orientation).
+// Positive means outward-facing triangles; negative means inward.
+function signedVolumeAuthoring(solid) {
+    const vp = solid._vertProperties;
+    const tv = solid._triVerts;
+    let vol6 = 0;
+    for (let t = 0; t < tv.length; t += 3) {
+        const i0 = tv[t] * 3, i1 = tv[t + 1] * 3, i2 = tv[t + 2] * 3;
+        const x0 = vp[i0], y0 = vp[i0 + 1], z0 = vp[i0 + 2];
+        const x1 = vp[i1], y1 = vp[i1 + 1], z1 = vp[i1 + 2];
+        const x2 = vp[i2], y2 = vp[i2 + 1], z2 = vp[i2 + 2];
+        vol6 += x0 * (y1 * z2 - z1 * y2)
+              - y0 * (x1 * z2 - z1 * x2)
+              + z0 * (x1 * y2 - y1 * x2);
+    }
+    return vol6 / 6.0;
+}
+
+// Ensure triangles are oriented so signed volume is positive (outward normals).
+function ensureOutwardOrientationAuthoring(solid) {
+    const vol = signedVolumeAuthoring(solid);
+    if (!(Number.isFinite(vol) && vol < 0)) return;
+    const tv = solid._triVerts;
+    for (let t = 0; t < tv.length; t += 3) {
+        const tmp = tv[t + 1];
+        tv[t + 1] = tv[t + 2];
+        tv[t + 2] = tmp;
+    }
+    solid._dirty = true;
+    solid._faceIndex = null;
 }
 
 function resamplePolyline3(pts, count, closed) {
@@ -1198,10 +1235,14 @@ function inflateSolidInPlace(solid, distance) {
 // preserving watertightness while biasing only the intended faces.
 function inflateSolidFacesInPlace(solid, distance, namePredicate) {
     if (!Number.isFinite(distance) || distance === 0) return;
-    const mesh = solid.getMesh();
-    const vp = mesh.vertProperties;
-    const tv = mesh.triVerts;
-    const fid = mesh.faceID;
+    // Align sign with outward orientation so positive distance always expands the tool
+    const vol = signedVolumeAuthoring(solid);
+    const dirSign = (Number.isFinite(vol) && vol !== 0) ? (vol > 0 ? 1 : -1) : 1;
+    const dist = distance * dirSign;
+    // Operate on authoring arrays directly to avoid requiring a Manifold here.
+    const vp = solid._vertProperties;
+    const tv = solid._triVerts;
+    const fid = solid._triIDs;
 
     const triCount = (tv.length / 3) | 0;
     const nv = (vp.length / 3) | 0;
@@ -1244,9 +1285,9 @@ function inflateSolidFacesInPlace(solid, distance, namePredicate) {
         const len = Math.hypot(nx, ny, nz);
         if (len > 1e-20) {
             const sx = nx / len, sy = ny / len, sz = nz / len;
-            out[i * 3 + 0] = vp[i * 3 + 0] + sx * distance;
-            out[i * 3 + 1] = vp[i * 3 + 1] + sy * distance;
-            out[i * 3 + 2] = vp[i * 3 + 2] + sz * distance;
+            out[i * 3 + 0] = vp[i * 3 + 0] + sx * dist;
+            out[i * 3 + 1] = vp[i * 3 + 1] + sy * dist;
+            out[i * 3 + 2] = vp[i * 3 + 2] + sz * dist;
         } else {
             out[i * 3 + 0] = vp[i * 3 + 0];
             out[i * 3 + 1] = vp[i * 3 + 1];
@@ -1254,21 +1295,16 @@ function inflateSolidFacesInPlace(solid, distance, namePredicate) {
         }
     }
 
-    // Re-author a new solid from displaced vertices, preserving face names
-    const rebuilt = new Solid();
-    for (let t = 0; t < tv.length; t += 3) {
-        const i0 = tv[t + 0] >>> 0;
-        const i1 = tv[t + 1] >>> 0;
-        const i2 = tv[t + 2] >>> 0;
-        const faceName = solid._idToFaceName.get(fid[(t/3)|0]) || 'FILLET';
-        rebuilt.addTriangle(
-            faceName,
-            [out[i0 * 3 + 0], out[i0 * 3 + 1], out[i0 * 3 + 2]],
-            [out[i1 * 3 + 0], out[i1 * 3 + 1], out[i1 * 3 + 2]],
-            [out[i2 * 3 + 0], out[i2 * 3 + 1], out[i2 * 3 + 2]]
-        );
+    // Adopt displaced positions in-place; connectivity and face IDs remain unchanged
+    solid._vertProperties = Array.from(out);
+    // Rebuild exact-key map
+    solid._vertKeyToIndex = new Map();
+    for (let i = 0; i < solid._vertProperties.length; i += 3) {
+        const x = solid._vertProperties[i], y = solid._vertProperties[i + 1], z = solid._vertProperties[i + 2];
+        solid._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
     }
-    copyFromSolid(solid, rebuilt);
+    solid._dirty = true;
+    solid._faceIndex = null;
 }
 
 // Convenience: inflate just the fillet side-strip faces ("..._SIDE_A" / "..._SIDE_B")

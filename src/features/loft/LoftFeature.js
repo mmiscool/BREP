@@ -31,7 +31,7 @@ const inputParamsSchema = {
   },
   boolean: {
     type: "boolean_operation",
-    default_value: { targets: [], operation: 'NONE', opperation: 'NONE' },
+    default_value: { targets: [], operation: 'NONE' },
     hint: "Optional boolean operation with selected solids"
   }
 };
@@ -55,6 +55,7 @@ export class LoftFeature {
 
     // Resolve input names to FACE objects; allow SKETCH that contains a FACE
     const faces = [];
+    const removed = [];
     for (const obj of profiles) {
       if (!obj) continue;
       let faceObj = obj;
@@ -62,8 +63,8 @@ export class LoftFeature {
         faceObj = obj.children.find(ch => ch.type === 'FACE') || obj.children.find(ch => ch.userData?.faceName);
       }
       if (faceObj && faceObj.type === 'FACE') {
-        // If face came from a sketch, mark sketch for removal
-        if (faceObj.parent && faceObj.parent.type === 'SKETCH') faceObj.parent.remove = true;
+        // If face came from a sketch, mark sketch for removal (structured)
+        if (faceObj.parent && faceObj.parent.type === 'SKETCH') removed.push(faceObj.parent);
         faces.push(faceObj);
       }
     }
@@ -244,6 +245,10 @@ export class LoftFeature {
 
     try { solid.setEpsilon(1e-6); } catch {}
     solid.visualize();
-    return await applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
+    const effects = await applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
+    // Flag removals (sketch parents + boolean effects)
+    try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch {}
+    // Return only artifacts to add
+    return effects.added || [];
   }
 }

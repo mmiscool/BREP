@@ -673,3 +673,7 @@ export class Viewer {
         return (2 * Math.tan(fovRad / 2) * dist) / height;
     }
 }
+
+
+
+

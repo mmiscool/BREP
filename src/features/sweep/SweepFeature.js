@@ -35,7 +35,7 @@ const inputParamsSchema = {
   },
   boolean: {
     type: "boolean_operation",
-    default_value: { targets: [], operation: 'NONE', opperation: 'NONE' },
+    default_value: { targets: [], operation: 'NONE' },
     hint: "Optional boolean operation with selected solids"
   }
 };
@@ -68,8 +68,9 @@ export class SweepFeature {
       faceObj = obj.children.find(ch => ch.type === 'FACE') || obj.children.find(ch => ch.userData?.faceName);
     }
 
+    const removed = [];
     // if the face is a child of a sketch we need to remove the sketch from the scene
-    if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') faceObj.parent.remove = true;
+    if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') removed.push(faceObj.parent);
 
     // Create the sweep solid
     const sweep = new BREP.Sweep({
@@ -82,6 +83,8 @@ export class SweepFeature {
     sweep.visualize();
 
     // Apply optional boolean operation via shared helper
-    return await applyBooleanOperation(partHistory || {}, sweep, this.inputParams.boolean, this.inputParams.featureID);
+    const effects = await applyBooleanOperation(partHistory || {}, sweep, this.inputParams.boolean, this.inputParams.featureID);
+    effects.removed = [...removed, ...effects.removed];
+    return effects;
   }
 }

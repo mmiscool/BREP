@@ -5,6 +5,7 @@ import * as THREE from 'three';
 // Feature classes live in their own files; registry wires them up.
 import { FeatureRegistry } from './FeatureRegistry.js';
 import { SelectionFilter } from './UI/SelectionFilter.js';
+import Stats from 'stats.js';
 
 export class PartHistory {
   constructor() {
@@ -15,6 +16,7 @@ export class PartHistory {
     this.callbacks = {};
     this.currentHistoryStepId = null;
     this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
+    this._ambientLight = null;
   }
 
 
@@ -24,22 +26,15 @@ export class PartHistory {
     return this.scene.getObjectByName(name);
   }
 
-  getObjectsByName(references) {
-    const objects = [];
-    for (const ref of references) {
-      const obj = this.getObjectByName(ref);
-      if (obj) {
-        objects.push(obj);
-      }
-    }
-    return objects;
-  }
+  // Removed: getObjectsByName (unused)
 
   async reset() {
     this.features = [];
     this.idCounter = 0;
     // empty the scene without destroying it
     await this.scene.clear();
+    // Clear transient state
+    this._ambientLight = null;
     if (this.callbacks.reset) {
       await this.callbacks.reset();
     }
@@ -58,27 +53,20 @@ export class PartHistory {
     const ambientLight = new THREE.AmbientLight(0xffffff, 2);
     this.scene.add(ambientLight);
 
-    // This method would run the history of features, executing them in order
-    // and generating artifacts based on their output.
-
     let skipFeature = false;
     let skipAllFeatures = false;
+    const nowMs = () => (typeof performance !== 'undefined' && performance?.now ? performance.now() : Date.now());
     for (const feature of this.features) {
-
-
-
       if (skipFeature || skipAllFeatures) {
-        // console.log(`Skipping feature: ${feature.inputParams.featureID}`);
         continue;
       }
 
+      stats.begin();
+
 
       if (whatStepToStopAt && feature.inputParams.featureID === whatStepToStopAt) {
-        // console.log(`Stopping history at feature: ${whatStepToStopAt}`);
-        skipAllFeatures = true;
+        skipAllFeatures = true; // stop after this feature
       }
-
-
 
       this.currentHistoryStepId = feature.inputParams.featureID;
 
@@ -86,33 +74,53 @@ export class PartHistory {
         await this.callbacks.run(feature.inputParams.featureID);
       }
       const FeatureClass = await this.featureRegistry.get(feature.type);
-      const instance = new FeatureClass();
-
-
+      const instance = new FeatureClass(this);
 
       await Object.assign(instance.inputParams, feature.inputParams);
       await Object.assign(instance.persistentData, feature.persistentData);
-
-      //console.log(FeatureClass.inputParamsSchema);
-      //console.log(instance.inputParams);
 
       instance.inputParams = await this.sanitizeInputParams(FeatureClass.inputParamsSchema, feature.inputParams);
 
       const debugMode = false;
 
+      const t0 = nowMs();
       if (debugMode === true) {
         console.log("Debug mode is enabled");
         try {
           instance.resultArtifacts = await instance.run(this);
+          // Normalize compatibility with legacy returns { added, removed }
+          const effects = this._normalizeRunResult(instance.resultArtifacts, feature.inputParams.featureID);
+          try { for (const r of effects.removed) { if (r) r.remove = true; } } catch { }
+          instance.resultArtifacts = effects.added;
+          const t1 = nowMs();
+          const dur = Math.max(0, Math.round(t1 - t0));
+          try {
+            feature.lastRun = { ok: true, startedAt: t0, endedAt: t1, durationMs: dur, error: null };
+          } catch { }
+          try { console.log(`[PartHistory] ${feature.type} #${feature.inputParams.featureID} finished in ${dur} ms`); } catch { }
         } catch (e) {
+          const t1 = nowMs();
+          const dur = Math.max(0, Math.round(t1 - t0));
+          try {
+            feature.lastRun = { ok: false, startedAt: t0, endedAt: t1, durationMs: dur, error: { message: e?.message || String(e), name: e?.name || 'Error', stack: e?.stack || null } };
+          } catch { }
           instance.errorString = `Error occurred while running feature ${feature.inputParams.featureID}: ${e.message}`;
           console.error(e);
-          return
+          return;
         }
       } else {
         instance.resultArtifacts = await instance.run(this);
+        // Normalize compatibility with legacy returns { added, removed }
+        const effects = this._normalizeRunResult(instance.resultArtifacts, feature.inputParams.featureID);
+        try { for (const r of effects.removed) { if (r) r.remove = true; } } catch { }
+        instance.resultArtifacts = effects.added;
+        const t1 = nowMs();
+        const dur = Math.max(0, Math.round(t1 - t0));
+        try {
+          feature.lastRun = { ok: true, startedAt: t0, endedAt: t1, durationMs: dur, error: null };
+        } catch { }
+        try { console.log(`[PartHistory] ${feature.type} #${feature.inputParams.featureID} finished in ${dur} ms`); } catch { }
       }
-
 
       feature.persistentData = instance.persistentData;
 
@@ -122,17 +130,14 @@ export class PartHistory {
       }
 
       // Remove any existing scene children owned by this feature (rerun case)
-      // Iterate a copy because we'll mutate scene.children during removal
       const toRemoveOwned = this.scene.children.slice().filter(ch => ch?.owningFeatureID === feature.inputParams.featureID);
       if (toRemoveOwned.length) {
-        //console.log(`[PartHistory] Removing ${toRemoveOwned.length} prior artifact(s) owned by`, feature.inputParams.featureID);
         for (const ch of toRemoveOwned) this.scene.remove(ch);
       }
 
       // Also remove any scene children flagged for removal (e.g., boolean inputs)
       const flagged = this.scene.children.slice().filter(ch => ch?.remove === true);
       if (flagged.length) {
-        //console.log(`[PartHistory] Removing ${flagged.length} child(ren) flagged .remove=true`);
         for (const ch of flagged) this.scene.remove(ch);
       }
 
@@ -142,42 +147,82 @@ export class PartHistory {
 
         // MONKEY PATCH .onClick() event on to the artifact
         artifact.onClick = () => {
-          // console.debug("Artifact clicked:", artifact?.name || artifact);
           SelectionFilter.toggleSelection(artifact);
         };
 
         // MONKEY PATCH .onClick() to each child of the artifact
         for (const child of artifact.children) {
           child.onClick = () => {
-
-            console.debug("Child clicked:", child?.name, child);
-            console.log("these are the points", child.points());
-            // toggle selection of the parent artifact
-
             if (!SelectionFilter.toggleSelection(child.parent)) SelectionFilter.toggleSelection(child);
           };
         }
-
-        //console.log("Added artifact to scene:", artifact);
       }
 
       // Final sweep: remove any newly-flagged .remove items after adding artifacts
-      // (some features may flag preexisting items during run)
       const flaggedAfter = this.scene.children.slice().filter(ch => ch?.remove === true);
       if (flaggedAfter.length) {
-        // console.debug(`[PartHistory] Post-add removal of ${flaggedAfter.length} flagged child(ren)`);
         for (const ch of flaggedAfter) {
-          try {
-            this.scene.remove(ch);
-          }
-          catch (error) {
-            console.warn(`[PartHistory] Failed to remove flagged child: ${error.message}`);
-          }
+          try { this.scene.remove(ch); }
+          catch (error) { console.warn(`[PartHistory] Failed to remove flagged child: ${error.message}`); }
         }
       }
+      // monitored code goes here
+      stats.end();
     }
+
     return this;
   }
+
+  _ensureAmbientLight() {
+    if (this._ambientLight && this.scene.children.includes(this._ambientLight)) return;
+    // Remove any stray ambient lights if present
+    const strays = this.scene.children.filter(o => o?.isLight && o?.type === 'AmbientLight');
+    for (const s of strays) { try { this.scene.remove(s); } catch { } }
+    this._ambientLight = new THREE.AmbientLight(0xffffff, 2);
+    this.scene.add(this._ambientLight);
+  }
+
+  // Removed unused signature/canonicalization helpers
+
+  _normalizeRunResult(result, featureID) {
+    const out = { added: [], removed: [] };
+    if (!result) return out;
+    // New unified shape
+    if (typeof result === 'object' && !Array.isArray(result) && (result.added || result.removed)) {
+      out.added = Array.isArray(result.added) ? result.added.filter(Boolean) : [];
+      out.removed = Array.isArray(result.removed) ? result.removed.filter(Boolean) : [];
+      return out;
+    }
+    // Back-compat: plain array → all are additions
+    if (Array.isArray(result)) {
+      out.added = result.filter(Boolean);
+      return out;
+    }
+    return out;
+  }
+
+  _safeRemove(obj) {
+    if (!obj) return;
+    try {
+      if (obj.parent) {
+        const rm = obj.parent.remove;
+        if (typeof rm === 'function') obj.parent.remove(obj);
+        else if (rm !== undefined && THREE?.Object3D?.prototype?.remove) THREE.Object3D.prototype.remove.call(obj.parent, obj);
+        else this.scene.remove(obj);
+      } else {
+        const rm = this.scene.remove;
+        if (typeof rm === 'function') this.scene.remove(obj);
+        else if (rm !== undefined && THREE?.Object3D?.prototype?.remove) THREE.Object3D.prototype.remove.call(this.scene, obj);
+      }
+    } catch { }
+  }
+
+  // Removed unused _safeAdd and _effectsAppearApplied
+
+
+
+
+
 
 
   // methods to store and retrieve feature history to JSON strings
@@ -215,19 +260,7 @@ export class PartHistory {
     return feature;
   }
 
-  async reorderFeature(idOfFeatureToMove, idOfFeatureToMoveAfter) {
-    const featureToMove = this.features.find(f => f.inputParams.featureID === idOfFeatureToMove);
-    if (!featureToMove) {
-      throw new Error(`Feature with ID "${idOfFeatureToMove}" not found.`);
-    }
-    this.features = this.features.filter(f => f.inputParams.featureID !== idOfFeatureToMove);
-    const index = this.features.findIndex(f => f.inputParams.featureID === idOfFeatureToMoveAfter);
-    if (index === -1) {
-      this.features.push(featureToMove);
-    } else {
-      this.features.splice(index + 1, 0, featureToMove);
-    }
-  }
+  // Removed unused reorderFeature
 
   async removeFeature(featureID) {
     this.features = this.features.filter(f => f.inputParams.featureID !== featureID);
@@ -298,9 +331,9 @@ export class PartHistory {
 
         } else if (schema[key].type === "boolean_operation") {
           // If it's a boolean operation, normalize op key and resolve targets to objects.
-          // Also pass through optional biasDistance (numeric) for pre-CSG nudging.
+          // Also pass through optional biasDistance (numeric) and new sweep cap offset controls.
           const raw = inputParams[key] || {};
-          const op = (raw.operation != null) ? raw.operation : raw.opperation;
+          const op = raw.operation;
           const items = Array.isArray(raw.targets) ? raw.targets : [];
           const targets = [];
           for (const it of items) {
@@ -310,7 +343,16 @@ export class PartHistory {
             if (obj) targets.push(obj);
           }
           const bias = Number(raw.biasDistance);
-          sanitized[key] = { operation: op ?? 'NONE', targets, biasDistance: Number.isFinite(bias) ? bias : 0.1 };
+          const offsetCapFlag = (raw.offsetCoplanarCap != null) ? String(raw.offsetCoplanarCap) : undefined;
+          const offsetDistance = Number(raw.offsetDistance);
+          const out = {
+            operation: op ?? 'NONE',
+            targets,
+            biasDistance: Number.isFinite(bias) ? bias : 0.1,
+          };
+          if (offsetCapFlag !== undefined) out.offsetCoplanarCap = offsetCapFlag;
+          if (Number.isFinite(offsetDistance)) out.offsetDistance = offsetDistance;
+          sanitized[key] = out;
         } else {
           sanitized[key] = inputParams[key];
         }
@@ -352,6 +394,13 @@ export function extractDefaultValues(schema) {
   }
   return result;
 }
+var stats = new Stats();
+stats.showPanel(0);
+stats.showPanel(1); // 0: fps, 1: ms, 2: mb, 3+: custom
+stats.showPanel(2);
+stats.showPanel(3);
+
+document.body.appendChild(stats.dom);
 
 
 
@@ -361,71 +410,5 @@ export function extractDefaultValues(schema) {
 
 
 
-function logGeometryPoints(input, { deindex = true, applyWorld = true, unique = false, epsilon = 1e-8 } = {}) {
-  const isMesh = !!(input && input.isMesh);
-  const geometry = isMesh ? input.geometry : input;
 
-  if (!geometry || !(geometry.isBufferGeometry || geometry.isGeometry)) {
-    console.error("Input must be a THREE.Mesh or THREE.(Buffer)Geometry");
-    return [];
-  }
-
-  // Normalize to BufferGeometry. NOTE: old THREE.Geometry only has its unique vertex list (e.g., 8 for a box).
-  let geom;
-  if (geometry.isBufferGeometry) {
-    geom = geometry;
-  } else {
-    // Fallback: minimal conversion for legacy THREE.Geometry (positions only).
-    // This preserves only the vertex list (no face splitting), so consider upgrading to BufferGeometry.
-    const pos = new Float32Array(geometry.vertices.length * 3);
-    for (let i = 0; i < geometry.vertices.length; i++) {
-      const v = geometry.vertices[i];
-      pos[i * 3 + 0] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
-    }
-    geom = new THREE.BufferGeometry();
-    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  }
-
-  // Optionally expand indexed geometry so each triangle corner is a separate point (e.g., box => 24)
-  let workGeom = geom;
-  if (deindex && workGeom.index) {
-    workGeom = workGeom.toNonIndexed(); // creates a clone
-  }
-
-  const position = workGeom.attributes.position;
-  if (!position) {
-    console.warn("Geometry has no position attribute.");
-    return [];
-  }
-
-  const out = [];
-  const seen = unique ? new Set() : null;
-  const v = new THREE.Vector3();
-
-  for (let i = 0; i < position.count; i++) {
-    v.set(position.getX(i), position.getY(i), position.getZ(i));
-
-    if (applyWorld && isMesh) {
-      v.applyMatrix4(input.matrixWorld);
-    }
-
-    if (unique) {
-      const kx = Math.round(v.x / epsilon) * epsilon;
-      const ky = Math.round(v.y / epsilon) * epsilon;
-      const kz = Math.round(v.z / epsilon) * epsilon;
-      const key = `${kx}|${ky}|${kz}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ x: kx, y: ky, z: kz });
-    } else {
-      out.push({ x: v.x, y: v.y, z: v.z });
-    }
-  }
-
-  console.log(out);
-  return out;
-}
-
-// Example usage:
-// logAllPoints(mesh); // Mesh -> world-space, deindexed (more than 8 for a box)
-// logAllPoints(mesh.geometry, { deindex: true, applyWorld: false }); // geometry only, local space
+// Removed unused debug helper logGeometryPoints

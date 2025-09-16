@@ -50,8 +50,9 @@ export class ExtrudeFeature {
       faceObj = obj.children.find(ch => ch.type === 'FACE') || obj.children.find(ch => ch.userData?.faceName);
     }
 
+    const removed = [];
     // if the face is a child of a sketch we need to remove the sketch from the scene
-    if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') faceObj.parent.remove = true;
+    if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') removed.push(faceObj.parent);
 
 
 
@@ -65,6 +66,10 @@ export class ExtrudeFeature {
     extrude.visualize();
 
     // Apply optional boolean operation via shared helper
-    return await applyBooleanOperation(partHistory || {}, extrude, this.inputParams.boolean, this.inputParams.featureID);
+    const effects = await applyBooleanOperation(partHistory || {}, extrude, this.inputParams.boolean, this.inputParams.featureID);
+    // Flag removals (sketch parent + boolean effects) for PartHistory to collect
+    try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch {}
+    // Return only artifacts to add
+    return effects.added || [];
   }
 }

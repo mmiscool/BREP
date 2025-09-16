@@ -30,7 +30,7 @@ const inputParamsSchema = {
     },
     boolean: {
         type: "boolean_operation",
-        default_value: { targets: [], operation: 'NONE', opperation: 'NONE' },
+        default_value: { targets: [], operation: 'NONE' },
         hint: "Optional boolean operation with selected solids"
     }
 };
@@ -66,7 +66,8 @@ export class RevolveFeature {
             return [];
         }
         
-        if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') faceObj.parent.remove = true;
+        const removed = [];
+        if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') removed.push(faceObj.parent);
 
         // Resolve axis edge → world-space origin+direction
         const axisObj = Array.isArray(axis) ? (axis[0] || null) : (axis || null);
@@ -328,6 +329,9 @@ export class RevolveFeature {
         // Weld slight numerical seams and build mesh
         try { solid.setEpsilon(1e-6); } catch {}
         solid.visualize();
-        return await applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
+        const effects = await applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
+        // Flag removals (sketch parent + boolean effects)
+        try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch {}
+        return effects.added || [];
     }
 }

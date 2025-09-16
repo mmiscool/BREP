@@ -10,7 +10,7 @@ export async function test_ExtrudeFace(partHistory) {
     extrude.inputParams.profile = `${cone.inputParams.featureID}_T`;
     extrude.inputParams.distance = 5;
 
-    // perform a boolean opperation between the 2 solids.
+    // perform a boolean operation between the 2 solids.
     const boolean = await partHistory.newFeature("B");
     boolean.inputParams.targetSolid = cone.inputParams.featureID;
     boolean.inputParams.toolSolid = extrude.inputParams.featureID;

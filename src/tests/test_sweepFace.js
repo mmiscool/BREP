@@ -10,7 +10,7 @@ export async function test_SweepFace(partHistory) {
     sweep.inputParams.profile = `${cone.inputParams.featureID}_T`;
     sweep.inputParams.distance = 5;
 
-    // perform a boolean opperation between the 2 solids.
+    // perform a boolean operation between the 2 solids.
     const boolean = await partHistory.newFeature("B");
     boolean.inputParams.targetSolid = cone.inputParams.featureID;
     boolean.inputParams.toolSolid = sweep.inputParams.featureID;

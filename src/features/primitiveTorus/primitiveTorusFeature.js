@@ -36,7 +36,7 @@ const inputParamsSchema = {
     },
     boolean: {
         type: 'boolean_operation',
-        default_value: { targets: [], operation: 'NONE', opperation: 'NONE' },
+        default_value: { targets: [], operation: 'NONE' },
         hint: 'Optional boolean operation with selected solids'
     }
 };

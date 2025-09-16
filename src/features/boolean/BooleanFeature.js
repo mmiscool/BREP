@@ -17,7 +17,7 @@ const inputParamsSchema = {
     boolean: {
         type: "boolean_operation",
         // For the Boolean feature, the widget's targets represent the OTHER solids to combine with the targetSolid
-        default_value: { targets: [], operation: 'UNION', opperation: 'UNION' },
+        default_value: { targets: [], operation: 'UNION' },
         hint: "Operation + other solids (as tools)",
     }
 };
@@ -30,7 +30,7 @@ export class BooleanFeature {
     constructor() {
         this.inputParams = extractDefaultValues(inputParamsSchema);
         this.persistentData = {};
-      
+
     }
 
     async run(partHistory) {
@@ -39,8 +39,8 @@ export class BooleanFeature {
         const target = (targetObj && typeof targetObj === 'object') ? targetObj : (targetObj ? await scene.getObjectByName(String(targetObj)) : null);
         if (!target) throw new Error(`Target solid not found`);
 
-        const bool = this.inputParams.boolean || { targets: [], operation: 'NONE', opperation: 'NONE' };
-        const op = String((bool.operation ?? bool.opperation ?? 'NONE')).toUpperCase();
+        const bool = this.inputParams.boolean || { targets: [], operation: 'NONE' };
+        const op = String((bool.operation ?? 'NONE')).toUpperCase();
         const toolEntries = Array.isArray(bool.targets) ? bool.targets.filter(Boolean) : [];
         if (op === 'NONE' || toolEntries.length === 0) {
             // No-op: leave scene unchanged
@@ -71,21 +71,23 @@ export class BooleanFeature {
         // - For UNION/INTERSECT: base = target, targets = tools → returns [result]; tools removed; we remove target.
         // - For SUBTRACT: invert per helper by passing base = union(tools), targets = [target] → returns [result];
         //   helper will remove target and the base union; also mark the original tool solids as removed here.
-        let outputs = [];
+        let effects = { added: [], removed: [] };
         if (op === 'SUBTRACT') {
             let toolUnion = tools[0];
             for (let i = 1; i < tools.length; i++) toolUnion = toolUnion.union(tools[i]);
-            // Remove the original tools (the helper removes only the baseUnion and target)
-            for (const t of tools) t.remove = true;
-            const param = { operation: 'SUBTRACT', opperation: 'SUBTRACT', targets: [target] };
-            outputs = await applyBooleanOperation(partHistory, toolUnion, param, this.inputParams.featureID);
+            const param = { operation: 'SUBTRACT', targets: [target] };
+            effects = await applyBooleanOperation(partHistory, toolUnion, param, this.inputParams.featureID);
+            // Also consider original tools as removed
+            effects.removed = [...tools, ...effects.removed];
         } else {
-            const param = { operation: op, opperation: op, targets: tools };
-            outputs = await applyBooleanOperation(partHistory, target, param, this.inputParams.featureID);
+            const param = { operation: op, targets: tools };
+            effects = await applyBooleanOperation(partHistory, target, param, this.inputParams.featureID);
             // Ensure original target is removed to avoid duplication
-            try { target.remove = true; } catch (_) { }
+            effects.removed = [target, ...effects.removed];
         }
 
-        return outputs;
+        // Mark removals and return only additions
+        try { for (const obj of effects.removed || []) { if (obj) obj.remove = true; } } catch { }
+        return effects.added || [];
     }
 }

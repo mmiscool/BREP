@@ -262,6 +262,15 @@ export class HistoryWidget {
         titleText.textContent = this._composeTitle(feature, id);
         headerBtn.appendChild(titleText);
 
+        // status (runtime + error indicator)
+        const statusText = document.createElement("span");
+        statusText.className = "acc-status";
+        statusText.textContent = this._composeStatus(feature);
+        if (feature && feature.lastRun && feature.lastRun.ok === false && feature.lastRun.error && feature.lastRun.error.message) {
+            statusText.title = String(feature.lastRun.error.message);
+        }
+        headerBtn.appendChild(statusText);
+
         // Actions (reorder, delete)
         const actions = document.createElement("div");
         actions.className = "acc-actions";
@@ -302,6 +311,7 @@ export class HistoryWidget {
         actions.appendChild(upBtn);
         actions.appendChild(downBtn);
         actions.appendChild(delBtn);
+        // No "run to end" play button in legacy UI
 
         headerRow.appendChild(headerBtn);
         headerRow.appendChild(actions);
@@ -336,8 +346,13 @@ export class HistoryWidget {
             schema,
             isOpen: false,
             paramsSig: this._computeParamsSig(feature.inputParams),
-            type: feature.type
+            type: feature.type,
+            statusText
         };
+        // Mark error state if present
+        if (feature && feature.lastRun && feature.lastRun.ok === false) {
+            item.classList.add('has-error');
+        }
         this._sections.set(String(id), entry);
     }
 
@@ -383,6 +398,20 @@ export class HistoryWidget {
                 entry.titleText.textContent = this._composeTitle(f, id);
             }
 
+            // Update status (runtime + errors)
+            if (entry.statusText) {
+                entry.statusText.textContent = this._composeStatus(f);
+                if (f && f.lastRun && f.lastRun.ok === false && f.lastRun.error && f.lastRun.error.message) {
+                    entry.statusText.title = String(f.lastRun.error.message);
+                } else {
+                    entry.statusText.removeAttribute('title');
+                }
+            }
+            // Toggle error state class
+            try {
+                entry.root.classList.toggle('has-error', !!(f && f.lastRun && f.lastRun.ok === false));
+            } catch (_) {}
+
             // Params changed?
             const newSig = this._computeParamsSig(f.inputParams);
             if (newSig !== entry.paramsSig) {
@@ -399,6 +428,21 @@ export class HistoryWidget {
     _composeTitle(feature, id) {
         const kind = feature && feature.type ? String(feature.type) : "Feature";
         return `${kind}  —  #${id}`;
+    }
+
+    _composeStatus(feature) {
+        if (!feature) return '';
+        const lr = feature.lastRun || null;
+        const pieces = [];
+        if (lr && Number.isFinite(lr.durationMs)) pieces.push(this._formatDuration(lr.durationMs));
+        if (lr && lr.ok === false) pieces.push('✖');
+        return pieces.length ? pieces.join(' ') : '';
+    }
+
+    _formatDuration(ms) {
+        if (!Number.isFinite(ms)) return '';
+        if (ms >= 1000) return `${(ms / 1000).toFixed(2)} s`;
+        return `${Math.round(ms)} ms`;
     }
 
     async _ensureCurrentExpanded(ph) {
@@ -832,6 +876,18 @@ export class HistoryWidget {
       .acc-title {
         flex: 1;
         color: var(--text);
+      }
+
+      .acc-status {
+        margin-left: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1;
+      }
+
+      .acc-item.has-error .acc-status {
+        color: var(--danger);
+        font-weight: 600;
       }
 
       .acc-actions {

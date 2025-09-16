@@ -106,13 +106,12 @@ export class ChamferFeature {
 
         finalSolid.name = `${targetSolid.name}`;
         finalSolid.visualize();
-
-        if (this.inputParams.debug) {
-            return [finalSolid, ...objectsForBoolean];
-        } else {
-            targetSolid.remove = true;
-            return [finalSolid];
-        }
+        // Flag the original solid for removal; PartHistory will handle it
+        try { targetSolid.remove = true; } catch {}
+        const out = [];
+        if (this.inputParams.debug) out.push(...objectsForBoolean);
+        out.push(finalSolid);
+        return out;
     }
 }
 

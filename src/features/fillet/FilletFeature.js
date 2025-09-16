@@ -162,7 +162,7 @@ export class FilletFeature {
                 const maxEdge = Math.max(1e-6, r / 2);
                 targetSolid.remesh({ maxEdgeLength: maxEdge });
                 // Refresh edge polylines for visualization
-                try { targetSolid.visualize(); } catch (_) {}
+                try { targetSolid.visualize(); } catch (_) { }
 
                 // Remap to new Edge objects by matching face-pair and closest center
                 const allEdges = targetSolid.children.filter(o => o && o.type === 'EDGE');
@@ -180,7 +180,7 @@ export class FilletFeature {
                 const lengthOf = (edge) => {
                     const pts = edge?.userData?.polylineLocal;
                     if (!Array.isArray(pts) || pts.length < 2) return 0;
-                    let L = 0; for (let i = 0; i < pts.length - 1; i++) { const a = pts[i], b = pts[i + 1]; L += Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]); }
+                    let L = 0; for (let i = 0; i < pts.length - 1; i++) { const a = pts[i], b = pts[i + 1]; L += Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); }
                     return L;
                 };
                 const pairOf = (edge) => {
@@ -262,41 +262,52 @@ export class FilletFeature {
 
         // Apply booleans sequentially using shared helper; supports robust nudge behavior
         let finalSolid = targetSolid;
+        const toRemove = new Set();
         for (let idx = 0; idx < objectsForBoolean.length; idx++) {
             const tool = objectsForBoolean[idx];
             const dir = String(this.inputParams.direction || 'INSET').toUpperCase();
             const op = (dir === 'AUTO') ? ((tool && tool.filletType) || 'SUBTRACT') : (dir === 'OUTSET' ? 'UNION' : 'SUBTRACT');
             const beforeVol = safeVolume(finalSolid);
-            const params = { operation: op, opperation: op, targets: [] };
-            let outputs = [];
+            const params = { operation: op, targets: [] };
+            let effects = { added: [], removed: [] };
 
             if (op === 'SUBTRACT') {
                 // base = tool, targets = [finalSolid]
                 params.targets = [finalSolid];
                 fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
-                outputs = await applyBooleanOperation(partHistory, tool, params, this.inputParams.featureID);
-                finalSolid = outputs[0] || finalSolid;
+                effects = await applyBooleanOperation(partHistory, tool, params, this.inputParams.featureID);
+                finalSolid = effects.added[0] || finalSolid;
             } else {
                 // UNION/INTERSECT: base = finalSolid, targets = [tool]
                 params.targets = [tool];
                 fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
-                outputs = await applyBooleanOperation(partHistory, finalSolid, params, this.inputParams.featureID);
-                finalSolid = outputs[0] || finalSolid;
+                effects = await applyBooleanOperation(partHistory, finalSolid, params, this.inputParams.featureID);
+                finalSolid = effects.added[0] || finalSolid;
             }
 
             fjson('BooleanDone', { idx, op, after: safeVolume(finalSolid) });
+            // Flag removed artifacts for scene cleanup
+            for (const r of effects.removed) { if (r) toRemove.add(r); }
         }
 
         finalSolid.name = `${targetSolid.name}`;
-        finalSolid.removeSmallInternalIslands(100);
-        finalSolid.simplify(.01);
-        finalSolid.visualize();
+        //finalSolid.removeSmallInternalIslands(100);
 
+        //const actualFinalSolid = await finalSolid.simplify(0.00001);
+        const actualFinalSolid = await finalSolid.simplify(0.0001);
+        actualFinalSolid.name = `${targetSolid.name}`;
+        actualFinalSolid.visualize();
+        // Replace original target solid
+        toRemove.add(targetSolid);
 
-        targetSolid.remove = true;
+        // Mark removals via flag for PartHistory to collect
+        try { for (const r of toRemove) { if (r) r.remove = true; } } catch { }
 
-        if (this.inputParams.debug) return [finalSolid, ...objectsForBoolean];
-        return [finalSolid];
+        // Return only the resulting artifacts to add
+        const out = [];
+        if (this.inputParams.debug) out.push(...objectsForBoolean);
+        out.push(actualFinalSolid);
+        return out;
     }
 }
 

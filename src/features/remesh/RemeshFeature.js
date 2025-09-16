@@ -55,7 +55,6 @@ export class RemeshFeature {
     const maxEdgeLength = (Number.isFinite(L) && L > 0) ? L : 1;
     const maxIterations = (Number.isFinite(I) && I > 0) ? I : 10;
 
-    target.remove = true;
     // Clone, remesh clone, keep original intact
     const remeshed = target.clone();
     remeshed.remesh({ maxEdgeLength, maxIterations });
@@ -64,7 +63,7 @@ export class RemeshFeature {
     try { remeshed.name = `(${target.name || 'Solid'})`; } catch (_) {}
     try { remeshed.visualize(); } catch (_) {}
 
+    try { target.remove = true; } catch {}
     return [remeshed];
   }
 }
-

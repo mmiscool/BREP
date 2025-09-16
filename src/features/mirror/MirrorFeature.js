@@ -58,7 +58,7 @@ export class MirrorFeature {
         const plane = this.#computeMirrorPlane(refObj, Number(this.inputParams.offsetDistance) || 0);
         if (!plane) return [];
 
-        const outputs = [];
+        const added = [];
         for (const src of solidObjs) {
             if (!src || src.type !== 'SOLID') continue;
             const mirrored = src.mirrorAcrossPlane(plane.point, plane.normal);
@@ -80,10 +80,9 @@ export class MirrorFeature {
             mirrored.name = `${featureID}:${src.name}:M`;
             // Build face/edge meshes for interaction/visibility
             mirrored.visualize();
-            outputs.push(mirrored);
+            added.push(mirrored);
         }
-
-        return outputs;
+        return added;
     }
 
     /**

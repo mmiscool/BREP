@@ -11,6 +11,9 @@ importers:
       manifold-3d:
         specifier: ^3.2.1
         version: 3.2.1
+      stats.js:
+        specifier: ^0.17.0
+        version: 0.17.0
       three:
         specifier: ^0.180.0
         version: 0.180.0
@@ -464,6 +467,9 @@ packages:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
 
+  stats.js@0.17.0:
+    resolution: {integrity: sha512-hNKz8phvYLPEcRkeG1rsGmV5ChMjKDAWU7/OJJdDErPBNChQXxCo3WZurGpnWc6gZhAzEPFad1aVgyOANH1sMw==}
+
   supports-color@5.5.0:
     resolution: {integrity: sha512-QjVjwdXIt408MIiAqCX4oUKsgU2EqAGzs2Ppkm4aQYbjm+ZEWEcW4SfFNTr4uMNZma0ey4f5lgLrkB0aX0QMow==}
     engines: {node: '>=4'}
@@ -867,6 +873,8 @@ snapshots:
       semver: 7.7.2
 
   source-map-js@1.2.1: {}
+
+  stats.js@0.17.0: {}
 
   supports-color@5.5.0:
     dependencies:

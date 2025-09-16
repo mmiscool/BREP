@@ -37,6 +37,6 @@ export class DatiumFeature {
     }
     async run() {
         // actual code to create the datium feature.
-        return []
+        return [];
     }
 }
