@@ -62,7 +62,7 @@ import { CADmaterials } from '../UI/CADmaterials.js';
 import { Line2, LineGeometry } from "three/examples/jsm/Addons.js";
 const { Manifold, Mesh: ManifoldMesh } = manifold;
 
-
+const debugMode = false;
 
 export class Edge extends Line2 {
     constructor(geometry) {
@@ -1315,7 +1315,25 @@ export class Solid extends THREE.Group {
      * Uses faceID per triangle so face names survive CSG operations.
      */
     _manifoldize() {
-        if (!this._dirty && this._manifold) return this._manifold;
+        // Measure timing for manifoldization (cache hits vs rebuilds)
+        const nowMs = () => (typeof performance !== 'undefined' && performance?.now ? performance.now() : Date.now());
+        const __t0 = nowMs();
+        if (!this._dirty && this._manifold) {
+            const __t1 = nowMs();
+            try { if (debugMode) console.log(`[Solid] _manifoldize cache-hit in ${Math.round(__t1 - __t0)} ms`); } catch { }
+            return this._manifold;
+        }
+        let __logged = false;
+        const __logDone = (ok = true) => {
+            if (__logged) return; __logged = true;
+            const __t1 = nowMs();
+            const triCountDbg = (this?._triVerts?.length || 0) / 3 | 0;
+            const vertCountDbg = (this?._vertProperties?.length || 0) / 3 | 0;
+            try {
+                if (debugMode) console.log(`[Solid] _manifoldize ${ok ? 'built' : 'failed'} in ${Math.round(__t1 - __t0)} ms (tris=${triCountDbg}, verts=${vertCountDbg})`);
+            } catch { }
+        };
+        try {
         // Ensure consistent orientation before building a Manifold
         this.fixTriangleWindingsByAdjacency();
         // Ensure outward orientation (positive signed volume). If negative, flip all tris.
@@ -1378,12 +1396,8 @@ export class Solid extends THREE.Group {
                             radius: this.radius,
                             arcSegments: this.arcSegments,
                             sampleCount: this.sampleCount,
-                            invert2D: this.invert2D,
-                            reverseTangent: this.reverseTangent,
-                            swapFaces: this.swapFaces,
                             sideMode: this.sideMode,
                             inflate: this.inflate,
-                            snapSeamToEdge: this.snapSeamToEdge,
                             sideStripSubdiv: this.sideStripSubdiv,
                             seamInsetScale: this.seamInsetScale,
                             projectStripsOpenEdges: this.projectStripsOpenEdges,
@@ -1404,11 +1418,18 @@ export class Solid extends THREE.Group {
                     try { console.error(JSON.stringify(failure)); } catch { console.error('[FilletSolidManifoldFailure]', failure.message); }
                 }
             } catch {}
+            __logDone(false);
             throw err;
         }
         this._dirty = false;
         this._faceIndex = null; // will rebuild on demand
+        __logDone(true);
         return this._manifold;
+        } finally {
+            // In case of unexpected control flow, ensure we log once with best-effort status.
+            const ok = !!(this && this._manifold) && this._dirty === false;
+            __logDone(ok);
+        }
     }
 
     /**
@@ -1656,8 +1677,8 @@ export class Solid extends THREE.Group {
         }
 
         for (const [id, triList] of this._faceIndex.entries()) {
-            const name = this._idToFaceName.get(id);
-            if (!name) continue;
+            // Fallback name for IDs Manifold produced that our map doesn't know yet
+            const name = this._idToFaceName.get(id) || `FACE_${id}`;
             let arr = nameToTris.get(name);
             if (!arr) { arr = []; nameToTris.set(name, arr); }
             for (let idx = 0; idx < triList.length; idx++) {
@@ -1775,32 +1796,123 @@ export class Solid extends THREE.Group {
             this.add(faceObj);
         }
 
-        if (showEdges && !usedFallback) {
-            const polylines = this.getBoundaryEdgePolylines();
-            for (const e of polylines) {
-                const positions = new Float32Array(e.positions.length * 3);
-                let w = 0;
-                for (let i = 0; i < e.positions.length; i++) {
-                    const p = e.positions[i];
-                    positions[w++] = p[0]; positions[w++] = p[1]; positions[w++] = p[2];
-                }
-                const g = new LineGeometry();
-                g.setPositions(Array.from(positions));
-                try { g.computeBoundingSphere(); } catch {}
+        if (showEdges) {
+            if (!usedFallback) {
+                const polylines = this.getBoundaryEdgePolylines();
+                for (const e of polylines) {
+                    const positions = new Float32Array(e.positions.length * 3);
+                    let w = 0;
+                    for (let i = 0; i < e.positions.length; i++) {
+                        const p = e.positions[i];
+                        positions[w++] = p[0]; positions[w++] = p[1]; positions[w++] = p[2];
+                    }
+                    const g = new LineGeometry();
+                    g.setPositions(Array.from(positions));
+                    try { g.computeBoundingSphere(); } catch {}
 
-                const edgeObj = new Edge(g);
-                edgeObj.name = e.name;
-                edgeObj.closedLoop = !!e.closedLoop;
-                edgeObj.userData = { faceA: e.faceA, faceB: e.faceB, polylineLocal: e.positions, closedLoop: !!e.closedLoop };
-                // For convenience in feature code, mirror THREE's parent with an explicit handle
-                edgeObj.parentSolid = this;
-                const fa = faceMap.get(e.faceA);
-                const fb = faceMap.get(e.faceB);
-                if (fa) fa.edges.push(edgeObj);
-                if (fb) fb.edges.push(edgeObj);
-                if (fa) edgeObj.faces.push(fa);
-                if (fb) edgeObj.faces.push(fb);
-                this.add(edgeObj);
+                    const edgeObj = new Edge(g);
+                    edgeObj.name = e.name;
+                    edgeObj.closedLoop = !!e.closedLoop;
+                    edgeObj.userData = { faceA: e.faceA, faceB: e.faceB, polylineLocal: e.positions, closedLoop: !!e.closedLoop };
+                    // For convenience in feature code, mirror THREE's parent with an explicit handle
+                    edgeObj.parentSolid = this;
+                    const fa = faceMap.get(e.faceA);
+                    const fb = faceMap.get(e.faceB);
+                    if (fa) fa.edges.push(edgeObj);
+                    if (fb) fb.edges.push(edgeObj);
+                    if (fa) edgeObj.faces.push(fa);
+                    if (fb) edgeObj.faces.push(fb);
+                    this.add(edgeObj);
+                }
+            } else {
+                // Fallback boundary extraction from raw authoring arrays.
+                try {
+                    const vp = this._vertProperties || [];
+                    const tv = this._triVerts || [];
+                    const ids = this._triIDs || [];
+                    const nv = (vp.length / 3) | 0;
+                    const triCount = (tv.length / 3) | 0;
+                    const NV = BigInt(Math.max(1, nv));
+                    const ukey = (a,b) => { const A=BigInt(a), B=BigInt(b); return A<B ? A*NV+B : B*NV+A; };
+                    const e2t = new Map(); // key -> [{id,a,b,tri}...]
+                    for (let t = 0; t < triCount; t++) {
+                        const id = ids[t];
+                        const base = t * 3;
+                        const i0 = tv[base + 0]>>>0, i1 = tv[base + 1]>>>0, i2 = tv[base + 2]>>>0;
+                        const edges = [ [i0,i1], [i1,i2], [i2,i0] ];
+                        for (let k = 0; k < 3; k++) {
+                            const a = edges[k][0], b = edges[k][1];
+                            const key = ukey(a,b);
+                            let arr = e2t.get(key);
+                            if (!arr) { arr = []; e2t.set(key, arr); }
+                            arr.push({ id, a, b, tri: t });
+                        }
+                    }
+                    // Create polyline objects between differing face IDs (authoring labels)
+                    const nameOf = (id) => this._idToFaceName && this._idToFaceName.get ? this._idToFaceName.get(id) : String(id);
+                    const pairToEdges = new Map(); // pairKey -> array of [u,v]
+                    for (const [key, arr] of e2t.entries()) {
+                        if (arr.length !== 2) continue;
+                        const a = arr[0], b = arr[1];
+                        if (a.id === b.id) continue;
+                        const nameA = nameOf(a.id), nameB = nameOf(b.id);
+                        const pair = nameA < nameB ? [nameA, nameB] : [nameB, nameA];
+                        const pairKey = JSON.stringify(pair);
+                        let list = pairToEdges.get(pairKey);
+                        if (!list) { list = []; pairToEdges.set(pairKey, list); }
+                        const u = Math.min(a.a, a.b), v = Math.max(a.a, a.b);
+                        list.push([u,v]);
+                    }
+
+                    const addPolyline = (nameA, nameB, indices) => {
+                        const visited = new Set();
+                        const adj = new Map();
+                        const ek = (u,v)=> (u<v?`${u},${v}`:`${v},${u}`);
+                        for (const [u,v] of indices) {
+                            if (!adj.has(u)) adj.set(u,new Set());
+                            if (!adj.has(v)) adj.set(v,new Set());
+                            adj.get(u).add(v); adj.get(v).add(u);
+                        }
+                        const verts = (idx)=> [vp[idx*3+0], vp[idx*3+1], vp[idx*3+2]];
+                        for (const [u0] of adj.entries()) {
+                            // find start (degree 1) or any if loop
+                            if ([...adj.get(u0)].length !== 1) continue;
+                            const poly = [];
+                            let u = u0, prev = -1;
+                            while (true) {
+                                const nbrs = [...adj.get(u)];
+                                let v = nbrs[0];
+                                if (v === prev && nbrs.length>1) v = nbrs[1];
+                                if (v === undefined) break;
+                                const key = ek(u,v);
+                                if (visited.has(key)) break;
+                                visited.add(key);
+                                poly.push(verts(u));
+                                prev = u; u = v;
+                                if (!adj.has(u)) break;
+                            }
+                            poly.push(verts(u));
+                            if (poly.length >= 2) {
+                                const g = new LineGeometry();
+                                g.setPositions(poly.flat());
+                                try { g.computeBoundingSphere(); } catch {}
+                                const edgeObj = new Edge(g);
+                                edgeObj.name = `${nameA}|${nameB}`;
+                                edgeObj.closedLoop = false;
+                                edgeObj.userData = { faceA: nameA, faceB: nameB, polylineLocal: poly, closedLoop: false };
+                                edgeObj.parentSolid = this;
+                                const fa = faceMap.get(nameA); const fb = faceMap.get(nameB);
+                                if (fa) fa.edges.push(edgeObj); if (fb) fb.edges.push(edgeObj);
+                                if (fa) edgeObj.faces.push(fa); if (fb) edgeObj.faces.push(fb);
+                                this.add(edgeObj);
+                            }
+                        }
+                    };
+                    for (const [pairKey, edgeList] of pairToEdges.entries()) {
+                        const [a,b] = JSON.parse(pairKey);
+                        addPolyline(a,b, edgeList);
+                    }
+                } catch (_) { /* ignore fallback edge errors */ }
             }
         }
 
@@ -1848,9 +1960,8 @@ export class Solid extends THREE.Group {
             if (arr.length !== 2) continue; // boundary or non-manifold; skip
             const a = arr[0], b = arr[1];
             if (a.id === b.id) continue; // same face label; not a boundary between labels
-            const nameA = this._idToFaceName.get(a.id);
-            const nameB = this._idToFaceName.get(b.id);
-            if (!nameA || !nameB) continue;
+            const nameA = this._idToFaceName.get(a.id) || `FACE_${a.id}`;
+            const nameB = this._idToFaceName.get(b.id) || `FACE_${b.id}`;
             const pair = nameA < nameB ? [nameA, nameB] : [nameB, nameA];
             const pairKey = JSON.stringify(pair);
             let list = pairToEdges.get(pairKey);
@@ -2005,8 +2116,27 @@ export class Solid extends THREE.Group {
             solid._vertKeyToIndex.set(`${x},${y},${z}`, i / 3);
         }
 
-        // Restore face name maps
-        solid._idToFaceName = new Map(idToFaceName);
+        // Restore face name maps, but ensure every faceID present in the mesh has a name.
+        const completeMap = new Map(idToFaceName);
+        try {
+            const ids = mesh.faceID && mesh.faceID.length ? mesh.faceID : null;
+            const triCount = (mesh.triVerts?.length || 0) / 3 | 0;
+            if (ids && ids.length === triCount) {
+                // Add fallback names for any unknown IDs to guarantee coverage
+                const seen = new Set();
+                for (let t = 0; t < triCount; t++) {
+                    const id = ids[t] >>> 0;
+                    if (seen.has(id)) continue;
+                    seen.add(id);
+                    if (!completeMap.has(id)) completeMap.set(id, `FACE_${id}`);
+                }
+            } else if (!ids) {
+                // No faceID provided by mesh: authoring triIDs were expanded as zeros.
+                if (!completeMap.has(0)) completeMap.set(0, 'FACE_0');
+            }
+        } catch (_) { /* best-effort completion */ }
+
+        solid._idToFaceName = new Map(completeMap);
         solid._faceNameToID = new Map(
             [...solid._idToFaceName.entries()].map(([id, name]) => [name, id])
         );
@@ -2121,6 +2251,45 @@ export class Solid extends THREE.Group {
         return area;
     }
 }
+
+// --- Method-level time profiling for Solid -----------------------------------
+// Wrap all prototype methods (except constructor and _manifoldize, which is
+// already instrumented) to log execution time when debugMode is true.
+(() => {
+    try {
+        if (Solid.__profiled) return;
+        Solid.__profiled = true;
+        const nowMs = () => (typeof performance !== 'undefined' && performance?.now ? performance.now() : Date.now());
+        const skip = new Set(['constructor', '_manifoldize']);
+        const proto = Solid.prototype;
+        for (const name of Object.getOwnPropertyNames(proto)) {
+            if (skip.has(name)) continue;
+            const desc = Object.getOwnPropertyDescriptor(proto, name);
+            if (!desc || typeof desc.value !== 'function') continue;
+            const fn = desc.value;
+            const wrapped = function (...args) {
+                if (!debugMode) return fn.apply(this, args);
+                const t0 = nowMs();
+                try {
+                    const ret = fn.apply(this, args);
+                    if (ret && typeof ret.then === 'function') {
+                        return ret.then(
+                            (val) => { try { if (debugMode) console.log(`[Solid] ${name} resolved in ${Math.round(nowMs() - t0)} ms`); } catch {} return val; },
+                            (err) => { try { if (debugMode) console.log(`[Solid] ${name} rejected in ${Math.round(nowMs() - t0)} ms`); } catch {} throw err; }
+                        );
+                    }
+                    try { if (debugMode) console.log(`[Solid] ${name} in ${Math.round(nowMs() - t0)} ms`); } catch {}
+                    return ret;
+                } catch (e) {
+                    try { if (debugMode) console.log(`[Solid] ${name} threw in ${Math.round(nowMs() - t0)} ms`); } catch {}
+                    throw e;
+                }
+            };
+            try { Object.defineProperty(wrapped, 'name', { value: name, configurable: true }); } catch {}
+            Object.defineProperty(proto, name, { ...desc, value: wrapped });
+        }
+    } catch { }
+})();
 
 // --- Example usage -----------------------------------------------------------
 // Build a 10 x 10 x w box by triangles, naming each face.

@@ -1,19 +1,15 @@
 import { extractDefaultValues } from "../../PartHistory.js";
 import { FilletSolid } from '../../BREP/fillet.js';
 import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
+import { fill } from "three/src/extras/TextureUtils.js";
 
 const inputParamsSchema = {
-    featureID: {
-        type: "string",
-        default_value: null,
-        hint: "unique identifier for the fillet feature",
-    },
     edges: {
         type: "reference_selection",
-        selectionFilter: ["EDGE", "FACE"],
+        selectionFilter: ["FACE", "EDGE"],
         multiple: true,
         default_value: null,
-        hint: "Select a single edge to preview its fillet solid",
+        hint: "Select faces (or an edge) to fillet along shared edges",
     },
     radius: {
         type: "number",
@@ -24,36 +20,14 @@ const inputParamsSchema = {
     inflate: {
         type: "number",
         step: 0.1,
-        default_value: 0.1,
-        hint: "Grow the cutting solid by this amount (units). Use small values like 0.0005 to avoid thin leftovers after subtraction.",
+        default_value: 0.0005,
+        hint: "Grow the cutting solid by this amount (units). Keep tiny (e.g. 0.0005). Closed loops ignore inflation to avoid self‑intersection.",
     },
-    projectStripsOpenEdges: {
-        type: "boolean",
-        default_value: false,
-        hint: "Use face‑projected side strips even for open edges (safer but can affect INSET cases)",
-    },
-    projectStripsClosedEdges: {
-        type: "boolean",
-        default_value: true,
-        hint: "Use face‑projected side strips for closed loops (disable to force analytic side strips)",
-    },
-    forceSeamInset: {
-        type: "boolean",
-        default_value: false,
-        hint: "Inset seam into faces for open edges (reduces coplanar overlaps; disable if INSET fillets misbehave)",
-    },
-    seamInsetScale: {
-        type: "number",
-        step: 1e-4,
-        default_value: 1e-3,
-        hint: "Scale factor for seam inset distance relative to radius",
-    },
-
     direction: {
         type: "options",
-        options: ["INSET", "OUTSET", "AUTO"],
+        options: ["INSET", "OUTSET"],
         default_value: "INSET",
-        hint: "Prefer fillet inside (INSET), outside (OUTSET), or auto-pick (AUTO)",
+        hint: "Prefer fillet inside (INSET) or outside (OUTSET)",
     },
     debug: {
         type: "boolean",
@@ -222,14 +196,11 @@ export class FilletFeature {
 
         // Create the fillet solid for each edge
         fjson('FeatureStart', {
-            featureID: this.inputParams.featureID || null,
             edgesSelected: edgeObjs.length,
             radius: this.inputParams.radius,
             inflate: this.inputParams.inflate,
             direction: this.inputParams.direction,
-            projectStripsOpenEdges: this.inputParams.projectStripsOpenEdges,
-            forceSeamInset: this.inputParams.forceSeamInset,
-            seamInsetScale: this.inputParams.seamInsetScale
+            debug: !!this.inputParams.debug
         });
         const objectsForBoolean = [];
         for (let idx = 0; idx < edgeObjs.length; idx++) {
@@ -240,12 +211,11 @@ export class FilletFeature {
                 this.inputParams.radius,
                 this.inputParams.inflate,
                 this.inputParams.direction,
-                this.inputParams.debug,
-                this.inputParams.projectStripsOpenEdges,
-                this.inputParams.projectStripsClosedEdges,
-                this.inputParams.forceSeamInset,
-                this.inputParams.seamInsetScale);
+                this.inputParams.debug);
+                filletSolid.visualize();
             objectsForBoolean.push(filletSolid);
+            console.log(`[FilletFeature] Created fillet tool for edge ${edgeName || '(unnamed)'}: volume=${safeVolume(filletSolid)}`);
+            console.log(filletSolid);
             // Summarize tool mesh if available
             try {
                 const mesh = filletSolid.getMesh();
@@ -266,28 +236,42 @@ export class FilletFeature {
         for (let idx = 0; idx < objectsForBoolean.length; idx++) {
             const tool = objectsForBoolean[idx];
             const dir = String(this.inputParams.direction || 'INSET').toUpperCase();
-            const op = (dir === 'AUTO') ? ((tool && tool.filletType) || 'SUBTRACT') : (dir === 'OUTSET' ? 'UNION' : 'SUBTRACT');
+            const op = (dir === 'OUTSET' ? 'UNION' : 'SUBTRACT');
             const beforeVol = safeVolume(finalSolid);
-            const params = { operation: op, targets: [] };
+                const params = { operation: op, targets: [] };
+            // Encourage distinct end-cap faces after subtraction by slightly
+            // nudging coplanar caps off target faces when needed. Use the user's
+            // inflate if provided, else a small fraction of the radius.
+            if (op === 'SUBTRACT') {
+                const mag = Math.max(0, Number(this.inputParams.inflate) || 0);
+                const dist = (mag > 0) ? mag : Math.max(1e-4, 0.02 * Math.abs(Number(this.inputParams.radius) || 1));
+                params.offsetCoplanarCap = 'START+;END+'; // both caps outward
+                params.offsetDistance = dist;
+            }
             let effects = { added: [], removed: [] };
 
             if (op === 'SUBTRACT') {
                 // base = tool, targets = [finalSolid]
                 params.targets = [finalSolid];
                 fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
-                effects = await applyBooleanOperation(partHistory, tool, params, this.inputParams.featureID);
+                effects = await applyBooleanOperation(partHistory, tool, params, null);
                 finalSolid = effects.added[0] || finalSolid;
             } else {
                 // UNION/INTERSECT: base = finalSolid, targets = [tool]
                 params.targets = [tool];
                 fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
-                effects = await applyBooleanOperation(partHistory, finalSolid, params, this.inputParams.featureID);
+                effects = await applyBooleanOperation(partHistory, finalSolid, params, null);
                 finalSolid = effects.added[0] || finalSolid;
             }
 
             fjson('BooleanDone', { idx, op, after: safeVolume(finalSolid) });
             // Flag removed artifacts for scene cleanup
-            for (const r of effects.removed) { if (r) toRemove.add(r); }
+            // In debug mode, keep fillet tools visible: don't mark them for removal.
+            for (const r of effects.removed) {
+                if (!r) continue;
+                if (this.inputParams.debug && objectsForBoolean.includes(r)) continue;
+                toRemove.add(r);
+            }
         }
 
         finalSolid.name = `${targetSolid.name}`;
@@ -297,6 +281,29 @@ export class FilletFeature {
         const actualFinalSolid = await finalSolid.simplify(0.0001);
         actualFinalSolid.name = `${targetSolid.name}`;
         actualFinalSolid.visualize();
+
+        // Alert if any triangles in the final solid are missing a face name
+        try {
+            const mesh = actualFinalSolid.getMesh && actualFinalSolid.getMesh();
+            const faceIDs = mesh && mesh.faceID ? Array.from(mesh.faceID) : [];
+            const idToName = actualFinalSolid && actualFinalSolid._idToFaceName ? actualFinalSolid._idToFaceName : new Map();
+            if (faceIDs.length) {
+                let missing = 0;
+                for (let i = 0; i < faceIDs.length; i++) {
+                    const id = faceIDs[i];
+                    if (!idToName.has(id)) missing++;
+                }
+                if (missing > 0) {
+                    const msg = `Fillet result warning: ${missing} triangle(s) in the final solid are missing a face name.`;
+                    if (typeof window !== 'undefined' && typeof window.alert === 'function') window.alert(msg);
+                    else if (typeof alert === 'function') alert(msg);
+                    else console.warn(msg);
+                }
+            }
+        } catch (e) {
+            // Non-fatal; continue pipeline
+            console.warn('[FilletFeature] Face-name check failed:', e?.message || e);
+        }
         // Replace original target solid
         toRemove.add(targetSolid);
 
@@ -305,7 +312,10 @@ export class FilletFeature {
 
         // Return only the resulting artifacts to add
         const out = [];
-        if (this.inputParams.debug) out.push(...objectsForBoolean);
+        if (this.inputParams.debug) {
+            for (const tool of objectsForBoolean) { try { tool.visualize(); } catch {} }
+            out.push(...objectsForBoolean, targetSolid);
+        }
         out.push(actualFinalSolid);
         return out;
     }
@@ -317,63 +327,22 @@ function makeSingleFilletSolid(edgeObj,
     radius = 1,
     inflate = 0,
     direction = 'INSET',
-    debug = false,
-    projectStripsOpenEdges = false,
-    projectStripsClosedEdges = true,
-    forceSeamInset = false,
-    seamInsetScale = 1e-3) {
-    const flipSide = false;
-    const flipTangent = false;
-    const swapFaces = false;
-
-
-    //console.log("Creating fillet solid for edge:", edgeObj, radius, inflate, flipSide, direction, flipTangent, swapFaces, debug);
-
-    // Robust defaults: do NOT force face‑projected side strips on open edges.
-    // Leave projection opt‑in via projectStripsOpenEdges; still prefer seam inset for INSET.
-    // For outward/union fillets, ensure side strips lie exactly on faces by
-    // defaulting to projection for open edges as well. For inset/subtract,
-    // keep the user's choice to preserve legacy behavior.
-    const isOutset = String(direction).toUpperCase() === 'OUTSET';
-    // For OUTSET (union) fillets, prefer projecting side strips onto the
-    // original faces even for open edges. This keeps the fillet solid
-    // exactly tangent to both adjacent faces.
-    const robustProjectOpen = isOutset ? true : projectStripsOpenEdges;
-    const robustProjectClosed = projectStripsClosedEdges;
-    // For OUTSET we must keep seam points exactly on the faces to preserve
-    // tangency; do not inset seams even if the toggle is on.
-    const robustInset = isOutset ? false : (forceSeamInset || (direction === 'INSET'));
-
-    // Preserve tangency on OUTSET by default: avoid inflating side strips
-    // which would pull seam vertices off the face planes.
-    const effInflate = isOutset ? 0 : inflate;
-
+    debug = false) {
+    // Only UI params are accepted; all robustness knobs are internal.
     const tool = new FilletSolid({
         edgeToFillet: edgeObj,
         radius,
-        inflate: effInflate,
-        invert2D: false,
-        reverseTangent: !!flipTangent,
-        swapFaces: !!swapFaces,
+        inflate,
         sideMode: direction,
         debug,
-        projectStripsOpenEdges: robustProjectOpen,
-        projectStripsClosedEdges: robustProjectClosed,
-        forceSeamInset: robustInset,
-        seamInsetScale
     });
     // tool.fixTriangleWindingsByAdjacency();
     // tool.invertNormals();
     tool.name = "FILLET_TOOL";
-    tool.visualize();
+    try { tool.visualize(); } catch {}
 
-    // if (direction === 'OUTSET') {
-
-    //     tool.flip(); // flip the solid to make it suitable for union
-    // }
+    // No extra flips or authoring tweaks here; FilletSolid handles robustness internally.
     return tool;
 }
 
-function safeVolume(s) {
-    try { return s.volume(); } catch { return 0; }
-}
+// (removed unused duplicate safeVolume; run() defines its own helper)

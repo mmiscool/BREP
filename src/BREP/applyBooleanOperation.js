@@ -6,6 +6,9 @@
 //   const out = await applyBooleanOperation(partHistory, baseSolid, this.inputParams.boolean, this.inputParams.featureID);
 //   return out; // array of solids to add to scene
 
+import manifold from "./setupManifold.js";
+import { Solid } from "./BetterSolid.js";
+
 export async function applyBooleanOperation(partHistory, baseSolid, booleanParam, featureID) {
   try {
     if (!booleanParam || typeof booleanParam !== 'object') return { added: [baseSolid], removed: [] };
@@ -64,15 +67,14 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
           const s = String(str || '').toUpperCase();
           const out = { start: 0, end: 0 };
           if (!s) return out;
-          const map = {
-            'START+': ['START', +1], 'START_POS': ['START', +1], 'STARTPOS': ['START', +1],
-            'START-': ['START', -1], 'START_NEG': ['START', -1], 'STARTNEG': ['START', -1],
-            'END+': ['END', +1],   'END_POS':   ['END', +1],   'ENDPOS':   ['END', +1],
-            'END-': ['END', -1],   'END_NEG':   ['END', -1],   'ENDNEG':   ['END', -1],
-          };
-          const key = s.replace(/\s+/g, '');
-          const m = map[key];
-          if (m) { out[m[0].toLowerCase()] = m[1]; }
+          const tok = s.split(/[\s,;|]+/g).filter(Boolean);
+          for (const t of tok) {
+            const key = t.replace(/\s+/g, '');
+            if (key === 'START+' || key === 'START_POS' || key === 'STARTPOS') out.start = +1;
+            else if (key === 'START-' || key === 'START_NEG' || key === 'STARTNEG') out.start = -1;
+            else if (key === 'END+' || key === 'END_POS' || key === 'ENDPOS') out.end = +1;
+            else if (key === 'END-' || key === 'END_NEG' || key === 'ENDNEG') out.end = -1;
+          }
           return out;
         };
 
@@ -219,14 +221,147 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
     // Apply selected boolean
     if (op === 'SUBTRACT') {
       // Inverted semantics for subtract: subtract the new baseSolid (tool)
-      // FROM each selected target solid.
+      // FROM each selected target solid. Add robust fallbacks similar to UNION.
       const results = [];
       let idx = 0;
+      // Local helpers (avoid depending on later declarations)
+      const approxScaleLocal = (solid) => {
+        try {
+          const vp = solid && solid._vertProperties;
+          if (!Array.isArray(vp) || vp.length < 3) return 1;
+          let minX = +Infinity, minY = +Infinity, minZ = +Infinity;
+          let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+          for (let i = 0; i < vp.length; i += 3) {
+            const x = vp[i], y = vp[i + 1], z = vp[i + 2];
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+          }
+          const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+          const diag = Math.hypot(dx, dy, dz);
+          return (diag > 0) ? diag : Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz), 1);
+        } catch { return 1; }
+      };
+      const preCleanLocal = (solid, eps) => {
+        try { if (typeof solid.setEpsilon === 'function') solid.setEpsilon(eps); } catch {}
+        try { if (typeof solid.fixTriangleWindingsByAdjacency === 'function') solid.fixTriangleWindingsByAdjacency(); } catch {}
+      };
+
+      const hullFromAuthoring = (solid) => {
+        try {
+          const { Manifold } = manifold;
+          const vp = solid && solid._vertProperties;
+          if (!Array.isArray(vp)) return null;
+          const uniq = new Set();
+          const pts = [];
+          for (let i = 0; i + 2 < vp.length; i += 3) {
+            const x = vp[i], y = vp[i + 1], z = vp[i + 2];
+            const k = `${x},${y},${z}`;
+            if (uniq.has(k)) continue;
+            uniq.add(k);
+            pts.push({ x, y, z });
+          }
+          if (pts.length < 4) return null;
+          const hullM = Manifold.hull(pts);
+          const name = (solid && solid.name) || 'FILLET_TOOL';
+          const map = new Map([[0, name]]);
+          return Solid._fromManifold(hullM, map);
+        } catch { return null; }
+      };
+
+      // Helper: try to rebuild a Fillet tool for SUBTRACT to bias seams inward
+      // on open edges and avoid coplanar contacts that lead to no-ops.
+      const maybeRegenFilletSubtract = (tool, scaleHint) => {
+        try {
+          const isFillet = tool && Object.prototype.hasOwnProperty.call(tool, 'edgeToFillet') && typeof tool.generate === 'function';
+          if (!isFillet) return false;
+          const edge = tool.edgeToFillet || {};
+          const isClosed = !!(edge.closedLoop || edge?.userData?.closedLoop);
+          if (isClosed) return false; // issue is mainly open edges
+          // Bias seams slightly inside the target faces and avoid face‑projected
+          // strips which can leave surfaces exactly coplanar.
+          tool.projectStripsOpenEdges = false;
+          tool.forceSeamInset = true;
+          // Use a conservative inset relative to scale to ensure overlap but
+          // keep it visually negligible.
+          const scl = Math.max(1, scaleHint || 1);
+          tool.seamInsetScale = Math.max(tool.seamInsetScale || 0, 1e-3);
+          // Keep inflate neutral for subtract; we only need inward bias.
+          if (!Number.isFinite(tool.inflate)) tool.inflate = 0;
+          tool.generate();
+          preCleanLocal(tool, Math.max(1e-9, 1e-6 * scl));
+          return true;
+        } catch { return false; }
+      };
+
       for (const target of tools) {
-        const out = target.subtract(baseSolid);
-        out.visualize();
-        try { out.name = (featureID ? `${featureID}_${++idx}` : out.name || 'RESULT'); } catch (_) { }
-        results.push(out);
+        try {
+          let out = target.subtract(baseSolid);
+          // If subtraction produced almost no change, try a more robust tool
+          // configuration aimed at open-edge INSET fillets.
+          try {
+            const beforeV = target.volume();
+            const afterV = out.volume();
+            const scale = Math.max(1, approxScaleLocal(target));
+            const tol = Math.max(1e-9, 1e-6 * beforeV + 1e-9 * (scale * scale * scale));
+            if (Math.abs(afterV - beforeV) <= tol) {
+              const changed = maybeRegenFilletSubtract(baseSolid, scale);
+              if (changed) {
+                const a = typeof target.clone === 'function' ? target.clone() : target;
+                preCleanLocal(a, Math.max(1e-9, 1e-6 * scale));
+                out = a.subtract(baseSolid);
+              }
+            }
+          } catch (_) { /* volume probes are best-effort */ }
+          out.visualize();
+          try { out.name = (featureID ? `${featureID}_${++idx}` : out.name || 'RESULT'); } catch (_) { }
+          results.push(out);
+          continue;
+        } catch (e1) {
+          // Fallback A: try on welded clones with tiny epsilon
+          try {
+            const a = typeof target.clone === 'function' ? target.clone() : target;
+            const b = typeof baseSolid.clone === 'function' ? baseSolid.clone() : baseSolid;
+            const scale = Math.max(1, approxScaleLocal(a));
+            const eps = Math.max(1e-9, 1e-6 * scale);
+            preCleanLocal(a, eps);
+            preCleanLocal(b, eps);
+            const out = a.subtract(b);
+            out.visualize();
+            try { out.name = (featureID ? `${featureID}_${++idx}` : out.name || 'RESULT'); } catch (_) { }
+            results.push(out);
+            continue;
+          } catch (e2) {
+            // Fallback B1: tweak Fillet tool for open-edge subtract and retry
+            try {
+              const scale = Math.max(1, approxScaleLocal(target));
+              const changed = maybeRegenFilletSubtract(baseSolid, scale);
+              if (changed) {
+                const a = typeof target.clone === 'function' ? target.clone() : target;
+                preCleanLocal(a, Math.max(1e-9, 1e-6 * scale));
+                const out = a.subtract(baseSolid);
+                out.visualize();
+                try { out.name = (featureID ? `${featureID}_${++idx}` : out.name || 'RESULT'); } catch (_) { }
+                results.push(out);
+                continue;
+              }
+            } catch (_) {}
+            // Fallback B2: attempt a convex hull of the tool's authored points
+            try {
+              const hull = hullFromAuthoring(baseSolid);
+              if (hull) {
+                const out = target.subtract(hull);
+                out.visualize();
+                try { out.name = (featureID ? `${featureID}_${++idx}` : out.name || 'RESULT'); } catch (_) { }
+                results.push(out);
+                continue;
+              }
+            } catch (_) {}
+            // Give up on this target; add it unchanged so pipeline continues
+            try { console.warn('[applyBooleanOperation] SUBTRACT failed; passing through target unchanged'); } catch {}
+            results.push(target);
+          }
+        }
       }
       // In SUBTRACT: removed = [all targets, baseSolid]
       const removed = [...tools];

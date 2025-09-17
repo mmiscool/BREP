@@ -1,46 +1,43 @@
 import { Solid } from "./BetterSolid.js";
+import manifold from "./setupManifold.js";
+import { buildTightPointCloudWrap } from "./PointCloudWrap.js";
 import * as THREE from 'three';
 
 
 export class FilletSolid extends Solid {
-    constructor({ edgeToFillet, radius = 1, arcSegments = 16, sampleCount = 50, invert2D = true, reverseTangent = false, swapFaces = false, sideMode = 'INSET', debug = false, debugStride = 12, inflate = 0, snapSeamToEdge = true, sideStripSubdiv = 8, seamInsetScale = 1e-3, projectStripsOpenEdges = false, forceSeamInset = false }) {
+    // Public API accepts only UI-driven parameters; all other knobs are internal.
+    constructor({ edgeToFillet, radius = 1, sideMode = 'INSET', debug = false, inflate = 0 }) {
         super();
         this.edgeToFillet = edgeToFillet;
         this.radius = radius;
         // Grow/shrink the fillet tool solid by this absolute amount (units of model space).
         // Positive inflates the solid slightly (useful to avoid thin remainders after CSG).
         this.inflate = Number.isFinite(inflate) ? inflate : 0;
-        this.arcSegments = Math.max(3, (arcSegments | 0));
-        this.sampleCount = Math.max(8, (sampleCount | 0));
-        // Controls which side of the cross-section the fillet falls on.
-        // When true, multiplies 2D (x,y) by -1 during mapping back to 3D.
-        this.invert2D = !!invert2D;
-        // Reverse the edge tangent used for section frame (t -> -t)
-        this.reverseTangent = !!reverseTangent;
-        // Swap which face defines the section's +u axis (vA3 vs vB3)
-        this.swapFaces = !!swapFaces;
+        // Internal tuning (not exposed in UI)
+        this.arcSegments = 16;
+        this.sampleCount = 50;
         // sideMode: 'AUTO' | 'INSET' | 'OUTSET' (relative to outward average normal)
         this.sideMode = (sideMode).toUpperCase();
         // Debug helpers
         this.debug = !!debug;
-        this.debugStride = Math.max(1, (debugStride | 0));
+        this.debugStride = 12;
         this._debugObjects = [];
         this.operationTargetSolid = null;
         this.filletType = null; // will be set to either "UNION" or "SUBTRACT" 
-        // If true, use the original input edge vertices for the seam (P-rail)
-        // so the side-strip shared edge coincides exactly with the input edge.
-        this.snapSeamToEdge = !!snapSeamToEdge;
-        this.sideStripSubdiv = Math.max(1, (sideStripSubdiv | 0));
+        // Side-strip grid resolution and seam inset tuning
+        this.sideStripSubdiv = 8;
         // Scale used to bias seams/side strips just inside the source faces
         // to avoid CSG residue from coincident geometry; applied as
         //   inset = max(1e-9, seamInsetScale * radius)
-        this.seamInsetScale = Number.isFinite(seamInsetScale) ? seamInsetScale : 1e-3;
-        // Prefer projecting side strips onto the source faces for closed loops,
-        // and optionally also for open edges when enabled.
-        this.projectStripsOpenEdges = !!projectStripsOpenEdges;
-        // When true, apply seam inset even for open edges; default false to
-        // preserve previous behavior that worked better for INSET fillets.
-        this.forceSeamInset = !!forceSeamInset;
+        this.seamInsetScale = 1e-3;
+        // Prefer projecting side strips onto the source faces for both closed and open edges by default.
+        this.projectStripsOpenEdges = true;
+        // Apply a slight inward bias for INSET (avoid coplanar residue); OUTSET keeps seams on faces.
+        this.forceSeamInset = (this.sideMode !== 'OUTSET');
+        // Only use a convex hull as a last‑resort fallback (see later in generate()).
+        // Forcing a hull here creates incorrect geometry for open/outset cases
+        // because far end-strip vertices can dominate the hull. Keep false.
+        this.forcePointCloudHull = false;
         this.generate();
     }
 
@@ -81,30 +78,58 @@ export class FilletSolid extends Solid {
         const trisA = solid.getFace(faceA.name);
         const trisB = solid.getFace(faceB.name);
 
-        // Build the section samples along the edge.
-        // When snapSeamToEdge is true, use the original edge vertices so
-        // the P‑rail used by side strips matches the input edge exactly.
-        // For closed loops, drop a duplicated terminal vertex if present.
-        const isClosed = !!(this.edgeToFillet.closedLoop || this.edgeToFillet.userData?.closedLoop);
+        // Build the section samples along the edge from the original edge
+        // vertices so the P‑rail used by side strips matches the input edge
+        // exactly. For closed loops, drop a duplicated terminal vertex if present.
+        // Robust closed-loop detection: trust flags if present, otherwise
+        // infer from the polyline geometry (first/last within epsilon).
+        let isClosed = !!(this.edgeToFillet.closedLoop || this.edgeToFillet.userData?.closedLoop);
+        if (!isClosed && Array.isArray(polyLocal) && polyLocal.length > 2) {
+            const a = polyLocal[0];
+            const b = polyLocal[polyLocal.length - 1];
+            if (a && b) {
+                const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+                const d2 = dx*dx + dy*dy + dz*dz;
+                // Tolerance scaled by radius to be unit-friendly
+                const eps = Math.max(1e-12, 1e-6 * this.radius * this.radius);
+                if (d2 <= eps) isClosed = true;
+            }
+        }
+        // Sampling: always use the exact input edge vertices (with midpoints) so
+        // the side-strip rail coincides with the selected edge geometry.
         let samples;
-        if (this.snapSeamToEdge) {
+        {
             const src = polyLocal.slice();
             if (isClosed && src.length > 2) {
                 const a = src[0], b = src[src.length - 1];
                 if (a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) src.pop();
             }
-            samples = src;
-        } else {
-            // Uniform resampling for smoother frames
-            samples = resamplePolyline3(polyLocal, this.sampleCount, isClosed);
+            const out = [];
+            for (let i = 0; i < src.length; i++) {
+                const a = src[i];
+                out.push(a);
+                const j = (i + 1);
+                if (isClosed) {
+                    const b = src[(i + 1) % src.length];
+                    const mx = 0.5 * (a[0] + b[0]);
+                    const my = 0.5 * (a[1] + b[1]);
+                    const mz = 0.5 * (a[2] + b[2]);
+                    out.push([mx, my, mz]);
+                } else if (j < src.length) {
+                    const b = src[j];
+                    const mx = 0.5 * (a[0] + b[0]);
+                    const my = 0.5 * (a[1] + b[1]);
+                    const mz = 0.5 * (a[2] + b[2]);
+                    out.push([mx, my, mz]);
+                }
+            }
+            samples = out;
         }
-        const rings = [];
 
         // Compute per-sample centerline by intersecting the two offset planes
         // (nA·C = nA·p - r, nB·C = nB·p - r) with the cross-section plane (t·C = t·p)
-        const centers = [];
-        const radialHints = []; // vector from center toward edge (for ring orientation)
-        const signedAngles = [];
+        // Build per-sample definitions for the arc sectors and the rails used
+        // to assemble the wedge; no need to retain additional rings/centers.
         const railP = [];   // original edge samples p[i]
         const railA = [];   // tangency along faceA direction
         const railB = [];   // tangency along faceB direction
@@ -125,10 +150,13 @@ export class FilletSolid extends Solid {
             const pNext = isClosed
                 ? arrToV(samples[(i + 1) % samples.length])
                 : arrToV(samples[Math.min(samples.length - 1, i + 1)]);
+            // Cross‑section plane normal: average of the two adjacent segment
+            // directions at this point (central difference) to stabilize
+            // the frame through corners of a polyline.
             const t = new THREE.Vector3().subVectors(pNext, pPrev);
             if (t.lengthSq() < 1e-14) continue;
             t.normalize();
-            if (this.reverseTangent) t.multiplyScalar(-1);
+            // No tangent reversal toggle (was unused in UI)
 
             // Per-sample local normals from each adjacent face (handles curved faces)
             // Use per-face normals near the projected points on each face to
@@ -144,9 +172,7 @@ export class FilletSolid extends Solid {
             let vB3 = nB.clone().cross(t);
             if (vA3.lengthSq() < 1e-12 || vB3.lengthSq() < 1e-12) continue;
             vA3.normalize(); vB3.normalize();
-            if (this.swapFaces) {
-                const tmp = vA3; vA3 = vB3; vB3 = tmp;
-            }
+            // No face-swap toggle (was unused in UI)
 
             // Orthonormal basis (u,v) with u aligned to vA3 for stable 2D mapping
             let u = vA3.clone();
@@ -158,7 +184,6 @@ export class FilletSolid extends Solid {
             d1_2.normalize();
             const dot2 = clamp(d0_2.x * d1_2.x + d0_2.y * d1_2.y, -1, 1);
             const angAbs = Math.acos(dot2);
-            signedAngles.push(angAbs);
 
             const half = 0.5 * angAbs;
             const sinHalf = Math.sin(half);
@@ -175,18 +200,12 @@ export class FilletSolid extends Solid {
             if (lenBis2 > 1e-9) bis2.multiplyScalar(1 / lenBis2); else bis2.set(0, 0);
 
             // Choose side using true 3D offset-plane intersection for exact tangency
-            const outwardAvg = nA.clone().add(nB);
-            if (outwardAvg.lengthSq() > 0) outwardAvg.normalize();
-
             // Solve with offset planes anchored to the face triangles (n·x = n·q ± r)
             const C_in  = solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, -1, nB, qB, -1, rEff); // inside
             const C_out = solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, +1, nB, qB, +1, rEff); // outside
 
             // Determine preferred side
-            let pick = 'in'; // default to inset
-            if (this.sideMode === 'OUTSET') pick = 'out';
-            // UI flip toggle
-            if (this.invert2D) pick = (pick === 'in') ? 'out' : 'in';
+            let pick = (this.sideMode === 'OUTSET') ? 'out' : 'in';
 
             let center = (pick === 'in') ? (C_in || C_out) : (C_out || C_in);
             if (!center) continue;
@@ -213,11 +232,14 @@ export class FilletSolid extends Solid {
                 }
             } catch (_) { /* ignore refine errors */ }
 
-            // Closed-loop robustness: if p→center distance is unreasonably large,
-            // use a 2D bisector construction in the section plane.
-            if (isClosed) {
+            // Robustness: if p→center distance is unreasonably large,
+            // recompute center using a 2D bisector construction in the
+            // section plane. Originally only applied to closed loops, but
+            // cones/oblique faces on open edges can also produce far centers
+            // due to nearly parallel offset planes.
+            {
                 const pToC = center.distanceTo(p);
-                const hardCap = 4 * rEff; // absolute cap
+                const hardCap = 6 * rEff; // absolute cap
                 const factor = 3.0;       // relative to 2D expectation
                 if (!Number.isFinite(pToC) || pToC > hardCap || pToC > factor * expectDist) {
                     // Direction along inward bisector in 2D (flip for OUTSET)
@@ -233,8 +255,6 @@ export class FilletSolid extends Solid {
                 }
             }
 
-            centers.push(center.clone());
-            radialHints.push(new THREE.Vector3().subVectors(p, center).normalize());
             railP.push(p.clone());
             railA.push(tA.clone());
             railB.push(tB.clone());
@@ -302,9 +322,22 @@ export class FilletSolid extends Solid {
         let seamB = railB.map(p => projectPointOntoFaceTriangles(trisB, p));
 
         // Bias seams slightly into the source solid to prevent coincident
-        // surfaces from leaving sliver shards after subtraction. For open
-        // (non-closed) edges, keep inset = 0 unless forceSeamInset is true
-        // to avoid creating gaps that can lead to a non-manifold tool.
+        // surfaces from leaving sliver shards after subtraction. For OPEN
+        // OUTSET edges, apply a tiny inset by default to avoid 3+ triangle
+        // foldovers along the arc/side/cap junctions which often prevent
+        // manifoldization.
+        if (!isClosed && this.sideMode === 'OUTSET') {
+            this.forceSeamInset = true;
+            // Use a very small scale for open edges so the seam stays tight
+            this.seamInsetScale = Math.min(this.seamInsetScale || 1e-3, 2e-4);
+        }
+        if (this.sideMode === 'INSET') {
+            // Bias seams a little more for robustness. Extremely tiny insets
+            // (1e-5*r) tend to quantize/weld away and can leave slivers or
+            // boundaries that prevent manifoldization. Use a conservative
+            // minimum of ~2e-4*r instead.
+            this.seamInsetScale = Math.min(this.seamInsetScale || 1e-3, 2e-4);
+        }
         let seamInset = ((isClosed || this.forceSeamInset) ? Math.max(1e-9, this.seamInsetScale * rEff) : 0);
         // Clamp inset on closed loops to avoid foldovers on slanted faces
         if (isClosed) seamInset = Math.min(seamInset, 0.02 * rEff);
@@ -312,21 +345,83 @@ export class FilletSolid extends Solid {
             seamA = insetPolylineAlongFaceNormals(trisA, seamA, +seamInset); // into face A
             seamB = insetPolylineAlongFaceNormals(trisB, seamB, +seamInset); // into face B
         }
+        // Apply inflate at the tangency as well: move seam points along their
+        // respective face normals by a signed amount. For INSET (subtract), push
+        // outward (+inflate); for OUTSET (union), pull inward (−inflate).
+        let seamInflate = (Math.abs(this.inflate) > 0)
+            ? ((this.sideMode === 'INSET') ? +this.inflate : -this.inflate)
+            : 0;
+        if (!isClosed && this.sideMode === 'INSET' && seamInflate !== 0) {
+            // Clamp outward bias so large UI values don't push the tool
+            // completely off the target faces.
+            const cap = 0.1 * rEff; // 10% of radius
+            seamInflate = Math.min(Math.abs(seamInflate), cap);
+        }
+        if (seamInflate !== 0) {
+            // `insetPolylineAlongFaceNormals` moves inward by +amount (along −n).
+            // Passing a negative amount moves outward by |amount| (along +n).
+            seamA = insetPolylineAlongFaceNormals(trisA, seamA, -seamInflate);
+            seamB = insetPolylineAlongFaceNormals(trisB, seamB, -seamInflate);
+        }
 
         const baseName = `FILLET_${faceA.name}|${faceB.name}`;
-        // Use face‑projected side strips for closed loops by default; allow
-        // enabling them for open edges via option.
-        const useFaceProjectedStrips = (isClosed || this.projectStripsOpenEdges);
+        // Side strips are always rebuilt on original faces via projection.
+
+        // Pre‑displace the edge rail P so the side strips actually extend
+        // outside the base body for INSET fillets. For OUTSET keep the
+        // previous behavior (use only the small user inflate).
+        // This makes the tool match the expected cross‑section with a sharp
+        // outer corner offset from the edge.
+        let railPBuild = railP;
+        if (!isClosed) {
+            let moveDist = 0;
+            if (this.sideMode === 'INSET') {
+                // Keep the actual edge rail fixed for INSET on open edges.
+                moveDist = 0;
+            } else {
+                // OUTSET: allow the gentle user‑controlled offset
+                moveDist = Math.abs(this.inflate) || 0;
+            }
+            if (moveDist > 0) {
+                try {
+                    railPBuild = displaceRailPForInflate(railP, trisA, trisB, moveDist, this.sideMode);
+                } catch { railPBuild = railP; }
+            }
+        }
 
         // Build curved fillet; snap ring endpoints to seamA/seamB
         buildWedgeDirect(this, baseName,
-            railP, sectorDefs, rEff, radialSegments, isClosed, seamA, seamB, /*skipSideStrips*/ useFaceProjectedStrips);
+            railPBuild, sectorDefs, rEff, radialSegments, isClosed, seamA, seamB);
 
-        if (useFaceProjectedStrips) {
-            // Rebuild the two side strips directly on original faces using projected grids
-            buildSideStripOnFace(this, `${baseName}_SIDE_A`, railP, seamA, isClosed, trisA, this.sideStripSubdiv, seamInset);
-            buildSideStripOnFace(this, `${baseName}_SIDE_B`, railP, seamB, isClosed, trisB, this.sideStripSubdiv, seamInset);
+        // If inflating, prefer to apply it during face-projected side strip build,
+        // which keeps a clean parameterization and avoids post-displacement overlap.
+        const sideInflateDuringBuild = (Math.abs(this.inflate) > 0);
+        // For INSET (subtract), push side strips OUTWARD relative to target faces (positive along face normals).
+        // For OUTSET (union), pull side strips INWARD (negative along face normals).
+        let sideOffsetSigned = sideInflateDuringBuild
+            ? (this.sideMode === 'INSET' ? +this.inflate : -this.inflate)
+            : 0;
+        if (!isClosed && this.sideMode === 'INSET' && sideOffsetSigned !== 0) {
+            const cap = 0.1 * rEff;
+            sideOffsetSigned = Math.sign(sideOffsetSigned) * Math.min(Math.abs(sideOffsetSigned), cap);
         }
+
+        // Rebuild the two side strips directly on original faces using projected grids
+        // and extend them beyond the selected edge ends by a robust length.
+        // Disable side-strip overshoot on open edges for now. The wedge end caps
+        // are built exactly at the first/last section, so extending the side
+        // strips beyond those sections leaves uncapped boundaries that can cause
+        // non‑manifold tools (and bad hulls if a hull fallback triggers).
+        let overshootLen = 0;
+        // INSET: keep side strips on the original faces so subtraction leaves
+        // the curved surface as the new boundary. OUTSET keeps configurable.
+        const projectSide = (this.sideMode === 'INSET') ? true : this.projectStripsOpenEdges;
+        // For open-edge INSET, use a single strip across width so the end-cap
+        // seams (P→seamA, P→seamB) are actual triangle edges shared between
+        // the side strips and the cap, preventing tiny gaps.
+        const widthSubdiv = (!isClosed && this.sideMode === 'INSET') ? 1 : this.sideStripSubdiv;
+        buildSideStripOnFace(this, `${baseName}_SIDE_A`, railPBuild, seamA, isClosed, trisA, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide);
+        buildSideStripOnFace(this, `${baseName}_SIDE_B`, railPBuild, seamB, isClosed, trisB, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide);
 
         // Heuristic: decide union vs subtract based on bisector direction vs outward normals
         this.filletType = classifyFilletBoolean(nAavg, nBavg, polyLocal);
@@ -335,7 +430,8 @@ export class FilletSolid extends Solid {
         // in authoring space to avoid requiring a Manifold build too early.
         try {
             this.fixTriangleWindingsByAdjacency();
-            const q = Math.max(1e-9, 1e-5 * rEff);
+            // Use a smaller quantization so tiny seam insets are preserved.
+            const q = Math.max(1e-9, 1e-7 * rEff);
             quantizeVerticesAuthoring(this, q);
             removeDegenerateTrianglesAuthoring(this, Math.max(1e-12, 1e-8 * rEff * rEff));
             // Ensure global outward orientation so positive inflation expands the tool
@@ -344,25 +440,59 @@ export class FilletSolid extends Solid {
             // Light weld to collapse near-coincident verts created by projections
             // and snapping. This reduces the chance of 3+ faces sharing a nearly
             // duplicated edge which Manifold treats as non-manifold.
-            this._weldVerticesByEpsilon(Math.max(1e-9, 5e-6 * rEff));
+            this._weldVerticesByEpsilon(Math.max(1e-9, 5e-7 * rEff));
+            // Enforce strict 2‑manifoldness by dropping surplus triangles on edges
+            // that exceed two incidents (prefer dropping SIDE, then CAP, keep ARC).
+            enforceTwoManifoldByDropping(this);
+            // Final orientation fix after dropping
+            this.fixTriangleWindingsByAdjacency();
         } catch {}
 
         // Inflate only the side-strip faces for all modes (OUTSET/INSET).
-        // The curved fillet face remains at the exact geometric radius.
-        if (Math.abs(this.inflate) > 0) {
-            inflateSideFacesInPlace(this, this.inflate);
-            try { this.fixTriangleWindingsByAdjacency(); } catch {}
-        }
+        // Use a safe inflator that protects arc seam vertices and reduces
+        // the step if any side-strip triangles would invert.
+        // side inflation already applied during face-projected build
 
         // Final clean: weld and drop any tiny degenerates created during inflation
         try {
             this._weldVerticesByEpsilon(Math.max(1e-9, 5e-6 * rEff));
             removeDegenerateTrianglesAuthoring(this, Math.max(1e-12, 1e-8 * rEff * rEff));
             this.fixTriangleWindingsByAdjacency();
+            enforceTwoManifoldByDropping(this);
+            this.fixTriangleWindingsByAdjacency();
         } catch {}
 
 
 
+
+        // If requested, force a manifold convex hull from the authored vertices now.
+        if (this.forcePointCloudHull) {
+            try {
+                const vp = this._vertProperties || [];
+                const uniq = new Set();
+                const pts = [];
+                for (let i = 0; i + 2 < vp.length; i += 3) {
+                    const x = vp[i], y = vp[i + 1], z = vp[i + 2];
+                    const k = `${x},${y},${z}`;
+                    if (uniq.has(k)) continue;
+                    uniq.add(k);
+                    pts.push({ x, y, z });
+                }
+                const wrapped = buildTightPointCloudWrap(pts, { });
+                copyFromSolid(this, wrapped);
+                this.filletType = this.filletType || 'SUBTRACT';
+                this.name = 'FILLET_TOOL';
+                try { this.fixTriangleWindingsByAdjacency(); } catch {}
+                try { ensureOutwardOrientationAuthoring(this); } catch {}
+                try { this._weldVerticesByEpsilon(1e-9); } catch {}
+                try { removeDegenerateTrianglesAuthoring(this, 1e-14); } catch {}
+                try { enforceTwoManifoldByDropping(this, 2); } catch {}
+                try { this.fixTriangleWindingsByAdjacency(); } catch {}
+            } catch (eHull) {
+                try { console.warn('[FilletSolid] forced hull failed:', eHull?.message || eHull); } catch {}
+            }
+            return this;
+        }
 
         // Proactive manifold check for OUTSET on open edges with face‑projected strips
         // (conical or highly slanted faces can occasionally produce foldovers
@@ -374,6 +504,23 @@ export class FilletSolid extends Solid {
         } catch (e) {
             const isClosed = !!(this.edgeToFillet?.closedLoop || this.edgeToFillet?.userData?.closedLoop);
             const isOutset = this.sideMode === 'OUTSET';
+            // First fallback: if inflate caused issues, reduce it and retry once
+            if (!this.__retryInflate && Math.abs(this.inflate) > 0) {
+                this.__retryInflate = true;
+                this.inflate *= 0.25; // aggressive shrink to find safe step
+                // Reset authoring buffers
+                this._vertProperties = [];
+                this._triVerts = [];
+                this._triIDs = [];
+                this._vertKeyToIndex = new Map();
+                this._idToFaceName = new Map();
+                this._faceNameToID = new Map();
+                this._dirty = true;
+                this._manifold = null;
+                this._faceIndex = null;
+                return this.generate();
+            }
+
             const mayRetry = isOutset && !isClosed && !this.__retryOnce;
             if (mayRetry) {
                 this.__retryOnce = true;
@@ -394,7 +541,79 @@ export class FilletSolid extends Solid {
                 // Re-run
                 return this.generate();
             }
+
+            // Debug mode: keep the authored triangles as-is so the bad mesh is
+            // visible in the scene via Solid.visualize()'s fallback path. Do not
+            // replace with a convex hull. Light tidy for display only.
+            if (this.debug) {
+                try { this.fixTriangleWindingsByAdjacency(); } catch {}
+                try { ensureOutwardOrientationAuthoring(this); } catch {}
+                try { this._weldVerticesByEpsilon(1e-9); } catch {}
+                try { removeDegenerateTrianglesAuthoring(this, 1e-14); } catch {}
+                this.name = 'FILLET_TOOL';
+                try { this.userData = this.userData || {}; this.userData.debugBad = true; } catch {}
+                // Mark dirty so visualize() rebuilds Three meshes from authoring arrays
+                this._dirty = true; this._faceIndex = null; this._manifold = null;
+                return this;
+            }
+
+            // Final fallback: rebuild tool as the convex hull of the authored
+            // vertex cloud. This guarantees a watertight manifold even if the
+            // wedge triangulation had local non-manifold configurations.
+            try {
+                const { Manifold } = manifold;
+                const vp = this._vertProperties || [];
+                const uniq = new Set();
+                const pts = [];
+                for (let i = 0; i + 2 < vp.length; i += 3) {
+                    const x = vp[i], y = vp[i + 1], z = vp[i + 2];
+                    const k = `${x},${y},${z}`;
+                    if (uniq.has(k)) continue;
+                    uniq.add(k);
+                    pts.push({ x, y, z });
+                }
+                if (pts.length >= 4) {
+                    const hullM = Manifold.hull(pts);
+                    // Wrap in Solid to copy arrays / bookkeeping, assign a simple face label
+                    const tmp = Solid._fromManifold(hullM, new Map([[0, 'FILLET_TOOL']]));
+                    copyFromSolid(this, tmp);
+                    // Preserve intent and metadata
+                    this.filletType = this.filletType || 'SUBTRACT';
+                    this.name = 'FILLET_TOOL';
+                    // Mark for rebuild and ensure coherent orientation
+                    try { this.fixTriangleWindingsByAdjacency(); } catch {}
+                    try { ensureOutwardOrientationAuthoring(this); } catch {}
+                    // One more light weld to drop any accidental duplicates
+                    try { this._weldVerticesByEpsilon(1e-9); } catch {}
+                } else {
+                    // Not enough unique points for a hull; keep authored data as-is
+                }
+            } catch (eHull) {
+                try { console.warn('[FilletSolid] hull fallback failed:', eHull?.message || eHull); } catch {}
+            }
         }
+
+        // Final sanity: alert if the tool is non‑manifold. This is a UX aid only
+        // (does not stop execution). We first check authoring manifoldness and
+        // then try to manifoldize. If either fails, pop a browser alert.
+        try {
+            let nonManifold = false;
+            try { if (!this._isCoherentlyOrientedManifold()) nonManifold = true; } catch { nonManifold = true; }
+            if (!nonManifold) {
+                try { this.getMesh(); } catch { nonManifold = true; }
+            }
+            if (nonManifold) {
+                const msg = `Fillet tool is non-manifold. Boolean may fail.\n` +
+                            `Edge faces: ${faceA?.name || '?'} | ${faceB?.name || '?'}`;
+                if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+                    window.alert(msg);
+                } else if (typeof alert === 'function') {
+                    alert(msg);
+                } else {
+                    try { console.warn(msg); } catch {}
+                }
+            }
+        } catch { /* never block the pipeline */ }
 
         // No manual Three.js mesh here; rely on Solid.visualize() for inspection
         return this;
@@ -422,32 +641,7 @@ function projectPerp(v, axis) {
     return res.normalize();
 }
 
-function chooseInteriorDirections(nAraw, nBraw, t) {
-    // Try flips on both normals; pick the pair whose bisector points opposite average outward
-    const outAvg = nAraw.clone().add(nBraw);
-    if (outAvg.lengthSq() > 0) outAvg.normalize();
-    let best = null;
-    const signs = [+1, -1];
-    for (const sA of signs) {
-        for (const sB of signs) {
-            const d0 = projectPerp(nAraw.clone().multiplyScalar(sA), t).normalize();
-            const d1 = projectPerp(nBraw.clone().multiplyScalar(sB), t).normalize();
-            const bis = d0.clone().add(d1);
-            if (bis.lengthSq() === 0) continue;
-            bis.normalize();
-            const score = outAvg.lengthSq() ? bis.dot(outAvg) : 0;
-            // Prefer most negative score (pointing inwards relative to outward average)
-            if (!best || score < best.score) {
-                best = { d0, d1, sA, sB, score };
-            }
-        }
-    }
-    if (!best) {
-        // Fallback to previous behavior
-        return { d0: projectPerp(nAraw.clone().negate(), t).normalize(), d1: projectPerp(nBraw.clone(), t).normalize(), sA: -1, sB: +1 };
-    }
-    return { d0: best.d0, d1: best.d1, sA: best.sA, sB: best.sB };
-}
+// (removed unused chooseInteriorDirections)
 
 // Signed volume of the authoring triangle soup (expects coherent orientation).
 // Positive means outward-facing triangles; negative means inward.
@@ -481,49 +675,7 @@ function ensureOutwardOrientationAuthoring(solid) {
     solid._faceIndex = null;
 }
 
-function resamplePolyline3(pts, count, closed) {
-    const V = pts.map(arrToV);
-    const list = V.slice();
-    if (closed && V.length > 2) list.push(V[0].clone()); // include wrap segment
-    const totalLen = polylineLength(list);
-    if (totalLen <= 0 || count <= 2) return pts;
-    const out = [];
-    if (closed) {
-        for (let s = 0; s < count; s++) {
-            const t = s / count; // avoid duplicate at end
-            const d = t * totalLen;
-            const p = pointAtArcLength(list, d);
-            out.push([p.x, p.y, p.z]);
-        }
-    } else {
-        for (let s = 0; s < count; s++) {
-            const t = s / (count - 1);
-            const d = t * totalLen;
-            const p = pointAtArcLength(list, d);
-            out.push([p.x, p.y, p.z]);
-        }
-    }
-    return out;
-}
-
-function polylineLength(pts) {
-    let L = 0;
-    for (let i = 1; i < pts.length; i++) L += pts[i].distanceTo(pts[i - 1]);
-    return L;
-}
-
-function pointAtArcLength(pts, dist) {
-    let acc = 0;
-    for (let i = 1; i < pts.length; i++) {
-        const seg = pts[i].distanceTo(pts[i - 1]);
-        if (acc + seg >= dist) {
-            const t = (dist - acc) / seg;
-            return new THREE.Vector3().lerpVectors(pts[i - 1], pts[i], t);
-        }
-        acc += seg;
-    }
-    return pts[pts.length - 1].clone();
-}
+// (removed unused uniform resampling helpers)
 
 // Compute closest point on a triangle mesh (array of {p1,p2,p3}) to a given point.
 // Returns a THREE.Vector3 of the closest point. If tris is empty, returns the input point.
@@ -716,7 +868,11 @@ function quantizeVerticesAuthoring(solid, q = 1e-6) {
 // Build a side strip that lies exactly on an original face mesh by projecting
 // a regular grid between railP (edge) and seam (projected tangency) onto the
 // face triangles, then triangulating the grid.
-function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, widthSubdiv = 8, inset = 0) {
+// Build a side strip between the P-rail and the seam. When `project` is true,
+// sample points are projected back to the source face triangles to lie exactly
+// on the face; when false, the strip is built as a simple ruled surface in
+// authoring space (robust for open/outset where projection may fold over).
+function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, widthSubdiv = 8, inset = 0, extraOffset = 0, endOvershoot = 0, project = true) {
     const n = Math.min(railP.length, seam.length);
     if (n < 2) return;
     const W = Math.max(1, widthSubdiv);
@@ -744,14 +900,65 @@ function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, wid
                 Pi.y + (Si.y - Pi.y) * t,
                 Pi.z + (Si.z - Pi.z) * t,
             );
-            let q = projectPointOntoFaceTriangles(tris, v);
-            if (inset > 0) {
+            if (project) {
+                let q = projectPointOntoFaceTriangles(tris, v);
                 const n = normalFromFaceTriangles(tris, q);
-                q = q.addScaledVector(n, -inset);
+                // Apply signed extra offset (inflate) and a small inward bias (inset) to avoid coplanar artifacts.
+                // Move = (+extraOffset) along +n (outward), and (−inset) along −n (inward).
+                let move = 0;
+                if (Number.isFinite(extraOffset) && extraOffset !== 0) move += extraOffset;
+                if (inset > 0) move -= inset;
+                if (move !== 0) q = q.addScaledVector(n, move);
+                row[k] = q;
+            } else {
+                // Ruled surface: keep the linear interpolation without projection or normal offsets
+                row[k] = v;
             }
-            row[k] = q;
         }
         rows[i] = row;
+    }
+
+    // Optionally prepend/append an extra row to extend beyond the selected edge ends
+    if (!closeLoop && endOvershoot > 0) {
+        const extendRow = (rowBase, rowNext, sign) => {
+            const dir = new THREE.Vector3();
+            // Estimate tangent along the rail using k=0 (edge seam) difference, fallback to average
+            if (rowNext && rowBase) {
+                dir.copy(rowBase[0]).sub(rowNext[0]);
+            }
+            if (dir.lengthSq() < 1e-20) {
+                // average across width
+                for (let k = 0; k <= W; k++) {
+                    const a = rowBase[k], b = rowNext[k];
+                    if (!a || !b) continue;
+                    dir.add(new THREE.Vector3().subVectors(a, b));
+                }
+            }
+            if (dir.lengthSq() < 1e-20) return null;
+            dir.normalize().multiplyScalar(sign * endOvershoot);
+            // Shift; optionally project back onto face triangles; reapply offsets
+            const out = new Array(W + 1);
+            for (let k = 0; k <= W; k++) {
+                let p = (rowBase[k] || rowBase[0]).clone().add(dir);
+                if (project) {
+                    p = projectPointOntoFaceTriangles(tris, p);
+                    const nrm = normalFromFaceTriangles(tris, p);
+                    let move = 0; if (Number.isFinite(extraOffset) && extraOffset !== 0) move += extraOffset; if (inset > 0) move -= inset;
+                    if (move !== 0 && nrm) p.addScaledVector(nrm, move);
+                }
+                out[k] = p;
+            }
+            return out;
+        };
+        // Prepend start extension (negative direction relative to forward growth)
+        const row0 = rows[0], row1 = rows[1];
+        const startExt = extendRow(row0, row1, +1);
+        if (startExt) rows.unshift(startExt);
+        // Append end extension (forward direction)
+        const rowN1 = rows[rows.length - 1];
+        const rowN2 = rows[rows.length - 2];
+        const endExt = extendRow(rowN1, rowN2, +1);
+        if (endExt) rows.push(endExt);
     }
 
     // Triangulate between consecutive rows
@@ -763,20 +970,39 @@ function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, wid
             const a1 = rowA[k + 1];
             const b0 = rowB[k];
             const b1 = rowB[k + 1];
-            // Checkerboard to avoid long strips
-            const checker = ((iA + k) & 1) === 0;
-            if (checker) {
-                solid.addTriangle(faceName, vToArr(a0), vToArr(b0), vToArr(b1));
-                solid.addTriangle(faceName, vToArr(a0), vToArr(b1), vToArr(a1));
+            // Choose diagonal that yields better shaped triangles and avoids skinny slivers
+            // Skip degenerate micro-tris created by offset/projection
+            const triArea2 = (p, q, r) => {
+                const ux = q.x - p.x, uy = q.y - p.y, uz = q.z - p.z;
+                const vx = r.x - p.x, vy = r.y - p.y, vz = r.z - p.z;
+                const nx = uy * vz - uz * vy;
+                const ny = uz * vx - ux * vz;
+                const nz = ux * vy - uy * vx;
+                return nx*nx + ny*ny + nz*nz; // squared doubled-area
+            };
+            const pushIfArea = (p, q, r) => {
+                const a2 = triArea2(p,q,r);
+                if (a2 > 1e-32) solid.addTriangle(faceName, vToArr(p), vToArr(q), vToArr(r));
+            };
+            // Evaluate both diagonals and pick the one with larger min area
+            const A1 = triArea2(a0, b0, b1);
+            const A2 = triArea2(a0, b1, a1);
+            const B1 = triArea2(a0, b0, a1);
+            const B2 = triArea2(a1, b0, b1);
+            const minA = Math.min(A1, A2);
+            const minB = Math.min(B1, B2);
+            if (minA >= minB) {
+                pushIfArea(a0, b0, b1);
+                pushIfArea(a0, b1, a1);
             } else {
-                solid.addTriangle(faceName, vToArr(a0), vToArr(b0), vToArr(a1));
-                solid.addTriangle(faceName, vToArr(a1), vToArr(b0), vToArr(b1));
+                pushIfArea(a0, b0, a1);
+                pushIfArea(a1, b0, b1);
             }
         }
     };
 
-    for (let i = 0; i < n - 1; i++) emitQuad(i, i + 1);
-    if (closeLoop && n > 2) emitQuad(n - 1, 0);
+    for (let i = 0; i < rows.length - 1; i++) emitQuad(i, i + 1);
+    if (closeLoop && n > 2) emitQuad(rows.length - 1, 0);
 }
 
 function averageFaceNormalObjectSpace(solid, faceName) {
@@ -822,24 +1048,7 @@ function localFaceNormalAtPoint(solid, faceName, p) {
     return best ? best.n : null;
 }
 
-function triangulateCapFan(solid, faceName, ring, flip = false) {
-    const c = new THREE.Vector3();
-    for (const p of ring) c.add(p);
-    c.multiplyScalar(1 / ring.length);
-    for (let j = 0; j < ring.length - 1; j++) {
-        const a = ring[j], b = ring[j + 1];
-        if (!flip) solid.addTriangle(faceName, vToArr(c), vToArr(a), vToArr(b));
-        else       solid.addTriangle(faceName, vToArr(c), vToArr(b), vToArr(a));
-    }
-}
-
-function triangulateCapToPoint(solid, faceName, ring, apex, flip = false) {
-    for (let j = 0; j < ring.length - 1; j++) {
-        const a = ring[j], b = ring[j + 1];
-        if (!flip) solid.addTriangle(faceName, vToArr(apex), vToArr(a), vToArr(b));
-        else       solid.addTriangle(faceName, vToArr(apex), vToArr(b), vToArr(a));
-    }
-}
+// (removed unused triangulateCapFan / triangulateCapToPoint)
 
 function classifyFilletBoolean(nA, nB, polyLocal) {
     // Simple heuristic: use the bisector of projected directions at mid-edge and compare to outward average
@@ -857,90 +1066,23 @@ function classifyFilletBoolean(nA, nB, polyLocal) {
     return (bis.dot(outwardAvg) >= 0) ? 'SUBTRACT' : 'UNION';
 }
 
-function buildTubeFromCenterline(solid, faceName, centers, radialHints, radius, radialSegments, closeLoop, apex0 = null, apex1 = null) {
-    if (!centers || centers.length < 2) return;
-    const rings = [];
-    let uPrev = null;
-    for (let i = 0; i < centers.length; i++) {
-        const c = centers[i];
-        const cPrev = centers[Math.max(0, i - 1)];
-        const cNext = centers[Math.min(centers.length - 1, i + 1)];
-        const Ti = new THREE.Vector3().subVectors(cNext, cPrev);
-        if (Ti.lengthSq() < 1e-14) continue;
-        Ti.normalize();
-
-        let u = null;
-        const hint = radialHints[i] ? radialHints[i].clone() : null;
-        if (uPrev) {
-            // Parallel transport: project previous u onto plane perp to Ti
-            u = uPrev.clone().addScaledVector(Ti, -uPrev.dot(Ti));
-            if (u.lengthSq() < 1e-10) u = null;
-        }
-        if (!u && hint) {
-            u = hint.addScaledVector(Ti, -hint.dot(Ti));
-            if (u.lengthSq() < 1e-10) u = null;
-        }
-        if (!u) {
-            // Fallback stable perpendicular
-            u = Math.abs(Ti.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-            u.addScaledVector(Ti, -u.dot(Ti));
-        }
-        u.normalize();
-        const v = new THREE.Vector3().crossVectors(Ti, u).normalize();
-        uPrev = u.clone();
-
-        const ring = [];
-        for (let j = 0; j <= radialSegments; j++) {
-            const a = (j / radialSegments) * Math.PI * 2;
-            const dir = u.clone().multiplyScalar(Math.cos(a)).add(v.clone().multiplyScalar(Math.sin(a)));
-            ring.push(c.clone().addScaledVector(dir, radius));
-        }
-        rings.push(ring);
-    }
-
-    // Connect rings
-    for (let i = 0; i < rings.length - 1; i++) {
-        const r0 = rings[i];
-        const r1 = rings[i + 1];
-        const segs = Math.min(r0.length, r1.length) - 1;
-        for (let j = 0; j < segs; j++) {
-            const p00 = r0[j],   p01 = r0[j + 1];
-            const p10 = r1[j],   p11 = r1[j + 1];
-            solid.addTriangle(faceName, vToArr(p00), vToArr(p10), vToArr(p11));
-            solid.addTriangle(faceName, vToArr(p00), vToArr(p11), vToArr(p01));
-        }
-    }
-    if (closeLoop && rings.length > 2) {
-        const r0 = rings[rings.length - 1];
-        const r1 = rings[0];
-        const segs = Math.min(r0.length, r1.length) - 1;
-        for (let j = 0; j < segs; j++) {
-            const p00 = r0[j],   p01 = r0[j + 1];
-            const p10 = r1[j],   p11 = r1[j + 1];
-            solid.addTriangle(faceName, vToArr(p00), vToArr(p10), vToArr(p11));
-            solid.addTriangle(faceName, vToArr(p00), vToArr(p11), vToArr(p01));
-        }
-    } else {
-        // Conical caps to the actual edge corner points (apex0/apex1)
-        if (rings[0]?.length >= 3 && apex0) triangulateCapToPoint(solid, `${faceName}_CAP0`, rings[0], apex0, false);
-        if (rings[rings.length - 1]?.length >= 3 && apex1) triangulateCapToPoint(solid, `${faceName}_CAP1`, rings[rings.length - 1], apex1, true);
-    }
-}
+// (removed unused buildTubeFromCenterline)
 
 // Build a single, watertight fillet wedge directly:
 // - Curved fillet surface (arc rings lofted along the edge)
 // - Two planar side strips from vertex rail P to arc start/end
 // - End caps at first/last sections if the edge is open
-function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegments, closeLoop, seamA = null, seamB = null, skipSideStrips = false) {
+function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegments, closeLoop, seamA = null, seamB = null) {
     const n = Math.min(railP.length, sectorDefs.length);
     if (n < 2) return;
 
     // Derive sub-face names for clearer tagging
-    const faceArc    = `${faceName}_ARC`;
-    const faceCap0   = `${faceName}_CAP0`;
-    const faceCap1   = `${faceName}_CAP1`;
-    const faceSideA  = `${faceName}_SIDE_A`;
-    const faceSideB  = `${faceName}_SIDE_B`;
+    const faceArc      = `${faceName}_ARC`;
+    // Name end caps deterministically so downstream logic (e.g., nudge coplanar caps)
+    // can target them explicitly and faces propagate through CSG with readable labels.
+    const faceCapStart = `${faceName}_CAP_START`;
+    const faceCapEnd   = `${faceName}_CAP_END`;
+    // Side strips are built separately on the original faces via projection.
 
     // Create arc rings (n x (arcSegments+1)) WITHOUT snapping to seams yet.
     // We align parameterization across rings first, then snap endpoints.
@@ -1005,14 +1147,19 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         return best;
     };
 
-    // Align parameterization ring-to-ring by allowing both flip and cyclic shift.
-    for (let i = 0; i < n - 1; i++) {
-        const rA = arcRings[i];
-        const rB = arcRings[i + 1];
-        if (!rA || !rB) continue;
-        const pick = bestAlign(rA, rB);
-        if (pick.flip) reverseRingInPlace(rB);
-        if (pick.shift) rotateRingInPlace(rB, pick.shift);
+    // Align parameterization ring-to-ring.
+    // For OPEN edges: keep a consistent A→B orientation across all rings and
+    // avoid any reversal/rotation that can cause loft twisting and non‑manifold
+    // connections at the end caps. For CLOSED loops, allow flexible alignment.
+    if (closeLoop) {
+        for (let i = 0; i < n - 1; i++) {
+            const rA = arcRings[i];
+            const rB = arcRings[i + 1];
+            if (!rA || !rB) continue;
+            const pick = bestAlign(rA, rB);
+            if (pick.flip) reverseRingInPlace(rB);
+            if (pick.shift) rotateRingInPlace(rB, pick.shift);
+        }
     }
 
     // After alignment, snap ring endpoints to exact face-tangency points if provided.
@@ -1024,6 +1171,17 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
 
     // Curved surface between successive arc rings. Alternate the quad
     // triangulation to avoid long zig-zag artifacts in the wireframe.
+    const triArea2 = (p, q, r) => {
+        const ux = q.x - p.x, uy = q.y - p.y, uz = q.z - p.z;
+        const vx = r.x - p.x, vy = r.y - p.y, vz = r.z - p.z;
+        const nx = uy * vz - uz * vy;
+        const ny = uz * vx - ux * vz;
+        const nz = ux * vy - uy * vx;
+        return nx*nx + ny*ny + nz*nz;
+    };
+    const pushIfArea = (face, a, b, c) => {
+        if (triArea2(a,b,c) > 1e-32) solid.addTriangle(face, vToArr(a), vToArr(b), vToArr(c));
+    };
     for (let i = 0; i < n - 1; i++) {
         const r0 = arcRings[i];
         const r1 = arcRings[i + 1];
@@ -1032,11 +1190,11 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
             const p10 = r1[j],   p11 = r1[j + 1];
             const checker = ((i + j) & 1) === 0;
             if (checker) {
-                solid.addTriangle(faceArc, vToArr(p00), vToArr(p10), vToArr(p11));
-                solid.addTriangle(faceArc, vToArr(p00), vToArr(p11), vToArr(p01));
+                pushIfArea(faceArc, p00, p10, p11);
+                pushIfArea(faceArc, p00, p11, p01);
             } else {
-                solid.addTriangle(faceArc, vToArr(p00), vToArr(p10), vToArr(p01));
-                solid.addTriangle(faceArc, vToArr(p01), vToArr(p10), vToArr(p11));
+                pushIfArea(faceArc, p00, p10, p01);
+                pushIfArea(faceArc, p01, p10, p11);
             }
         }
     }
@@ -1067,22 +1225,7 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         }
     }
 
-    // Side strips: (P ↔ arc start) and (P ↔ arc end)
-    if (!skipSideStrips) {
-        for (let i = 0; i < n - 1; i++) {
-            const P0 = railP[i], P1 = railP[i + 1];
-            const A0 = arcRings[i][0], A1 = arcRings[i + 1][0];
-            const B0 = arcRings[i][arcSegments], B1 = arcRings[i + 1][arcSegments];
-            // P-A (side A strip)
-            solid.addTriangle(faceSideA, vToArr(P0), vToArr(A0), vToArr(A1));
-            solid.addTriangle(faceSideA, vToArr(P0), vToArr(A1), vToArr(P1));
-            // P-B (side B strip)
-            solid.addTriangle(faceSideB, vToArr(P0), vToArr(B1), vToArr(B0));
-            solid.addTriangle(faceSideB, vToArr(P0), vToArr(P1), vToArr(B1));
-        }
-    }
-
-    if (!skipSideStrips && closeLoop && n > 2) {
+    if (closeLoop && n > 2) {
         const i0 = n - 1, i1 = 0;
         const P0 = railP[i0], P1 = railP[i1];
         // For the seam, mirror A/B if the seam ring orientation was flipped.
@@ -1101,12 +1244,7 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         const A1 = seamFlipped ? r1[arcSegments] : r1[0];
         const B0 = r0[arcSegments];
         const B1 = seamFlipped ? r1[0] : r1[arcSegments];
-        // seam for side A
-        solid.addTriangle(faceSideA, vToArr(P0), vToArr(A0), vToArr(A1));
-        solid.addTriangle(faceSideA, vToArr(P0), vToArr(A1), vToArr(P1));
-        // seam for side B
-        solid.addTriangle(faceSideB, vToArr(P0), vToArr(B1), vToArr(B0));
-        solid.addTriangle(faceSideB, vToArr(P0), vToArr(P1), vToArr(B1));
+        // Side strips are handled by face‑projection builder; nothing here.
     }
 
     // End caps for open edges: fan from P to arc ring
@@ -1115,80 +1253,46 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         const Astart = arcRings[0];
         for (let j = 0; j < arcSegments; j++) {
             const a0 = Astart[j], a1 = Astart[j + 1];
-            solid.addTriangle(faceCap0, vToArr(Pstart), vToArr(a0), vToArr(a1));
+            if (triArea2(Pstart, a0, a1) > 1e-32) solid.addTriangle(faceCapStart, vToArr(Pstart), vToArr(a0), vToArr(a1));
         }
         const Pend = railP[n - 1];
         const Aend = arcRings[n - 1];
         for (let j = 0; j < arcSegments; j++) {
             const a0 = Aend[j], a1 = Aend[j + 1];
-            solid.addTriangle(faceCap1, vToArr(Pend), vToArr(a1), vToArr(a0));
+            if (triArea2(Pend, a1, a0) > 1e-32) solid.addTriangle(faceCapEnd, vToArr(Pend), vToArr(a1), vToArr(a0));
         }
     }
 }
-// Build a closed triangular prism by skinning 3 rails: P (edge), A (tangent to faceA), B (tangent to faceB)
-function buildCornerPrism(solid, faceName, railP, railA, railB, closeLoop) {
-    const n = Math.min(railP.length, railA.length, railB.length);
-    if (n < 2) return;
 
-    const link = (a0, a1, b0, b1) => {
-        solid.addTriangle(faceName, vToArr(a0), vToArr(b0), vToArr(b1));
-        solid.addTriangle(faceName, vToArr(a0), vToArr(b1), vToArr(a1));
-    };
-
-    for (let i = 0; i < n - 1; i++) {
-        // Surfaces between rails
-        link(railP[i], railP[i+1], railA[i], railA[i+1]); // P-A
-        link(railP[i], railP[i+1], railB[i], railB[i+1]); // P-B
-        link(railA[i], railA[i+1], railB[i], railB[i+1]); // A-B
-    }
-
-    if (closeLoop) {
-        const i = n - 1, j = 0;
-        link(railP[i], railP[j], railA[i], railA[j]);
-        link(railP[i], railP[j], railB[i], railB[j]);
-        link(railA[i], railA[j], railB[i], railB[j]);
-    } else {
-        // Triangular caps at ends
-        solid.addTriangle(faceName, vToArr(railP[0]), vToArr(railA[0]), vToArr(railB[0]));
-        solid.addTriangle(faceName, vToArr(railP[n-1]), vToArr(railB[n-1]), vToArr(railA[n-1]));
-    }
+// Extend side strips (on face A and face B) beyond the first and last
+// samples of the original edge by an absolute length `extendLen`, and close
+// each extension with a triangular cap. Points on A/B are projected to their
+// respective face triangle meshes to stay on-surface.
+function estimateOvershootLength(targetSolid, rEff){
+    try {
+        const mesh = targetSolid?.getMesh();
+        if (!mesh) return Math.max(10*rEff, 1e-3);
+        const vp = mesh.vertProperties;
+        let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
+        for(let i=0;i<vp.length;i+=3){
+            const x=vp[i],y=vp[i+1],z=vp[i+2];
+            if(x<minX)minX=x; if(y<minY)minY=y; if(z<minZ)minZ=z;
+            if(x>maxX)maxX=x; if(y>maxY)maxY=y; if(z>maxZ)maxZ=z;
+        }
+        const dx=maxX-minX, dy=maxY-minY, dz=maxZ-minZ;
+        const diag = Math.hypot(dx,dy,dz);
+        return Math.max(2*rEff, 0.3*diag);
+    } catch { return Math.max(10*rEff, 1e-3); }
 }
+// Build a closed triangular prism by skinning 3 rails: P (edge), A (tangent to faceA), B (tangent to faceB)
+// (removed unused buildCornerPrism)
 
 // Solve for center C such that:
 //   nA·C = nA·p - r
 //   nB·C = nB·p - r
 //   t ·C = t ·p
 // Returns THREE.Vector3 or null
-function solveCenterFromOffsetPlanes(p, t, nA, nB, r) {
-    const dA = nA.dot(p) - r;
-    const dB = nB.dot(p) - r;
-    const dT = t.dot(p);
-    const A = [
-        [nA.x, nA.y, nA.z],
-        [nB.x, nB.y, nB.z],
-        [t.x,  t.y,  t.z ],
-    ];
-    const b = [dA, dB, dT];
-    const x = solve3(A, b);
-    if (!x) return null;
-    return new THREE.Vector3(x[0], x[1], x[2]);
-}
-
-// Variant that accepts chosen offset directions for each face normal.
-function solveCenterFromOffsetPlanesSigned(p, t, nA, sA, nB, sB, r) {
-    const dA = nA.dot(p) + sA * r;
-    const dB = nB.dot(p) + sB * r;
-    const dT = t.dot(p);
-    const A = [
-        [nA.x, nA.y, nA.z],
-        [nB.x, nB.y, nB.z],
-        [t.x,  t.y,  t.z ],
-    ];
-    const b = [dA, dB, dT];
-    const x = solve3(A, b);
-    if (!x) return null;
-    return new THREE.Vector3(x[0], x[1], x[2]);
-}
+// (removed unused solveCenterFromOffsetPlanes / solveCenterFromOffsetPlanesSigned)
 
 // Variant anchored to points on each face. Uses plane constants from the
 // nearest triangle points qA and qB so the offset planes are parallel to the
@@ -1267,158 +1371,115 @@ function copyFromSolid(dst, src) {
 // robustness by removing thin slivers when subtracting the tool.
 // Modifies `solid` in-place by rebuilding its authoring arrays from the
 // inflated vertex positions while preserving face names.
-function inflateSolidInPlace(solid, distance) {
-    if (!Number.isFinite(distance) || distance === 0) return;
-    // Get an oriented, deduplicated mesh from Manifold
-    const mesh = solid.getMesh();
-    const vp = mesh.vertProperties; // Float32Array length = 3*nv
-    const tv = mesh.triVerts;       // Uint32Array length = 3*nt
-    const fid = mesh.faceID;        // Uint32Array length = nt
-
-    const nv = (vp.length / 3) | 0;
-    const normals = new Float32Array(vp.length);
-
-    // Accumulate area-weighted normals per vertex (triangle orientation is outward)
-    for (let t = 0, tri = 0; t < tv.length; t += 3, tri++) {
-        const i0 = tv[t + 0] >>> 0;
-        const i1 = tv[t + 1] >>> 0;
-        const i2 = tv[t + 2] >>> 0;
-        const ax = vp[i0 * 3 + 0], ay = vp[i0 * 3 + 1], az = vp[i0 * 3 + 2];
-        const bx = vp[i1 * 3 + 0], by = vp[i1 * 3 + 1], bz = vp[i1 * 3 + 2];
-        const cx = vp[i2 * 3 + 0], cy = vp[i2 * 3 + 1], cz = vp[i2 * 3 + 2];
-        const ux = bx - ax, uy = by - ay, uz = bz - az;
-        const vx = cx - ax, vy = cy - ay, vz = cz - az;
-        const nx = uy * vz - uz * vy;
-        const ny = uz * vx - ux * vz;
-        const nz = ux * vy - uy * vx;
-        normals[i0 * 3 + 0] += nx; normals[i0 * 3 + 1] += ny; normals[i0 * 3 + 2] += nz;
-        normals[i1 * 3 + 0] += nx; normals[i1 * 3 + 1] += ny; normals[i1 * 3 + 2] += nz;
-        normals[i2 * 3 + 0] += nx; normals[i2 * 3 + 1] += ny; normals[i2 * 3 + 2] += nz;
-    }
-
-    // Normalize and compute displaced positions
-    const out = new Float32Array(vp.length);
-    for (let i = 0; i < nv; i++) {
-        let nx = normals[i * 3 + 0];
-        let ny = normals[i * 3 + 1];
-        let nz = normals[i * 3 + 2];
-        const len = Math.hypot(nx, ny, nz);
-        if (len > 1e-20) { nx /= len; ny /= len; nz /= len; } else { nx = ny = nz = 0; }
-        out[i * 3 + 0] = vp[i * 3 + 0] + nx * distance;
-        out[i * 3 + 1] = vp[i * 3 + 1] + ny * distance;
-        out[i * 3 + 2] = vp[i * 3 + 2] + nz * distance;
-    }
-
-    // Re-author a new solid from displaced vertices, preserving face names
-    const rebuilt = new Solid();
-    for (let t = 0, tri = 0; t < tv.length; t += 3, tri++) {
-        const i0 = tv[t + 0] >>> 0;
-        const i1 = tv[t + 1] >>> 0;
-        const i2 = tv[t + 2] >>> 0;
-        const faceName = solid._idToFaceName.get(fid[tri]) || 'FILLET';
-        rebuilt.addTriangle(
-            faceName,
-            [out[i0 * 3 + 0], out[i0 * 3 + 1], out[i0 * 3 + 2]],
-            [out[i1 * 3 + 0], out[i1 * 3 + 1], out[i1 * 3 + 2]],
-            [out[i2 * 3 + 0], out[i2 * 3 + 1], out[i2 * 3 + 2]]
-        );
-    }
-
-    // Adopt rebuilt data into the original solid
-    copyFromSolid(solid, rebuilt);
-}
+// (removed unused inflateSolidInPlace)
 
 // Inflate only a subset of faces (by name predicate), accumulating
 // area-weighted normals from those faces and offsetting the vertices
 // that participate in them. Vertices not touched by the predicate
 // remain in place. Shared seam vertices will shift accordingly,
 // preserving watertightness while biasing only the intended faces.
-function inflateSolidFacesInPlace(solid, distance, namePredicate) {
-    if (!Number.isFinite(distance) || distance === 0) return;
-    // Align sign with outward orientation so positive distance always expands the tool
-    const vol = signedVolumeAuthoring(solid);
-    const dirSign = (Number.isFinite(vol) && vol !== 0) ? (vol > 0 ? 1 : -1) : 1;
-    const dist = distance * dirSign;
-    // Operate on authoring arrays directly to avoid requiring a Manifold here.
-    const vp = solid._vertProperties;
-    const tv = solid._triVerts;
-    const fid = solid._triIDs;
-
-    const triCount = (tv.length / 3) | 0;
-    const nv = (vp.length / 3) | 0;
-    if (triCount === 0 || nv === 0) return;
-
-    // Build mask per triangle whether its face name matches predicate
-    const triUse = new Uint8Array(triCount);
-    for (let t = 0; t < triCount; t++) {
-        const id = fid ? fid[t] : undefined;
-        const name = id !== undefined ? solid._idToFaceName.get(id) : undefined;
-        triUse[t] = namePredicate && namePredicate(name) ? 1 : 0;
-    }
-
-    // Accumulate normals only from selected triangles
-    const normals = new Float64Array(vp.length);
-    for (let t = 0; t < triCount; t++) {
-        if (!triUse[t]) continue;
-        const i0 = tv[t * 3 + 0] >>> 0;
-        const i1 = tv[t * 3 + 1] >>> 0;
-        const i2 = tv[t * 3 + 2] >>> 0;
-        const ax = vp[i0 * 3 + 0], ay = vp[i0 * 3 + 1], az = vp[i0 * 3 + 2];
-        const bx = vp[i1 * 3 + 0], by = vp[i1 * 3 + 1], bz = vp[i1 * 3 + 2];
-        const cx = vp[i2 * 3 + 0], cy = vp[i2 * 3 + 1], cz = vp[i2 * 3 + 2];
-        const ux = bx - ax, uy = by - ay, uz = bz - az;
-        const vx = cx - ax, vy = cy - ay, vz = cz - az;
-        const nx = uy * vz - uz * vy;
-        const ny = uz * vx - ux * vz;
-        const nz = ux * vy - uy * vx;
-        normals[i0 * 3 + 0] += nx; normals[i0 * 3 + 1] += ny; normals[i0 * 3 + 2] += nz;
-        normals[i1 * 3 + 0] += nx; normals[i1 * 3 + 1] += ny; normals[i1 * 3 + 2] += nz;
-        normals[i2 * 3 + 0] += nx; normals[i2 * 3 + 1] += ny; normals[i2 * 3 + 2] += nz;
-    }
-
-    // Compute displaced positions for affected vertices; others copy through
-    const out = new Float32Array(vp.length);
-    for (let i = 0; i < nv; i++) {
-        const nx = normals[i * 3 + 0];
-        const ny = normals[i * 3 + 1];
-        const nz = normals[i * 3 + 2];
-        const len = Math.hypot(nx, ny, nz);
-        if (len > 1e-20) {
-            const sx = nx / len, sy = ny / len, sz = nz / len;
-            out[i * 3 + 0] = vp[i * 3 + 0] + sx * dist;
-            out[i * 3 + 1] = vp[i * 3 + 1] + sy * dist;
-            out[i * 3 + 2] = vp[i * 3 + 2] + sz * dist;
-        } else {
-            out[i * 3 + 0] = vp[i * 3 + 0];
-            out[i * 3 + 1] = vp[i * 3 + 1];
-            out[i * 3 + 2] = vp[i * 3 + 2];
-        }
-    }
-
-    // Adopt displaced positions in-place; connectivity and face IDs remain unchanged
-    solid._vertProperties = Array.from(out);
-    // Rebuild exact-key map
-    solid._vertKeyToIndex = new Map();
-    for (let i = 0; i < solid._vertProperties.length; i += 3) {
-        const x = solid._vertProperties[i], y = solid._vertProperties[i + 1], z = solid._vertProperties[i + 2];
-        solid._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
-    }
-    solid._dirty = true;
-    solid._faceIndex = null;
-}
+// (removed unused inflateSolidFacesInPlace)
 
 // Convenience: inflate just the fillet side-strip faces ("..._SIDE_A" / "..._SIDE_B")
-function inflateSideFacesInPlace(solid, distance) {
-    return inflateSolidFacesInPlace(solid, distance, (name) => {
-        if (typeof name !== 'string') return false;
-        return name.includes('_SIDE_A') || name.includes('_SIDE_B');
-    });
+// (removed unused convenience inflators)
+
+// Displace the input P-rail along the average of the two face normals.
+// Positive distance moves along outward average for OUTSET, negative for INSET.
+function displaceRailPForInflate(railP, trisA, trisB, distance, sideMode = 'INSET') {
+    const out = new Array(railP.length);
+    // For INSET (subtract), move the P-rail outward; for OUTSET (union), move inward.
+    const sign = (String(sideMode).toUpperCase() === 'INSET') ? +1 : -1;
+    const d = Math.abs(Number(distance) || 0) * sign;
+    for (let i = 0; i < railP.length; i++) {
+        const p = railP[i];
+        // Sample normals from both faces near p
+        const qA = projectPointOntoFaceTriangles(trisA, p);
+        const qB = projectPointOntoFaceTriangles(trisB, p);
+        const nA = normalFromFaceTriangles(trisA, qA);
+        const nB = normalFromFaceTriangles(trisB, qB);
+        const n = new THREE.Vector3(nA.x + nB.x, nA.y + nB.y, nA.z + nB.z);
+        if (n.lengthSq() > 1e-20) n.normalize(); else n.set(0, 0, 0);
+        out[i] = p.clone().addScaledVector(n, d);
+    }
+    return out;
 }
 
-// Convenience: inflate just the curved fillet arc faces ("..._ARC")
-function inflateArcFacesInPlace(solid, distance) {
-    return inflateSolidFacesInPlace(solid, distance, (name) => {
-        if (typeof name !== 'string') return false;
-        return name.endsWith('_ARC') || name.includes('_ARC');
-    });
+// Enforce 2‑manifoldness by removing surplus triangles on edges with >2 incidents.
+// Preference order for dropping: SIDE_* (lowest), *_CAP*, then *_ARC* (highest keep).
+// Also prefers removing smaller‑area triangles first.
+function enforceTwoManifoldByDropping(solid, maxPasses = 3) {
+    for (let pass = 0; pass < maxPasses; pass++) {
+        const vp = solid._vertProperties;
+        const tv = solid._triVerts;
+        const fid = solid._triIDs;
+        const triCount = (tv.length / 3) | 0;
+        if (triCount === 0) return 0;
+
+        // Build edge -> tris map (undirected)
+        const edgeMap = new Map(); // key "i:j" with i<j -> [triIdx,...]
+        const triArea = new Float64Array(triCount);
+        const triName = new Array(triCount);
+        const areaOf = (i0, i1, i2) => {
+            const ax = vp[i0*3+0], ay = vp[i0*3+1], az = vp[i0*3+2];
+            const bx = vp[i1*3+0], by = vp[i1*3+1], bz = vp[i1*3+2];
+            const cx = vp[i2*3+0], cy = vp[i2*3+1], cz = vp[i2*3+2];
+            const ux = bx-ax, uy = by-ay, uz = bz-az;
+            const vx = cx-ax, vy = cy-ay, vz = cz-az;
+            const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+            return 0.5 * Math.hypot(nx, ny, nz);
+        };
+        for (let t = 0; t < triCount; t++) {
+            const i0 = tv[t*3+0]>>>0, i1 = tv[t*3+1]>>>0, i2 = tv[t*3+2]>>>0;
+            const a = areaOf(i0, i1, i2); triArea[t] = a;
+            const id = fid ? fid[t] : undefined;
+            triName[t] = (id !== undefined) ? (solid._idToFaceName.get(id) || '') : '';
+            const add = (a,b) => {
+                const i = Math.min(a,b), j = Math.max(a,b);
+                const key = i+":"+j;
+                let arr = edgeMap.get(key);
+                if (!arr) { arr = []; edgeMap.set(key, arr); }
+                arr.push(t);
+            };
+            add(i0,i1); add(i1,i2); add(i2,i0);
+        }
+
+        const drop = new Uint8Array(triCount);
+        let needDrop = 0;
+        const priority = (name) => {
+            if (typeof name !== 'string') return 0;
+            if (name.includes('_ARC')) return 3; // keep most
+            if (name.includes('_CAP')) return 2;
+            if (name.includes('_SIDE_')) return 1; // drop first
+            return 1;
+        };
+
+        for (const [key, tris] of edgeMap.entries()) {
+            if (!tris || tris.length <= 2) continue;
+            // Sort by (priority asc -> drop first), then by area asc
+            const arr = tris.slice().sort((ta,tb)=>{
+                const pa = priority(triName[ta]);
+                const pb = priority(triName[tb]);
+                if (pa !== pb) return pa - pb;
+                return triArea[ta] - triArea[tb];
+            });
+            const toRemove = arr.length - 2;
+            for (let k = 0; k < toRemove; k++) { drop[arr[k]] = 1; needDrop++; }
+        }
+
+        if (!needDrop) return 0;
+        // Rebuild arrays without dropped triangles
+        const newTV = [];
+        const newFID = [];
+        for (let t = 0; t < triCount; t++) {
+            if (drop[t]) continue;
+            newTV.push(tv[t*3+0]>>>0, tv[t*3+1]>>>0, tv[t*3+2]>>>0);
+            if (fid) newFID.push(fid[t]);
+        }
+        solid._triVerts = newTV;
+        if (fid) solid._triIDs = newFID; else solid._triIDs = null;
+        solid._dirty = true;
+        solid._faceIndex = null;
+        // Loop again in case removals reduced some >2 edges indirectly
+    }
+    return 0;
 }
