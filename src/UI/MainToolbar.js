@@ -79,6 +79,10 @@ export class MainToolbar {
     left.appendChild(this._btn('🔍', 'Frame all geometry', () => this.viewer?.zoomToFit?.()));
     // Use a mesh-like icon to better suggest wireframe
     left.appendChild(this._btn('🕸️', 'Toggle wireframe', () => this.viewer?.toggleWireframe?.()));
+    // Toggle persistent inspector panel (bottom-left, updates on click)
+    left.appendChild(this._btn('🧪', 'Toggle Inspector panel', () => {
+      try { this.viewer && this.viewer.toggleInspectorPanel && this.viewer.toggleInspectorPanel(); } catch {}
+    }));
     left.appendChild(this._btn('📤', 'Export current part as STL', () => this._onExportSTL()));
     left.appendChild(this._btn('ℹ️', 'Open About page', () => window.open('about.html', '_blank')));
 

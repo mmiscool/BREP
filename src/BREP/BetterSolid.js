@@ -1738,13 +1738,19 @@ export class Solid extends THREE.Group {
             }
         }
 
-        const { showEdges = true } = options;
+        const { showEdges = true, forceAuthoring = false, authoringOnly = false } = options;
         let faces; let usedFallback = false;
-        try {
-            faces = this.getFaces(false);
-        } catch (err) {
-            console.warn('[Solid.visualize] getFaces failed, falling back to raw arrays:', err?.message || err);
+        if (!forceAuthoring && !authoringOnly) {
+            try {
+                faces = this.getFaces(false);
+            } catch (err) {
+                console.warn('[Solid.visualize] getFaces failed, falling back to raw arrays:', err?.message || err);
+                usedFallback = true;
+            }
+        } else {
             usedFallback = true;
+        }
+        if (usedFallback || !faces) {
             // Fallback: group authored triangles by face name directly from arrays.
             // This enables visualization even if manifoldization failed, which helps debugging.
             const vp = this._vertProperties || [];

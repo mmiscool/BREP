@@ -20,6 +20,11 @@ const inputParamsSchema = {
     default_value: 1,
     hint: "Extrude distance when no path is provided",
   },
+  distanceBack: {
+    type: "number",
+    default_value: 0,
+    hint: "Optional backward extrude distance (two-sided extrude)",
+  },
   boolean: {
     type: "boolean_operation",
     default_value: { targets: [], operation: 'NONE' },
@@ -40,7 +45,7 @@ export class ExtrudeFeature {
 
   async run(partHistory) {
     // actual code to create the extrude feature.
-    const { profile, distance } = this.inputParams;
+    const { profile, distance, distanceBack } = this.inputParams;
 
     // Resolve profile object: accept FACE object or a SKETCH group object
     const obj = Array.isArray(profile) ? (profile[0] || null) : (profile || null);
@@ -57,10 +62,10 @@ export class ExtrudeFeature {
 
 
     // Create the extrude using the sweep solid
-    const extrude = new BREP.Sweep({
+    const extrude = new BREP.ExtrudeSolid({
       face: faceObj,
-      sweepPathEdges: [],
       distance: distance,
+      distanceBack: distanceBack,
       name: this.inputParams.featureID
     });
     extrude.visualize();

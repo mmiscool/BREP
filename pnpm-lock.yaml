@@ -17,6 +17,9 @@ importers:
       three:
         specifier: ^0.180.0
         version: 0.180.0
+      threejs-offset:
+        specifier: ^0.1.0
+        version: 0.1.0(three@0.180.0)
     devDependencies:
       '@types/node':
         specifier: ^24.1.0
@@ -477,6 +480,11 @@ packages:
   three@0.180.0:
     resolution: {integrity: sha512-o+qycAMZrh+TsE01GqWUxUIKR1AL0S8pq7zDkYOQw8GqfX8b8VoCKYUoHbhiX5j+7hr8XsuHDVU6+gkQJQKg9w==}
 
+  threejs-offset@0.1.0:
+    resolution: {integrity: sha512-9xRhWWhQm6VCLJUamMrp44RtVixv5cX93bDVW1ikNCCoX05CDvnHMQXgiASqYZ2QD0w1a4dDQzrcUNLxOPa6Uw==}
+    peerDependencies:
+      three: ^0.143.0
+
   tinyglobby@0.2.14:
     resolution: {integrity: sha512-tX5e7OM1HnYr2+a2C/4V0htOcSQcoSTH9KgJnVvNm5zm/cyEWKJ7j7YutsH9CxMdtOkkLFy2AHrMci9IM8IPZQ==}
     engines: {node: '>=12.0.0'}
@@ -881,6 +889,10 @@ snapshots:
       has-flag: 3.0.0
 
   three@0.180.0: {}
+
+  threejs-offset@0.1.0(three@0.180.0):
+    dependencies:
+      three: 0.180.0
 
   tinyglobby@0.2.14:
     dependencies:

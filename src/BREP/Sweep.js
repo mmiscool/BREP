@@ -188,14 +188,14 @@ export class FacesSolid extends Solid {
  *   and named `${edgeName}_SW`.
  */
 export class Sweep extends FacesSolid {
-  constructor({ face, sweepPathEdges = [], distance = 1, mode = 'translate', name = 'Sweep' } = {}) {
+  constructor({ face, sweepPathEdges = [], distance = 1, distanceBack = 0, mode = 'translate', name = 'Sweep' } = {}) {
     super({ name });
-    this.params = { face, distance, sweepPathEdges, mode, name };
+    this.params = { face, distance, distanceBack, sweepPathEdges, mode, name };
     this.generate();
   }
 
   generate() {
-    const { face, distance, sweepPathEdges, mode } = this.params;
+    const { face, distance, distanceBack, sweepPathEdges, mode } = this.params;
     if (!face || !face.geometry) return;
 
     // Clear any existing children (visualization) and reset authoring arrays
@@ -636,19 +636,36 @@ export class Sweep extends FacesSolid {
       offsets = filtered;
     }
 
-    // Determine sweep vector for cap translation only (single-shot extrude or end cap of path)
-    let dir = null;
+    // Determine sweep vectors for cap translation only (single-shot extrude or end cap of path)
+    let dir = null;     // forward vector (legacy name)
+    let dirF = null;    // forward vector
+    let dirB = null;    // backward vector (for two-sided extrude)
     if (offsets.length >= 2) {
       dir = offsets[offsets.length - 1].clone();
+      dirF = dir.clone();
     } else if (distance instanceof THREE.Vector3) {
       dir = distance.clone();
+      dirF = dir.clone();
     } else if (typeof distance === 'number') {
       const n = typeof face.getAverageNormal === 'function'
         ? face.getAverageNormal().clone()
         : new THREE.Vector3(0, 1, 0);
       dir = n.multiplyScalar(distance);
+      dirF = dir.clone();
     } else {
       dir = new THREE.Vector3(0, 1, 0);
+      dirF = dir.clone();
+    }
+    // Two-sided only applies to translate extrude (no path offsets)
+    const twoSided = (offsets.length < 2) && typeof distanceBack === 'number' && isFinite(distanceBack) && distanceBack > 0;
+    if (twoSided) {
+      let n = null;
+      if (dirF && dirF.lengthSq() > 1e-20) {
+        n = dirF.clone().normalize();
+      } else {
+        n = (typeof face.getAverageNormal === 'function') ? face.getAverageNormal().clone() : new THREE.Vector3(0, 1, 0);
+      }
+      dirB = n.multiplyScalar(-distanceBack);
     }
 
     const startName = `${face.name || 'Face'}_START`;
@@ -674,13 +691,21 @@ export class Sweep extends FacesSolid {
         const allW = contourW.concat(...holesW);
         for (const t of tris) {
           const p0 = allW[t[0]], p1 = allW[t[1]], p2 = allW[t[2]];
-          // Start cap reversed (skip in pathAlign; built later)
-          if (mode !== 'pathAlign') this.addTriangle(startName, p0, p2, p1);
-          // End cap:
           if (mode !== 'pathAlign') {
-            const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
-            const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
-            const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
+            if (twoSided && dirB) {
+              // Start cap at back offset (reversed orientation)
+              const b0 = [p0[0] + dirB.x, p0[1] + dirB.y, p0[2] + dirB.z];
+              const b1 = [p1[0] + dirB.x, p1[1] + dirB.y, p1[2] + dirB.z];
+              const b2 = [p2[0] + dirB.x, p2[1] + dirB.y, p2[2] + dirB.z];
+              this.addTriangle(startName, b0, b2, b1);
+            } else {
+              // Legacy: start cap at base
+              this.addTriangle(startName, p0, p2, p1);
+            }
+            // End cap at forward offset
+            const q0 = [p0[0] + dirF.x, p0[1] + dirF.y, p0[2] + dirF.z];
+            const q1 = [p1[0] + dirF.x, p1[1] + dirF.y, p1[2] + dirF.z];
+            const q2 = [p2[0] + dirF.x, p2[1] + dirF.y, p2[2] + dirF.z];
             this.addTriangle(endName, q0, q1, q2);
           }
         }
@@ -704,10 +729,17 @@ export class Sweep extends FacesSolid {
       const addCapTris = (i0, i1, i2) => {
         const p0 = faceWorld[i0], p1 = faceWorld[i1], p2 = faceWorld[i2];
         if (mode !== 'pathAlign') {
-          this.addTriangle(startName, p0, p2, p1);
-          const q0 = [p0[0] + dir.x, p0[1] + dir.y, p0[2] + dir.z];
-          const q1 = [p1[0] + dir.x, p1[1] + dir.y, p1[2] + dir.z];
-          const q2 = [p2[0] + dir.x, p2[1] + dir.y, p2[2] + dir.z];
+          if (twoSided && dirB) {
+            const b0 = [p0[0] + dirB.x, p0[1] + dirB.y, p0[2] + dirB.z];
+            const b1 = [p1[0] + dirB.x, p1[1] + dirB.y, p1[2] + dirB.z];
+            const b2 = [p2[0] + dirB.x, p2[1] + dirB.y, p2[2] + dirB.z];
+            this.addTriangle(startName, b0, b2, b1);
+          } else {
+            this.addTriangle(startName, p0, p2, p1);
+          }
+          const q0 = [p0[0] + dirF.x, p0[1] + dirF.y, p0[2] + dirF.z];
+          const q1 = [p1[0] + dirF.x, p1[1] + dirF.y, p1[2] + dirF.z];
+          const q2 = [p2[0] + dirF.x, p2[1] + dirF.y, p2[2] + dirF.z];
           this.addTriangle(endName, q0, q1, q2);
         }
       };
@@ -1025,23 +1057,41 @@ export class Sweep extends FacesSolid {
         }
 
         if (!doPathSweep) {
-          // single-vector extrude (original behavior)
-          for (let i = 0; i < base.length - 1; i++) {
-            const a = base[i];
-            const b = base[i + 1];
-            if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
-            const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
-            const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
-            const setA = pointToEdgeNames.get(key(a));
-            const setB = pointToEdgeNames.get(key(b));
-            let name = `${face.name || 'FACE'}_SW`;
-            if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
-            if (isHole) {
-              this.addTriangle(name, a, b2, b);
-              this.addTriangle(name, a, a2, b2);
-            } else {
-              this.addTriangle(name, a, b, b2);
-              this.addTriangle(name, a, b2, a2);
+          // translate-only
+          if (twoSided && dirB) {
+            for (let i = 0; i < base.length - 1; i++) {
+              const a = base[i];
+              const b = base[i + 1];
+              if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+              const A0 = [a[0] + dirB.x, a[1] + dirB.y, a[2] + dirB.z];
+              const B0 = [b[0] + dirB.x, b[1] + dirB.y, b[2] + dirB.z];
+              const A1 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
+              const B1 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
+              const setA = pointToEdgeNames.get(key(a));
+              const setB = pointToEdgeNames.get(key(b));
+              let name = `${face.name || 'FACE'}_SW`;
+              if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+              addQuad(name, A0, B0, B1, A1, isHole);
+            }
+          } else {
+            // single-vector extrude (original behavior)
+            for (let i = 0; i < base.length - 1; i++) {
+              const a = base[i];
+              const b = base[i + 1];
+              if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+              const a2 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
+              const b2 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
+              const setA = pointToEdgeNames.get(key(a));
+              const setB = pointToEdgeNames.get(key(b));
+              let name = `${face.name || 'FACE'}_SW`;
+              if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+              if (isHole) {
+                this.addTriangle(name, a, b2, b);
+                this.addTriangle(name, a, a2, b2);
+              } else {
+                this.addTriangle(name, a, b, b2);
+                this.addTriangle(name, a, b2, a2);
+              }
             }
           }
         } else {
@@ -1197,15 +1247,29 @@ export class Sweep extends FacesSolid {
           const isHole = !!(edge && edge.userData && edge.userData.isHole);
 
           if (!doPathSweep) {
-            // Single-vector extrude
-            for (let i = 0; i < n - 1; i++) {
-              const a = pA[i];
-              const b = pA[i + 1];
-              if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue; // guard
-              const a2 = [a[0] + dir.x, a[1] + dir.y, a[2] + dir.z];
-              const b2 = [b[0] + dir.x, b[1] + dir.y, b[2] + dir.z];
-              if (isHole) { this.addTriangle(name, a, b2, b); this.addTriangle(name, a, a2, b2); }
-              else { this.addTriangle(name, a, b, b2); this.addTriangle(name, a, b2, a2); }
+            if (twoSided && dirB) {
+              for (let i = 0; i < n - 1; i++) {
+                const a = pA[i];
+                const b = pA[i + 1];
+                if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue; // guard
+                const A0 = [a[0] + dirB.x, a[1] + dirB.y, a[2] + dirB.z];
+                const B0 = [b[0] + dirB.x, b[1] + dirB.y, b[2] + dirB.z];
+                const A1 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
+                const B1 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
+                if (isHole) { this.addTriangle(name, A0, B1, B0); this.addTriangle(name, A0, A1, B1); }
+                else { this.addTriangle(name, A0, B0, B1); this.addTriangle(name, A0, B1, A1); }
+              }
+            } else {
+              // Single-vector extrude
+              for (let i = 0; i < n - 1; i++) {
+                const a = pA[i];
+                const b = pA[i + 1];
+                if ((a[0] === b[0] && a[1] === b[1] && a[2] === b[2])) continue; // guard
+                const a2 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
+                const b2 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
+                if (isHole) { this.addTriangle(name, a, b2, b); this.addTriangle(name, a, a2, b2); }
+                else { this.addTriangle(name, a, b, b2); this.addTriangle(name, a, b2, a2); }
+              }
             }
           } else {
             // Path-based

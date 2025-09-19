@@ -127,6 +127,8 @@ export class PartHistory {
       // set the owningFeatureID for each new artifact
       for (const artifact of instance.resultArtifacts) {
         artifact.owningFeatureID = feature.inputParams.featureID;
+        try {await artifact.visualize();} catch {}
+        
       }
 
       // Remove any existing scene children owned by this feature (rerun case)

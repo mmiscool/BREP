@@ -1,6 +1,7 @@
 import { Solid } from "./BetterSolid.js";
 import manifold from "./setupManifold.js";
 import { buildTightPointCloudWrap } from "./PointCloudWrap.js";
+import {applyOffset } from 'threejs-offset';
 import * as THREE from 'three';
 
 
@@ -77,6 +78,37 @@ export class FilletSolid extends Solid {
         // normal sampling and later for seam projection.
         const trisA = solid.getFace(faceA.name);
         const trisB = solid.getFace(faceB.name);
+
+        // Precompute face data for faster point projections and normal calculations
+        const faceDataCache = new Map();
+        const getFaceData = (faceName, tris) => {
+            if (faceDataCache.has(faceName)) return faceDataCache.get(faceName);
+
+            const data = tris.map(t => {
+                const a = new THREE.Vector3(t.p1[0], t.p1[1], t.p1[2]);
+                const b = new THREE.Vector3(t.p2[0], t.p2[1], t.p2[2]);
+                const c = new THREE.Vector3(t.p3[0], t.p3[1], t.p3[2]);
+
+                const cx = (a.x + b.x + c.x) / 3;
+                const cy = (a.y + b.y + c.y) / 3;
+                const cz = (a.z + b.z + c.z) / 3;
+
+                const ab = new THREE.Vector3().subVectors(b, a);
+                const ac = new THREE.Vector3().subVectors(c, a);
+                const n = new THREE.Vector3().crossVectors(ab, ac);
+                const len = n.length();
+                if (len < 1e-14) return null;
+
+                n.multiplyScalar(1 / len);
+                return { cx, cy, cz, normal: n, triangle: t };
+            }).filter(Boolean);
+
+            faceDataCache.set(faceName, data);
+            return data;
+        };
+
+        const faceDataA = getFaceData(faceA.name, trisA);
+        const faceDataB = getFaceData(faceB.name, trisB);
 
         // Build the section samples along the edge from the original edge
         // vertices so the P‑rail used by side strips matches the input edge
@@ -161,10 +193,10 @@ export class FilletSolid extends Solid {
             // Per-sample local normals from each adjacent face (handles curved faces)
             // Use per-face normals near the projected points on each face to
             // better approximate analytic curvature (important for cones).
-            const qA = projectPointOntoFaceTriangles(trisA, p);
-            const qB = projectPointOntoFaceTriangles(trisB, p);
-            const nA = localFaceNormalAtPoint(solid, faceA.name, qA) || nAavg;
-            const nB = localFaceNormalAtPoint(solid, faceB.name, qB) || nBavg;
+            const qA = projectPointOntoFaceTriangles(trisA, p, faceDataA);
+            const qB = projectPointOntoFaceTriangles(trisB, p, faceDataB);
+            const nA = localFaceNormalAtPoint(solid, faceA.name, qA, faceDataA) || nAavg;
+            const nB = localFaceNormalAtPoint(solid, faceB.name, qB, faceDataB) || nBavg;
 
             // Section frame and face trace directions ensure exact tangency
             // Face traces in the section plane: vA3 = normalize(nA x t), vB3 = normalize(nB x t)
@@ -219,18 +251,24 @@ export class FilletSolid extends Solid {
             // Refine center using normals at the actual tangency points on the
             // faces (projected). This improves accuracy on curved meshes where
             // normals vary across the face near the edge.
-            try {
-                const qA1 = projectPointOntoFaceTriangles(trisA, tA);
-                const qB1 = projectPointOntoFaceTriangles(trisB, tB);
-                const nA1 = localFaceNormalAtPoint(solid, faceA.name, qA1) || nAavg;
-                const nB1 = localFaceNormalAtPoint(solid, faceB.name, qB1) || nBavg;
-                const C_ref = solveCenterFromOffsetPlanesAnchored(p, t, nA1, qA1, sA, nB1, qB1, sB, rEff);
-                if (C_ref) {
-                    center = C_ref;
-                    tA = center.clone().addScaledVector(nA1, -sA * rEff);
-                    tB = center.clone().addScaledVector(nB1, -sB * rEff);
-                }
-            } catch (_) { /* ignore refine errors */ }
+            // Skip refinement if initial center is already close to expected distance
+            const initialDist = center.distanceTo(p);
+            const needsRefinement = Math.abs(initialDist - expectDist) > 0.1 * rEff;
+
+            if (needsRefinement) {
+                try {
+                    const qA1 = projectPointOntoFaceTriangles(trisA, tA, faceDataA);
+                    const qB1 = projectPointOntoFaceTriangles(trisB, tB, faceDataB);
+                    const nA1 = localFaceNormalAtPoint(solid, faceA.name, qA1, faceDataA) || nAavg;
+                    const nB1 = localFaceNormalAtPoint(solid, faceB.name, qB1, faceDataB) || nBavg;
+                    const C_ref = solveCenterFromOffsetPlanesAnchored(p, t, nA1, qA1, sA, nB1, qB1, sB, rEff);
+                    if (C_ref) {
+                        center = C_ref;
+                        tA = center.clone().addScaledVector(nA1, -sA * rEff);
+                        tB = center.clone().addScaledVector(nB1, -sB * rEff);
+                    }
+                } catch (_) { /* ignore refine errors */ }
+            }
 
             // Robustness: if p→center distance is unreasonably large,
             // recompute center using a 2D bisector construction in the
@@ -389,10 +427,6 @@ export class FilletSolid extends Solid {
             }
         }
 
-        // Build curved fillet; snap ring endpoints to seamA/seamB
-        buildWedgeDirect(this, baseName,
-            railPBuild, sectorDefs, rEff, radialSegments, isClosed, seamA, seamB);
-
         // If inflating, prefer to apply it during face-projected side strip build,
         // which keeps a clean parameterization and avoids post-displacement overlap.
         const sideInflateDuringBuild = (Math.abs(this.inflate) > 0);
@@ -420,11 +454,36 @@ export class FilletSolid extends Solid {
         // seams (P→seamA, P→seamB) are actual triangle edges shared between
         // the side strips and the cap, preventing tiny gaps.
         const widthSubdiv = (!isClosed && this.sideMode === 'INSET') ? 1 : this.sideStripSubdiv;
-        buildSideStripOnFace(this, `${baseName}_SIDE_A`, railPBuild, seamA, isClosed, trisA, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide);
-        buildSideStripOnFace(this, `${baseName}_SIDE_B`, railPBuild, seamB, isClosed, trisB, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide);
+        const sideRowsA = computeSideStripRows(railPBuild, seamA, isClosed, trisA, widthSubdiv, seamInset, sideOffsetSigned, projectSide);
+        const sideRowsB = computeSideStripRows(railPBuild, seamB, isClosed, trisB, widthSubdiv, seamInset, sideOffsetSigned, projectSide);
+
+        buildWedgeDirect(this, baseName,
+            railPBuild, sectorDefs, rEff, radialSegments, isClosed, seamA, seamB,
+            { rowsA: sideRowsA, rowsB: sideRowsB });
+
+        buildSideStripOnFace(this, `${baseName}_SIDE_A`, railPBuild, seamA, isClosed, trisA, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide, sideRowsA);
+        buildSideStripOnFace(this, `${baseName}_SIDE_B`, railPBuild, seamB, isClosed, trisB, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide, sideRowsB);
 
         // Heuristic: decide union vs subtract based on bisector direction vs outward normals
         this.filletType = classifyFilletBoolean(nAavg, nBavg, polyLocal);
+
+        // Debug: validate cap/strip seams to detect any T-junctions early.
+        if (this.debug && !isClosed) {
+            try {
+                const missA0 = validateCapStripSeam(this, `${baseName}_SIDE_A`, sideRowsA?.[0], `${baseName}_CAP_START`);
+                const missB0 = validateCapStripSeam(this, `${baseName}_SIDE_B`, sideRowsB?.[0], `${baseName}_CAP_START`);
+                const missA1 = validateCapStripSeam(this, `${baseName}_SIDE_A`, sideRowsA?.[sideRowsA.length-1], `${baseName}_CAP_END`);
+                const missB1 = validateCapStripSeam(this, `${baseName}_SIDE_B`, sideRowsB?.[sideRowsB.length-1], `${baseName}_CAP_END`);
+                const any = (missA0?.length||0)+(missB0?.length||0)+(missA1?.length||0)+(missB1?.length||0);
+                if (any > 0) {
+                    console.warn('[FilletSolid] seam validator: missing strip edges on cap boundary', {
+                        baseName,
+                        startA: missA0, startB: missB0,
+                        endA: missA1,   endB: missB1,
+                    });
+                }
+            } catch (e) { try { console.warn('[FilletSolid] seam validation failed:', e?.message||e); } catch {} }
+        }
 
         // Before inflating, ensure triangles are coherently oriented and pre-clean
         // in authoring space to avoid requiring a Manifold build too early.
@@ -620,6 +679,179 @@ export class FilletSolid extends Solid {
     }
 }
 
+function buildEndCapEarcut(solid, faceName, arcRing, rowA, rowB, normalHint = null) {
+    if (!Array.isArray(arcRing) || arcRing.length < 2) return false;
+    if (!Array.isArray(rowA) || !Array.isArray(rowB)) return false;
+    if (rowA.length < 2 || rowB.length < 2) return false;
+
+    const loop = buildEndCapLoop(arcRing, rowA, rowB);
+    if (!loop || loop.length < 3) return false;
+
+    if (triangulateCapWithEarcut(solid, faceName, loop, normalHint)) return true;
+    triangulateCapFanFallback(solid, faceName, loop);
+    return true;
+}
+
+function buildEndCapLoop(arcRing, rowA, rowB) {
+    const loop = [];
+    const eps2 = 1e-20;
+    const pushUnique = (pt) => {
+        if (!pt) return;
+        const last = loop[loop.length - 1];
+        if (last && last.distanceToSquared(pt) <= eps2) return;
+        loop.push(pt.clone());
+    };
+
+    for (let i = 0; i < arcRing.length; i++) {
+        const pt = arcRing[i];
+        if (!pt) continue;
+        if (i === arcRing.length - 1 && pt.distanceToSquared(arcRing[0]) <= eps2) continue;
+        pushUnique(pt);
+    }
+
+    if (Array.isArray(rowB)) {
+        for (let k = rowB.length - 1; k >= 0; k--) pushUnique(rowB[k]);
+    }
+    if (Array.isArray(rowA)) {
+        for (let k = 1; k < rowA.length; k++) pushUnique(rowA[k]);
+    }
+
+    if (loop.length > 2 && loop[loop.length - 1].distanceToSquared(loop[0]) <= eps2) loop.pop();
+    return loop;
+}
+
+// Triangulate the polygonal cap using Three.js earcut helper. Ensures every
+// boundary vertex becomes part of the mesh to prevent T junctions along seams.
+function triangulateCapWithEarcut(solid, faceName, polygon, normalHint = null) {
+    if (!Array.isArray(polygon) || polygon.length < 3) return false;
+
+    // Copy the loop so we can safely reverse without affecting callers
+    const outer = polygon.map(p => p.clone());
+
+    // Compute a stable plane and basis for 2D projection
+    let normal = computeLoopNormal(outer);
+    if (normalHint && normal && normal.dot(normalHint) < 0) normal.negate();
+    if (!normal || normal.lengthSq() < 1e-20) normal = normalHint ? normalHint.clone() : estimateLoopNormal(outer);
+    if (!normal || normal.lengthSq() < 1e-20) return false;
+    normal.normalize();
+
+    const origin = outer[0].clone();
+    let u = null;
+    for (let i = 1; i < outer.length; i++) {
+        const diff = outer[i].clone().sub(origin);
+        if (diff.lengthSq() > 1e-16) { u = diff.normalize(); break; }
+    }
+    if (!u) {
+        const arbitrary = Math.abs(normal.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+        u = arbitrary.clone().cross(normal).normalize();
+    }
+    let v = new THREE.Vector3().crossVectors(normal, u);
+    if (v.lengthSq() < 1e-16) {
+        const arbitrary = Math.abs(normal.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+        u = arbitrary.clone().cross(normal).normalize();
+        v = new THREE.Vector3().crossVectors(normal, u);
+    }
+    v.normalize();
+
+    const project2D = (pt) => {
+        const d = pt.clone().sub(origin);
+        return new THREE.Vector2(d.dot(u), d.dot(v));
+    };
+
+    let points2D = outer.map(project2D);
+    let area = THREE.ShapeUtils.area(points2D);
+    // Ensure CCW for positive area (consistent with outward normal)
+    if (area < 0) {
+        outer.reverse();
+        normal.negate();
+        points2D = outer.map(project2D);
+        area = THREE.ShapeUtils.area(points2D);
+    }
+    if (Math.abs(area) < 1e-16) return false;
+
+    // Use earcut to find a centroid inside the polygon, then triangulate
+    // as a fan from that interior anchor so EVERY boundary edge is a triangle
+    // edge, preventing T junctions with neighboring faces.
+    const earTris = THREE.ShapeUtils.triangulateShape(points2D, []);
+
+    // Compute area-weighted 2D centroid from earcut triangles (inside polygon)
+    let cx = 0, cy = 0, aSum = 0;
+    if (earTris && earTris.length) {
+        for (const tri of earTris) {
+            const A = points2D[tri[0]];
+            const B = points2D[tri[1]];
+            const C = points2D[tri[2]];
+            const triArea = 0.5 * ((B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x));
+            if (!Number.isFinite(triArea) || Math.abs(triArea) < 1e-20) continue;
+            const tx = (A.x + B.x + C.x) / 3;
+            const ty = (A.y + B.y + C.y) / 3;
+            cx += tx * triArea;
+            cy += ty * triArea;
+            aSum += triArea;
+        }
+    }
+    if (Math.abs(aSum) < 1e-20) {
+        // Fallback: simple average of polygon points
+        for (const p of points2D) { cx += p.x; cy += p.y; }
+        cx /= points2D.length; cy /= points2D.length;
+    } else {
+        cx /= aSum; cy /= aSum;
+    }
+    // Map anchor back to 3D
+    const anchor3D = origin.clone().addScaledVector(u, cx).addScaledVector(v, cy);
+
+    // Triangulate as a full fan along the border: (anchor, vi, v(i+1))
+    const N = outer.length;
+    // Consistent orientation: for CCW border, (anchor, i, i+1) yields outward facing if normal is outward
+    for (let i = 0; i < N; i++) {
+        const j = (i + 1) % N;
+        const a = anchor3D;
+        const b = outer[i];
+        const c = outer[j];
+        solid.addTriangle(faceName, vToArr(a), vToArr(b), vToArr(c));
+    }
+    return true;
+}
+
+function triangulateCapFanFallback(solid, faceName, polygon) {
+    if (!Array.isArray(polygon) || polygon.length < 3) return false;
+    const anchor = polygon[0];
+    for (let i = 1; i < polygon.length - 1; i++) {
+        const b = polygon[i];
+        const c = polygon[i + 1];
+        solid.addTriangle(faceName, vToArr(anchor), vToArr(b), vToArr(c));
+    }
+    return true;
+}
+
+function computeLoopNormal(loop) {
+    if (!Array.isArray(loop) || loop.length < 3) return null;
+    const normal = new THREE.Vector3(0, 0, 0);
+    const count = loop.length;
+    for (let i = 0; i < count; i++) {
+        const current = loop[i];
+        const next = loop[(i + 1) % count];
+        normal.x += (current.y - next.y) * (current.z + next.z);
+        normal.y += (current.z - next.z) * (current.x + next.x);
+        normal.z += (current.x - next.x) * (current.y + next.y);
+    }
+    return normal;
+}
+
+function estimateLoopNormal(loop) {
+    if (!Array.isArray(loop) || loop.length < 3) return null;
+    const origin = loop[0];
+    for (let i = 1; i < loop.length - 1; i++) {
+        const a = loop[i].clone().sub(origin);
+        for (let j = i + 1; j < loop.length; j++) {
+            const b = loop[j].clone().sub(origin);
+            const n = a.clone().cross(b);
+            if (n.lengthSq() > 1e-20) return n;
+        }
+    }
+    return null;
+}
+
 // ===================== Helpers ===================== //
 
 function arrToV(p) { return new THREE.Vector3(p[0], p[1], p[2]); }
@@ -679,21 +911,50 @@ function ensureOutwardOrientationAuthoring(solid) {
 
 // Compute closest point on a triangle mesh (array of {p1,p2,p3}) to a given point.
 // Returns a THREE.Vector3 of the closest point. If tris is empty, returns the input point.
-function projectPointOntoFaceTriangles(tris, point) {
+function projectPointOntoFaceTriangles(tris, point, faceData = null) {
     if (!Array.isArray(tris) || tris.length === 0) return point.clone();
     const P = point.clone();
     let best = null;
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
     const c = new THREE.Vector3();
-    for (const t of tris) {
-        a.set(t.p1[0], t.p1[1], t.p1[2]);
-        b.set(t.p2[0], t.p2[1], t.p2[2]);
-        c.set(t.p3[0], t.p3[1], t.p3[2]);
-        const q = closestPointOnTriangle(P, a, b, c);
-        const d2 = q.distanceToSquared(P);
-        if (!best || d2 < best.d2) best = { d2, q };
+
+    // Use precomputed face data if available
+    if (faceData) {
+        // First pass: find candidate triangles using centroid distances
+        const candidates = [];
+        for (const data of faceData) {
+            const dx = data.cx - P.x;
+            const dy = data.cy - P.y;
+            const dz = data.cz - P.z;
+            const d2 = dx*dx + dy*dy + dz*dz;
+            if (!best || d2 < best.d2 * 4) { // Allow some margin for non-centroid closest points
+                candidates.push(data);
+            }
+        }
+
+        // Second pass: compute exact closest point only for candidates
+        for (const data of candidates) {
+            const t = data.triangle;
+            a.set(t.p1[0], t.p1[1], t.p1[2]);
+            b.set(t.p2[0], t.p2[1], t.p2[2]);
+            c.set(t.p3[0], t.p3[1], t.p3[2]);
+            const q = closestPointOnTriangle(P, a, b, c);
+            const d2 = q.distanceToSquared(P);
+            if (!best || d2 < best.d2) best = { d2, q };
+        }
+    } else {
+        // Fallback to original implementation
+        for (const t of tris) {
+            a.set(t.p1[0], t.p1[1], t.p1[2]);
+            b.set(t.p2[0], t.p2[1], t.p2[2]);
+            c.set(t.p3[0], t.p3[1], t.p3[2]);
+            const q = closestPointOnTriangle(P, a, b, c);
+            const d2 = q.distanceToSquared(P);
+            if (!best || d2 < best.d2) best = { d2, q };
+        }
     }
+
     return best ? best.q.clone() : P.clone();
 }
 
@@ -751,22 +1012,50 @@ function normalFromFaceTriangles(tris, point) {
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
     const c = new THREE.Vector3();
-    for (const t of tris) {
+
+    // Precompute centroids and normals for faster distance checks
+    const triangleData = tris.map(t => {
+        a.set(t.p1[0], t.p1[1], t.p1[2]);
+        b.set(t.p2[0], t.p2[1], t.p2[2]);
+        c.set(t.p3[0], t.p3[1], t.p3[2]);
+        const cx = (a.x + b.x + c.x) / 3;
+        const cy = (a.y + b.y + c.y) / 3;
+        const cz = (a.z + b.z + c.z) / 3;
+
+        const ab = new THREE.Vector3().subVectors(b, a);
+        const ac = new THREE.Vector3().subVectors(c, a);
+        const n = new THREE.Vector3().crossVectors(ab, ac);
+        const len = n.length();
+        if (len < 1e-14) return null;
+
+        n.multiplyScalar(1 / len);
+        return { cx, cy, cz, normal: n, triangle: t };
+    }).filter(Boolean);
+
+    // First pass: find candidate triangles using centroid distances
+    const candidates = [];
+    for (const data of triangleData) {
+        const dx = data.cx - P.x;
+        const dy = data.cy - P.y;
+        const dz = data.cz - P.z;
+        const d2 = dx*dx + dy*dy + dz*dz;
+        if (!best || d2 < best.d2 * 4) {
+            candidates.push(data);
+        }
+    }
+
+    // Second pass: compute exact closest point and use its normal
+    for (const data of candidates) {
+        const t = data.triangle;
         a.set(t.p1[0], t.p1[1], t.p1[2]);
         b.set(t.p2[0], t.p2[1], t.p2[2]);
         c.set(t.p3[0], t.p3[1], t.p3[2]);
         const q = closestPointOnTriangle(P, a, b, c);
         const d2 = q.distanceToSquared(P);
-        if (!best || d2 < best.d2) best = { d2, a: a.clone(), b: b.clone(), c: c.clone(), q };
+        if (!best || d2 < best.d2) best = { d2, normal: data.normal };
     }
-    if (!best) return new THREE.Vector3(0, 1, 0);
-    const ab = new THREE.Vector3().subVectors(best.b, best.a);
-    const ac = new THREE.Vector3().subVectors(best.c, best.a);
-    const n = new THREE.Vector3().crossVectors(ab, ac);
-    const len = n.length();
-    if (len < 1e-14) return new THREE.Vector3(0, 1, 0);
-    n.multiplyScalar(1 / len);
-    return n;
+
+    return best ? best.normal : new THREE.Vector3(0, 1, 0);
 }
 
 // Push each point of a polyline slightly inward along the face normal to avoid
@@ -865,20 +1154,15 @@ function quantizeVerticesAuthoring(solid, q = 1e-6) {
     return (changes / 3) | 0;
 }
 
-// Build a side strip that lies exactly on an original face mesh by projecting
-// a regular grid between railP (edge) and seam (projected tangency) onto the
-// face triangles, then triangulating the grid.
-// Build a side strip between the P-rail and the seam. When `project` is true,
-// sample points are projected back to the source face triangles to lie exactly
-// on the face; when false, the strip is built as a simple ruled surface in
-// authoring space (robust for open/outset where projection may fold over).
-function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, widthSubdiv = 8, inset = 0, extraOffset = 0, endOvershoot = 0, project = true) {
+// Sample a grid of points spanning the side strip between the original edge
+// rail and the projected fillet seam on a face. Returns an array of rows, each
+// containing `widthSubdiv+1` vertices ordered from rail (k=0) to seam (k=W).
+function computeSideStripRows(railP, seam, closeLoop, tris, widthSubdiv = 8, inset = 0, extraOffset = 0, project = true) {
     const n = Math.min(railP.length, seam.length);
-    if (n < 2) return;
+    if (n < 2) return null;
     const W = Math.max(1, widthSubdiv);
-
-    // Precompute rows of projected points from edge -> seam
     const rows = new Array(n);
+
     for (let i = 0; i < n; i++) {
         const Pi = railP[i];
         const Si = seam[i];
@@ -886,12 +1170,10 @@ function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, wid
         for (let k = 0; k <= W; k++) {
             const t = k / W;
             if (k === 0) {
-                // Preserve exact input edge as the common seam
                 row[k] = Pi.clone();
                 continue;
             }
             if (k === W) {
-                // Use the provided seam point exactly to match the curved surface seam
                 row[k] = Si.clone();
                 continue;
             }
@@ -902,32 +1184,45 @@ function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, wid
             );
             if (project) {
                 let q = projectPointOntoFaceTriangles(tris, v);
-                const n = normalFromFaceTriangles(tris, q);
-                // Apply signed extra offset (inflate) and a small inward bias (inset) to avoid coplanar artifacts.
-                // Move = (+extraOffset) along +n (outward), and (−inset) along −n (inward).
+                const nrm = normalFromFaceTriangles(tris, q);
                 let move = 0;
                 if (Number.isFinite(extraOffset) && extraOffset !== 0) move += extraOffset;
                 if (inset > 0) move -= inset;
-                if (move !== 0) q = q.addScaledVector(n, move);
+                if (move !== 0 && nrm) q = q.addScaledVector(nrm, move);
                 row[k] = q;
             } else {
-                // Ruled surface: keep the linear interpolation without projection or normal offsets
                 row[k] = v;
             }
         }
         rows[i] = row;
     }
 
-    // Optionally prepend/append an extra row to extend beyond the selected edge ends
+    return rows;
+}
+
+// Build a side strip between the P-rail and the seam on a source face.
+// Accepts precomputed rows to maintain consistency with other consumers (e.g.,
+// end-cap construction) and avoids introducing new seam vertices that could
+// create T junctions.
+function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, widthSubdiv = 8, inset = 0, extraOffset = 0, endOvershoot = 0, project = true, precomputedRows = null) {
+    let baseRows = null;
+    if (Array.isArray(precomputedRows) && precomputedRows.length >= 2) {
+        baseRows = precomputedRows;
+    } else {
+        baseRows = computeSideStripRows(railP, seam, closeLoop, tris, widthSubdiv, inset, extraOffset, project);
+    }
+    if (!Array.isArray(baseRows) || baseRows.length < 2) return;
+
+    const rows = baseRows.map(row => row.slice());
+    const W = Math.max(1, (rows[0]?.length || 1) - 1);
+
     if (!closeLoop && endOvershoot > 0) {
         const extendRow = (rowBase, rowNext, sign) => {
             const dir = new THREE.Vector3();
-            // Estimate tangent along the rail using k=0 (edge seam) difference, fallback to average
             if (rowNext && rowBase) {
                 dir.copy(rowBase[0]).sub(rowNext[0]);
             }
             if (dir.lengthSq() < 1e-20) {
-                // average across width
                 for (let k = 0; k <= W; k++) {
                     const a = rowBase[k], b = rowNext[k];
                     if (!a || !b) continue;
@@ -936,62 +1231,79 @@ function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, wid
             }
             if (dir.lengthSq() < 1e-20) return null;
             dir.normalize().multiplyScalar(sign * endOvershoot);
-            // Shift; optionally project back onto face triangles; reapply offsets
             const out = new Array(W + 1);
             for (let k = 0; k <= W; k++) {
                 let p = (rowBase[k] || rowBase[0]).clone().add(dir);
                 if (project) {
                     p = projectPointOntoFaceTriangles(tris, p);
                     const nrm = normalFromFaceTriangles(tris, p);
-                    let move = 0; if (Number.isFinite(extraOffset) && extraOffset !== 0) move += extraOffset; if (inset > 0) move -= inset;
+                    let move = 0;
+                    if (Number.isFinite(extraOffset) && extraOffset !== 0) move += extraOffset;
+                    if (inset > 0) move -= inset;
                     if (move !== 0 && nrm) p.addScaledVector(nrm, move);
                 }
                 out[k] = p;
             }
             return out;
         };
-        // Prepend start extension (negative direction relative to forward growth)
-        const row0 = rows[0], row1 = rows[1];
+
+        const row0 = rows[0];
+        const row1 = rows[1];
         const startExt = extendRow(row0, row1, +1);
         if (startExt) rows.unshift(startExt);
-        // Append end extension (forward direction)
+
         const rowN1 = rows[rows.length - 1];
         const rowN2 = rows[rows.length - 2];
         const endExt = extendRow(rowN1, rowN2, +1);
         if (endExt) rows.push(endExt);
     }
 
-    // Triangulate between consecutive rows
     const emitQuad = (iA, iB) => {
         const rowA = rows[iA];
         const rowB = rows[iB];
+        const isStartEdge = (iA === 0);
+        const isEndEdge   = (iB === rows.length - 1);
         for (let k = 0; k < W; k++) {
             const a0 = rowA[k];
             const a1 = rowA[k + 1];
             const b0 = rowB[k];
             const b1 = rowB[k + 1];
-            // Choose diagonal that yields better shaped triangles and avoids skinny slivers
-            // Skip degenerate micro-tris created by offset/projection
             const triArea2 = (p, q, r) => {
                 const ux = q.x - p.x, uy = q.y - p.y, uz = q.z - p.z;
                 const vx = r.x - p.x, vy = r.y - p.y, vz = r.z - p.z;
                 const nx = uy * vz - uz * vy;
                 const ny = uz * vx - ux * vz;
                 const nz = ux * vy - uy * vx;
-                return nx*nx + ny*ny + nz*nz; // squared doubled-area
+                return nx*nx + ny*ny + nz*nz;
             };
             const pushIfArea = (p, q, r) => {
-                const a2 = triArea2(p,q,r);
-                if (a2 > 1e-32) solid.addTriangle(faceName, vToArr(p), vToArr(q), vToArr(r));
+                if (triArea2(p, q, r) > 1e-32) solid.addTriangle(faceName, vToArr(p), vToArr(q), vToArr(r));
             };
-            // Evaluate both diagonals and pick the one with larger min area
-            const A1 = triArea2(a0, b0, b1);
-            const A2 = triArea2(a0, b1, a1);
-            const B1 = triArea2(a0, b0, a1);
-            const B2 = triArea2(a1, b0, b1);
-            const minA = Math.min(A1, A2);
-            const minB = Math.min(B1, B2);
-            if (minA >= minB) {
+            // Areas for both diagonal choices
+            const A1 = triArea2(a0, b0, b1); // pair 1, tri (a0,b0,b1)
+            const A2 = triArea2(a0, b1, a1); // pair 1, tri (a0,b1,a1) includes edge (a0,a1)
+            const B1 = triArea2(a0, b0, a1); // pair 2, tri (a0,b0,a1)
+            const B2 = triArea2(a1, b0, b1); // pair 2, tri (a1,b0,b1) includes edge (b0,b1)
+
+            // Prefer the diagonal that creates boundary-aligned edges so the
+            // cap can share those exact edges and avoid T junctions.
+            let choosePair = 0; // 0 => pair A (A1+A2), 1 => pair B (B1+B2)
+            if (isStartEdge) {
+                // Need edge (a0,a1) to exist on the side strip at the start end
+                // This edge appears in triangle (a0,b1,a1) => pair A
+                choosePair = 0;
+            } else if (isEndEdge) {
+                // Need edge (b0,b1) to exist on the side strip at the end end
+                // This edge appears in triangle (a1,b0,b1) => pair B
+                choosePair = 1;
+            } else {
+                // Interior: pick the more stable diagonal (maximize min area)
+                const minA = Math.min(A1, A2);
+                const minB = Math.min(B1, B2);
+                choosePair = (minA >= minB) ? 0 : 1;
+            }
+
+            if (choosePair === 0) {
                 pushIfArea(a0, b0, b1);
                 pushIfArea(a0, b1, a1);
             } else {
@@ -1002,7 +1314,43 @@ function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, wid
     };
 
     for (let i = 0; i < rows.length - 1; i++) emitQuad(i, i + 1);
-    if (closeLoop && n > 2) emitQuad(rows.length - 1, 0);
+    if (closeLoop && rows.length > 2) emitQuad(rows.length - 1, 0);
+}
+
+// --- Debug utility: verify that a side strip contains all consecutive
+// edges along a provided boundary row. Returns an array of missing segments.
+function validateCapStripSeam(solid, sideFaceName, boundaryRow, capFaceName) {
+    if (!Array.isArray(boundaryRow) || boundaryRow.length < 2) return [];
+    const id = solid._faceNameToID?.get(sideFaceName);
+    if (id === undefined || id === null) return [];
+    const tv = solid._triVerts || [];
+    const fid = solid._triIDs || [];
+    const edgeSet = new Set();
+    const addEdge = (i, j) => {
+        const a = Math.min(i,j), b = Math.max(i,j);
+        edgeSet.add(a+':'+b);
+    };
+    for (let t = 0; t < tv.length; t += 3) {
+        const face = fid ? fid[(t/3)|0] : undefined;
+        if (face !== id) continue;
+        const i0 = tv[t]>>>0, i1 = tv[t+1]>>>0, i2 = tv[t+2]>>>0;
+        addEdge(i0,i1); addEdge(i1,i2); addEdge(i2,i0);
+    }
+    const keyToIndex = solid._vertKeyToIndex || new Map();
+    const idxOf = (p) => keyToIndex.get(`${p.x},${p.y},${p.z}`);
+    const missing = [];
+    for (let k = 0; k < boundaryRow.length - 1; k++) {
+        const a = boundaryRow[k];
+        const b = boundaryRow[k+1];
+        const ia = idxOf(a); const ib = idxOf(b);
+        if (ia === undefined || ib === undefined) { missing.push({k, reason:'vertex_not_found'}); continue; }
+        const key = (Math.min(ia,ib))+':'+(Math.max(ia,ib));
+        if (!edgeSet.has(key)) missing.push({k, ia, ib, a:[a.x,a.y,a.z], b:[b.x,b.y,b.z]});
+    }
+    if (missing.length) {
+        try { console.warn('[FilletSolid] Missing boundary edges on strip', {sideFaceName, capFaceName, count:missing.length, missing}); } catch {}
+    }
+    return missing;
 }
 
 function averageFaceNormalObjectSpace(solid, faceName) {
@@ -1024,27 +1372,48 @@ function averageFaceNormalObjectSpace(solid, faceName) {
     return accum.normalize();
 }
 
-function localFaceNormalAtPoint(solid, faceName, p) {
+function localFaceNormalAtPoint(solid, faceName, p, faceData = null) {
+    if (faceData) {
+        // Use precomputed face data
+        let best = null;
+        for (const data of faceData) {
+            const d = Math.abs(data.normal.dot(new THREE.Vector3().subVectors(p, new THREE.Vector3(data.cx, data.cy, data.cz))));
+            if (!best || d < best.d) best = { d, n: data.normal };
+        }
+        return best ? best.n : null;
+    }
+
+    // Fallback to original implementation
     const tris = solid.getFace(faceName);
     if (!tris || !tris.length) return null;
     let best = null;
     const pa = new THREE.Vector3(), pb = new THREE.Vector3(), pc = new THREE.Vector3();
     const n = new THREE.Vector3();
     const centroid = new THREE.Vector3();
-    for (const t of tris) {
+
+    // Precompute triangle data for faster processing
+    const triangleData = tris.map(t => {
         pa.set(t.p1[0], t.p1[1], t.p1[2]);
         pb.set(t.p2[0], t.p2[1], t.p2[2]);
         pc.set(t.p3[0], t.p3[1], t.p3[2]);
-        // Triangle normal (area-weighted by magnitude implicitly via distance test)
+
         const ab = new THREE.Vector3().subVectors(pb, pa);
         const ac = new THREE.Vector3().subVectors(pc, pa);
-        n.copy(ab).cross(ac); // right-handed orientation
-        if (n.lengthSq() < 1e-14) continue;
+        n.copy(ab).cross(ac);
+        if (n.lengthSq() < 1e-14) return null;
+
         n.normalize();
         centroid.copy(pa).add(pb).add(pc).multiplyScalar(1/3);
-        const d = Math.abs(n.dot(new THREE.Vector3().subVectors(p, centroid)));
-        if (!best || d < best.d) best = { d, n: n.clone() };
+
+        return { centroid: centroid.clone(), normal: n.clone(), triangle: t };
+    }).filter(Boolean);
+
+    // Find the triangle whose centroid is closest to the point
+    for (const data of triangleData) {
+        const d = Math.abs(data.normal.dot(new THREE.Vector3().subVectors(p, data.centroid)));
+        if (!best || d < best.d) best = { d, n: data.normal };
     }
+
     return best ? best.n : null;
 }
 
@@ -1072,7 +1441,7 @@ function classifyFilletBoolean(nA, nB, polyLocal) {
 // - Curved fillet surface (arc rings lofted along the edge)
 // - Two planar side strips from vertex rail P to arc start/end
 // - End caps at first/last sections if the edge is open
-function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegments, closeLoop, seamA = null, seamB = null) {
+function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegments, closeLoop, seamA = null, seamB = null, sideStripData = null) {
     const n = Math.min(railP.length, sectorDefs.length);
     if (n < 2) return;
 
@@ -1247,19 +1616,68 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         // Side strips are handled by face‑projection builder; nothing here.
     }
 
-    // End caps for open edges: fan from P to arc ring
     if (!closeLoop) {
-        const Pstart = railP[0];
-        const Astart = arcRings[0];
-        for (let j = 0; j < arcSegments; j++) {
-            const a0 = Astart[j], a1 = Astart[j + 1];
-            if (triArea2(Pstart, a0, a1) > 1e-32) solid.addTriangle(faceCapStart, vToArr(Pstart), vToArr(a0), vToArr(a1));
+        const rowsA = Array.isArray(sideStripData?.rowsA) ? sideStripData.rowsA : null;
+        const rowsB = Array.isArray(sideStripData?.rowsB) ? sideStripData.rowsB : null;
+
+        const startRowA = rowsA?.[0] || null;
+        const startRowB = rowsB?.[0] || null;
+        const endRowA = rowsA?.[rowsA.length - 1] || null;
+        const endRowB = rowsB?.[rowsB.length - 1] || null;
+
+        const startTangent = (railP.length > 1)
+            ? new THREE.Vector3().subVectors(railP[Math.min(1, railP.length - 1)], railP[0]).normalize()
+            : null;
+        const endTangent = (railP.length > 1)
+            ? new THREE.Vector3().subVectors(railP[railP.length - 1], railP[Math.max(0, railP.length - 2)]).normalize()
+            : null;
+
+        const arcDirStart = (arcRings[0]?.[1] && arcRings[0]?.[0])
+            ? new THREE.Vector3().subVectors(arcRings[0][1], arcRings[0][0]).normalize()
+            : null;
+        const arcDirEnd = (arcRings[n - 1]?.[arcSegments - 1] && arcRings[n - 1]?.[arcSegments])
+            ? new THREE.Vector3().subVectors(arcRings[n - 1][arcSegments - 1], arcRings[n - 1][arcSegments]).normalize()
+            : null;
+
+        const normalHintStart = (startTangent && arcDirStart)
+            ? new THREE.Vector3().crossVectors(startTangent, arcDirStart).normalize()
+            : null;
+        const normalHintEnd = (endTangent && arcDirEnd)
+            ? new THREE.Vector3().crossVectors(endTangent, arcDirEnd).normalize()
+            : null;
+
+        const builtStart = buildEndCapEarcut(
+            solid,
+            faceCapStart,
+            arcRings[0],
+            startRowA,
+            startRowB,
+            normalHintStart
+        );
+        if (!builtStart) {
+            const Pstart = railP[0];
+            const Astart = arcRings[0];
+            for (let j = 0; j < arcSegments; j++) {
+                const a0 = Astart[j], a1 = Astart[j + 1];
+                if (triArea2(Pstart, a0, a1) > 1e-32) solid.addTriangle(faceCapStart, vToArr(Pstart), vToArr(a0), vToArr(a1));
+            }
         }
-        const Pend = railP[n - 1];
-        const Aend = arcRings[n - 1];
-        for (let j = 0; j < arcSegments; j++) {
-            const a0 = Aend[j], a1 = Aend[j + 1];
-            if (triArea2(Pend, a1, a0) > 1e-32) solid.addTriangle(faceCapEnd, vToArr(Pend), vToArr(a1), vToArr(a0));
+
+        const builtEnd = buildEndCapEarcut(
+            solid,
+            faceCapEnd,
+            arcRings[n - 1],
+            endRowA,
+            endRowB,
+            normalHintEnd ? normalHintEnd.clone().negate() : null
+        );
+        if (!builtEnd) {
+            const Pend = railP[n - 1];
+            const Aend = arcRings[n - 1];
+            for (let j = 0; j < arcSegments; j++) {
+                const a0 = Aend[j], a1 = Aend[j + 1];
+                if (triArea2(Pend, a1, a0) > 1e-32) solid.addTriangle(faceCapEnd, vToArr(Pend), vToArr(a1), vToArr(a0));
+            }
         }
     }
 }
@@ -1317,18 +1735,53 @@ function solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, sA, nB, qB, sB, r) {
     return new THREE.Vector3(x[0], x[1], x[2]);
 }
 
-// Solve 3x3 linear system A x = b using Cramer's rule
+// Solve 3x3 linear system A x = b using Gaussian elimination with partial pivoting
 function solve3(A, b) {
-    const detA = det3(A);
-    if (Math.abs(detA) < 1e-10) return null;
-    const Ax = [ [b[0], A[0][1], A[0][2]], [b[1], A[1][1], A[1][2]], [b[2], A[2][1], A[2][2]] ];
-    const Ay = [ [A[0][0], b[0], A[0][2]], [A[1][0], b[1], A[1][2]], [A[2][0], b[2], A[2][2]] ];
-    const Az = [ [A[0][0], A[0][1], b[0]], [A[1][0], A[1][1], b[1]], [A[2][0], A[2][1], b[2]] ];
-    const x = det3(Ax) / detA;
-    const y = det3(Ay) / detA;
-    const z = det3(Az) / detA;
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
-    return [x, y, z];
+    const n = 3;
+    const mat = A.map(row => [...row]); // Copy matrix
+    const vec = [...b]; // Copy vector
+
+    // Forward elimination
+    for (let i = 0; i < n; i++) {
+        // Find pivot
+        let maxRow = i;
+        for (let k = i + 1; k < n; k++) {
+            if (Math.abs(mat[k][i]) > Math.abs(mat[maxRow][i])) {
+                maxRow = k;
+            }
+        }
+
+        // Swap rows
+        if (maxRow !== i) {
+            [mat[i], mat[maxRow]] = [mat[maxRow], mat[i]];
+            [vec[i], vec[maxRow]] = [vec[maxRow], vec[i]];
+        }
+
+        // Check for singular matrix
+        if (Math.abs(mat[i][i]) < 1e-12) return null;
+
+        // Eliminate
+        for (let k = i + 1; k < n; k++) {
+            const factor = mat[k][i] / mat[i][i];
+            for (let j = i; j < n; j++) {
+                mat[k][j] -= factor * mat[i][j];
+            }
+            vec[k] -= factor * vec[i];
+        }
+    }
+
+    // Back substitution
+    const x = new Array(n);
+    for (let i = n - 1; i >= 0; i--) {
+        x[i] = vec[i];
+        for (let j = i + 1; j < n; j++) {
+            x[i] -= mat[i][j] * x[j];
+        }
+        x[i] /= mat[i][i];
+    }
+
+    if (!x.every(Number.isFinite)) return null;
+    return x;
 }
 
 function det3(M) {

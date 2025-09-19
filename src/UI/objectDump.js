@@ -5,6 +5,7 @@
  * - Returns a root <div> you can attach anywhere.
  */
 export function generateObjectUI(target, options = {}) {
+  ensureStyles();
   const cfg = {
     title: options.title ?? 'Object Inspector',
     showTypes: options.showTypes ?? true,
@@ -75,6 +76,44 @@ export function generateObjectUI(target, options = {}) {
 }
 
 /* ========================= Helpers ========================= */
+
+function ensureStyles() {
+  if (document.getElementById('objui-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'objui-styles';
+  style.textContent = `
+    :root{ --bg:#0b0d10; --panel:#0f141a; --text:#e5e7eb; --muted:#9aa4b2; --border:#2a3442; --hover:#1b2433; --ok:#3b82f6; }
+    .objui{ color:var(--text); font:12px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; }
+    .objui .hr{ height:1px; background:#1e2430; margin:6px 0; }
+
+    .objui-header{ display:grid; grid-template-columns: auto 1fr auto; align-items:center; gap:8px; }
+    .objui-title{ font-weight:700; color:var(--text); white-space:nowrap; }
+    .objui-search input{ width:100%; box-sizing:border-box; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font:12px system-ui; }
+    .objui-actions{ display:flex; gap:6px; }
+    .objui-btn{ background:var(--hover); color:var(--text); border:1px solid var(--border); padding:6px 8px; border-radius:8px; cursor:pointer; font-weight:700; font-size:12px; }
+    .objui-btn:hover{ filter:brightness(1.1); }
+
+    .tree{ display:block; }
+
+    details{ border-left:1px solid #1e2430; margin-left:8px; }
+    summary{ list-style:none; cursor:pointer; user-select:none; padding:4px 4px; margin-left:-8px; display:grid; grid-template-columns:14px 1fr auto auto; align-items:center; gap:8px; color:var(--text); }
+    summary::-webkit-details-marker{ display:none; }
+    .chev{ width:14px; height:14px; color:#9aa4b2; transform:rotate(180deg); transition:transform .12s ease; }
+    details[open] > summary .chev{ transform:rotate(90deg); }
+    .key{ color:var(--text); font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    .meta{ color:var(--muted); font-style:italic; }
+    .type-badge{ color:#b7c0cc; border:1px solid #2d3748; border-radius:6px; padding:2px 6px; font:11px system-ui; }
+
+    .kv{ display:grid; grid-template-columns:14px 180px 1fr auto; align-items:center; gap:8px; padding:4px 4px; }
+    .kv .key{ font-weight:600; }
+    .value-input, .value-date{ width:100%; box-sizing:border-box; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 7px; font:12px ui-monospace, Menlo, Consolas, monospace; }
+    .value-input.readonly{ background:#0f141a; color:#c9d1d9; border-color:#1e2430; }
+    .value-checkbox{ width:16px; height:16px; }
+
+    .hidden{ display:none !important; }
+  `;
+  document.head.appendChild(style);
+}
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isArray = Array.isArray;
@@ -403,14 +442,18 @@ function makeEditorForType(value, t, onCommit) {
 }
 
 function showPreview(v, max = 40) {
-  let s = '';
+  let s;
   try {
     if (typeof v === 'function') s = `[Function ${v.name || 'anonymous'}]`;
     else if (typeof v === 'symbol') s = v.toString();
     else if (v instanceof Date) s = v.toISOString();
-    else s = JSON.stringify(v, replacerForJSON());
+    else {
+      const j = JSON.stringify(v, replacerForJSON());
+      s = (j === undefined ? String(v) : j);
+    }
   } catch {
     s = String(v);
   }
+  s = String(s ?? '');
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }

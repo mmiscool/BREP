@@ -19,6 +19,7 @@ import { FileManagerWidget } from './fileManagerWidget.js';
 import './mobile.js';
 import { SketchMode3D } from './SketchMode3D.js';
 import { ViewCube } from './ViewCube.js';
+import { generateObjectUI } from './objectDump.js';
 
 export class Viewer {
     /**
@@ -136,6 +137,10 @@ export class Viewer {
         this._sketchMode = null;
         this._lastPointerEvent = null;
         this._cubeActive = false;
+        // Inspector panel state
+        this._inspectorOpen = false;
+        this._inspectorEl = null;
+        this._inspectorContent = null;
 
         // Raycaster for picking
         this.raycaster = new THREE.Raycaster();
@@ -518,7 +523,22 @@ export class Viewer {
 
     _selectAt(event) {
         const { target } = this._pickAtEvent(event);
-        if (target && typeof target.onClick === 'function') {
+        if (!target) return;
+        // One-shot diagnostic inspector
+        if (this._diagPickOnce) {
+            this._diagPickOnce = false;
+            try { this._showDiagnosticsFor(target); } catch (e) { try { console.warn('Diagnostics failed:', e); } catch {} }
+            // Restore selection filter if we changed it
+            if (this._diagRestoreFilter) {
+                try { SelectionFilter.restoreAllowedSelectionTypes && SelectionFilter.restoreAllowedSelectionTypes(); } catch {}
+                this._diagRestoreFilter = false;
+            }
+        }
+        // If inspector panel is open, update it immediately for the clicked object
+        if (this._inspectorOpen) {
+            try { this._updateInspectorFor(target); } catch (e) { try { console.warn('Inspector update failed:', e); } catch {} }
+        }
+        if (typeof target.onClick === 'function') {
             try { target.onClick(); } catch { }
         }
     }
@@ -575,6 +595,458 @@ export class Viewer {
     _onContextMenu(event) {
         // No interactive targets; allow default context menu
         void event;
+    }
+
+    // ————————————————————————————————————————
+    // Diagnostics (one‑shot picker)
+    // ————————————————————————————————————————
+    enableDiagnosticPick() {
+        this._diagPickOnce = true;
+        // Do not modify the SelectionFilter; inspect will honor the current filter.
+        try { this._toast('Click an item to inspect'); } catch {}
+    }
+
+    // ————————————————————————————————————————
+    // Inspector panel (toggle + update-on-click)
+    // ————————————————————————————————————————
+    toggleInspectorPanel() { this._inspectorOpen ? this._closeInspectorPanel() : this._openInspectorPanel(); }
+    _openInspectorPanel() {
+        if (this._inspectorOpen) return;
+        this._ensureInspectorPanel();
+        this._inspectorEl.style.display = 'flex';
+        this._inspectorOpen = true;
+        // Placeholder message until user clicks an object
+        try {
+            this._setInspectorPlaceholder('Click an object in the scene to inspect.');
+        } catch {}
+    }
+    _closeInspectorPanel() {
+        if (!this._inspectorOpen) return;
+        this._inspectorOpen = false;
+        try { this._inspectorEl.style.display = 'none'; } catch {}
+    }
+    _ensureInspectorPanel() {
+        if (this._inspectorEl) return;
+        // Styles (one-time)
+        if (!document.getElementById('inspector-panel-styles')) {
+            const style = document.createElement('style');
+            style.id = 'inspector-panel-styles';
+            style.textContent = `
+              .inspector-panel{position:fixed;left:12px;bottom:12px;width:min(520px,92vw);height:70vh;display:flex;flex-direction:column;background:#0b0d10;border:1px solid #2a3442;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.35);z-index:2147483646;overflow:hidden}
+              .inspector-header{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #1e2430;color:#e5e7eb;font:600 13px system-ui}
+              .inspector-title{flex:1}
+              .inspector-actions{display:flex;gap:8px}
+              .inspector-btn{background:#1b2433;border:1px solid #334155;color:#e5e7eb;padding:6px 10px;border-radius:8px;cursor:pointer;font:700 12px system-ui}
+              .inspector-content{flex:1;overflow:auto;padding:8px}
+              .inspector-placeholder{color:#9aa4b2;font:12px system-ui;opacity:.9}
+            `;
+            document.head.appendChild(style);
+        }
+        // Panel
+        const panel = document.createElement('div');
+        panel.className = 'inspector-panel';
+        // Header
+        const header = document.createElement('div');
+        header.className = 'inspector-header';
+        const title = document.createElement('div'); title.className = 'inspector-title'; title.textContent = 'Inspector';
+        const btnDownload = document.createElement('button'); btnDownload.className = 'inspector-btn'; btnDownload.textContent = 'Download JSON';
+        btnDownload.addEventListener('click', () => {
+            try {
+                const json = this._lastInspectorDownload ? this._lastInspectorDownload() : (this._lastInspectorJSON || '{}');
+                const blob = new Blob([json], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url; a.download = 'diagnostics.json'; document.body.appendChild(a); a.click();
+                setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+            } catch {}
+        });
+        const btnClose = document.createElement('button'); btnClose.className = 'inspector-btn'; btnClose.textContent = 'Hide';
+        btnClose.addEventListener('click', () => this._closeInspectorPanel());
+        const actions = document.createElement('div'); actions.className = 'inspector-actions'; actions.appendChild(btnDownload); actions.appendChild(btnClose);
+        header.appendChild(title); header.appendChild(actions);
+        // Content
+        const content = document.createElement('div'); content.className = 'inspector-content';
+        panel.appendChild(header); panel.appendChild(content);
+        document.body.appendChild(panel);
+        this._inspectorEl = panel;
+        this._inspectorContent = content;
+        this._lastInspectorDownload = null;
+        this._lastInspectorJSON = '{}';
+    }
+    _setInspectorPlaceholder(msg) {
+        if (!this._inspectorContent) return;
+        this._inspectorContent.innerHTML = '';
+        const p = document.createElement('div'); p.className = 'inspector-placeholder'; p.textContent = msg || '';
+        this._inspectorContent.appendChild(p);
+        this._lastInspectorDownload = null;
+        this._lastInspectorJSON = '{}';
+    }
+    _updateInspectorFor(target) {
+        this._ensureInspectorPanel();
+        if (!target) { this._setInspectorPlaceholder('Nothing selected.'); return; }
+        try {
+            const { out, downloadFactory } = this._buildDiagnostics(target);
+            this._inspectorContent.innerHTML = '';
+            // Attach object UI tree
+            const ui = generateObjectUI(out, { title: 'Object Inspector', showTypes: true, collapsed: false });
+            this._inspectorContent.appendChild(ui);
+            // Persist download factory and raw JSON for header button
+            this._lastInspectorDownload = downloadFactory;
+            this._lastInspectorJSON = JSON.stringify(out, null, 2);
+        } catch (e) {
+            console.warn(e);
+            this._setInspectorPlaceholder('Inspector failed. See console.');
+        }
+    }
+
+    _round(n) { return Math.abs(n) < 1e-12 ? 0 : Number(n.toFixed(6)); }
+
+    _edgePointsWorld(edge) {
+        const pts = [];
+        const v = new THREE.Vector3();
+        const local = edge?.userData?.polylineLocal;
+        const isWorld = !!(edge?.userData?.polylineWorld);
+        if (Array.isArray(local) && local.length >= 2) {
+            if (isWorld) {
+                for (const p of local) pts.push([this._round(p[0]), this._round(p[1]), this._round(p[2])]);
+            } else {
+                for (const p of local) { v.set(p[0], p[1], p[2]).applyMatrix4(edge.matrixWorld); pts.push([this._round(v.x), this._round(v.y), this._round(v.z)]); }
+            }
+        } else {
+            const pos = edge?.geometry?.getAttribute?.('position');
+            if (pos && pos.itemSize === 3) {
+                for (let i = 0; i < pos.count; i++) { v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(edge.matrixWorld); pts.push([this._round(v.x), this._round(v.y), this._round(v.z)]); }
+            }
+        }
+        return pts;
+    }
+
+    _buildDiagnostics(target) {
+        const out = { type: target?.type || String(target?.constructor?.name||'Object'), name: target?.name || null };
+        let downloadFactory = null; // optional closure that returns full JSON text for download
+
+        if (target.type === 'FACE') {
+            // Triangles via Solid API to ensure correct grouping
+            let solid = target.parent; while (solid && solid.type !== 'SOLID') solid = solid.parent;
+            const faceName = target.userData?.faceName || target.name;
+            try {
+                if (solid && typeof solid.getFace === 'function' && faceName) {
+                    const tris = solid.getFace(faceName) || [];
+                    const mapTri = (t) => ({
+                        indices: Array.isArray(t.indices) ? t.indices : undefined,
+                        p1: t.p1.map(this._round), p2: t.p2.map(this._round), p3: t.p3.map(this._round),
+                        normal: (()=>{ const a=t.p1, b=t.p2, c=t.p3; const ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2]; const vx=c[0]-a[0], vy=c[1]-a[1], vz=c[2]-a[2]; const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const len=Math.hypot(nx,ny,nz)||1; return [this._round(nx/len),this._round(ny/len),this._round(nz/len)]; })(),
+                        area: (()=>{ const a=t.p1, b=t.p2, c=t.p3; const ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2]; const vx=c[0]-a[0], vy=c[1]-a[1], vz=c[2]-a[2]; const cx=uy*vz-uz*vy, cy=uz*vx-ux*vz, cz=ux*vy-uy*vx; return this._round(0.5*Math.hypot(cx,cy,cz)); })()
+                    });
+                    const triFull = tris.map(mapTri);
+                    try {
+                        let triMax = 5000; // preview cap
+                        if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX_FACE)) triMax = window.BREP_DIAG_TRI_MAX_FACE|0;
+                        if (triMax < 0) triMax = triFull.length;
+                        const count = Math.min(triFull.length, triMax);
+                        out.triangles = triFull.slice(0, count);
+                        if (count < triFull.length) { out.trianglesTruncated = true; out.trianglesTotal = triFull.length; out.trianglesLimit = triMax; }
+                    } catch { out.triangles = triFull; }
+                    // Full JSON factory for download
+                    downloadFactory = () => {
+                        const full = JSON.parse(JSON.stringify(out));
+                        full.triangles = triFull;
+                        delete full.trianglesTruncated; delete full.trianglesLimit; delete full.trianglesTotal;
+                        return JSON.stringify(full, null, 2);
+                    };
+                } else {
+                    // Fallback: read triangles from the face geometry
+                    const pos = target.geometry?.getAttribute?.('position');
+                    if (pos) {
+                        const v = new THREE.Vector3();
+                        const triCount = (pos.count / 3) | 0;
+                        const triFull = new Array(triCount);
+                        for (let i = 0; i < triCount; i++) {
+                            v.set(pos.getX(3*i+0), pos.getY(3*i+0), pos.getZ(3*i+0)).applyMatrix4(target.matrixWorld);
+                            const p0 = [this._round(v.x), this._round(v.y), this._round(v.z)];
+                            v.set(pos.getX(3*i+1), pos.getY(3*i+1), pos.getZ(3*i+1)).applyMatrix4(target.matrixWorld);
+                            const p1 = [this._round(v.x), this._round(v.y), this._round(v.z)];
+                            v.set(pos.getX(3*i+2), pos.getY(3*i+2), pos.getZ(3*i+2)).applyMatrix4(target.matrixWorld);
+                            const p2 = [this._round(v.x), this._round(v.y), this._round(v.z)];
+                            const ux=p1[0]-p0[0], uy=p1[1]-p0[1], uz=p1[2]-p0[2];
+                            const vx=p2[0]-p0[0], vy=p2[1]-p0[1], vz=p2[2]-p0[2];
+                            const cx=uy*vz-uz*vy, cy=uz*vx-ux*vz, cz=ux*vy-uy*vx; const len=Math.hypot(cx,cy,cz)||1;
+                            triFull[i] = { p1: p0, p2: p1, p3: p2, normal:[this._round(cx/len),this._round(cy/len),this._round(cz/len)], area:this._round(0.5*Math.hypot(cx,cy,cz)) };
+                        }
+                        try {
+                            let triMax = 5000; // preview cap for UI
+                            if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX_FACE)) triMax = window.BREP_DIAG_TRI_MAX_FACE|0;
+                            if (triMax < 0) triMax = triFull.length;
+                            const count = Math.min(triFull.length, triMax);
+                            out.triangles = triFull.slice(0, count);
+                            if (count < triFull.length) { out.trianglesTruncated = true; out.trianglesTotal = triFull.length; out.trianglesLimit = triMax; }
+                        } catch { out.triangles = triFull; }
+                        downloadFactory = () => {
+                            const full = JSON.parse(JSON.stringify(out));
+                            full.triangles = triFull;
+                            delete full.trianglesTruncated; delete full.trianglesLimit; delete full.trianglesTotal;
+                            return JSON.stringify(full, null, 2);
+                        };
+                    }
+                }
+            } catch {}
+
+            // Edges connected to this face
+            try {
+                const edges = Array.isArray(target.edges) ? target.edges : [];
+                out.edges = edges.map(e => ({ name: e.name || null, faces: (Array.isArray(e.faces)? e.faces.map(f=>f?.name||f?.userData?.faceName||null):[]), closedLoop: !!e.closedLoop, length: (typeof e.length==='function'? this._round(e.length()): undefined), points: this._edgePointsWorld(e) }));
+            } catch { out.edges = []; }
+
+            // Unique world vertices of the face (dedup from triangles)
+            try {
+                const uniq = new Map();
+                for (const tri of out.triangles || []) { for (const P of [tri.p1,tri.p2,tri.p3]) { const k=`${P[0]},${P[1]},${P[2]}`; if (!uniq.has(k)) uniq.set(k, P); } }
+                out.uniqueVertices = Array.from(uniq.values());
+            } catch {}
+
+            // Basic metrics and orientation hints
+            try { const n = target.getAverageNormal?.(); if (n) out.averageNormal = [this._round(n.x), this._round(n.y), this._round(n.z)]; } catch {}
+            try { const a = target.surfaceArea?.(); if (Number.isFinite(a)) out.surfaceArea = this._round(a); } catch {}
+            try {
+                // Bounding box in world coords from triangle points
+                const pts=[]; for (const tri of out.triangles||[]) { pts.push(tri.p1, tri.p2, tri.p3); }
+                if (pts.length) {
+                    let min=[+Infinity,+Infinity,+Infinity], max=[-Infinity,-Infinity,-Infinity];
+                    for (const p of pts) { if (p[0]<min[0]) min[0]=p[0]; if (p[1]<min[1]) min[1]=p[1]; if (p[2]<min[2]) min[2]=p[2]; if (p[0]>max[0]) max[0]=p[0]; if (p[1]>max[1]) max[1]=p[1]; if (p[2]>max[2]) max[2]=p[2]; }
+                    out.bbox = { min, max };
+                }
+            } catch {}
+
+            // Neighbor face names
+            try { out.neighbors = Array.from(new Set((out.edges||[]).flatMap(e=> e.faces||[]).filter(Boolean))); } catch {}
+
+            // Boundary loops if available from metadata
+            try {
+                const loops = target.userData?.boundaryLoopsWorld;
+                if (Array.isArray(loops) && loops.length) {
+                    out.boundaryLoops = loops.map(l => ({ isHole: !!l.isHole, pts: (Array.isArray(l.pts)? l.pts : l).map(p=>[this._round(p[0]),this._round(p[1]),this._round(p[2])]) }));
+                }
+            } catch {}
+        } else if (target.type === 'EDGE') {
+            out.closedLoop = !!target.closedLoop;
+            out.points = this._edgePointsWorld(target);
+            try { out.length = this._round(target.length()); } catch {}
+            try { out.faces = (Array.isArray(target.faces)? target.faces.map(f=>f?.name||f?.userData?.faceName||null):[]); } catch {}
+        } else if (target.type === 'SOLID') {
+            try {
+                const faces = target.getFaces?.(false) || [];
+                out.faceCount = faces.length;
+                out.faces = faces.slice(0, 10).map(f => ({ faceName: f.faceName, triangles: (f.triangles||[]).length }));
+                if (faces.length > 10) out.facesTruncated = true;
+            } catch {}
+            // Gather geometry arrays (prefer manifold mesh, fallback to authoring arrays)
+            let arrays = null; let usedAuthoring = false;
+            try {
+                const mesh = target.getMesh?.();
+                if (mesh && mesh.vertProperties && mesh.triVerts) {
+                    arrays = { vp: Array.from(mesh.vertProperties), tv: Array.from(mesh.triVerts), ids: Array.isArray(mesh.faceID) ? Array.from(mesh.faceID) : [] };
+                }
+            } catch {}
+            if (!arrays) {
+                try {
+                    const vp = Array.isArray(target._vertProperties) ? target._vertProperties.slice() : [];
+                    const tv = Array.isArray(target._triVerts) ? target._triVerts.slice() : [];
+                    const ids = Array.isArray(target._triIDs) ? target._triIDs.slice() : [];
+                    arrays = { vp, tv, ids }; usedAuthoring = true;
+                } catch {}
+            }
+
+            if (arrays) {
+                const { vp, tv, ids } = arrays;
+                out.meshStats = { vertices: (vp.length/3)|0, triangles: (tv.length/3)|0, source: usedAuthoring ? 'authoring' : 'manifold' };
+                // BBox
+                let min=[+Infinity,+Infinity,+Infinity], max=[-Infinity,-Infinity,-Infinity];
+                for (let i=0;i<vp.length;i+=3){ const x=this._round(vp[i]), y=this._round(vp[i+1]), z=this._round(vp[i+2]); if (x<min[0])min[0]=x; if (y<min[1])min[1]=y; if (z<min[2])min[2]=z; if (x>max[0])max[0]=x; if (y>max[1])max[1]=y; if (z>max[2])max[2]=z; }
+                if (min[0]!==Infinity) out.bbox = { min, max };
+
+                // Triangles with points (cap output size in preview; full list available via Download)
+                try {
+                    const triCount = (tv.length/3)|0;
+                    let triMax = 5000; // sane default for UI
+                    try { if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX)) triMax = window.BREP_DIAG_TRI_MAX|0; } catch {}
+                    if (triMax < 0) triMax = triCount; // -1 => no cap
+                    const count = Math.min(triCount, triMax);
+                    const tris = new Array(count);
+                    const nameOf = (id)=> (target._idToFaceName && target._idToFaceName.get) ? target._idToFaceName.get(id) : undefined;
+                    for (let t=0;t<count;t++){
+                        const i0=tv[3*t+0]>>>0, i1=tv[3*t+1]>>>0, i2=tv[3*t+2]>>>0;
+                        const p0=[this._round(vp[3*i0+0]), this._round(vp[3*i0+1]), this._round(vp[3*i0+2])];
+                        const p1=[this._round(vp[3*i1+0]), this._round(vp[3*i1+1]), this._round(vp[3*i1+2])];
+                        const p2=[this._round(vp[3*i2+0]), this._round(vp[3*i2+1]), this._round(vp[3*i2+2])];
+                        let faceID = (Array.isArray(ids) && ids.length===triCount) ? ids[t] : undefined;
+                        const ux=p1[0]-p0[0], uy=p1[1]-p0[1], uz=p1[2]-p0[2];
+                        const vx=p2[0]-p0[0], vy=p2[1]-p0[1], vz=p2[2]-p0[2];
+                        const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const nlen=Math.hypot(nx,ny,nz)||1;
+                        tris[t] = {
+                            index: t,
+                            faceID: faceID,
+                            faceName: faceID!==undefined ? (nameOf(faceID) || null) : null,
+                            p1: p0, p2: p1, p3: p2,
+                            normal: [this._round(nx/nlen), this._round(ny/nlen), this._round(nz/nlen)],
+                            area: this._round(0.5*nlen)
+                        };
+                    }
+                    out.triangles = tris;
+                    if (count < triCount) { out.trianglesTruncated = true; out.trianglesTotal = triCount; out.trianglesLimit = triMax; }
+                    // Build full JSON on demand
+                    downloadFactory = () => {
+                        const trisFull = new Array(triCount);
+                        const nameOf = (id)=> (target._idToFaceName && target._idToFaceName.get) ? target._idToFaceName.get(id) : undefined;
+                        for (let t=0;t<triCount;t++){
+                            const i0=tv[3*t+0]>>>0, i1=tv[3*t+1]>>>0, i2=tv[3*t+2]>>>0;
+                            const p0=[this._round(vp[3*i0+0]), this._round(vp[3*i0+1]), this._round(vp[3*i0+2])];
+                            const p1=[this._round(vp[3*i1+0]), this._round(vp[3*i1+1]), this._round(vp[3*i1+2])];
+                            const p2=[this._round(vp[3*i2+0]), this._round(vp[3*i2+1]), this._round(vp[3*i2+2])];
+                            let faceID = (Array.isArray(ids) && ids.length===triCount) ? ids[t] : undefined;
+                            const ux=p1[0]-p0[0], uy=p1[1]-p0[1], uz=p1[2]-p0[2];
+                            const vx=p2[0]-p0[0], vy=p2[1]-p0[1], vz=p2[2]-p0[2];
+                            const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const nlen=Math.hypot(nx,ny,nz)||1;
+                            trisFull[t] = {
+                                index: t,
+                                faceID: faceID,
+                                faceName: faceID!==undefined ? (nameOf(faceID) || null) : null,
+                                p1: p0, p2: p1, p3: p2,
+                                normal: [this._round(nx/nlen), this._round(ny/nlen), this._round(nz/nlen)],
+                                area: this._round(0.5*nlen)
+                            };
+                        }
+                        const full = JSON.parse(JSON.stringify(out));
+                        full.triangles = trisFull; delete full.trianglesTruncated; delete full.trianglesLimit; delete full.trianglesTotal;
+                        return JSON.stringify(full, null, 2);
+                    };
+                } catch {}
+
+                // Non-manifold / topology diagnostics (undirected edge uses)
+                try {
+                    const nv = (vp.length/3)|0; const NV = BigInt(Math.max(1,nv));
+                    const eKey = (a,b)=>{ const A=BigInt(a), B=BigInt(b); return A<B ? A*NV+B : B*NV+A; };
+                    const e2c = new Map();
+                    const triCount = (tv.length/3)|0;
+                    const degenerate = []; const used = new Uint8Array(nv);
+                    for (let t=0;t<triCount;t++){
+                        const i0=tv[3*t+0]>>>0, i1=tv[3*t+1]>>>0, i2=tv[3*t+2]>>>0;
+                        used[i0]=1; used[i1]=1; used[i2]=1;
+                        const ax=vp[3*i0+0], ay=vp[3*i0+1], az=vp[3*i0+2];
+                        const bx=vp[3*i1+0], by=vp[3*i1+1], bz=vp[3*i1+2];
+                        const cx=vp[3*i2+0], cy=vp[3*i2+1], cz=vp[3*i2+2];
+                        const ux=bx-ax, uy=by-ay, uz=bz-az; const vx=cx-ax, vy=cy-ay, vz=cz-az;
+                        const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const area2=nx*nx+ny*ny+nz*nz;
+                        if (area2 <= 1e-30) degenerate.push(t);
+                        const add=(a,b)=>{ const k=eKey(Math.min(a,b),Math.max(a,b)); e2c.set(k, (e2c.get(k)||0)+1); };
+                        add(i0,i1); add(i1,i2); add(i2,i0);
+                    }
+                    let gt2=0, lt2=0, eq1=0; const exGT=[], exLT=[], exB=[];
+                    for (const [k,c] of e2c.entries()){
+                        if (c>2){ gt2++; if (exGT.length<12) exGT.push({ edge:k.toString(), uses:c }); }
+                        else if (c<2){ lt2++; if (c===1){ eq1++; if (exB.length<12) exB.push({ edge:k.toString(), uses:c }); } else { if (exLT.length<12) exLT.push({ edge:k.toString(), uses:c }); } }
+                    }
+                    let isolated=0; for (let i=0;i<nv;i++) if (!used[i]) isolated++;
+                    out.topology = {
+                        degenerateTriangles: { count: degenerate.length, examples: degenerate.slice(0,12) },
+                        edges: { gt2, lt2, boundary:eq1, examples_gt2: exGT, examples_lt2: exLT, examples_boundary: exB },
+                        isolatedVertices: isolated
+                    };
+                } catch {}
+
+                // Faces fallback from authoring arrays when manifold faces unavailable
+                if (!out.faceCount || !Array.isArray(out.faces)) {
+                    try {
+                        const nameOf = (id)=> (target._idToFaceName && target._idToFaceName.get) ? target._idToFaceName.get(id) : String(id);
+                        const nameToTris = new Map();
+                        const triCount=(tv.length/3)|0;
+                        for(let t=0;t<triCount;t++){
+                            const id = Array.isArray(ids) ? ids[t] : undefined;
+                            const name = nameOf(id);
+                            if (!name) continue;
+                            let arr = nameToTris.get(name); if (!arr){ arr=[]; nameToTris.set(name, arr); }
+                            arr.push(t);
+                        }
+                        const facesRaw = [];
+                        for (const [faceName, trisIdx] of nameToTris.entries()) facesRaw.push({ faceName, triangles: trisIdx.length });
+                        facesRaw.sort((a,b)=> b.triangles - a.triangles);
+                        out.faceCount = facesRaw.length;
+                        out.faces = facesRaw.slice(0, 20);
+                        if (facesRaw.length > 20) out.facesTruncated = true;
+                    } catch {}
+                }
+            }
+
+            try { const vol = target.volume?.(); if (Number.isFinite(vol)) out.volume = this._round(vol); } catch {}
+            try { const area = target.surfaceArea?.(); if (Number.isFinite(area)) out.surfaceArea = this._round(area); } catch {}
+        }
+
+        return { out, downloadFactory: downloadFactory || (()=> JSON.stringify(out, null, 2)) };
+    }
+
+    _showDiagnosticsFor(target) {
+        const { out, downloadFactory } = this._buildDiagnostics(target);
+        const json = JSON.stringify(out, null, 2);
+        this._showModal('Selection Diagnostics', json, { onDownload: downloadFactory });
+    }
+
+    _toast(msg, ms = 1200) {
+        try {
+            const el = document.createElement('div');
+            el.textContent = msg;
+            el.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);background:#111c;backdrop-filter:blur(6px);color:#e5e7eb;padding:6px 10px;border:1px solid #2a3442;border-radius:8px;z-index:2147483647;font:12px/1.2 system-ui;';
+            document.body.appendChild(el);
+            setTimeout(()=>{ try{ el.parentNode && el.parentNode.removeChild(el);}catch{} }, ms);
+        } catch {}
+    }
+
+    _showModal(title, text, opts = {}) {
+        const mask = document.createElement('div');
+        mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(2px);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
+        const box = document.createElement('div');
+        box.style.cssText = 'width:min(980px,90vw);height:min(70vh,720px);background:#0b0d10;border:1px solid #2a3442;border-radius:10px;box-shadow:0 12px 28px rgba(0,0,0,.35);display:flex;flex-direction:column;overflow:hidden;';
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #1e2430;color:#e5e7eb;font:600 13px system-ui;';
+        header.textContent = title || 'Diagnostics';
+        const close = document.createElement('button');
+        close.textContent = '✕';
+        close.title = 'Close';
+        close.style.cssText = 'margin-left:auto;background:transparent;border:0;color:#9aa4b2;cursor:pointer;font:700 14px system-ui;padding:4px;';
+        const pre = document.createElement('textarea');
+        pre.readOnly = true;
+        pre.value = text || '';
+        pre.style.cssText = 'flex:1;resize:none;background:#0f141a;color:#e5e7eb;border:0;padding:10px 12px;font:12px/1.3 ui-monospace,Menlo,Consolas,monospace;white-space:pre;';
+        const foot = document.createElement('div');
+        foot.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;padding:8px 12px;border-top:1px solid #1e2430;';
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'mtb-btn';
+        copyBtn.textContent = 'Copy JSON';
+        copyBtn.style.cssText = 'background:#1b2433;border:1px solid #334155;color:#e5e7eb;padding:6px 10px;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;';
+        copyBtn.addEventListener('click', async () => { try { await navigator.clipboard.writeText(pre.value); copyBtn.textContent = 'Copied!'; setTimeout(()=>copyBtn.textContent='Copy JSON', 900); } catch {} });
+        const dlBtn = document.createElement('button');
+        dlBtn.className = 'mtb-btn';
+        dlBtn.textContent = 'Download';
+        dlBtn.style.cssText = copyBtn.style.cssText;
+        dlBtn.addEventListener('click', () => {
+            try {
+                const content = (opts && typeof opts.onDownload === 'function') ? opts.onDownload() : pre.value;
+                const blob = new Blob([content], {type:'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'diagnostics.json'; document.body.appendChild(a); a.click();
+                setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+            } catch {}
+        });
+
+        close.addEventListener('click', ()=>{ try{ document.body.removeChild(mask);}catch{} });
+        mask.addEventListener('click', (e)=>{ if (e.target === mask) { try{ document.body.removeChild(mask);}catch{} } });
+
+        header.appendChild(close);
+        box.appendChild(header);
+        box.appendChild(pre);
+        foot.appendChild(copyBtn);
+        foot.appendChild(dlBtn);
+        box.appendChild(foot);
+        mask.appendChild(box);
+        document.body.appendChild(mask);
     }
 
     // ————————————————————————————————————————
@@ -673,7 +1145,3 @@ export class Viewer {
         return (2 * Math.tan(fovRad / 2) * dist) / height;
     }
 }
-
-
-
-

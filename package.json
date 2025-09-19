@@ -16,7 +16,8 @@
   "dependencies": {
     "manifold-3d": "^3.2.1",
     "stats.js": "^0.17.0",
-    "three": "^0.180.0"
+    "three": "^0.180.0",
+    "threejs-offset": "^0.1.0"
   },
   "description": "",
   "devDependencies": {
