@@ -769,42 +769,83 @@ export class Sweep extends FacesSolid {
       const geom = faceObj?.geometry; if (!geom) return loops;
       const pos = geom.getAttribute && geom.getAttribute('position'); if (!pos) return loops;
       const idx = geom.getIndex && geom.getIndex();
-      // Build world-space vertex list
+      // World-space vertices
       const world = new Array(pos.count);
       const v = new THREE.Vector3();
       for (let i = 0; i < pos.count; i++) { v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(faceObj.matrixWorld); world[i] = [v.x, v.y, v.z]; }
-      // Collect boundary edges with orientation from triangles
-      const undirected = new Map(); // key min,max -> {count, dir:[a,b]}
+      // Count undirected triangle edges
+      const edgeCount = new Map(); // key min,max -> count
       const triIter = (cb)=>{
         if (idx) { for (let t=0;t<idx.count;t+=3){ cb(idx.getX(t+0)>>>0, idx.getX(t+1)>>>0, idx.getX(t+2)>>>0); } }
         else { const triCount=(pos.count/3)|0; for(let t=0;t<triCount;t++){ cb(3*t+0,3*t+1,3*t+2); } }
       };
-      const addEdge = (a,b)=>{
-        const i = Math.min(a,b), j = Math.max(a,b); const k = `${i},${j}`; let rec = undirected.get(k); if(!rec){ rec={count:0,dir:[a,b]}; undirected.set(k,rec);} rec.count++;
-      };
-      triIter((i0,i1,i2)=>{ addEdge(i0,i1); addEdge(i1,i2); addEdge(i2,i0); });
-      const edges = [];
-      for (const rec of undirected.values()) if (rec.count===1) edges.push(rec.dir.slice());
-      if (!edges.length) return loops;
-      // Build adjacency by start index
-      const startToEdges = new Map();
-      const push = (k, ei)=>{ let arr = startToEdges.get(k); if(!arr){ arr=[]; startToEdges.set(k,arr);} arr.push(ei); };
-      edges.forEach(([a,b],ei)=> push(a,ei));
-      const used = new Array(edges.length).fill(false);
-      for (let s=0;s<edges.length;s++){
-        if (used[s]) continue;
-        let loopIdx=[]; let [a,b] = edges[s]; used[s]=true; loopIdx.push(a); let cur=b;
-        while(true){ loopIdx.push(cur); const list = startToEdges.get(cur)||[]; let nextEi=-1; for (const ei of list){ if (!used[ei]){ nextEi=ei; break; } } if (nextEi<0) break; used[nextEi]=true; cur = edges[nextEi][1]; if (cur===loopIdx[0]){ break; } }
-        if (loopIdx.length>=3){
-          const pts=[]; for (let k=0;k<loopIdx.length;k++){ const p=world[loopIdx[k]]; if (pts.length){ const q=pts[pts.length-1]; if (q[0]===p[0]&&q[1]===p[1]&&q[2]===p[2]) continue; } pts.push([p[0],p[1],p[2]]); }
-          if (pts.length>=3) loops.push({ pts, isHole:false });
+      const inc = (a,b)=>{ const i=Math.min(a,b), j=Math.max(a,b); const k=`${i},${j}`; edgeCount.set(k, (edgeCount.get(k)||0)+1); };
+      triIter((i0,i1,i2)=>{ inc(i0,i1); inc(i1,i2); inc(i2,i0); });
+      // Keep only boundary edges (count==1) and build adjacency for both directions
+      const adj = new Map(); // index -> Set(neighbor indices)
+      const addAdj = (a,b)=>{ let s=adj.get(a); if(!s){ s=new Set(); adj.set(a,s);} s.add(b); };
+      for (const [k,c] of edgeCount.entries()) {
+        if (c === 1) {
+          const [iStr, jStr] = k.split(','); const i = Number(iStr), j = Number(jStr);
+          addAdj(i,j); addAdj(j,i);
         }
+      }
+      // Walk loops by following neighbors not equal to previous
+      const visited = new Set(); // canonical edge keys "i,j" with i<j
+      const edgeKey = (a,b)=>{ const i=Math.min(a,b), j=Math.max(a,b); return `${i},${j}`; };
+      for (const [a, neigh] of adj.entries()) {
+        for (const b of neigh) {
+          const k = edgeKey(a,b); if (visited.has(k)) continue;
+          const ring = [a, b];
+          visited.add(k);
+          let prev = a, cur = b, guard = 0;
+          while (guard++ < 100000) {
+            const nset = adj.get(cur) || new Set();
+            // Choose the next neighbor that's not where we came from
+            let next = null; for (const n of nset) { if (n !== prev) { next = n; break; } }
+            if (next == null) break;
+            const kk = edgeKey(cur, next); if (visited.has(kk)) break;
+            visited.add(kk);
+            ring.push(next);
+            prev = cur; cur = next;
+            if (cur === ring[0]) break; // closed
+          }
+          if (ring.length >= 3) {
+            // Dedup consecutive duplicates and convert to points
+            const pts = [];
+            for (let i = 0; i < ring.length; i++) {
+              const p = world[ring[i]];
+              if (pts.length) { const q = pts[pts.length - 1]; if (q[0]===p[0] && q[1]===p[1] && q[2]===p[2]) continue; }
+              pts.push([p[0], p[1], p[2]]);
+            }
+            if (pts.length >= 3) loops.push({ pts, isHole: false });
+          }
+        }
+      }
+      // Classify holes by signed area in the face plane
+      if (loops.length) {
+        const n = (typeof faceObj.getAverageNormal === 'function') ? faceObj.getAverageNormal().clone() : new THREE.Vector3(0,0,1);
+        if (n.lengthSq() < 1e-20) n.set(0,0,1); n.normalize();
+        let ux = new THREE.Vector3(1,0,0); if (Math.abs(n.dot(ux)) > 0.99) ux.set(0,1,0);
+        const U = new THREE.Vector3().crossVectors(n, ux).normalize();
+        const V = new THREE.Vector3().crossVectors(n, U).normalize();
+        const area2 = (arr)=>{ let a=0; for (let i=0;i<arr.length;i++){ const p=arr[i], q=arr[(i+1)%arr.length]; a += (p.x*q.y - q.x*p.y); } return 0.5*a; };
+        const loopAreas = loops.map(loop => {
+          const v2 = loop.pts.map(P => new THREE.Vector2(new THREE.Vector3(P[0],P[1],P[2]).sub(new THREE.Vector3()).dot(U), new THREE.Vector3(P[0],P[1],P[2]).dot(V)));
+          return area2(v2);
+        });
+        let outerIdx = 0; let outerAbs = 0; for (let i=0;i<loopAreas.length;i++){ const ab = Math.abs(loopAreas[i]); if (ab>outerAbs){ outerAbs=ab; outerIdx=i; } }
+        const outerSign = Math.sign(loopAreas[outerIdx] || 1);
+        for (let i=0;i<loops.length;i++){ const sign = Math.sign(loopAreas[i] || 0); loops[i].isHole = (sign !== outerSign); }
       }
       return loops;
     };
     if (!boundaryLoops || !boundaryLoops.length) boundaryLoops = computeBoundaryLoopsFromFace(face);
     const doPathSweep = offsets.length >= 2;
-    if (boundaryLoops && boundaryLoops.length) {
+    // Only use boundary-loop based sidewalls when doing pathAlign, so caps and
+    // walls share identical vertices. For translate mode we generate one open
+    // ribbon per input edge and never attempt to form closed loops.
+    if (mode === 'pathAlign' && boundaryLoops && boundaryLoops.length) {
       const _inputDbg = { mode, pathCount: pathPts.length, loops: boundaryLoops.length, face: face?.name };
       dlog('Input', 'pathAlign params', _inputDbg);
       djson('Input', _inputDbg);
@@ -1130,8 +1171,8 @@ export class Sweep extends FacesSolid {
                 const setB = pointToEdgeNames.get(key(b));
                 let name = `${face.name || 'FACE'}_SW`;
                 if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
-                if (isHole) { this.addTriangle(name, A0, B1, B0); this.addTriangle(name, A0, A1, B1); }
-                else { this.addTriangle(name, A0, B0, B1); this.addTriangle(name, A0, B1, A1); }
+                // Use robust splitting to avoid skinny/inside-crossing diagonals
+                addQuad(name, A0, B0, B1, A1, isHole);
                 if (sweepDebugEnabled() && seg===0 && i===0) {
                   const walls0 = { A0, B0, B1, A1 };
                   dlog('Walls','first quad', walls0);
@@ -1280,7 +1321,14 @@ export class Sweep extends FacesSolid {
               if (upRef.lengthSq() < 1e-20) upRef.set(0,0,1);
               upRef.normalize();
               const T = P.map((_, i) => (i < P.length - 1 ? P[i + 1].clone().sub(P[i]).normalize() : P[i].clone().sub(P[i - 1] || P[i]).normalize()));
-              const ref = new THREE.Vector3(pA[best][0], pA[best][1], pA[best][2]).sub(P[0]);
+              // Pick the edge polyline point nearest to the start of the path
+              // and use it as a stable reference for initial frame orientation.
+              let bestIndex = 0; let bestRefD2 = Infinity;
+              for (let i = 0; i < pA.length; i++) {
+                const dx = pA[i][0] - P[0].x, dy = pA[i][1] - P[0].y, dz = pA[i][2] - P[0].z;
+                const d2 = dx*dx + dy*dy + dz*dz; if (d2 < bestRefD2) { bestRefD2 = d2; bestIndex = i; }
+              }
+              const ref = new THREE.Vector3(pA[bestIndex][0], pA[bestIndex][1], pA[bestIndex][2]).sub(P[0]);
               const Xs = []; const Ys = []; const Zs = [];
               for (let i = 0; i < P.length; i++) {
                 const z = T[i].clone().normalize();
@@ -1289,7 +1337,7 @@ export class Sweep extends FacesSolid {
                   if (i > 0) x = Xs[i - 1].clone(); else x = new THREE.Vector3().crossVectors(upRef, z);
                 }
                 x.normalize();
-                const t = new THREE.Vector3(pA[Math.min(best+1, pA.length-1)][0]-pA[best][0], pA[Math.min(best+1, pA.length-1)][1]-pA[best][1], pA[Math.min(best+1, pA.length-1)][2]-pA[best][2]);
+                const t = new THREE.Vector3(pA[Math.min(bestIndex+1, pA.length-1)][0]-pA[bestIndex][0], pA[Math.min(bestIndex+1, pA.length-1)][1]-pA[bestIndex][1], pA[Math.min(bestIndex+1, pA.length-1)][2]-pA[bestIndex][2]);
                 const tp = t.sub(z.clone().multiplyScalar(t.dot(z)));
                 if (tp.lengthSq() > 1e-14) {
                   if (x.dot(tp.normalize()) < 0) x.multiplyScalar(-1);
@@ -1300,7 +1348,7 @@ export class Sweep extends FacesSolid {
                 Xs[i] = x; Ys[i] = y; Zs[i] = z;
               }
               // Bias rotation at start to align with base edge direction
-              const baseDir = new THREE.Vector3(pA[Math.min(best+1, pA.length-1)][0]-pA[best][0], pA[Math.min(best+1, pA.length-1)][1]-pA[best][1], pA[Math.min(best+1, pA.length-1)][2]-pA[best][2]).normalize();
+              const baseDir = new THREE.Vector3(pA[Math.min(bestIndex+1, pA.length-1)][0]-pA[bestIndex][0], pA[Math.min(bestIndex+1, pA.length-1)][1]-pA[bestIndex][1], pA[Math.min(bestIndex+1, pA.length-1)][2]-pA[bestIndex][2]).normalize();
               const tgt = baseDir.sub(Zs[0].clone().multiplyScalar(baseDir.dot(Zs[0])));
               if (tgt.lengthSq()>1e-14){
                 const t = tgt.normalize();
@@ -1361,8 +1409,7 @@ export class Sweep extends FacesSolid {
                   const B0 = [b[0] + off0.x, b[1] + off0.y, b[2] + off0.z];
                   const A1 = [a[0] + off1.x, a[1] + off1.y, a[2] + off1.z];
                   const B1 = [b[0] + off1.x, b[1] + off1.y, b[2] + off1.z];
-                  if (isHole) { this.addTriangle(name, A0, B1, B0); this.addTriangle(name, A0, A1, B1); }
-                  else { this.addTriangle(name, A0, B0, B1); this.addTriangle(name, A0, B1, A1); }
+                  addQuad(name, A0, B0, B1, A1, isHole);
                 }
               }
             }
