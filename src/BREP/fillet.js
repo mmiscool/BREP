@@ -1,8 +1,54 @@
 import { Solid } from "./BetterSolid.js";
 import manifold from "./setupManifold.js";
 import { buildTightPointCloudWrap } from "./PointCloudWrap.js";
-import {applyOffset } from 'threejs-offset';
 import * as THREE from 'three';
+
+// Shared scratch vectors to reduce allocations in tight loops
+const __vAB = new THREE.Vector3();
+const __vAC = new THREE.Vector3();
+const __vAP = new THREE.Vector3();
+const __vBP = new THREE.Vector3();
+const __vCP = new THREE.Vector3();
+const __vCB = new THREE.Vector3();
+const __tmp1 = new THREE.Vector3();
+const __tmp2 = new THREE.Vector3();
+const __tmp3 = new THREE.Vector3();
+
+// Lightweight per-face triangle data cache to accelerate repeated
+// closest-point and normal queries during fillet construction.
+// Keyed by the triangle array instance returned from getFace(...).
+const __FACE_DATA_CACHE = (typeof WeakMap !== 'undefined') ? new WeakMap() : new Map();
+function getCachedFaceDataForTris(tris) {
+    if (!Array.isArray(tris) || tris.length === 0) return [];
+    const existing = __FACE_DATA_CACHE.get(tris);
+    if (existing) return existing;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    const faceData = tris.map(t => {
+        a.set(t.p1[0], t.p1[1], t.p1[2]);
+        b.set(t.p2[0], t.p2[1], t.p2[2]);
+        c.set(t.p3[0], t.p3[1], t.p3[2]);
+        const cx = (a.x + b.x + c.x) / 3;
+        const cy = (a.y + b.y + c.y) / 3;
+        const cz = (a.z + b.z + c.z) / 3;
+        const ab = new THREE.Vector3().subVectors(b, a);
+        const ac = new THREE.Vector3().subVectors(c, a);
+        const n = new THREE.Vector3().crossVectors(ab, ac);
+        const len = n.length();
+        if (len < 1e-14) return null;
+        n.multiplyScalar(1 / len);
+        // Bounding radius from centroid that encloses the triangle
+        const dxA = a.x - cx, dyA = a.y - cy, dzA = a.z - cz;
+        const dxB = b.x - cx, dyB = b.y - cy, dzB = b.z - cz;
+        const dxC = c.x - cx, dyC = c.y - cy, dzC = c.z - cz;
+        const rA2 = dxA*dxA + dyA*dyA + dzA*dzA;
+        const rB2 = dxB*dxB + dyB*dyB + dzB*dzB;
+        const rC2 = dxC*dxC + dyC*dyC + dzC*dzC;
+        const rad = Math.sqrt(Math.max(rA2, rB2, rC2));
+        return { cx, cy, cz, rad, normal: n, triangle: t };
+    }).filter(Boolean);
+    __FACE_DATA_CACHE.set(tris, faceData);
+    return faceData;
+}
 
 
 export class FilletSolid extends Solid {
@@ -79,36 +125,9 @@ export class FilletSolid extends Solid {
         const trisA = solid.getFace(faceA.name);
         const trisB = solid.getFace(faceB.name);
 
-        // Precompute face data for faster point projections and normal calculations
-        const faceDataCache = new Map();
-        const getFaceData = (faceName, tris) => {
-            if (faceDataCache.has(faceName)) return faceDataCache.get(faceName);
-
-            const data = tris.map(t => {
-                const a = new THREE.Vector3(t.p1[0], t.p1[1], t.p1[2]);
-                const b = new THREE.Vector3(t.p2[0], t.p2[1], t.p2[2]);
-                const c = new THREE.Vector3(t.p3[0], t.p3[1], t.p3[2]);
-
-                const cx = (a.x + b.x + c.x) / 3;
-                const cy = (a.y + b.y + c.y) / 3;
-                const cz = (a.z + b.z + c.z) / 3;
-
-                const ab = new THREE.Vector3().subVectors(b, a);
-                const ac = new THREE.Vector3().subVectors(c, a);
-                const n = new THREE.Vector3().crossVectors(ab, ac);
-                const len = n.length();
-                if (len < 1e-14) return null;
-
-                n.multiplyScalar(1 / len);
-                return { cx, cy, cz, normal: n, triangle: t };
-            }).filter(Boolean);
-
-            faceDataCache.set(faceName, data);
-            return data;
-        };
-
-        const faceDataA = getFaceData(faceA.name, trisA);
-        const faceDataB = getFaceData(faceB.name, trisB);
+        // Fetch cached face data for faster point projections and normal calculations
+        const faceDataA = getCachedFaceDataForTris(trisA);
+        const faceDataB = getCachedFaceDataForTris(trisB);
 
         // Build the section samples along the edge from the original edge
         // vertices so the P‑rail used by side strips matches the input edge
@@ -356,8 +375,9 @@ export class FilletSolid extends Solid {
         this._vertKeyToIndex = new Map();
         // Snap arc seams to lie exactly on the original faces by projecting
         // the per-section tangency points onto the face triangle meshes.
-        let seamA = railA.map(p => projectPointOntoFaceTriangles(trisA, p));
-        let seamB = railB.map(p => projectPointOntoFaceTriangles(trisB, p));
+        // Use precomputed face data when projecting seams for faster lookups
+        let seamA = railA.map(p => projectPointOntoFaceTriangles(trisA, p, faceDataA));
+        let seamB = railB.map(p => projectPointOntoFaceTriangles(trisB, p, faceDataB));
 
         // Bias seams slightly into the source solid to prevent coincident
         // surfaces from leaving sliver shards after subtraction. For OPEN
@@ -918,43 +938,62 @@ function projectPointOntoFaceTriangles(tris, point, faceData = null) {
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
     const c = new THREE.Vector3();
+    const qVec = new THREE.Vector3();
 
-    // Use precomputed face data if available
-    if (faceData) {
-        // First pass: find candidate triangles using centroid distances
-        const candidates = [];
-        for (const data of faceData) {
-            const dx = data.cx - P.x;
-            const dy = data.cy - P.y;
-            const dz = data.cz - P.z;
-            const d2 = dx*dx + dy*dy + dz*dz;
-            if (!best || d2 < best.d2 * 4) { // Allow some margin for non-centroid closest points
-                candidates.push(data);
-            }
+    // Acquire face data (precomputed if possible)
+    const data = faceData && Array.isArray(faceData) ? faceData : getCachedFaceDataForTris(tris);
+
+    // Two‑phase exact search with safe culling bound.
+    // Phase 1: seed best using K nearest centroids (fast, approximate)
+    // Phase 2: check the remaining triangles only if their centroid distance
+    //          is within a conservative lower bound that can beat current best.
+    const K = 32;
+    if (data && data.length) {
+        const pairs = new Array(data.length);
+        for (let i = 0; i < data.length; i++) {
+            const d = data[i];
+            const dx = d.cx - P.x, dy = d.cy - P.y, dz = d.cz - P.z;
+            pairs[i] = { d2: dx*dx + dy*dy + dz*dz, data: d };
         }
-
-        // Second pass: compute exact closest point only for candidates
-        for (const data of candidates) {
-            const t = data.triangle;
+        pairs.sort((x, y) => x.d2 - y.d2);
+        const N = Math.min(K, pairs.length);
+        for (let i = 0; i < N; i++) {
+            const t = pairs[i].data.triangle;
             a.set(t.p1[0], t.p1[1], t.p1[2]);
             b.set(t.p2[0], t.p2[1], t.p2[2]);
             c.set(t.p3[0], t.p3[1], t.p3[2]);
-            const q = closestPointOnTriangle(P, a, b, c);
-            const d2 = q.distanceToSquared(P);
-            if (!best || d2 < best.d2) best = { d2, q };
+            closestPointOnTriangleToOut(P, a, b, c, qVec);
+            const d2 = qVec.distanceToSquared(P);
+            if (!best || d2 < best.d2) best = { d2, q: qVec.clone() };
         }
-    } else {
-        // Fallback to original implementation
-        for (const t of tris) {
+        // Phase 2: safe prune using centroid radius bound
+        const bestDist = best ? Math.sqrt(best.d2) : Infinity;
+        for (let i = N; i < pairs.length; i++) {
+            const d = pairs[i].data;
+            const rad = d.rad || 0;
+            // If centroid distance is greater than (bestDist + rad), triangle cannot beat best
+            const threshold2 = (bestDist + rad) * (bestDist + rad);
+            if (pairs[i].d2 > threshold2) continue;
+            const t = d.triangle;
             a.set(t.p1[0], t.p1[1], t.p1[2]);
             b.set(t.p2[0], t.p2[1], t.p2[2]);
             c.set(t.p3[0], t.p3[1], t.p3[2]);
-            const q = closestPointOnTriangle(P, a, b, c);
-            const d2 = q.distanceToSquared(P);
-            if (!best || d2 < best.d2) best = { d2, q };
+            closestPointOnTriangleToOut(P, a, b, c, qVec);
+            const d2 = qVec.distanceToSquared(P);
+            if (!best || d2 < best.d2) { best = { d2, q: qVec.clone() }; }
         }
+        return best ? best.q.clone() : P.clone();
     }
 
+    // Fallback: brute force (should rarely happen)
+    for (const t of tris) {
+        a.set(t.p1[0], t.p1[1], t.p1[2]);
+        b.set(t.p2[0], t.p2[1], t.p2[2]);
+        c.set(t.p3[0], t.p3[1], t.p3[2]);
+        closestPointOnTriangleToOut(P, a, b, c, qVec);
+        const d2 = qVec.distanceToSquared(P);
+        if (!best || d2 < best.d2) best = { d2, q: qVec.clone() };
+    }
     return best ? best.q.clone() : P.clone();
 }
 
@@ -1004,6 +1043,52 @@ function closestPointOnTriangle(P, A, B, C) {
     return A.clone().addScaledVector(AB, v).addScaledVector(AC, w);
 }
 
+// Output-parameter version to avoid allocating new vectors per call
+function closestPointOnTriangleToOut(P, A, B, C, out) {
+    // Adapted from Real-Time Collision Detection (Christer Ericson)
+    const AB = __vAB.subVectors(B, A);
+    const AC = __vAC.subVectors(C, A);
+    const AP = __vAP.subVectors(P, A);
+
+    const d1 = AB.dot(AP);
+    const d2 = AC.dot(AP);
+    if (d1 <= 0 && d2 <= 0) { out.copy(A); return out; }
+
+    const BP = __vBP.subVectors(P, B);
+    const d3 = AB.dot(BP);
+    const d4 = AC.dot(BP);
+    if (d3 >= 0 && d4 <= d3) { out.copy(B); return out; }
+
+    const vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+        const v = d1 / (d1 - d3);
+        out.copy(A).addScaledVector(AB, v); return out;
+    }
+
+    const CP = __vCP.subVectors(P, C);
+    const d5 = AB.dot(CP);
+    const d6 = AC.dot(CP);
+    if (d6 >= 0 && d5 <= d6) { out.copy(C); return out; }
+
+    const vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+        const w = d2 / (d2 - d6);
+        out.copy(A).addScaledVector(AC, w); return out;
+    }
+
+    const va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+        const w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        out.copy(B).addScaledVector(__vCB.subVectors(C, B), w); return out;
+    }
+
+    // Inside face region. Compute barycentric coordinates (u,v,w) and return
+    const denom = 1 / (AB.dot(AB) * AC.dot(AC) - Math.pow(AB.dot(AC), 2));
+    const v = (AC.dot(AC) * AB.dot(AP) - AB.dot(AC) * AC.dot(AP)) * denom;
+    const w = (AB.dot(AB) * AC.dot(AP) - AB.dot(AC) * AB.dot(AP)) * denom;
+    out.copy(A).addScaledVector(AB, v).addScaledVector(AC, w); return out;
+}
+
 // Approximate local face normal at a point using the nearest triangle of tris
 function normalFromFaceTriangles(tris, point) {
     if (!Array.isArray(tris) || tris.length === 0) return new THREE.Vector3(0, 1, 0);
@@ -1012,49 +1097,56 @@ function normalFromFaceTriangles(tris, point) {
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
     const c = new THREE.Vector3();
+    const qVec = new THREE.Vector3();
 
-    // Precompute centroids and normals for faster distance checks
-    const triangleData = tris.map(t => {
-        a.set(t.p1[0], t.p1[1], t.p1[2]);
-        b.set(t.p2[0], t.p2[1], t.p2[2]);
-        c.set(t.p3[0], t.p3[1], t.p3[2]);
-        const cx = (a.x + b.x + c.x) / 3;
-        const cy = (a.y + b.y + c.y) / 3;
-        const cz = (a.z + b.z + c.z) / 3;
-
-        const ab = new THREE.Vector3().subVectors(b, a);
-        const ac = new THREE.Vector3().subVectors(c, a);
-        const n = new THREE.Vector3().crossVectors(ab, ac);
-        const len = n.length();
-        if (len < 1e-14) return null;
-
-        n.multiplyScalar(1 / len);
-        return { cx, cy, cz, normal: n, triangle: t };
-    }).filter(Boolean);
-
-    // First pass: find candidate triangles using centroid distances
-    const candidates = [];
-    for (const data of triangleData) {
-        const dx = data.cx - P.x;
-        const dy = data.cy - P.y;
-        const dz = data.cz - P.z;
-        const d2 = dx*dx + dy*dy + dz*dz;
-        if (!best || d2 < best.d2 * 4) {
-            candidates.push(data);
+    const data = getCachedFaceDataForTris(tris);
+    const K = 32;
+    if (data && data.length) {
+        const pairs = new Array(data.length);
+        for (let i = 0; i < data.length; i++) {
+            const d = data[i];
+            const dx = d.cx - P.x, dy = d.cy - P.y, dz = d.cz - P.z;
+            pairs[i] = { d2: dx*dx + dy*dy + dz*dz, data: d };
         }
+        pairs.sort((x, y) => x.d2 - y.d2);
+        const N = Math.min(K, pairs.length);
+        for (let i = 0; i < N; i++) {
+            const d = pairs[i].data;
+            const t = d.triangle;
+            a.set(t.p1[0], t.p1[1], t.p1[2]);
+            b.set(t.p2[0], t.p2[1], t.p2[2]);
+            c.set(t.p3[0], t.p3[1], t.p3[2]);
+            closestPointOnTriangleToOut(P, a, b, c, qVec);
+            const d2 = qVec.distanceToSquared(P);
+            if (!best || d2 < best.d2) best = { d2, normal: d.normal };
+        }
+        // Safe prune and refine using centroid-radius bound
+        const bestDist = best ? Math.sqrt(best.d2) : Infinity;
+        for (let i = N; i < pairs.length; i++) {
+            const d = pairs[i].data;
+            const rad = d.rad || 0;
+            const threshold2 = (bestDist + rad) * (bestDist + rad);
+            if (pairs[i].d2 > threshold2) continue;
+            const t = d.triangle;
+            a.set(t.p1[0], t.p1[1], t.p1[2]);
+            b.set(t.p2[0], t.p2[1], t.p2[2]);
+            c.set(t.p3[0], t.p3[1], t.p3[2]);
+            closestPointOnTriangleToOut(P, a, b, c, qVec);
+            const d2 = qVec.distanceToSquared(P);
+            if (!best || d2 < best.d2) best = { d2, normal: d.normal };
+        }
+        return best ? best.normal : new THREE.Vector3(0, 1, 0);
     }
 
-    // Second pass: compute exact closest point and use its normal
-    for (const data of candidates) {
-        const t = data.triangle;
+    // Fallback brute force
+    for (const t of tris) {
         a.set(t.p1[0], t.p1[1], t.p1[2]);
         b.set(t.p2[0], t.p2[1], t.p2[2]);
         c.set(t.p3[0], t.p3[1], t.p3[2]);
-        const q = closestPointOnTriangle(P, a, b, c);
-        const d2 = q.distanceToSquared(P);
-        if (!best || d2 < best.d2) best = { d2, normal: data.normal };
+        closestPointOnTriangleToOut(P, a, b, c, qVec);
+        const d2 = qVec.distanceToSquared(P);
+        if (!best || d2 < best.d2) best = { d2, normal: new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a)).normalize() };
     }
-
     return best ? best.normal : new THREE.Vector3(0, 1, 0);
 }
 
@@ -1158,6 +1250,7 @@ function quantizeVerticesAuthoring(solid, q = 1e-6) {
 // rail and the projected fillet seam on a face. Returns an array of rows, each
 // containing `widthSubdiv+1` vertices ordered from rail (k=0) to seam (k=W).
 function computeSideStripRows(railP, seam, closeLoop, tris, widthSubdiv = 8, inset = 0, extraOffset = 0, project = true) {
+    const faceData = getCachedFaceDataForTris(tris);
     const n = Math.min(railP.length, seam.length);
     if (n < 2) return null;
     const W = Math.max(1, widthSubdiv);
@@ -1183,7 +1276,7 @@ function computeSideStripRows(railP, seam, closeLoop, tris, widthSubdiv = 8, ins
                 Pi.z + (Si.z - Pi.z) * t,
             );
             if (project) {
-                let q = projectPointOntoFaceTriangles(tris, v);
+                let q = projectPointOntoFaceTriangles(tris, v, faceData);
                 const nrm = normalFromFaceTriangles(tris, q);
                 let move = 0;
                 if (Number.isFinite(extraOffset) && extraOffset !== 0) move += extraOffset;
@@ -1205,6 +1298,7 @@ function computeSideStripRows(railP, seam, closeLoop, tris, widthSubdiv = 8, ins
 // end-cap construction) and avoids introducing new seam vertices that could
 // create T junctions.
 function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, widthSubdiv = 8, inset = 0, extraOffset = 0, endOvershoot = 0, project = true, precomputedRows = null) {
+    const faceData = getCachedFaceDataForTris(tris);
     let baseRows = null;
     if (Array.isArray(precomputedRows) && precomputedRows.length >= 2) {
         baseRows = precomputedRows;
@@ -1235,7 +1329,7 @@ function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, wid
             for (let k = 0; k <= W; k++) {
                 let p = (rowBase[k] || rowBase[0]).clone().add(dir);
                 if (project) {
-                    p = projectPointOntoFaceTriangles(tris, p);
+                    p = projectPointOntoFaceTriangles(tris, p, faceData);
                     const nrm = normalFromFaceTriangles(tris, p);
                     let move = 0;
                     if (Number.isFinite(extraOffset) && extraOffset !== 0) move += extraOffset;
@@ -1724,15 +1818,21 @@ function solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, sA, nB, qB, sB, r) {
     const dA = nA.dot(qA) + sA * r;
     const dB = nB.dot(qB) + sB * r;
     const dT = t.dot(p);
-    const A = [
-        [nA.x, nA.y, nA.z],
-        [nB.x, nB.y, nB.z],
-        [t.x,  t.y,  t.z ],
-    ];
-    const b = [dA, dB, dT];
-    const x = solve3(A, b);
-    if (!x) return null;
-    return new THREE.Vector3(x[0], x[1], x[2]);
+    // Intersection of three planes using vector triple products:
+    // C = ( (nB×t)*dA + (t×nA)*dB + (nA×nB)*dT ) / ( nA·(nB×t) )
+    const nbxt = __tmp1.copy(nB).cross(t);
+    const txnA = __tmp2.copy(t).cross(nA);
+    const nAxnB = __tmp3.copy(nA).cross(nB);
+    const denom = nA.dot(nbxt);
+    if (!Number.isFinite(denom) || Math.abs(denom) < 1e-14) {
+        // Fallback to Gaussian elimination for near-degenerate configuration
+        const A = [ [nA.x, nA.y, nA.z], [nB.x, nB.y, nB.z], [t.x, t.y, t.z] ];
+        const b = [dA, dB, dT];
+        const x = solve3(A, b);
+        return x ? new THREE.Vector3(x[0], x[1], x[2]) : null;
+    }
+    const num = nbxt.multiplyScalar(dA).add(txnA.multiplyScalar(dB)).add(nAxnB.multiplyScalar(dT));
+    return new THREE.Vector3(num.x / denom, num.y / denom, num.z / denom);
 }
 
 // Solve 3x3 linear system A x = b using Gaussian elimination with partial pivoting
@@ -1839,6 +1939,8 @@ function copyFromSolid(dst, src) {
 // Displace the input P-rail along the average of the two face normals.
 // Positive distance moves along outward average for OUTSET, negative for INSET.
 function displaceRailPForInflate(railP, trisA, trisB, distance, sideMode = 'INSET') {
+    const faceDataA = getCachedFaceDataForTris(trisA);
+    const faceDataB = getCachedFaceDataForTris(trisB);
     const out = new Array(railP.length);
     // For INSET (subtract), move the P-rail outward; for OUTSET (union), move inward.
     const sign = (String(sideMode).toUpperCase() === 'INSET') ? +1 : -1;
@@ -1846,8 +1948,8 @@ function displaceRailPForInflate(railP, trisA, trisB, distance, sideMode = 'INSE
     for (let i = 0; i < railP.length; i++) {
         const p = railP[i];
         // Sample normals from both faces near p
-        const qA = projectPointOntoFaceTriangles(trisA, p);
-        const qB = projectPointOntoFaceTriangles(trisB, p);
+        const qA = projectPointOntoFaceTriangles(trisA, p, faceDataA);
+        const qB = projectPointOntoFaceTriangles(trisB, p, faceDataB);
         const nA = normalFromFaceTriangles(trisA, qA);
         const nB = normalFromFaceTriangles(trisB, qB);
         const n = new THREE.Vector3(nA.x + nB.x, nA.y + nB.y, nA.z + nB.z);

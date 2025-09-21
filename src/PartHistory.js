@@ -396,13 +396,24 @@ export function extractDefaultValues(schema) {
   }
   return result;
 }
-var stats = new Stats();
-stats.showPanel(0);
-stats.showPanel(1); // 0: fps, 1: ms, 2: mb, 3+: custom
-stats.showPanel(2);
-stats.showPanel(3);
-
-document.body.appendChild(stats.dom);
+// Create a performance stats instance in the browser; provide a no-op shim in Node.
+let stats;
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  try {
+    stats = new Stats();
+    stats.showPanel(0);
+    stats.showPanel(1); // 0: fps, 1: ms, 2: mb, 3+: custom
+    stats.showPanel(2);
+    stats.showPanel(3);
+    try { document.body.appendChild(stats.dom); } catch { /* ignore */ }
+  } catch {
+    // Fallback to no-op if Stats fails in a non-DOM environment
+    stats = { begin() {}, end() {}, showPanel() {} };
+  }
+} else {
+  // Node or non-DOM environments: no-op implementation
+  stats = { begin() {}, end() {}, showPanel() {} };
+}
 
 
 

@@ -212,10 +212,12 @@ export class FilletFeature {
                 this.inputParams.inflate,
                 this.inputParams.direction,
                 this.inputParams.debug);
-                filletSolid.visualize();
+            if (dbg) { try { filletSolid.visualize(); } catch {} }
             objectsForBoolean.push(filletSolid);
-            console.log(`[FilletFeature] Created fillet tool for edge ${edgeName || '(unnamed)'}: volume=${safeVolume(filletSolid)}`);
-            console.log(filletSolid);
+            if (dbg) {
+                try { console.log(`[FilletFeature] Created fillet tool for edge ${edgeName || '(unnamed)'}: volume=${safeVolume(filletSolid)}`); } catch {}
+                try { console.log(filletSolid); } catch {}
+            }
             // Summarize tool mesh if available
             try {
                 const mesh = filletSolid.getMesh();

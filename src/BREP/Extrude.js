@@ -37,13 +37,14 @@ export class ExtrudeSolid extends Solid {
     } else {
       dirF = new THREE.Vector3(0, 1, 0);
     }
-    if (Number.isFinite(distanceBack) && distanceBack !== 0) {
+    const backMag = Math.abs(Number(distanceBack));
+    if (Number.isFinite(backMag) && backMag > 0) {
       const n = dirF.clone();
       if (n.lengthSq() < 1e-20) {
         const nf = (typeof face.getAverageNormal === 'function') ? face.getAverageNormal().clone() : new THREE.Vector3(0, 1, 0);
-        dirB = nf.normalize().multiplyScalar(-distanceBack); // supports negative values
+        dirB = nf.normalize().multiplyScalar(-backMag); // back is opposite of forward
       } else {
-        dirB = n.normalize().multiplyScalar(-distanceBack); // supports negative values
+        dirB = n.normalize().multiplyScalar(-backMag); // back is opposite of forward
       }
     }
 
@@ -70,6 +71,27 @@ export class ExtrudeSolid extends Solid {
     // Caps: copy face triangles in world space, translate end, reverse start.
     const baseGeom = face.geometry;
     const posAttr = baseGeom.getAttribute && baseGeom.getAttribute('position');
+    // Snap helpers to ensure side walls share exact vertices with caps
+    let __capWorld = null; // base cap vertices in world coords
+    let __snapStart = null; // Map rounded -> exact start cap vertex
+    let __snapEnd = null;   // Map rounded -> exact end cap vertex
+    const __key = (p) => `${p[0].toFixed(7)},${p[1].toFixed(7)},${p[2].toFixed(7)}`;
+    const __makeSnapMap = (worldPts, offset) => {
+      if (!worldPts) return null;
+      const off = offset || new THREE.Vector3(0,0,0);
+      const m = new Map();
+      for (let i = 0; i < worldPts.length; i++) {
+        const w = worldPts[i];
+        const q = [w[0] + off.x, w[1] + off.y, w[2] + off.z];
+        m.set(__key(q), q);
+      }
+      return m;
+    };
+    const __snap = (map, p) => {
+      if (!map) return p;
+      const s = map.get(__key(p));
+      return s ? s : p;
+    };
     if (posAttr) {
       const idxAttr = baseGeom.getIndex && baseGeom.getIndex();
       const v = new THREE.Vector3();
@@ -78,6 +100,7 @@ export class ExtrudeSolid extends Solid {
         v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(face.matrixWorld);
         world[i] = [v.x, v.y, v.z];
       }
+      __capWorld = world;
       const emit = (i0, i1, i2) => {
         const p0 = world[i0], p1 = world[i1], p2 = world[i2];
         // Start cap
@@ -101,6 +124,11 @@ export class ExtrudeSolid extends Solid {
         const triCount = (posAttr.count / 3) | 0;
         for (let t = 0; t < triCount; t++) emit(3 * t + 0, 3 * t + 1, 3 * t + 2);
       }
+    }
+    // Build snap maps once caps are authored
+    if (__capWorld) {
+      __snapStart = __makeSnapMap(__capWorld, dirB ? dirB : new THREE.Vector3(0,0,0));
+      __snapEnd = __makeSnapMap(__capWorld, dirF);
     }
 
     // Helper: get world-space polyline for an edge. Never auto-close.
@@ -136,10 +164,61 @@ export class ExtrudeSolid extends Solid {
       return out;
     };
 
-    // One ribbon per edge
-    const edges = Array.isArray(face?.edges) ? face.edges : [];
-    for (const edge of edges) {
-      const name = `${edge?.name || 'EDGE'}_SW`;
+    // Prefer explicit boundary loops (outer + holes) to guarantee identical
+    // vertices with caps, but emit one side face per original sketch edge.
+    // Fallback to per-edge polylines if loops are unavailable.
+    const sideSegments = [];
+    const loops = face?.userData?.boundaryLoopsWorld;
+    const nearEq = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
+    const samePt = (P, Q) => P && Q && nearEq(P[0], Q[0]) && nearEq(P[1], Q[1]) && nearEq(P[2], Q[2]);
+    const findEdgeNameFor = (A, B) => {
+      const edges = Array.isArray(face?.edges) ? face.edges : [];
+      for (const e of edges) {
+        const poly = e?.userData?.polylineLocal;
+        const isWorld = !!(e?.userData?.polylineWorld);
+        if (Array.isArray(poly) && poly.length >= 2) {
+          const P = isWorld ? poly : poly.map(p => {
+            const v = new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(e.matrixWorld); return [v.x, v.y, v.z];
+          });
+          const p0 = P[0], p1 = P[P.length - 1];
+          if ((samePt(p0, A) && samePt(p1, B)) || (samePt(p0, B) && samePt(p1, A))) {
+            return `${e?.name || 'EDGE'}_SW`;
+          }
+        }
+      }
+      return null;
+    };
+
+    if (Array.isArray(loops) && loops.length) {
+      for (let li = 0; li < loops.length; li++) {
+        const l = loops[li];
+        if (!l || !Array.isArray(l.pts) || l.pts.length < 2) continue;
+        // Build per-segment ribbons along the loop: [p[i] -> p[i+1]] and closing [last -> first]
+        const pts = [];
+        for (const p of l.pts) { if (p && p.length >= 3) pts.push([p[0], p[1], p[2]]); }
+        // Dedup consecutive duplicates
+        for (let i = pts.length - 2; i >= 0; i--) { const a = pts[i], b = pts[i + 1]; if (samePt(a, b)) pts.splice(i + 1, 1); }
+        const M = pts.length;
+        if (M < 2) continue;
+        const emitSeg = (A, B, segIdx) => {
+          const nm = findEdgeNameFor(A, B) || `${face.name || 'Face'}_${li}_SEG${segIdx}_SW`;
+          sideSegments.push({ name: nm, poly: [A, B], isHole: !!l.isHole });
+        };
+        for (let i = 0; i < M - 1; i++) emitSeg(pts[i], pts[i + 1], i);
+        // Closing segment
+        emitSeg(pts[M - 1], pts[0], M - 1);
+      }
+    } else {
+      const edges = Array.isArray(face?.edges) ? face.edges : [];
+      for (const edge of edges) {
+        const poly = extractPolylineWorld(edge);
+        // Keep as a single ribbon for legacy faces
+        sideSegments.push({ name: `${edge?.name || 'EDGE'}_SW`, poly, isHole: !!(edge && edge.userData && edge.userData.isHole) });
+      }
+    }
+
+    // One ribbon per segment/polyline
+    for (const { name, poly, isHole } of sideSegments) {
       // Pre-count triangles already authored for this sidewall label so we
       // can verify how many were added for this edge (should be 2 per segment).
       const sideID = this._getOrCreateID(name);
@@ -149,7 +228,6 @@ export class ExtrudeSolid extends Solid {
         return c;
       };
       const beforeTris = triCountByID(sideID);
-      const poly = extractPolylineWorld(edge);
       if (!Array.isArray(poly) || poly.length < 2) continue;
       // Do NOT drop the final point even if it duplicates the start. We only
       // generate quads between consecutive samples and never auto-close the
@@ -157,28 +235,33 @@ export class ExtrudeSolid extends Solid {
       // last actual segment (second-to-last -> last) is emitted for closed
       // edge polylines that repeat the first point at the end.
       const n = poly.length;
-      const isHole = !!(edge && edge.userData && edge.userData.isHole);
       const expectedSegments = Math.max(0, n - 1);
       if (dirB) {
         for (let i = 0; i < n - 1; i++) {
           const a = poly[i];
           const b = poly[i + 1];
-          const A0 = [a[0] + dirB.x, a[1] + dirB.y, a[2] + dirB.z];
-          const B0 = [b[0] + dirB.x, b[1] + dirB.y, b[2] + dirB.z];
-          const A1 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
-          const B1 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
+          let A0 = [a[0] + dirB.x, a[1] + dirB.y, a[2] + dirB.z];
+          let B0 = [b[0] + dirB.x, b[1] + dirB.y, b[2] + dirB.z];
+          let A1 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
+          let B1 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
+          A0 = __snap(__snapStart, A0); B0 = __snap(__snapStart, B0);
+          A1 = __snap(__snapEnd, A1);   B1 = __snap(__snapEnd, B1);
           addQuad(name, A0, B0, B1, A1, isHole);
         }
+        // Closing handled upstream by emitting an explicit last->first segment when loops are available.
       } else {
         for (let i = 0; i < n - 1; i++) {
           const a = poly[i];
           const b = poly[i + 1];
-          const A0 = [a[0], a[1], a[2]];
-          const B0 = [b[0], b[1], b[2]];
-          const A1 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
-          const B1 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
+          let A0 = [a[0], a[1], a[2]];
+          let B0 = [b[0], b[1], b[2]];
+          let A1 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
+          let B1 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
+          A0 = __snap(__snapStart, A0); B0 = __snap(__snapStart, B0);
+          A1 = __snap(__snapEnd, A1);   B1 = __snap(__snapEnd, B1);
           addQuad(name, A0, B0, B1, A1, isHole);
         }
+        // Closing handled upstream by emitting an explicit last->first segment when loops are available.
       }
 
       // Post-check: count how many triangles were added for this sidewall.
@@ -186,15 +269,11 @@ export class ExtrudeSolid extends Solid {
       const added = afterTris - beforeTris;
       const expected = expectedSegments * 2;
       if (added !== expected) {
-        alert(`Extrude sidewall triangle mismatch for ${edge?.name || 'EDGE'}: segments=${expectedSegments}, triangles=${added} (expected ${expected})`);
-        const msg = `Extrude sidewall triangle mismatch for ${edge?.name || 'EDGE'}: segments=${expectedSegments}, triangles=${added} (expected ${expected})`;
+        const msg = `Extrude sidewall triangle mismatch for ${name}: segments=${expectedSegments}, triangles=${added} (expected ${expected})`;
         try {
-          if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-            window.alert(msg);
-          } else {
-            console.warn(msg);
-          }
-        } catch (_) { console.warn(msg); }
+          if (typeof window !== 'undefined' && typeof window.alert === 'function') window.alert(msg);
+        } catch {}
+        try { console.warn(msg); } catch {}
       }
     }
 

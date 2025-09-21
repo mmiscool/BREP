@@ -83,6 +83,9 @@ export class MainToolbar {
     left.appendChild(this._btn('🧪', 'Toggle Inspector panel', () => {
       try { this.viewer && this.viewer.toggleInspectorPanel && this.viewer.toggleInspectorPanel(); } catch {}
     }));
+    // Export/Import Part JSON
+    left.appendChild(this._btn('📦', 'Export part JSON', () => this._onExportPartJSON()));
+    left.appendChild(this._btn('📥', 'Import part JSON', () => this._onImportPartJSON()));
     left.appendChild(this._btn('📤', 'Export current part as STL', () => this._onExportSTL()));
     left.appendChild(this._btn('ℹ️', 'Open About page', () => window.open('about.html', '_blank')));
 
@@ -161,6 +164,76 @@ export class MainToolbar {
   _safeName(raw, fallback = 'solid') {
     const s = String(raw || '').trim();
     return (s.length ? s : fallback).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80);
+  }
+
+  async _onExportPartJSON() {
+    try {
+      const json = await this.viewer?.partHistory?.toJSON?.();
+      if (!json) { alert('Nothing to export.'); return; }
+      const base = this._safeName(this.viewer?.fileManagerWidget?.currentName || 'part');
+      this._download(`${base}.part.json`, json, 'application/json');
+    } catch (e) {
+      alert('Export failed. See console for details.');
+      console.error(e);
+    }
+  }
+
+  _onImportPartJSON() {
+    try {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json,application/json';
+      input.style.display = 'none';
+      input.addEventListener('change', async () => {
+        try {
+          const file = input.files && input.files[0];
+          try { if (input.parentNode) input.parentNode.removeChild(input); } catch {}
+          if (!file) return;
+          const text = await file.text();
+          // Allow both raw PartHistory JSON and wrapper objects with { data }
+          let payload = text;
+          try {
+            const obj = JSON.parse(text);
+            if (obj && typeof obj === 'object') {
+              if (Array.isArray(obj.features)) {
+                payload = JSON.stringify(obj);
+              } else if (obj.data) {
+                payload = (typeof obj.data === 'string') ? obj.data : JSON.stringify(obj.data);
+              }
+            }
+          } catch { /* keep raw text */ }
+
+          await this.viewer?.partHistory?.reset?.();
+          await this.viewer?.partHistory?.fromJSON?.(payload);
+          await this.viewer?.partHistory?.runHistory?.();
+          try { this.viewer?.zoomToFit?.(1.1); } catch {}
+
+          // Optionally update File Manager current name to the imported filename (sans extension)
+          try {
+            const fm = this.viewer?.fileManagerWidget;
+            if (fm) {
+              const name = String(file.name || '').replace(/\.[^.]+$/, '');
+              if (name) {
+                fm.currentName = name;
+                if (fm.nameInput) fm.nameInput.value = name;
+                fm.refreshList && fm.refreshList();
+                fm._saveLastName && fm._saveLastName(name);
+              }
+            }
+          } catch { /* non-fatal */ }
+
+          alert('Import complete.');
+        } catch (e) {
+          alert('Import failed. See console for details.');
+          console.error(e);
+        }
+      }, { once: true });
+      document.body.appendChild(input);
+      input.click();
+    } catch (e) {
+      alert('Unable to open file dialog.');
+      console.error(e);
+    }
   }
 
   _onExportSTL() {

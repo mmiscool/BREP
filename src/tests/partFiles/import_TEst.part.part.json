@@ -1,0 +1,646 @@
+{
+  "features": [
+    {
+      "type": "S",
+      "inputParams": {
+        "featureID": "S8",
+        "sketchPlane": null,
+        "editSketch": null,
+        "curveResolution": "16"
+      },
+      "persistentData": {
+        "basis": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "x": [
+            1,
+            0,
+            0
+          ],
+          "y": [
+            0,
+            1,
+            0
+          ],
+          "z": [
+            0,
+            0,
+            1
+          ]
+        },
+        "sketch": {
+          "points": [
+            {
+              "id": 0,
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 1,
+              "x": 0,
+              "y": 19.999995,
+              "fixed": false
+            },
+            {
+              "id": 2,
+              "x": 24.825992,
+              "y": 32.948741,
+              "fixed": false
+            },
+            {
+              "id": 3,
+              "x": 37.117184,
+              "y": 15.719556,
+              "fixed": false
+            },
+            {
+              "id": 4,
+              "x": 37.117184,
+              "y": 0,
+              "fixed": false
+            },
+            {
+              "id": 5,
+              "x": 18.271034,
+              "y": 13.635452,
+              "fixed": false
+            },
+            {
+              "id": 6,
+              "x": 18.271034,
+              "y": 19.890693,
+              "fixed": false
+            },
+            {
+              "id": 7,
+              "x": 2.696772,
+              "y": 14.465233,
+              "fixed": false
+            },
+            {
+              "id": 8,
+              "x": 8.441377,
+              "y": 3.358996,
+              "fixed": false
+            },
+            {
+              "id": 9,
+              "x": 2.696772,
+              "y": 14.465233,
+              "fixed": false
+            },
+            {
+              "id": 10,
+              "x": 8.441377,
+              "y": 14.465233,
+              "fixed": false
+            },
+            {
+              "id": 11,
+              "x": 8.441377,
+              "y": 14.465233,
+              "fixed": false
+            },
+            {
+              "id": 12,
+              "x": 8.441377,
+              "y": 3.358996,
+              "fixed": false
+            },
+            {
+              "id": 13,
+              "x": 2.696772,
+              "y": 3.358996,
+              "fixed": false
+            },
+            {
+              "id": 14,
+              "x": 2.696772,
+              "y": 3.358996,
+              "fixed": false
+            },
+            {
+              "id": 15,
+              "x": 28.866638,
+              "y": 8.912114,
+              "fixed": false
+            },
+            {
+              "id": 16,
+              "x": 32.185746,
+              "y": 4.061113,
+              "fixed": false
+            },
+            {
+              "id": 17,
+              "x": 28.866638,
+              "y": 8.912114,
+              "fixed": false
+            },
+            {
+              "id": 18,
+              "x": 32.185746,
+              "y": 8.912114,
+              "fixed": false
+            },
+            {
+              "id": 19,
+              "x": 32.185746,
+              "y": 8.912114,
+              "fixed": false
+            },
+            {
+              "id": 20,
+              "x": 32.185746,
+              "y": 4.061113,
+              "fixed": false
+            },
+            {
+              "id": 21,
+              "x": 28.866638,
+              "y": 4.061113,
+              "fixed": false
+            },
+            {
+              "id": 22,
+              "x": 28.866638,
+              "y": 4.061113,
+              "fixed": false
+            }
+          ],
+          "geometries": [
+            {
+              "id": 1,
+              "type": "line",
+              "points": [
+                0,
+                1
+              ],
+              "construction": false
+            },
+            {
+              "id": 2,
+              "type": "line",
+              "points": [
+                1,
+                2
+              ],
+              "construction": false
+            },
+            {
+              "id": 3,
+              "type": "line",
+              "points": [
+                2,
+                3
+              ],
+              "construction": false
+            },
+            {
+              "id": 4,
+              "type": "line",
+              "points": [
+                3,
+                4
+              ],
+              "construction": false
+            },
+            {
+              "id": 5,
+              "type": "line",
+              "points": [
+                0,
+                4
+              ],
+              "construction": false
+            },
+            {
+              "id": 6,
+              "type": "circle",
+              "points": [
+                5,
+                6
+              ],
+              "construction": false
+            },
+            {
+              "id": 7,
+              "type": "line",
+              "points": [
+                7,
+                10
+              ],
+              "construction": false
+            },
+            {
+              "id": 8,
+              "type": "line",
+              "points": [
+                11,
+                8
+              ],
+              "construction": false
+            },
+            {
+              "id": 9,
+              "type": "line",
+              "points": [
+                12,
+                13
+              ],
+              "construction": false
+            },
+            {
+              "id": 10,
+              "type": "line",
+              "points": [
+                14,
+                9
+              ],
+              "construction": false
+            },
+            {
+              "id": 11,
+              "type": "line",
+              "points": [
+                15,
+                18
+              ],
+              "construction": false
+            },
+            {
+              "id": 12,
+              "type": "line",
+              "points": [
+                19,
+                16
+              ],
+              "construction": false
+            },
+            {
+              "id": 13,
+              "type": "line",
+              "points": [
+                20,
+                21
+              ],
+              "construction": false
+            },
+            {
+              "id": 14,
+              "type": "line",
+              "points": [
+                22,
+                17
+              ],
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": 0,
+              "type": "⏚",
+              "points": [
+                0
+              ],
+              "status": "solved",
+              "previousPointValues": "[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true}]"
+            },
+            {
+              "id": 1,
+              "type": "⟺",
+              "points": [
+                1,
+                2
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": 28,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":1,\"x\":0,\"y\":19.999995,\"fixed\":false},{\"id\":2,\"x\":24.825992,\"y\":32.948741,\"fixed\":false}]"
+            },
+            {
+              "id": 2,
+              "type": "⟺",
+              "points": [
+                2,
+                3
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": 21.164067487084093,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":2,\"x\":24.825992,\"y\":32.948741,\"fixed\":false},{\"id\":3,\"x\":37.117184,\"y\":15.719556,\"fixed\":false}]"
+            },
+            {
+              "id": 3,
+              "type": "│",
+              "points": [
+                3,
+                4
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":3,\"x\":37.117184,\"y\":15.719556,\"fixed\":false},{\"id\":4,\"x\":37.117184,\"y\":0,\"fixed\":false}]"
+            },
+            {
+              "id": 4,
+              "type": "│",
+              "points": [
+                0,
+                1
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":1,\"x\":0,\"y\":19.999995,\"fixed\":false}]"
+            },
+            {
+              "id": 5,
+              "type": "━",
+              "points": [
+                0,
+                4
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":4,\"x\":37.117184,\"y\":0,\"fixed\":false}]"
+            },
+            {
+              "id": 6,
+              "type": "⟺",
+              "points": [
+                0,
+                1
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": 20,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":1,\"x\":0,\"y\":19.999995,\"fixed\":false}]"
+            },
+            {
+              "id": 7,
+              "type": "⟺",
+              "points": [
+                0,
+                4
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": 37.117188,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":4,\"x\":37.117184,\"y\":0,\"fixed\":false}]"
+            },
+            {
+              "id": 8,
+              "type": "≡",
+              "points": [
+                7,
+                9
+              ],
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":7,\"x\":2.696772,\"y\":14.465233,\"fixed\":false},{\"id\":9,\"x\":2.696772,\"y\":14.465233,\"fixed\":false}]"
+            },
+            {
+              "id": 9,
+              "type": "≡",
+              "points": [
+                10,
+                11
+              ],
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":10,\"x\":8.441377,\"y\":14.465233,\"fixed\":false},{\"id\":11,\"x\":8.441377,\"y\":14.465233,\"fixed\":false}]"
+            },
+            {
+              "id": 10,
+              "type": "≡",
+              "points": [
+                8,
+                12
+              ],
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":8,\"x\":8.441377,\"y\":3.358996,\"fixed\":false},{\"id\":12,\"x\":8.441377,\"y\":3.358996,\"fixed\":false}]"
+            },
+            {
+              "id": 11,
+              "type": "≡",
+              "points": [
+                13,
+                14
+              ],
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":13,\"x\":2.696772,\"y\":3.358996,\"fixed\":false},{\"id\":14,\"x\":2.696772,\"y\":3.358996,\"fixed\":false}]"
+            },
+            {
+              "id": 12,
+              "type": "⟂",
+              "points": [
+                7,
+                10,
+                11,
+                8
+              ],
+              "status": "solved",
+              "value": 90,
+              "previousPointValues": "[{\"id\":7,\"x\":2.696772,\"y\":14.465233,\"fixed\":false},{\"id\":10,\"x\":8.441377,\"y\":14.465233,\"fixed\":false},{\"id\":11,\"x\":8.441377,\"y\":14.465233,\"fixed\":false},{\"id\":8,\"x\":8.441377,\"y\":3.358996,\"fixed\":false}]",
+              "error": null
+            },
+            {
+              "id": 13,
+              "type": "⟂",
+              "points": [
+                11,
+                8,
+                12,
+                13
+              ],
+              "status": "solved",
+              "value": 90,
+              "previousPointValues": "[{\"id\":11,\"x\":8.441377,\"y\":14.465233,\"fixed\":false},{\"id\":8,\"x\":8.441377,\"y\":3.358996,\"fixed\":false},{\"id\":12,\"x\":8.441377,\"y\":3.358996,\"fixed\":false},{\"id\":13,\"x\":2.696772,\"y\":3.358996,\"fixed\":false}]",
+              "error": null
+            },
+            {
+              "id": 14,
+              "type": "⟂",
+              "points": [
+                12,
+                13,
+                14,
+                9
+              ],
+              "status": "solved",
+              "value": 90,
+              "previousPointValues": "[{\"id\":12,\"x\":8.441377,\"y\":3.358996,\"fixed\":false},{\"id\":13,\"x\":2.696772,\"y\":3.358996,\"fixed\":false},{\"id\":14,\"x\":2.696772,\"y\":3.358996,\"fixed\":false},{\"id\":9,\"x\":2.696772,\"y\":14.465233,\"fixed\":false}]",
+              "error": null
+            },
+            {
+              "id": 15,
+              "type": "≡",
+              "points": [
+                15,
+                17
+              ],
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":15,\"x\":28.866638,\"y\":8.912114,\"fixed\":false},{\"id\":17,\"x\":28.866638,\"y\":8.912114,\"fixed\":false}]"
+            },
+            {
+              "id": 16,
+              "type": "≡",
+              "points": [
+                18,
+                19
+              ],
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":18,\"x\":32.185746,\"y\":8.912114,\"fixed\":false},{\"id\":19,\"x\":32.185746,\"y\":8.912114,\"fixed\":false}]"
+            },
+            {
+              "id": 17,
+              "type": "≡",
+              "points": [
+                16,
+                20
+              ],
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":16,\"x\":32.185746,\"y\":4.061113,\"fixed\":false},{\"id\":20,\"x\":32.185746,\"y\":4.061113,\"fixed\":false}]"
+            },
+            {
+              "id": 18,
+              "type": "≡",
+              "points": [
+                21,
+                22
+              ],
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":21,\"x\":28.866638,\"y\":4.061113,\"fixed\":false},{\"id\":22,\"x\":28.866638,\"y\":4.061113,\"fixed\":false}]"
+            },
+            {
+              "id": 19,
+              "type": "⟂",
+              "points": [
+                15,
+                18,
+                19,
+                16
+              ],
+              "status": "solved",
+              "value": 90,
+              "previousPointValues": "[{\"id\":15,\"x\":28.866638,\"y\":8.912114,\"fixed\":false},{\"id\":18,\"x\":32.185746,\"y\":8.912114,\"fixed\":false},{\"id\":19,\"x\":32.185746,\"y\":8.912114,\"fixed\":false},{\"id\":16,\"x\":32.185746,\"y\":4.061113,\"fixed\":false}]",
+              "error": null
+            },
+            {
+              "id": 20,
+              "type": "⟂",
+              "points": [
+                19,
+                16,
+                20,
+                21
+              ],
+              "status": "solved",
+              "value": 90,
+              "previousPointValues": "[{\"id\":19,\"x\":32.185746,\"y\":8.912114,\"fixed\":false},{\"id\":16,\"x\":32.185746,\"y\":4.061113,\"fixed\":false},{\"id\":20,\"x\":32.185746,\"y\":4.061113,\"fixed\":false},{\"id\":21,\"x\":28.866638,\"y\":4.061113,\"fixed\":false}]",
+              "error": null
+            },
+            {
+              "id": 21,
+              "type": "⟂",
+              "points": [
+                20,
+                21,
+                22,
+                17
+              ],
+              "status": "solved",
+              "value": 90,
+              "previousPointValues": "[{\"id\":20,\"x\":32.185746,\"y\":4.061113,\"fixed\":false},{\"id\":21,\"x\":28.866638,\"y\":4.061113,\"fixed\":false},{\"id\":22,\"x\":28.866638,\"y\":4.061113,\"fixed\":false},{\"id\":17,\"x\":28.866638,\"y\":8.912114,\"fixed\":false}]",
+              "error": null
+            }
+          ]
+        },
+        "sketchDimOffsets": {
+          "1": {
+            "d": 7.719249922400918
+          },
+          "2": {
+            "d": 5.912559647659901
+          },
+          "6": {
+            "d": 4.984961958068299
+          },
+          "7": {
+            "d": -10.126940193522842
+          }
+        }
+      },
+      "lastRun": {
+        "ok": true,
+        "startedAt": 901551.5,
+        "endedAt": 901555,
+        "durationMs": 4,
+        "error": null
+      }
+    },
+    {
+      "type": "E",
+      "inputParams": {
+        "featureID": "E9",
+        "profile": "S8:PROFILE",
+        "distance": "37",
+        "boolean": {
+          "targets": [],
+          "operation": "NONE"
+        },
+        "distanceBack": "-18"
+      },
+      "persistentData": {},
+      "lastRun": {
+        "ok": true,
+        "startedAt": 901558.6999999881,
+        "endedAt": 901564.2999999821,
+        "durationMs": 6,
+        "error": null
+      }
+    }
+  ],
+  "idCounter": 11,
+  "expressions": "//Examples:\nx = 20 + 6; \ny = x * 2;"
+}

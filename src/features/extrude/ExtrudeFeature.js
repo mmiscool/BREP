@@ -61,12 +61,13 @@ export class ExtrudeFeature {
 
 
 
-    // Create the extrude using the sweep solid
-    const extrude = new BREP.ExtrudeSolid({
+    // Create the extrude using the robust Sweep implementation (handles holes and per-edge side faces)
+    const extrude = new BREP.Sweep({
       face: faceObj,
       distance: distance,
       distanceBack: distanceBack,
-      name: this.inputParams.featureID
+      mode: 'translate',
+      name: this.inputParams.featureID,
     });
     extrude.visualize();
 

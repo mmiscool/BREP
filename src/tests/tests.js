@@ -46,6 +46,60 @@ testFunctions.push();
 testFunctions.push();
 testFunctions.push();
 
+// Dynamically register tests to import part files from src/tests/partFiles (Node only)
+async function registerPartFileTests() {
+    if (!(typeof process !== 'undefined' && process.versions && process.versions.node)) return;
+    try {
+        const partsDir = 'src/tests/partFiles';
+        // Use async API to avoid ESM sync-fs readiness issues
+        try {
+            const entries = await fs.promises.readdir(partsDir);
+            const files = entries.filter(f => typeof f === 'string' && f.toLowerCase().endsWith('.json'));
+            for (const file of files) {
+                const filePath = path.join(partsDir, file);
+                const baseName = String(file).replace(/\.[^.]+$/, '');
+                const safeName = baseName.replace(/[^a-zA-Z0-9._-]+/g, '_').substring(0, 100);
+                const testName = `import_part_${safeName}`;
+
+                const importTest = async function (partHistory) {
+                    // Read file and load into PartHistory
+                    const content = await fs.promises.readFile(filePath, 'utf8');
+                    let payload = content;
+                    try {
+                        const obj = JSON.parse(content);
+                        if (obj && typeof obj === 'object') {
+                            if (Array.isArray(obj.features)) {
+                                payload = JSON.stringify(obj);
+                            } else if (obj.data) {
+                                payload = (typeof obj.data === 'string') ? obj.data : JSON.stringify(obj.data);
+                            }
+                        }
+                    } catch (_) {
+                        // invalid JSON; let runSingleTest catch and report when fromJSON or runHistory runs
+                    }
+                    await partHistory.reset();
+                    await partHistory.fromJSON(payload);
+                    // runHistory will be called by runSingleTest()
+                };
+                try { Object.defineProperty(importTest, 'name', { value: testName, configurable: true }); } catch {}
+                testFunctions.push({
+                    test: importTest,
+                    printArtifacts: false,
+                    exportFaces: false,
+                    exportSolids: false,
+                    resetHistory: true,
+                    allowErrors: true,
+                    _sourceFile: filePath,
+                });
+            }
+        } catch (e) {
+            // Directory may not exist; ignore silently in CI
+        }
+    } catch (e) {
+        console.warn('Failed to register part file import tests:', e?.message || e);
+    }
+}
+
 
 
 // call runTests if we are in the nodejs environment
@@ -61,6 +115,9 @@ export async function runTests(partHistory = new PartHistory(), callbackToRunBet
 
     // delete the ./tests/results directory in an asynchronous way
     await fs.promises.rm('./tests/results', { recursive: true, force: true });
+
+    // Discover and register part-file import tests (Node only)
+    await registerPartFileTests();
 
     for (const testFunction of testFunctions) {
         const isLastTest = testFunction === testFunctions[testFunctions.length - 1];
@@ -137,12 +194,27 @@ export async function runTests(partHistory = new PartHistory(), callbackToRunBet
 
 
 export async function runSingleTest(testFunction, partHistory = new PartHistory()) {
-
-    await testFunction.test(partHistory);
-    await partHistory.runHistory();
-    // Optional per-test post-run hook for validations/metrics
-    if (typeof testFunction.afterRun === 'function') {
-        try { await testFunction.afterRun(partHistory); } catch (e) { console.warn('afterRun failed:', e?.message || e); }
+    let error = null;
+    try {
+        await testFunction.test(partHistory);
+        await partHistory.runHistory();
+        // Optional per-test post-run hook for validations/metrics
+        if (typeof testFunction.afterRun === 'function') {
+            try { await testFunction.afterRun(partHistory); } catch (e) { console.warn('afterRun failed:', e?.message || e); }
+        }
+    } catch (e) {
+        error = e;
+        if (testFunction.allowErrors) {
+            const name = (testFunction.test && testFunction.test.name) ? testFunction.test.name : 'unnamed_test';
+            const exportPath = `./tests/results/${name}/`;
+            try { if (!fs.existsSync(exportPath)) fs.mkdirSync(exportPath, { recursive: true }); } catch {}
+            const msg = `${e?.message || e}\n\n${e?.stack || ''}`;
+            try { writeFile(path.join(exportPath, 'error.txt'), msg); } catch {}
+            console.error(`Error in test ${name}:`, e);
+        } else {
+            // rethrow to fail fast for normal tests
+            throw e;
+        }
     }
     console.log(partHistory);
     // sleep for 1 second to allow any async operations to complete
