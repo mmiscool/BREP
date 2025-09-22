@@ -1804,7 +1804,13 @@ export class Solid extends THREE.Group {
 
         if (showEdges) {
             if (!usedFallback) {
-                const polylines = this.getBoundaryEdgePolylines();
+                let polylines = [];
+                try { polylines = this.getBoundaryEdgePolylines() || []; } catch { polylines = []; }
+                // Safety net: if manifold-based extraction yielded no edges (e.g., faceID missing),
+                // fall back to authoring-based boundary extraction so we still visualize edges.
+                if (!Array.isArray(polylines) || polylines.length === 0) {
+                    try { usedFallback = true; } catch {}
+                }
                 for (const e of polylines) {
                     const positions = new Float32Array(e.positions.length * 3);
                     let w = 0;
@@ -1830,7 +1836,8 @@ export class Solid extends THREE.Group {
                     if (fb) edgeObj.faces.push(fb);
                     this.add(edgeObj);
                 }
-            } else {
+            }
+            if (usedFallback) {
                 // Fallback boundary extraction from raw authoring arrays.
                 try {
                     const vp = this._vertProperties || [];

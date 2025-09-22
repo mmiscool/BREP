@@ -945,11 +945,19 @@ export class Viewer {
                         else if (c<2){ lt2++; if (c===1){ eq1++; if (exB.length<12) exB.push({ edge:k.toString(), uses:c }); } else { if (exLT.length<12) exLT.push({ edge:k.toString(), uses:c }); } }
                     }
                     let isolated=0; for (let i=0;i<nv;i++) if (!used[i]) isolated++;
+                    const isClosed = (eq1 === 0);
+                    const hasNonManifoldEdges = (gt2 > 0);
+                    const isManifold = isClosed && !hasNonManifoldEdges;
                     out.topology = {
+                        isManifold,
+                        closed: isClosed,
+                        nonManifoldEdges: hasNonManifoldEdges ? gt2 : 0,
                         degenerateTriangles: { count: degenerate.length, examples: degenerate.slice(0,12) },
                         edges: { gt2, lt2, boundary:eq1, examples_gt2: exGT, examples_lt2: exLT, examples_boundary: exB },
                         isolatedVertices: isolated
                     };
+                    // Expose quick boolean at root for easy scanning
+                    out.isManifold = isManifold;
                 } catch {}
 
                 // Faces fallback from authoring arrays when manifold faces unavailable

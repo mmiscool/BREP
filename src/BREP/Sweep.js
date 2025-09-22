@@ -854,7 +854,10 @@ export class Sweep extends FacesSolid {
       // Build a quick lookup from boundary points to their originating sketch edge(s)
       // so we can label side walls per curve while still using cap-matching vertices.
       const key = (p) => `${p[0].toFixed(6)},${p[1].toFixed(6)},${p[2].toFixed(6)}`;
-      const edges = Array.isArray(face?.edges) ? face.edges : [];
+      // Use only non-closed edges for per-segment naming so vertical boundaries
+      // between side panels remain distinct. Closed loop edges (from PNG trace)
+      // cover the whole ring and would otherwise collapse all walls under one name.
+      const edges = (Array.isArray(face?.edges) ? face.edges : []).filter(e => !e.closedLoop);
       const pointToEdgeNames = new Map(); // key -> Set(edgeName)
       for (const e of edges) {
         const name = `${e?.name || 'EDGE'}_SW`;
@@ -1472,7 +1475,10 @@ export class Sweep extends FacesSolid {
       }
       this.setEpsilon(eps);
       // Prune tiny floating fragments that can appear at sharp corners.
-      try { this.removeSmallIslands({ maxTriangles: 12, removeInternal: true, removeExternal: true }); } catch (_) { }
+      // Skip automatic island removal for extrusions based on traced images; tiny
+      // sliver panels near sharp corners can be valid and removing them can open
+      // the shell. Users can run repair tools explicitly if needed.
+      // try { this.removeSmallIslands({ maxTriangles: 12, removeInternal: true, removeExternal: true }); } catch (_) { }
       // Build the manifold now so callers get a ready solid. If it fails due
       // to borderline vertex mismatches, progressively increase epsilon and
       // retry a few times.

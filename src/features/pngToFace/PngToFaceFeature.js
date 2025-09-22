@@ -108,10 +108,13 @@ export class PngToFaceFeature {
     const bY = new THREE.Vector3().fromArray(basis.y);
     const bZ = new THREE.Vector3().fromArray(basis.z);
     const m = new THREE.Matrix4().makeBasis(bX, bY, bZ).setPosition(bO);
+    // Quantize world coordinates to reduce FP drift and guarantee identical
+    // vertices between caps and walls. Use a small absolute grid (~1e-6).
+    const Q = 1e-6;
+    const q = (n) => Math.abs(n) < Q ? 0 : Math.round(n / Q) * Q;
     const toW = (x, y) => {
-      const v = new THREE.Vector3(x, y, 0);
-      v.applyMatrix4(m);
-      return [v.x, v.y, v.z];
+      const v = new THREE.Vector3(x, y, 0).applyMatrix4(m);
+      return [q(v.x), q(v.y), q(v.z)];
     };
 
     // Build triangulated Face and boundary Edges
@@ -155,9 +158,11 @@ export class PngToFaceFeature {
 
       // Boundary loop records for downstream Sweep side construction
       const contourClosed = (contour.length && (contour[0][0]===contour[contour.length-1][0] && contour[0][1]===contour[contour.length-1][1])) ? contour : contour.concat([contour[0]]);
-      boundaryLoopsWorld.push({ pts: contourClosed.map(([x,y]) => toW(x,y)), isHole: false });
+      const contourClosedW = contourClosed.map(([x,y]) => toW(x,y));
+      boundaryLoopsWorld.push({ pts: contourClosedW, isHole: false });
       const holesClosed = holes.map((h) => (h.length && (h[0][0]===h[h.length-1][0] && h[0][1]===h[h.length-1][1])) ? h : h.concat([h[0]]));
-      for (const h of holesClosed) boundaryLoopsWorld.push({ pts: h.map(([x,y]) => toW(x,y)), isHole: true });
+      const holesClosedW = holesClosed.map((h)=> h.map(([x,y]) => toW(x,y)));
+      for (const hw of holesClosedW) boundaryLoopsWorld.push({ pts: hw, isHole: true });
 
       // For profileGroups used by Sweep caps, store OPEN loops (no duplicate last point)
       const contourOpen = contourClosed.slice(0, -1);
@@ -165,8 +170,8 @@ export class PngToFaceFeature {
       profileGroups.push({
         contour2D: contourOpen.slice(),
         holes2D: holesOpen.map(h => h.slice()),
-        contourW: contourOpen.map(([x,y]) => toW(x,y)),
-        holesW: holesOpen.map((h) => h.map(([x,y]) => toW(x,y)))
+        contourW: contourClosedW.slice(0, -1),
+        holesW: holesClosedW.map(hw => hw.slice(0, -1))
       });
     }
 
@@ -188,9 +193,33 @@ export class PngToFaceFeature {
     face.userData.boundaryLoopsWorld = boundaryLoopsWorld;
     face.userData.profileGroups = profileGroups;
 
-    // Edges from loops (split into linear regions)
+    // Edges from loops
     const edges = [];
     let edgeIdx = 0;
+
+    // 1) Closed-loop edges per boundary (outer + holes) to guarantee closed connectivity
+    const addClosedLoopEdge = (closedLoop, isHole) => {
+      if (!closedLoop || closedLoop.length < 2) return;
+      // Ensure closed by duplicating the first if needed
+      let ring = closedLoop;
+      const f = ring[0], l = ring[ring.length - 1];
+      if (!(f[0] === l[0] && f[1] === l[1])) ring = ring.concat([f]);
+      // Build world positions
+      const positions = [];
+      for (let i = 0; i < ring.length; i++) {
+        const p = ring[i];
+        const w = toW(p[0], p[1]);
+        positions.push(w[0], w[1], w[2]);
+      }
+      const lg = new LineGeometry();
+      lg.setPositions(positions);
+      try { lg.computeBoundingSphere(); } catch {}
+      const e = new Edge(lg);
+      e.name = `${sceneGroup.name}:L${edgeIdx++}`;
+      e.closedLoop = true;
+      e.userData = { polylineLocal: positionsToTriples(positions), polylineWorld: true, isHole: !!isHole };
+      edges.push(e);
+    };
     const addEdgeSegment = (segPts, isHole) => {
       if (!segPts || segPts.length < 2) return;
       const positions = [];
@@ -261,6 +290,16 @@ export class PngToFaceFeature {
       }
       return cleaned;
     };
+
+    // Emit one closed edge for outer, and one for each hole
+    for (const grp of groups) {
+      const outerClosed = grp.outer[0] && grp.outer[grp.outer.length-1] && (grp.outer[0][0]===grp.outer[grp.outer.length-1][0] && grp.outer[0][1]===grp.outer[grp.outer.length-1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
+      addClosedLoopEdge(outerClosed, false);
+      for (const h of grp.holes) {
+        const hClosed = h[0] && h[h.length-1] && (h[0][0]===h[h.length-1][0] && h[0][1]===h[h.length-1][1]) ? h : h.concat([h[0]]);
+        addClosedLoopEdge(hClosed, true);
+      }
+    }
 
     for (const grp of groups) {
       const outerClosed = grp.outer[0] && grp.outer[grp.outer.length-1] && (grp.outer[0][0]===grp.outer[grp.outer.length-1][0] && grp.outer[0][1]===grp.outer[grp.outer.length-1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
@@ -655,6 +694,51 @@ function groupLoopsOuterHoles(loops) {
       if (i === j) continue;
       if (pointInPoly(reps[i], norm[j])) depth[i]++;
     }
+}
+
+// Fallback helper for older code paths or HMR cache: same logic as inlined makeSegments.
+function splitLoopIntoLinearRegions(closedLoop, eps = 1e-12) {
+  if (!Array.isArray(closedLoop) || closedLoop.length < 2) return [];
+  // Ensure closed ring
+  const ring = (closedLoop[0][0] === closedLoop[closedLoop.length - 1][0] && closedLoop[0][1] === closedLoop[closedLoop.length - 1][1])
+    ? closedLoop.slice()
+    : closedLoop.concat([closedLoop[0]]);
+  const n = ring.length - 1;
+  if (n < 2) return [];
+  const dir = (a, b) => [b[0] - a[0], b[1] - a[1]];
+  const collinear = (u, v) => Math.abs(u[0] * v[1] - u[1] * v[0]) <= eps;
+  const segs = [];
+  let cur = [ring[0]];
+  let prevDir = dir(ring[0], ring[1]);
+  for (let i = 1; i < n; i++) {
+    const b = ring[i];
+    const c = ring[i + 1];
+    const d = dir(b, c);
+    if (collinear(prevDir, d)) { cur.push(b); prevDir = d; }
+    else { cur.push(b); if (cur.length >= 2) segs.push(cur.slice()); cur = [b]; prevDir = d; }
+  }
+  cur.push(ring[n]);
+  if (cur.length >= 2) segs.push(cur);
+  // Merge first/last if collinear
+  if (segs.length >= 2) {
+    const first = segs[0];
+    const last = segs[segs.length - 1];
+    const u = dir(last[last.length - 2], last[last.length - 1]);
+    const v = dir(first[0], first[1]);
+    if (collinear(u, v)) {
+      const merged = last.slice();
+      for (let i = 1; i < first.length; i++) merged.push(first[i]);
+      segs[0] = merged; segs.pop();
+    }
+  }
+  // Dedup consecutive points
+  const cleaned = [];
+  for (const s of segs) {
+    const out = [];
+    for (let i = 0; i < s.length; i++) { const p = s[i]; if (!out.length || out[out.length - 1][0] !== p[0] || out[out.length - 1][1] !== p[1]) out.push(p); }
+    if (out.length >= 2) cleaned.push(out);
+  }
+  return cleaned;
 }
 
 // Split a closed loop [ [x,y], ... , [x0,y0] ] into maximal straight-line regions.
