@@ -842,10 +842,12 @@ export class Sweep extends FacesSolid {
     };
     if (!boundaryLoops || !boundaryLoops.length) boundaryLoops = computeBoundaryLoopsFromFace(face);
     const doPathSweep = offsets.length >= 2;
-    // Only use boundary-loop based sidewalls when doing pathAlign, so caps and
-    // walls share identical vertices. For translate mode we generate one open
-    // ribbon per input edge and never attempt to form closed loops.
-    if (mode === 'pathAlign' && boundaryLoops && boundaryLoops.length) {
+    // Prefer boundary-loop based sidewalls whenever loops are available so
+    // caps and walls share identical vertices and produce a watertight mesh.
+    // This avoids non‑manifold vertical edges when input edges are split into
+    // multiple segments (e.g., PNG trace linear regions). Falls back to
+    // per-edge ribbons only when loops are unavailable.
+    if (boundaryLoops && boundaryLoops.length) {
       const _inputDbg = { mode, pathCount: pathPts.length, loops: boundaryLoops.length, face: face?.name };
       dlog('Input', 'pathAlign params', _inputDbg);
       djson('Input', _inputDbg);

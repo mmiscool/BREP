@@ -37,6 +37,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Fillet: Implemented
 - Chamfer: Implemented
 - STL/3MF Import: Implemented
+- PNG to Face (image trace): Implemented
 
 ## Getting Started
 
@@ -78,6 +79,24 @@ importFeature.inputParams.fileToImport = someStlOr3mfData; // string (ASCII or d
 importFeature.inputParams.deflectionAngle = 15; // degrees to group triangles into faces
 await ph.runHistory();
 ```
+
+## PNG to Face (Image Trace)
+
+Use the “PNG to Face” feature to convert a monochrome PNG into a planar Face with boundary edges suitable for Extrude or Sweep. The image is binarized at a threshold and the foreground region is traced into closed loops with automatic hole detection. The result is returned as a SKETCH-like group containing:
+
+- A triangulated Face (`...:PROFILE`) in the XY plane (Z=0)
+- Edge loops for the outer boundary and holes
+
+Parameters:
+- fileToImport: PNG data (file picker or data URL)
+- threshold: 0–255 cutoff (default 128)
+- invert: swap foreground/background
+- pixelScale: world units per pixel (default 1)
+- center: center geometry at the origin (default on)
+- rdpTolerance: optional simplification in world units (0 disables)
+- placementPlane: select a PLANE or FACE to place the traced profile on (default is world XY)
+
+Then select the produced Face (or the SKETCH group) as the `profile` for the Extrude feature.
 
 ## How It Works
 
@@ -210,3 +229,9 @@ The project also includes a simple license report generator (`pnpm generateLicen
 ## License
 
 See `LICENSE.md`. This project uses a dual-licensing strategy managed by Autodrop3d LLC.
+
+
+
+
+Todo: 
+Area of face in inspector. 
