@@ -4,7 +4,6 @@
 
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
-import { applyBooleanOperation } from '../../BREP/applyBooleanOperation.js';
 
 const inputParamsSchema = {
     featureID: {
@@ -26,6 +25,11 @@ const inputParamsSchema = {
         type: 'number',
         default_value: 64,
         hint: 'Number of segments around the circumference'
+    },
+    transform: {
+        type: 'transform',
+        default_value: { position: [0, 0, 0], rotationEuler: [0, 0, 0], scale: [1, 1, 1] },
+        hint: 'Position, rotation, and scale'
     },
     boolean: {
         type: 'boolean_operation',
@@ -54,8 +58,13 @@ export class PrimitiveCylinderFeature {
             resolution,
             name: featureID,
         });
+        try {
+            if (this.inputParams.transform) {
+                cyl.bakeTRS(this.inputParams.transform);
+            }
+        } catch (_) { }
         cyl.visualize();
 
-        return await applyBooleanOperation(partHistory || {}, cyl, this.inputParams.boolean, featureID);
+        return await BREP.applyBooleanOperation(partHistory || {}, cyl, this.inputParams.boolean, featureID);
     }
 }

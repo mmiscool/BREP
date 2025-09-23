@@ -1,7 +1,6 @@
 import { extractDefaultValues } from "../../PartHistory.js";
-import { FacesSolid } from "../../BREP/Sweep.js";
-import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
-import * as THREE from 'three';
+import { BREP } from "../../BREP/BREP.js";
+const THREE = BREP.THREE;
 
 const inputParamsSchema = {
   featureID: {
@@ -144,7 +143,8 @@ export class LoftFeature {
       return poly.length ? [{ isHole: false, pts: poly }] : [];
     };
 
-    const solid = new FacesSolid({ name: this.inputParams.featureID || 'Loft' });
+    const solid = new BREP.Solid();
+    solid.name = this.inputParams.featureID || 'Loft';
 
     // Caps on first and last faces
     const addCapFromFace = (face, capNamePrefix, reverseStart) => {
@@ -245,7 +245,7 @@ export class LoftFeature {
 
     try { solid.setEpsilon(1e-6); } catch {}
     solid.visualize();
-    const effects = await applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
+    const effects = await BREP.applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
     // Flag removals (sketch parents + boolean effects)
     try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch {}
     // Return only artifacts to add

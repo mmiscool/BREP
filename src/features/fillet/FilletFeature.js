@@ -1,6 +1,5 @@
 import { extractDefaultValues } from "../../PartHistory.js";
-import { FilletSolid } from '../../BREP/fillet.js';
-import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
+import { BREP } from "../../BREP/BREP.js";
 
 
 const inputParamsSchema = {
@@ -256,13 +255,13 @@ export class FilletFeature {
                 // base = tool, targets = [finalSolid]
                 params.targets = [finalSolid];
                 fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
-                effects = await applyBooleanOperation(partHistory, tool, params, null);
+                effects = await BREP.applyBooleanOperation(partHistory, tool, params, null);
                 finalSolid = effects.added[0] || finalSolid;
             } else {
                 // UNION/INTERSECT: base = finalSolid, targets = [tool]
                 params.targets = [tool];
                 fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
-                effects = await applyBooleanOperation(partHistory, finalSolid, params, null);
+                effects = await BREP.applyBooleanOperation(partHistory, finalSolid, params, null);
                 finalSolid = effects.added[0] || finalSolid;
             }
 
@@ -331,7 +330,7 @@ function makeSingleFilletSolid(edgeObj,
     direction = 'INSET',
     debug = false) {
     // Only UI params are accepted; all robustness knobs are internal.
-    const tool = new FilletSolid({
+    const tool = new BREP.FilletSolid({
         edgeToFillet: edgeObj,
         radius,
         inflate,

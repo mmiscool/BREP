@@ -297,6 +297,58 @@ export class Solid extends THREE.Group {
         this.renderOrder = 1;
     }
 
+    /**
+     * Apply a Matrix4 to all authored vertices (bake transform into geometry arrays).
+     * Does not modify the Object3D transform; marks manifold dirty for rebuild.
+     * @param {THREE.Matrix4} matrix
+     * @returns {Solid} this
+     */
+    bakeTransform(matrix) {
+        try {
+            if (!matrix || typeof matrix.elements === 'undefined') return this;
+            if (!Array.isArray(this._vertProperties) || this._vertProperties.length === 0) return this;
+            const m = (matrix && matrix.isMatrix4) ? matrix : new THREE.Matrix4().fromArray(matrix.elements || matrix);
+            const e = m.elements;
+            const vp = this._vertProperties;
+            // Inline mat4 multiply for speed
+            for (let i = 0; i < vp.length; i += 3) {
+                const x = vp[i + 0], y = vp[i + 1], z = vp[i + 2];
+                const nx = e[0] * x + e[4] * y + e[8]  * z + e[12];
+                const ny = e[1] * x + e[5] * y + e[9]  * z + e[13];
+                const nz = e[2] * x + e[6] * y + e[10] * z + e[14];
+                vp[i + 0] = nx; vp[i + 1] = ny; vp[i + 2] = nz;
+            }
+            // Rebuild exact-key map and mark dirty
+            this._vertKeyToIndex = new Map();
+            for (let i = 0; i < vp.length; i += 3) {
+                const X = vp[i], Y = vp[i + 1], Z = vp[i + 2];
+                this._vertKeyToIndex.set(`${X},${Y},${Z}`, (i / 3) | 0);
+            }
+            this._dirty = true;
+            this._faceIndex = null;
+        } catch (_) { /* ignore */ }
+        return this;
+    }
+
+    /**
+     * Convenience: compose TRS and bake transform.
+     * @param {{ position?:number[], rotationEuler?:number[], scale?:number[] }} trs
+     * @returns {Solid} this
+     */
+    bakeTRS(trs) {
+        try {
+            const p = Array.isArray(trs?.position) ? trs.position : [0, 0, 0];
+            const r = Array.isArray(trs?.rotationEuler) ? trs.rotationEuler : [0, 0, 0];
+            const s = Array.isArray(trs?.scale) ? trs.scale : [1, 1, 1];
+            const pos = new THREE.Vector3(p[0] || 0, p[1] || 0, p[2] || 0);
+            const eul = new THREE.Euler(r[0] || 0, r[1] || 0, r[2] || 0, 'XYZ');
+            const quat = new THREE.Quaternion().setFromEuler(eul);
+            const scl = new THREE.Vector3(s[0] || 1, s[1] || 1, s[2] || 1);
+            const m = new THREE.Matrix4().compose(pos, quat, scl);
+            return this.bakeTransform(m);
+        } catch (_) { return this; }
+    }
+
     // --- Basic building blocks -------------------------------------------------
 
     _key([x, y, z]) {

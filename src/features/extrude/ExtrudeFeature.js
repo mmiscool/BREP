@@ -1,6 +1,5 @@
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
-import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
 
 const inputParamsSchema = {
   featureID: {
@@ -72,7 +71,7 @@ export class ExtrudeFeature {
     extrude.visualize();
 
     // Apply optional boolean operation via shared helper
-    const effects = await applyBooleanOperation(partHistory || {}, extrude, this.inputParams.boolean, this.inputParams.featureID);
+    const effects = await BREP.applyBooleanOperation(partHistory || {}, extrude, this.inputParams.boolean, this.inputParams.featureID);
     // Flag removals (sketch parent + boolean effects) for PartHistory to collect
     try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch {}
     // Return only artifacts to add

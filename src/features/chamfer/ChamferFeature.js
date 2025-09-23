@@ -1,5 +1,5 @@
 import { extractDefaultValues } from "../../PartHistory.js";
-import { ChamferSolid } from '../../BREP/chamfer.js';
+import { BREP } from '../../BREP/BREP.js'
 
 const inputParamsSchema = {
     featureID: {
@@ -116,7 +116,7 @@ export class ChamferFeature {
 }
 
 function makeSingleChamferSolid(edgeObj, distance = 1, inflate = 0, direction = 'INSET', debug = false) {
-    const tool = new ChamferSolid({ edgeToChamfer: edgeObj, distance, inflate, direction, debug });
+    const tool = new BREP.ChamferSolid({ edgeToChamfer: edgeObj, distance, inflate, direction, debug });
     tool.name = "CHAMFER_TOOL";
     tool.visualize();
     return tool;

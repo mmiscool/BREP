@@ -1,8 +1,8 @@
 
 import { ConstraintEngine } from './sketchSolver2D/ConstraintEngine.js';
 import { extractDefaultValues } from "../../PartHistory.js";
-import * as THREE from 'three';
-import { Face, Edge } from '../../BREP/BetterSolid.js';
+import { BREP } from "../../BREP/BREP.js";
+const THREE = BREP.THREE;
 import { LineGeometry } from 'three/examples/jsm/Addons.js';
 
 const inputParamsSchema = {
@@ -295,7 +295,7 @@ export class SketchFeature {
                 const aw = toWorld(a.x,a.y); const bw = toWorld(b.x,b.y);
                 const lg = new LineGeometry();
                 lg.setPositions([aw.x, aw.y, aw.z, bw.x, bw.y, bw.z]);
-                const e = new Edge(lg); e.name = `G${g.id}`; e.userData = { polylineLocal:[[aw.x,aw.y,aw.z],[bw.x,bw.y,bw.z]], polylineWorld:true }; edges.push(e); edgeBySegId.set(g.id, e);
+                const e = new BREP.Edge(lg); e.name = `G${g.id}`; e.userData = { polylineLocal:[[aw.x,aw.y,aw.z],[bw.x,bw.y,bw.z]], polylineWorld:true }; edges.push(e); edgeBySegId.set(g.id, e);
             } else if (g.type==='arc' && g.points?.length===3) {
                 const c = pointById.get(g.points[0]); const sa=pointById.get(g.points[1]); const sb=pointById.get(g.points[2]); if(!c||!sa||!sb) continue;
                 const cx=c.x, cy=c.y; const r=Math.hypot(sa.x-cx, sa.y-cy);
@@ -582,7 +582,7 @@ export class SketchFeature {
                 const bZ2 = new THREE.Vector3().crossVectors(bX2,bY2).normalize();
                 m.makeBasis(bX2,bY2,bZ2); m.setPosition(bO2);
                 geom2D.applyMatrix4(m); geom2D.computeVertexNormals(); geom2D.computeBoundingSphere();
-                const face = new Face(geom2D); face.name = `${sceneGroup.name}:PROFILE`; face.userData.faceName = face.name; face.edges = Array.from(boundaryEdges); face.userData.boundaryLoopsWorld = boundaryLoopsWorld; face.userData.profileGroups = profileGroups;
+                const face = new BREP.Face(geom2D); face.name = `${sceneGroup.name}:PROFILE`; face.userData.faceName = face.name; face.edges = Array.from(boundaryEdges); face.userData.boundaryLoopsWorld = boundaryLoopsWorld; face.userData.profileGroups = profileGroups;
                 sceneGroup.add(face);
                 for (const e of edges) { sceneGroup.add(e); }
                 profileFace = face;

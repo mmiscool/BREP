@@ -1,6 +1,6 @@
-
 import { extractDefaultValues } from "../../PartHistory.js";
-import * as THREE from 'three';
+import { BREP } from "../../BREP/BREP.js";
+const THREE = BREP.THREE;
 import { CADmaterials } from '../../UI/CADmaterials.js';
 
 const inputParamsSchema = {

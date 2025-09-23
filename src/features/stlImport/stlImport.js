@@ -2,8 +2,7 @@ import { extractDefaultValues } from "../../PartHistory.js";
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { MeshToBrep } from '../../BREP/meshToBrep.js';
-import { MeshRepairer } from "../../BREP/MeshRepairer.js";
+import { BREP } from "../../BREP/BREP.js";
 
 
 
@@ -134,7 +133,7 @@ export class stlImport {
         // if (!geometry.index) geometry = MeshRepairer._ensureIndexed(geometry);
 
         // Run mesh repair pipeline per selected level to produce a BufferGeometry
-        const repairer = new MeshRepairer();
+        const repairer = new BREP.MeshRepairer();
         let repairedGeometry = geometry;
         if (this.inputParams.meshRepairLevel === "BASIC") {
             repairedGeometry = repairer.repairAll(repairedGeometry);
@@ -145,7 +144,7 @@ export class stlImport {
         }
 
         // Build a BREP solid by grouping triangles into faces via deflection angle
-        const solid = new MeshToBrep(repairedGeometry, this.inputParams.deflectionAngle);
+        const solid = new BREP.MeshToBrep(repairedGeometry, this.inputParams.deflectionAngle);
         solid.name = this.inputParams.featureID;
         solid.visualize();
 

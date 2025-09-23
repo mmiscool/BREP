@@ -4,7 +4,6 @@
 
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
-import { applyBooleanOperation } from '../../BREP/applyBooleanOperation.js';
 
 const inputParamsSchema = {
     featureID: {
@@ -26,6 +25,11 @@ const inputParamsSchema = {
         type: 'number',
         default_value: 10,
         hint: 'Depth along Z'
+    },
+    transform: {
+        type: 'transform',
+        default_value: { position: [0, 0, 0], rotationEuler: [0, 0, 0], scale: [1, 1, 1] },
+        hint: 'Position, rotation, and scale'
     },
     boolean: {
         type: 'boolean_operation',
@@ -54,9 +58,15 @@ export class PrimitiveCubeFeature {
             z: sizeZ,
             name: featureID,
         });
+        // Apply transform before visualization so it bakes into geometry arrays
+        try {
+            if (this.inputParams.transform) {
+                cube.bakeTRS(this.inputParams.transform);
+            }
+        } catch (_) { }
         cube.visualize();
 
         // Apply optional boolean operation
-        return await applyBooleanOperation(partHistory || {}, cube, this.inputParams.boolean, featureID);
+        return await BREP.applyBooleanOperation(partHistory || {}, cube, this.inputParams.boolean, featureID);
     }
 }

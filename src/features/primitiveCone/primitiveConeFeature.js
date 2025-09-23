@@ -4,7 +4,6 @@
 
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
-import { applyBooleanOperation } from '../../BREP/applyBooleanOperation.js';
 
 const inputParamsSchema = {
   featureID: {
@@ -31,6 +30,11 @@ const inputParamsSchema = {
     type: 'number',
     default_value: 32,
     hint: 'Number of segments around the circumference'
+  },
+  transform: {
+    type: 'transform',
+    default_value: { position: [0, 0, 0], rotationEuler: [0, 0, 0], scale: [1, 1, 1] },
+    hint: 'Position, rotation, and scale'
   },
   boolean: {
     type: 'boolean_operation',
@@ -60,9 +64,14 @@ export class PrimitiveConeFeature {
       resolution,
       name: this.inputParams.featureID
     });
+    try {
+      if (this.inputParams.transform) {
+        cone.bakeTRS(this.inputParams.transform);
+      }
+    } catch (_) { }
     cone.visualize();
 
-    return await applyBooleanOperation(partHistory || {}, cone, this.inputParams.boolean, this.inputParams.featureID);
+    return await BREP.applyBooleanOperation(partHistory || {}, cone, this.inputParams.boolean, this.inputParams.featureID);
   }
 }
 

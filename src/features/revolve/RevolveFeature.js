@@ -1,7 +1,6 @@
 import { extractDefaultValues } from "../../PartHistory.js";
-import * as THREE from 'three';
-import { FacesSolid } from "../../BREP/Sweep.js";
-import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
+import { BREP } from "../../BREP/BREP.js";
+const THREE = BREP.THREE;
 
 const inputParamsSchema = {
     featureID: {
@@ -65,7 +64,7 @@ export class RevolveFeature {
             console.warn("RevolveFeature: no profile face found");
             return [];
         }
-        
+
         const removed = [];
         if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') removed.push(faceObj.parent);
 
@@ -84,7 +83,7 @@ export class RevolveFeature {
                     const p = cached[i];
                     if (!pick.length) { pick.push(p); continue; }
                     const q = pick[0];
-                    if (Math.abs(p[0]-q[0])>1e-12 || Math.abs(p[1]-q[1])>1e-12 || Math.abs(p[2]-q[2])>1e-12) pick.push(p);
+                    if (Math.abs(p[0] - q[0]) > 1e-12 || Math.abs(p[1] - q[1]) > 1e-12 || Math.abs(p[2] - q[2]) > 1e-12) pick.push(p);
                 }
                 if (pick.length >= 2) {
                     if (isWorld) {
@@ -131,7 +130,8 @@ export class RevolveFeature {
         };
 
         // New solid
-        const solid = new FacesSolid({ name: this.inputParams.featureID || 'Revolve' });
+        const solid = new BREP.Solid();
+        solid.name = this.inputParams.featureID || 'Revolve';
 
         // Caps: use sketch profile triangulation if available, else face geometry
         const groups = Array.isArray(faceObj?.userData?.profileGroups) ? faceObj.userData.profileGroups : null;
@@ -183,9 +183,9 @@ export class RevolveFeature {
                         solid.addTriangle(`${faceObj.name || 'Face'}_END`, q0, q1, q2);
                     };
                     if (hasIndex) {
-                        for (let i = 0; i < idx.count; i += 3) addTri(idx.getX(i+0)>>>0, idx.getX(i+1)>>>0, idx.getX(i+2)>>>0);
+                        for (let i = 0; i < idx.count; i += 3) addTri(idx.getX(i + 0) >>> 0, idx.getX(i + 1) >>> 0, idx.getX(i + 2) >>> 0);
                     } else {
-                        for (let t = 0; t < (posAttr.count/3|0); t++) addTri(3*t+0, 3*t+1, 3*t+2);
+                        for (let t = 0; t < (posAttr.count / 3 | 0); t++) addTri(3 * t + 0, 3 * t + 1, 3 * t + 2);
                     }
                 }
             }
@@ -218,17 +218,17 @@ export class RevolveFeature {
                 const isHole = !!(loop && loop.isHole);
                 const pA = pts.slice();
                 if (pA.length >= 2) {
-                    const first = pA[0], last = pA[pA.length-1];
-                    if (!(first[0]===last[0] && first[1]===last[1] && first[2]===last[2])) pA.push([first[0],first[1],first[2]]);
+                    const first = pA[0], last = pA[pA.length - 1];
+                    if (!(first[0] === last[0] && first[1] === last[1] && first[2] === last[2])) pA.push([first[0], first[1], first[2]]);
                 }
                 for (let i = pA.length - 2; i >= 0; i--) {
-                    const a = pA[i], b = pA[i+1];
-                    if (a[0]===b[0] && a[1]===b[1] && a[2]===b[2]) pA.splice(i+1,1);
+                    const a = pA[i], b = pA[i + 1];
+                    if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) pA.splice(i + 1, 1);
                 }
 
                 for (let i = 0; i < pA.length - 1; i++) {
                     const a = pA[i];
-                    const b = pA[i+1];
+                    const b = pA[i + 1];
                     const setA = pointToEdgeNames.get(key(a));
                     const setB = pointToEdgeNames.get(key(b));
                     let fname = `${faceObj.name || 'FACE'}_RV`;
@@ -237,7 +237,7 @@ export class RevolveFeature {
                     // sweep along angular steps
                     let ang0 = 0;
                     for (let s = 0; s < steps; s++, ang0 += dA) {
-                        const ang1 = (s === steps-1) ? sweepRad : ang0 + dA;
+                        const ang1 = (s === steps - 1) ? sweepRad : ang0 + dA;
                         const a0 = rotateP(new THREE.Vector3(a[0], a[1], a[2]), ang0);
                         const a1 = rotateP(new THREE.Vector3(a[0], a[1], a[2]), ang1);
                         const b0 = rotateP(new THREE.Vector3(b[0], b[1], b[2]), ang0);
@@ -327,11 +327,11 @@ export class RevolveFeature {
         }
 
         // Weld slight numerical seams and build mesh
-        try { solid.setEpsilon(1e-6); } catch {}
+        try { solid.setEpsilon(1e-6); } catch { }
         solid.visualize();
-        const effects = await applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
+        const effects = await BREP.applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
         // Flag removals (sketch parent + boolean effects)
-        try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch {}
+        try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch { }
         return effects.added || [];
     }
 }

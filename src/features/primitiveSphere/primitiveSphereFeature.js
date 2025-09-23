@@ -4,7 +4,6 @@
 
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
-import { applyBooleanOperation } from '../../BREP/applyBooleanOperation.js';
 
 const inputParamsSchema = {
     featureID: {
@@ -21,6 +20,11 @@ const inputParamsSchema = {
         type: 'number',
         default_value: 32,
         hint: 'Base segment count (longitude). Latitude segments are derived from this.'
+    },
+    transform: {
+        type: 'transform',
+        default_value: { position: [0, 0, 0], rotationEuler: [0, 0, 0], scale: [1, 1, 1] },
+        hint: 'Position, rotation, and scale'
     },
     boolean: {
         type: 'boolean_operation',
@@ -48,8 +52,13 @@ export class PrimitiveSphereFeature {
             resolution,
             name: featureID,
         });
+        try {
+            if (this.inputParams.transform) {
+                sphere.bakeTRS(this.inputParams.transform);
+            }
+        } catch (_) { }
         sphere.visualize();
 
-        return await applyBooleanOperation(partHistory || {}, sphere, this.inputParams.boolean, featureID);
+        return await BREP.applyBooleanOperation(partHistory || {}, sphere, this.inputParams.boolean, featureID);
     }
 }

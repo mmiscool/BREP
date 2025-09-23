@@ -1,6 +1,6 @@
 import { extractDefaultValues } from "../../PartHistory.js";
-import * as THREE from 'three';
-import { Face, Edge } from '../../BREP/BetterSolid.js';
+import { BREP } from "../../BREP/BREP.js";
+const THREE = BREP.THREE;
 import { LineGeometry } from 'three/examples/jsm/Addons.js';
 
 const inputParamsSchema = {
@@ -187,7 +187,7 @@ export class PngToFaceFeature {
     geom.computeVertexNormals();
     geom.computeBoundingSphere();
 
-    const face = new Face(geom);
+    const face = new BREP.Face(geom);
     face.name = `${sceneGroup.name}:PROFILE`;
     face.userData.faceName = face.name;
     face.userData.boundaryLoopsWorld = boundaryLoopsWorld;
@@ -214,7 +214,7 @@ export class PngToFaceFeature {
       const lg = new LineGeometry();
       lg.setPositions(positions);
       try { lg.computeBoundingSphere(); } catch {}
-      const e = new Edge(lg);
+      const e = new BREP.Edge(lg);
       e.name = `${sceneGroup.name}:L${edgeIdx++}`;
       e.closedLoop = true;
       e.userData = { polylineLocal: positionsToTriples(positions), polylineWorld: true, isHole: !!isHole };
@@ -231,7 +231,7 @@ export class PngToFaceFeature {
       const lg = new LineGeometry();
       lg.setPositions(positions);
       try { lg.computeBoundingSphere(); } catch {}
-      const e = new Edge(lg);
+      const e = new BREP.Edge(lg);
       e.name = `${sceneGroup.name}:E${edgeIdx++}`;
       e.closedLoop = false;
       e.userData = { polylineLocal: positionsToTriples(positions), polylineWorld: true, isHole: !!isHole };

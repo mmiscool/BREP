@@ -1,6 +1,5 @@
 import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
-import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
 
 const inputParamsSchema = {
   featureID: {
@@ -83,7 +82,7 @@ export class SweepFeature {
     sweep.visualize();
 
     // Apply optional boolean operation via shared helper
-    const effects = await applyBooleanOperation(partHistory || {}, sweep, this.inputParams.boolean, this.inputParams.featureID);
+    const effects = await BREP.applyBooleanOperation(partHistory || {}, sweep, this.inputParams.boolean, this.inputParams.featureID);
     effects.removed = [...removed, ...effects.removed];
     return effects;
   }

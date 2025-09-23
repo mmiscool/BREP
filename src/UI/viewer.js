@@ -554,11 +554,21 @@ export class Viewer {
         try {
             if (this.viewCube && this.viewCube.isEventInside(event)) return;
         } catch {}
+        // If hovering TransformControls gizmo, skip scene hover handling
+        try {
+            const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
+            if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) return;
+        } catch {}
         this._updateHover(event);
     }
 
     _onPointerDown(event) {
         if (this._disposed) return;
+        // If pointer is over TransformControls gizmo, let it handle the interaction
+        try {
+            const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
+            if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) { try { event.preventDefault(); } catch {}; return; }
+        } catch {}
         // If pressing in the view cube region, disable controls for this gesture
         try {
             this._cubeActive = !!(this.viewCube && this.viewCube.isEventInside(event));
@@ -574,6 +584,11 @@ export class Viewer {
 
     _onPointerUp(event) {
         if (this._disposed) return;
+        // If releasing over TransformControls gizmo, skip scene selection
+        try {
+            const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
+            if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) { try { event.preventDefault(); } catch {}; return; }
+        } catch {}
         // If the gesture began in the cube, handle click there exclusively
         if (this._cubeActive) {
             try { if (this.viewCube && this.viewCube.handleClick(event)) { this._cubeActive = false; return; } } catch {}

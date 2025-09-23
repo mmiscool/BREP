@@ -1,5 +1,5 @@
 import { extractDefaultValues } from "../../PartHistory.js";
-import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
+import { BREP } from '../../BREP/BREP.js'
 
 const inputParamsSchema = {
     featureID: {
@@ -76,12 +76,12 @@ export class BooleanFeature {
             let toolUnion = tools[0];
             for (let i = 1; i < tools.length; i++) toolUnion = toolUnion.union(tools[i]);
             const param = { operation: 'SUBTRACT', targets: [target] };
-            effects = await applyBooleanOperation(partHistory, toolUnion, param, this.inputParams.featureID);
+            effects = await BREP.applyBooleanOperation(partHistory, toolUnion, param, this.inputParams.featureID);
             // Also consider original tools as removed
             effects.removed = [...tools, ...effects.removed];
         } else {
             const param = { operation: op, targets: tools };
-            effects = await applyBooleanOperation(partHistory, target, param, this.inputParams.featureID);
+            effects = await BREP.applyBooleanOperation(partHistory, target, param, this.inputParams.featureID);
             // Ensure original target is removed to avoid duplication
             effects.removed = [target, ...effects.removed];
         }

@@ -8,6 +8,9 @@
 "use strict";
 
 import { SelectionFilter } from './SelectionFilter.js';
+import * as THREE from 'three';
+import { TransformControls as TransformControlsDirect } from 'three/examples/jsm/controls/TransformControls.js';
+import { TransformControls as TransformControlsAddons } from 'three/examples/jsm/Addons.js';
 
 export class HistoryWidget {
     /**
@@ -1002,6 +1005,46 @@ class genFeatureUI {
         } catch (_) { }
         genFeatureUI.__activeRefInput = el || null;
     }
+
+    // Track a single globally-active transform controls session across all instances
+    static __activeXform = {
+        owner: null,
+        key: null,
+        inputEl: null,
+        wrapEl: null,
+        target: null,
+        controls: null,
+        viewer: null,
+    };
+    static __stopGlobalActiveXform() {
+        const s = genFeatureUI.__activeXform;
+        if (!s || !s.controls) return;
+        try {
+            // Detach and dispose controls
+            s.controls.detach();
+            if (s.viewer && s.viewer.scene) {
+                try { if (s.controls && s.controls.isObject3D) s.viewer.scene.remove(s.controls); } catch (_) {}
+                try { if (s.group && s.group.isObject3D) s.viewer.scene.remove(s.group); } catch (_) {}
+            }
+            try { s.controls.dispose(); } catch (_) {}
+        } catch (_) { }
+        try {
+            // Remove target object
+            if (s.viewer && s.viewer.scene && s.target) s.viewer.scene.remove(s.target);
+        } catch (_) { }
+        try { if (window.__BREP_activeXform) window.__BREP_activeXform = null; } catch (_) { }
+        try {
+            // Restore camera controls
+            if (s.viewer && s.viewer.controls) s.viewer.controls.enabled = true;
+        } catch (_) { }
+        try {
+            // Clear highlight
+            if (s.inputEl) s.inputEl.removeAttribute('active-transform');
+            const wrap = s.wrapEl;
+            if (wrap) wrap.classList.remove('ref-active');
+        } catch (_) { }
+        genFeatureUI.__activeXform = { owner: null, key: null, inputEl: null, wrapEl: null, target: null, controls: null, viewer: null };
+    }
     /**
      * @param {Object} schema - e.g. { sizeX: {type:'number', default_value:'2*t', hint:'Width formula' }, ... }
      * @param {Object} params - a live object to keep in sync with user edits
@@ -1045,6 +1088,17 @@ class genFeatureUI {
                 }
                 this._stopActiveReferenceSelection();
             } catch (_) { }
+            try {
+                // Close active transform session if clicking outside its wrapper; commit changes
+                const s = genFeatureUI.__activeXform;
+                if (s && s.owner === this) {
+                    if (!(target && typeof target.closest === 'function' && target.closest('.transform-wrap'))) {
+                        const val = this.params[s.key];
+                        genFeatureUI.__stopGlobalActiveXform();
+                        this._emitParamsChange(s.key, val);
+                    }
+                }
+            } catch (_) { }
         };
         // Capture focus changes within this form
         this._shadow.addEventListener('focusin', (ev) => {
@@ -1054,6 +1108,14 @@ class genFeatureUI {
         this._shadow.addEventListener('mousedown', (ev) => {
             stopIfOtherControl(ev.target);
         }, true);
+    }
+
+    destroy() {
+        // Clean up any active transform session owned by this instance
+        try {
+            const s = genFeatureUI.__activeXform;
+            if (s && s.owner === this) genFeatureUI.__stopGlobalActiveXform();
+        } catch (_) { }
     }
 
     /** Returns the live params object (already kept in sync). */
@@ -1082,11 +1144,40 @@ class genFeatureUI {
 
             this._setInputValue(el, def.type, v);
 
-            // If this is a multi reference selection, also refresh chip list
-            if (def && def.type === 'reference_selection' && def.multiple) {
+            // If this is a reference selection, refresh custom UI
+            if (def && def.type === 'reference_selection') {
                 const row = this._fieldsWrap.querySelector(`[data-key="${key}"]`);
-                const chips = row ? row.querySelector('.ref-chips') : null;
-                if (chips) this._renderChips(chips, key, Array.isArray(v) ? v : []);
+                if (def.multiple) {
+                    const chips = row ? row.querySelector('.ref-chips') : null;
+                    if (chips) this._renderChips(chips, key, Array.isArray(v) ? v : []);
+                } else {
+                    const display = row ? row.querySelector('.ref-single-display') : null;
+                    if (display) {
+                        const txt = (v == null || String(v).trim() === '') ? 'Click then select in scene…' : String(v);
+                        display.textContent = txt;
+                    }
+                }
+                continue;
+            }
+
+            // Transform widget: refresh info line
+            if (def && def.type === 'transform') {
+                const row = this._fieldsWrap.querySelector(`[data-key="${key}"]`);
+                const info = row ? row.querySelector('.transform-info') : null;
+                if (info) {
+                    const fmt = (n) => {
+                        const x = Number(n);
+                        if (!Number.isFinite(x)) return '0';
+                        const a = Math.abs(x);
+                        const prec = a >= 100 ? 0 : (a >= 10 ? 1 : 2);
+                        return String(x.toFixed(prec));
+                    };
+                    const p = Array.isArray(v?.position) ? v.position : [0,0,0];
+                    const r = Array.isArray(v?.rotationEuler) ? v.rotationEuler : [0,0,0];
+                    const s = Array.isArray(v?.scale) ? v.scale : [1,1,1];
+                    info.textContent = `pos(${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])})  rot(${fmt(r[0])}, ${fmt(r[1])}, ${fmt(r[2])})  scale(${fmt(s[0])}, ${fmt(s[1])}, ${fmt(s[2])})`;
+                }
+                continue;
             }
         }
     }
@@ -1203,19 +1294,17 @@ class genFeatureUI {
                     break;
 
                 case 'reference_selection': {
-                    // Base input used to activate selection listening
+                    // Hidden input used as event/value carrier; visible UI is custom
                     inputEl = document.createElement('input');
-                    inputEl.type = 'text';
+                    inputEl.type = 'hidden';
                     inputEl.id = id;
-                    inputEl.className = 'input';
-
-                    // Multi-select support renders chip list next to input
+                    // Multi-select support renders chip list next to hidden input
                     const isMulti = !!def.multiple;
                     if (isMulti) inputEl.dataset.multiple = 'true';
 
                     // Wrapper so clicking anywhere can activate selection
                     const refWrap = document.createElement('div');
-                    refWrap.className = isMulti ? 'ref-multi-wrap' : 'ref-wrap';
+                    refWrap.className = isMulti ? 'ref-multi-wrap' : 'ref-single-wrap';
 
                     let chipsWrap = null;
                     if (isMulti) {
@@ -1225,6 +1314,26 @@ class genFeatureUI {
                             this._activateReferenceSelection(inputEl, def);
                         });
                         refWrap.appendChild(chipsWrap);
+                        // Initial render of any existing chips
+                        try {
+                            const current = this._pickInitialValue(key, def);
+                            this._renderChips(chipsWrap, key, Array.isArray(current) ? current : []);
+                        } catch (_) { }
+                    } else {
+                        // Single-select: render a clickable display that looks like an input
+                        const display = document.createElement('div');
+                        display.className = 'ref-single-display';
+                        display.title = 'Click then select in scene';
+                        const setDisplay = (val) => {
+                            const txt = (val == null || String(val).trim() === '') ? 'Click then select in scene…' : String(val);
+                            display.textContent = txt;
+                        };
+                        setDisplay(this._pickInitialValue(key, def));
+                        display.addEventListener('click', () => this._activateReferenceSelection(inputEl, def));
+                        refWrap.appendChild(display);
+
+                        // Keep display in sync when value changes
+                        inputEl.addEventListener('change', () => setDisplay(inputEl.value));
                     }
 
                     this._setInputValue(inputEl, def.type, this._pickInitialValue(key, def));
@@ -1264,18 +1373,82 @@ class genFeatureUI {
                         }
                     });
 
-                    // Activate selection on click
-                    inputEl.addEventListener('click', () => this._activateReferenceSelection(inputEl, def));
+                    // Keep hidden input inside wrapper so ESC/highlight logic can find it
+                    refWrap.appendChild(inputEl);
+                    controlWrap.appendChild(refWrap);
+                    break;
+                }
 
-                    if (isMulti && chipsWrap) {
-                        const current = this._pickInitialValue(key, def);
-                        if (Array.isArray(current) && current.length) this._renderChips(chipsWrap, key, current);
-                        refWrap.appendChild(inputEl);
-                        inputEl.placeholder = 'Click then select in scene…';
-                        controlWrap.appendChild(refWrap);
-                    } else {
-                        controlWrap.appendChild(inputEl);
-                    }
+                case 'transform': {
+                    // Hidden input placeholder to carry active state (for consistency)
+                    inputEl = document.createElement('input');
+                    inputEl.type = 'hidden';
+                    inputEl.id = id;
+
+                    const wrap = document.createElement('div');
+                    wrap.className = 'transform-wrap';
+
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn';
+                    btn.textContent = String(def.label || 'Position in 3D…');
+
+                    // Info line showing current TRS
+                    const info = document.createElement('div');
+                    info.className = 'transform-info';
+                    const fmt = (n) => {
+                        const v = Number(n);
+                        if (!Number.isFinite(v)) return '0';
+                        const a = Math.abs(v);
+                        const prec = a >= 100 ? 0 : (a >= 10 ? 1 : 2);
+                        return String(v.toFixed(prec));
+                    };
+                    const updateInfo = () => {
+                        const v = this._pickInitialValue(key, def) || {};
+                        const p = Array.isArray(v.position) ? v.position : [0, 0, 0];
+                        const r = Array.isArray(v.rotationEuler) ? v.rotationEuler : [0, 0, 0];
+                        const s = Array.isArray(v.scale) ? v.scale : [1, 1, 1];
+                        info.textContent = `pos(${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])})  rot(${fmt(r[0])}, ${fmt(r[1])}, ${fmt(r[2])})  scale(${fmt(s[0])}, ${fmt(s[1])}, ${fmt(s[2])})`;
+                    };
+                    updateInfo();
+
+                    // Mode toggles
+                    const modes = document.createElement('div');
+                    modes.className = 'transform-modes';
+                    const mkModeBtn = (label, mode) => {
+                        const b = document.createElement('button');
+                        b.type = 'button';
+                        b.className = 'btn btn-slim';
+                        b.textContent = label;
+                        b.dataset.mode = mode;
+                        b.addEventListener('click', () => {
+                            inputEl.dataset.xformMode = mode;
+                            try {
+                                const s = genFeatureUI.__activeXform;
+                                if (s && s.inputEl === inputEl && s.controls) s.controls.setMode(mode);
+                            } catch (_) { }
+                            // update visual selected state
+                            modes.querySelectorAll('button').forEach(x => x.classList.toggle('selected', x === b));
+                        });
+                        return b;
+                    };
+                    const bT = mkModeBtn('Move', 'translate');
+                    const bR = mkModeBtn('Rotate', 'rotate');
+                    const bS = mkModeBtn('Scale', 'scale');
+                    modes.appendChild(bT); modes.appendChild(bR); modes.appendChild(bS);
+                    // Default selected
+                    const defMode = inputEl.dataset.xformMode || 'translate';
+                    ({ translate: bT, rotate: bR, scale: bS }[defMode] || bT).classList.add('selected');
+
+                    const activate = () => this._activateTransformWidget({ inputEl, wrapEl: wrap, key, def });
+                    btn.addEventListener('click', activate);
+
+                    wrap.appendChild(btn);
+                    wrap.appendChild(modes);
+                    wrap.appendChild(info);
+                    // Keep hidden input inside to aid traversal
+                    wrap.appendChild(inputEl);
+                    controlWrap.appendChild(wrap);
                     break;
                 }
 
@@ -1540,7 +1713,7 @@ class genFeatureUI {
                 }
             }
 
-            controlWrap.appendChild(inputEl);
+            if (!inputEl.parentNode) controlWrap.appendChild(inputEl);
             row.appendChild(controlWrap);
             this._fieldsWrap.appendChild(row);
             this._inputs.set(key, inputEl);
@@ -1590,6 +1763,10 @@ class genFeatureUI {
                 if (el !== inputEl) {
                     try { el.style.filter = 'none'; } catch (_) { }
                     try { el.removeAttribute('active-reference-selection'); } catch (_) { }
+                    try {
+                        const wrap = el.closest('.ref-single-wrap, .ref-multi-wrap');
+                        if (wrap) wrap.classList.remove('ref-active');
+                    } catch (_) { }
                 }
             });
         };
@@ -1599,10 +1776,152 @@ class genFeatureUI {
         try { inputEl.dataset.activatedAt = String(Date.now()); } catch (_) { }
         inputEl.style.filter = 'invert(1)';
         inputEl.setAttribute('active-reference-selection', 'true');
+        try {
+            const wrap = inputEl.closest('.ref-single-wrap, .ref-multi-wrap');
+            if (wrap) wrap.classList.add('ref-active');
+        } catch (_) { }
 
         try { console.log('Setting selection types:', def.selectionFilter); } catch (_) { }
         SelectionFilter.stashAllowedSelectionTypes();
         SelectionFilter.SetSelectionTypes(def.selectionFilter);
+    }
+
+    // Activate a TransformControls session for a transform widget
+    _activateTransformWidget({ inputEl, wrapEl, key, def }) {
+        try { this._stopActiveReferenceSelection(); } catch (_) {}
+        // Stop any existing transform session (global singleton)
+        try { genFeatureUI.__stopGlobalActiveXform(); } catch (_) {}
+
+        const viewer = this.options?.viewer || null;
+        if (!viewer || !viewer.scene || !viewer.camera || !viewer.renderer) return;
+
+        // Toggle: if already active for this input, stop and commit
+        try {
+            const s = genFeatureUI.__activeXform;
+            if (s && s.inputEl === inputEl) {
+                const currentVal = this.params[key];
+                genFeatureUI.__stopGlobalActiveXform();
+                this._emitParamsChange(key, currentVal);
+                return;
+            }
+        } catch (_) { }
+
+        // Build or reuse target object from current param value
+        const cur = this._pickInitialValue(key, def) || {};
+        const p = Array.isArray(cur.position) ? cur.position : [0, 0, 0];
+        const r = Array.isArray(cur.rotationEuler) ? cur.rotationEuler : [0, 0, 0];
+        const s = Array.isArray(cur.scale) ? cur.scale : [1, 1, 1];
+
+        const target = new THREE.Object3D();
+        try {
+            target.position.set(Number(p[0]||0), Number(p[1]||0), Number(p[2]||0));
+            target.rotation.set(Number(r[0]||0), Number(r[1]||0), Number(r[2]||0));
+            target.scale.set(Number(s[0]||1), Number(s[1]||1), Number(s[2]||1));
+        } catch (_) { }
+        viewer.scene.add(target);
+
+        // Prefer the direct controls build; fallback to Addons
+        let TCctor = TransformControlsDirect || TransformControlsAddons;
+        try {
+            if (!TCctor) TCctor = TransformControlsAddons;
+        } catch (_) { /* no-op */ }
+        if (!TCctor) {
+            console.warn('[TransformControls] Not available from imports; skipping gizmo.');
+            return;
+        }
+        const tc = new TCctor(viewer.camera, viewer.renderer.domElement);
+        const desiredMode = (inputEl && inputEl.dataset && inputEl.dataset.xformMode) ? String(inputEl.dataset.xformMode) : 'translate';
+        tc.setMode(desiredMode);
+        tc.addEventListener('dragging-changed', (ev) => {
+            try { if (viewer.controls) viewer.controls.enabled = !ev.value; } catch (_) { }
+        });
+
+        const updateParamFromTarget = () => {
+            const pos = [target.position.x, target.position.y, target.position.z];
+            const rot = [target.rotation.x, target.rotation.y, target.rotation.z];
+            const scl = [target.scale.x, target.scale.y, target.scale.z];
+            const next = { position: pos, rotationEuler: rot, scale: scl };
+            this.params[key] = next;
+            try {
+                // Update info line if present
+                const row = this._fieldsWrap.querySelector(`[data-key="${key}"]`);
+                const info = row ? row.querySelector('.transform-info') : null;
+                if (info) {
+                    const fmt = (n) => {
+                        const x = Number(n);
+                        if (!Number.isFinite(x)) return '0';
+                        const a = Math.abs(x);
+                        const prec = a >= 100 ? 0 : (a >= 10 ? 1 : 2);
+                        return String(x.toFixed(prec));
+                    };
+                    info.textContent = `pos(${fmt(pos[0])}, ${fmt(pos[1])}, ${fmt(pos[2])})  rot(${fmt(rot[0])}, ${fmt(rot[1])}, ${fmt(rot[2])})  scale(${fmt(scl[0])}, ${fmt(scl[1])}, ${fmt(scl[2])})`;
+                }
+            } catch (_) { }
+        };
+        tc.addEventListener('change', updateParamFromTarget);
+
+        // Expose an isOver helper for Viewer to suppress its own handlers when interacting with gizmo
+        const isOver = (ev) => {
+            try {
+                const canvas = viewer.renderer.domElement;
+                const rect = canvas.getBoundingClientRect();
+                const x = (ev.clientX - rect.left) / rect.width; // 0..1
+                const y = (ev.clientY - rect.top) / rect.height; // 0..1
+                const ndc = new THREE.Vector2(x * 2 - 1, -(y * 2 - 1));
+                viewer.raycaster.setFromCamera(ndc, viewer.camera);
+                const pickRoot = tc.picker || tc._picker || tc.gizmo || tc._gizmo;
+                if (!pickRoot) return false;
+                const hits = viewer.raycaster.intersectObject(pickRoot, true) || [];
+                return hits.length > 0;
+            } catch (_) { return false; }
+        };
+        try { window.__BREP_activeXform = { controls: tc, viewer, isOver }; } catch (_) { }
+
+        let addedToScene = false;
+        try {
+            if (tc && tc.isObject3D) { viewer.scene.add(tc); addedToScene = true; }
+        } catch (_) { /* tolerate builds where controls aren't Object3D */ }
+        if (!addedToScene) {
+            // Fallback: try adding known internal object3D parts if present
+            try {
+                const group = new THREE.Group();
+                group.name = 'TransformControlsGroup';
+                const candidates = [tc?.gizmo, tc?._gizmo, tc?.picker, tc?._picker, tc?.helper, tc?._helper];
+                let attached = 0;
+                for (const cand of candidates) {
+                    if (cand && cand.isObject3D) { try { group.add(cand); attached++; } catch (_) {} }
+                }
+                if (attached > 0) { viewer.scene.add(group); addedToScene = true; tc.__fallbackGroup = group; }
+            } catch (_) { /* ignore */ }
+            if (!addedToScene) {
+                // eslint-disable-next-line no-console
+                console.warn('[TransformControls] Could not add gizmo to scene (no Object3D found).');
+            }
+        }
+        try { tc.showX = true; tc.showY = true; tc.showZ = true; } catch (_) { }
+        try { tc.setSpace('world'); } catch (_) { }
+        try { tc.addEventListener('change', () => { try { viewer.render(); } catch (_) {} }); } catch (_) { }
+        try { tc.attach(target); } catch (_) { }
+
+        // Mark active
+        inputEl.setAttribute('active-transform', 'true');
+        try { wrapEl.classList.add('ref-active'); } catch (_) { }
+
+        genFeatureUI.__activeXform = {
+            owner: this,
+            key,
+            inputEl,
+            wrapEl,
+            target,
+            controls: tc,
+            viewer,
+            group: tc.__fallbackGroup || (tc && tc.isObject3D ? tc : null),
+            captureHandlers: null,
+        };
+    }
+
+    _stopActiveTransformWidget() {
+        try { genFeatureUI.__stopGlobalActiveXform(); } catch (_) { }
     }
 
 
@@ -1612,6 +1931,10 @@ class genFeatureUI {
             if (genFeatureUI.__activeRefInput) {
                 try { genFeatureUI.__activeRefInput.style.filter = 'none'; } catch (_) { }
                 try { genFeatureUI.__activeRefInput.removeAttribute('active-reference-selection'); } catch (_) { }
+                try {
+                    const wrap = genFeatureUI.__activeRefInput.closest('.ref-single-wrap, .ref-multi-wrap');
+                    if (wrap) wrap.classList.remove('ref-active');
+                } catch (_) { }
             }
         } catch (_) { }
         genFeatureUI.__activeRefInput = null;
@@ -1679,6 +2002,11 @@ class genFeatureUI {
     }
 
     _emitParamsChange(key, value) {
+        // Suppress auto-run if a transform editing session is active on this form
+        try {
+            const s = genFeatureUI.__activeXform;
+            if (s && s.owner === this) return;
+        } catch (_) { }
         if (typeof this.options.onChange === 'function') {
             const featureID = (this.params && Object.prototype.hasOwnProperty.call(this.params, 'featureID'))
                 ? this.params.featureID
@@ -1703,6 +2031,7 @@ class genFeatureUI {
             case 'boolean': return false;
             case 'options': return '';
             case 'reference_selection': return null;
+            case 'transform': return { position: [0, 0, 0], rotationEuler: [0, 0, 0], scale: [1, 1, 1] };
             default: return '';
         }
     }
@@ -1817,6 +2146,8 @@ class genFeatureUI {
         cursor: pointer;
         transition: border-color .15s ease, box-shadow .15s ease, transform .05s ease;
       }
+      .btn.btn-slim { padding: 6px 10px; border-radius: 8px; font-size: 12px; }
+      .btn.selected { border-color: var(--focus); color: #fff; }
       .btn:hover { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
       .btn:active { transform: translateY(1px); }
       .input:focus, .select:focus {
@@ -1836,6 +2167,28 @@ class genFeatureUI {
         border-radius: 10px;
         background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01));
       }
+      /* Single reference display (replaces textbox) */
+      .ref-single-wrap { display: block; }
+      .ref-single-display {
+        appearance: none;
+        background: var(--input-bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 8px 10px;
+        outline: none;
+        cursor: pointer;
+        user-select: none;
+        min-height: 36px;
+        display: flex;
+        align-items: center;
+      }
+      /* Active highlight for ref widgets */
+      .ref-single-wrap.ref-active .ref-single-display,
+      .ref-multi-wrap.ref-active .ref-chips {
+        border-color: var(--focus);
+        box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+      }
       /* Multi reference chips */
       .ref-multi-wrap { display: flex; flex-direction: column; gap: 6px; }
       .ref-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; border: 1px dashed var(--border); border-radius: 10px; cursor: pointer; background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01)); max-width: 100%; }
@@ -1843,6 +2196,12 @@ class genFeatureUI {
       .ref-chip-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
       .ref-chip-remove { color: var(--muted); cursor: pointer; flex: 0 0 auto; }
       .ref-chip-remove:hover { color: var(--danger); }
+
+      /* Transform widget */
+      .transform-wrap { display: flex; flex-direction: column; gap: 6px; }
+      .transform-modes { display: flex; gap: 6px; }
+      .transform-info { font-size: 12px; color: var(--muted); }
+      .transform-wrap.ref-active .btn { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
     `;
         return style;
     }

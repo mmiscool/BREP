@@ -32,6 +32,10 @@ export class SelectionFilterWidget {
                     }
                     activeRefSelect.removeAttribute("active-reference-selection");
                     activeRefSelect.style.filter = "none";
+                    try {
+                        const wrap = activeRefSelect.closest('.ref-single-wrap, .ref-multi-wrap');
+                        if (wrap) wrap.classList.remove('ref-active');
+                    } catch (_) { }
                     // Restore the selection types to the previous state
                     try { SelectionFilter.restoreAllowedSelectionTypes(); } catch (_) { }
                 }
@@ -183,6 +187,10 @@ export class SelectionFilterWidget {
                 activeRefSelect.style.filter = 'none';
                 activeRefSelect.dispatchEvent(new Event('change'));
                 // Restore selection types to what they were before activation
+                try {
+                    const wrap = activeRefSelect.closest('.ref-single-wrap, .ref-multi-wrap');
+                    if (wrap) wrap.classList.remove('ref-active');
+                } catch (_) { }
                 try { SelectionFilter.restoreAllowedSelectionTypes(); } catch (_) { }
             }
         };
