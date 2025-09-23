@@ -19,6 +19,7 @@ import { FileManagerWidget } from './fileManagerWidget.js';
 import './mobile.js';
 import { SketchMode3D } from './SketchMode3D.js';
 import { ViewCube } from './ViewCube.js';
+import { FloatingWindow } from './FloatingWindow.js';
 import { generateObjectUI } from './objectDump.js';
 
 export class Viewer {
@@ -642,29 +643,13 @@ export class Viewer {
     }
     _ensureInspectorPanel() {
         if (this._inspectorEl) return;
-        // Styles (one-time)
-        if (!document.getElementById('inspector-panel-styles')) {
-            const style = document.createElement('style');
-            style.id = 'inspector-panel-styles';
-            style.textContent = `
-              .inspector-panel{position:fixed;left:12px;bottom:12px;width:min(520px,92vw);height:70vh;display:flex;flex-direction:column;background:#0b0d10;border:1px solid #2a3442;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.35);z-index:2147483646;overflow:hidden}
-              .inspector-header{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #1e2430;color:#e5e7eb;font:600 13px system-ui}
-              .inspector-title{flex:1}
-              .inspector-actions{display:flex;gap:8px}
-              .inspector-btn{background:#1b2433;border:1px solid #334155;color:#e5e7eb;padding:6px 10px;border-radius:8px;cursor:pointer;font:700 12px system-ui}
-              .inspector-content{flex:1;overflow:auto;padding:8px}
-              .inspector-placeholder{color:#9aa4b2;font:12px system-ui;opacity:.9}
-            `;
-            document.head.appendChild(style);
-        }
-        // Panel
-        const panel = document.createElement('div');
-        panel.className = 'inspector-panel';
-        // Header
-        const header = document.createElement('div');
-        header.className = 'inspector-header';
-        const title = document.createElement('div'); title.className = 'inspector-title'; title.textContent = 'Inspector';
-        const btnDownload = document.createElement('button'); btnDownload.className = 'inspector-btn'; btnDownload.textContent = 'Download JSON';
+        // Create a floating window anchored bottom-left, resizable and draggable
+        const height = Math.max(260, Math.floor((window?.innerHeight || 800) * 0.7));
+        const fw = new FloatingWindow({ title: 'Inspector', width: 520, height, x: 12, bottom: 12, shaded: false });
+        // Header actions
+        const btnDownload = document.createElement('button');
+        btnDownload.className = 'fw-btn';
+        btnDownload.textContent = 'Download JSON';
         btnDownload.addEventListener('click', () => {
             try {
                 const json = this._lastInspectorDownload ? this._lastInspectorDownload() : (this._lastInspectorJSON || '{}');
@@ -674,15 +659,22 @@ export class Viewer {
                 setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
             } catch {}
         });
-        const btnClose = document.createElement('button'); btnClose.className = 'inspector-btn'; btnClose.textContent = 'Hide';
+        const btnClose = document.createElement('button');
+        btnClose.className = 'fw-btn';
+        btnClose.textContent = 'Hide';
         btnClose.addEventListener('click', () => this._closeInspectorPanel());
-        const actions = document.createElement('div'); actions.className = 'inspector-actions'; actions.appendChild(btnDownload); actions.appendChild(btnClose);
-        header.appendChild(title); header.appendChild(actions);
-        // Content
-        const content = document.createElement('div'); content.className = 'inspector-content';
-        panel.appendChild(header); panel.appendChild(content);
-        document.body.appendChild(panel);
-        this._inspectorEl = panel;
+        fw.addHeaderAction(btnDownload);
+        fw.addHeaderAction(btnClose);
+
+        // Wire content area
+        const content = document.createElement('div');
+        content.style.display = 'block';
+        content.style.width = '100%';
+        content.style.height = '100%';
+        fw.content.appendChild(content);
+
+        this._inspectorFW = fw;
+        this._inspectorEl = fw.root;
         this._inspectorContent = content;
         this._lastInspectorDownload = null;
         this._lastInspectorJSON = '{}';
@@ -690,7 +682,11 @@ export class Viewer {
     _setInspectorPlaceholder(msg) {
         if (!this._inspectorContent) return;
         this._inspectorContent.innerHTML = '';
-        const p = document.createElement('div'); p.className = 'inspector-placeholder'; p.textContent = msg || '';
+        const p = document.createElement('div');
+        p.textContent = msg || '';
+        p.style.color = '#9aa4b2';
+        p.style.font = '12px system-ui';
+        p.style.opacity = '0.9';
         this._inspectorContent.appendChild(p);
         this._lastInspectorDownload = null;
         this._lastInspectorJSON = '{}';

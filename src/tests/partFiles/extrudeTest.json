@@ -1,0 +1,88 @@
+{
+  "features": [
+    {
+      "type": "P.CU",
+      "inputParams": {
+        "featureID": "P.CU23",
+        "sizeX": 10,
+        "sizeY": 10,
+        "sizeZ": 10,
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotationEuler": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "boolean": {
+          "targets": [],
+          "operation": "NONE"
+        }
+      },
+      "persistentData": {},
+      "lastRun": {
+        "ok": true,
+        "startedAt": 733905.2000000477,
+        "endedAt": 733906.6000000238,
+        "durationMs": 1,
+        "error": null
+      }
+    },
+    {
+      "type": "CHAMFER",
+      "inputParams": {
+        "featureID": "CHAMFER24",
+        "edges": [
+          "P.CU23_PZ"
+        ],
+        "distance": "2.7",
+        "inflate": 0.1,
+        "direction": "INSET",
+        "debug": false
+      },
+      "persistentData": {},
+      "lastRun": {
+        "ok": true,
+        "startedAt": 733908.5,
+        "endedAt": 733917.3000000119,
+        "durationMs": 9,
+        "error": null
+      }
+    },
+    {
+      "type": "E",
+      "inputParams": {
+        "featureID": "E25",
+        "profile": "CHAMFER_P.CU23_PY|P.CU23_PZ_BEVEL",
+        "distance": "0",
+        "distanceBack": "7",
+        "boolean": {
+          "targets": [
+            "P.CU23"
+          ],
+          "operation": "UNION"
+        }
+      },
+      "persistentData": {},
+      "lastRun": {
+        "ok": true,
+        "startedAt": 733918.8000000119,
+        "endedAt": 733921.6000000238,
+        "durationMs": 3,
+        "error": null
+      }
+    }
+  ],
+  "idCounter": 25,
+  "expressions": "//Examples:\nx = 20 + 6; \ny = x * 2;"
+}

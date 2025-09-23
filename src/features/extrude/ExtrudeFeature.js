@@ -61,12 +61,22 @@ export class ExtrudeFeature {
 
 
     // Create the extrude using the robust Sweep implementation (handles holes and per-edge side faces)
+    // If user requests a UNION with the same solid the profile came from,
+    // skip the cap that lies on the original face plane to avoid coplanar
+    // overlaps (which can leave an internal seam after CSG).
+    const op = String(this.inputParams?.boolean?.operation || 'NONE').toUpperCase();
+    const targets = Array.isArray(this.inputParams?.boolean?.targets) ? this.inputParams.boolean.targets : [];
+    const parentSolid = faceObj && faceObj.parent && typeof faceObj.parent.getFaceNames === 'function' ? faceObj.parent : null;
+    const unionTargetsIncludeParent = op === 'UNION' && parentSolid && targets && targets.some(t => t === parentSolid || (typeof t === 'string' && t === parentSolid.name));
+    const omitBaseCap = !!unionTargetsIncludeParent;
+
     const extrude = new BREP.Sweep({
       face: faceObj,
       distance: distance,
       distanceBack: distanceBack,
       mode: 'translate',
       name: this.inputParams.featureID,
+      omitBaseCap,
     });
     extrude.visualize();
 

@@ -1,6 +1,7 @@
 // browserTests.js — BrowserTesting with UI widget (dark mode, top-right)
 
 import { Viewer } from '../UI/viewer.js';
+import { FloatingWindow } from '../UI/FloatingWindow.js';
 import { runTests, testFunctions, runSingleTest } from './tests.js';
 import { ConsoleCapture } from './ConsoleCapture.js'
 
@@ -112,38 +113,8 @@ export class BrowserTesting {
 
   // ====== UI: Build top-right widget ======
   _buildUI() {
-    // Container
-    const root = document.createElement("div");
-    Object.assign(root.style, {
-      position: "fixed",
-      top: "40px",
-      right: "16px",
-      zIndex: "2147483647",
-      width: "420px",
-      maxHeight: "100%",
-      overflow: "hidden",
-      background: "#0b0b0e",
-      color: "#e5e7eb",
-      border: "1px solid #2a2a33",
-      borderRadius: "14px",
-      boxShadow: "0 10px 28px rgba(0,0,0,0.55)",
-      display: "flex",
-      flexDirection: "column",
-    });
-
-    // Header / title
-    const header = document.createElement("div");
-    Object.assign(header.style, {
-      padding: "12px 14px",
-      borderBottom: "1px solid #23232b",
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      fontWeight: "700",
-      cursor: "pointer",
-      letterSpacing: "0.2px",
-    });
-    header.textContent = "Browser Testing";
+    // Floating window container (draggable, shade-on-title, resizable)
+    const fw = new FloatingWindow({ title: 'Browser Testing', width: 420, height: 420, right: 16, top: 40, shaded: false });
 
     // Controls row
     const controls = document.createElement("div");
@@ -165,7 +136,7 @@ export class BrowserTesting {
     controls.appendChild(btnNext);
     controls.appendChild(btnRunAll);
 
-    // Table container (scrollable)
+    // Table container (content area already scrolls; this keeps structure)
     const tableWrap = document.createElement("div");
     Object.assign(tableWrap.style, {
       overflow: "auto",
@@ -275,11 +246,9 @@ export class BrowserTesting {
     footer.appendChild(this._selectionLabel);
 
     // Assemble widget
-    root.appendChild(header);
-    root.appendChild(controls);
-    root.appendChild(tableWrap);
-    root.appendChild(footer);
-    document.body.appendChild(root);
+    fw.content.appendChild(controls);
+    fw.content.appendChild(tableWrap);
+    fw.content.appendChild(footer);
 
     // Wire top buttons
     btnRunCurrent.addEventListener("click", async () => {
@@ -295,19 +264,10 @@ export class BrowserTesting {
     // Initial selected row styling
     this._applySelectionStyles();
 
+    // Start shaded/collapsed if desired by default; keep behavior off by default
+    // fw.setShaded(true);
 
-    // add an event to the header that makes the window shade
-    header.addEventListener("click", () => {
-      this.popupDiv.style.display = this.popupDiv.style.display === "none" ? "block" : "none";
-      controls.style.display = controls.style.display === "none" ? "flex" : "none";
-      table.style.display = table.style.display === "none" ? "block" : "none";
-      footer.style.display = footer.style.display === "none" ? "flex" : "none";
-    });
-
-
-    header.click();
-
-    return { root, header, controls, table, tbody };
+    return { window: fw, controls, table, tbody };
   }
 
   // ====== Selection helpers ======

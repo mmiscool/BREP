@@ -188,14 +188,14 @@ export class FacesSolid extends Solid {
  *   and named `${edgeName}_SW`.
  */
 export class Sweep extends FacesSolid {
-  constructor({ face, sweepPathEdges = [], distance = 1, distanceBack = 0, mode = 'translate', name = 'Sweep' } = {}) {
+  constructor({ face, sweepPathEdges = [], distance = 1, distanceBack = 0, mode = 'translate', name = 'Sweep', omitBaseCap = false } = {}) {
     super({ name });
-    this.params = { face, distance, distanceBack, sweepPathEdges, mode, name };
+    this.params = { face, distance, distanceBack, sweepPathEdges, mode, name, omitBaseCap };
     this.generate();
   }
 
   generate() {
-    const { face, distance, distanceBack, sweepPathEdges, mode } = this.params;
+    const { face, distance, distanceBack, sweepPathEdges, mode, omitBaseCap } = this.params;
     if (!face || !face.geometry) return;
 
     // Clear any existing children (visualization) and reset authoring arrays
@@ -697,16 +697,19 @@ export class Sweep extends FacesSolid {
               const b0 = [p0[0] + dirB.x, p0[1] + dirB.y, p0[2] + dirB.z];
               const b1 = [p1[0] + dirB.x, p1[1] + dirB.y, p1[2] + dirB.z];
               const b2 = [p2[0] + dirB.x, p2[1] + dirB.y, p2[2] + dirB.z];
+              // back-offset cap is never the base cap; always keep
               this.addTriangle(startName, b0, b2, b1);
             } else {
               // Legacy: start cap at base
-              this.addTriangle(startName, p0, p2, p1);
+              if (!omitBaseCap) this.addTriangle(startName, p0, p2, p1);
             }
             // End cap at forward offset
             const q0 = [p0[0] + dirF.x, p0[1] + dirF.y, p0[2] + dirF.z];
             const q1 = [p1[0] + dirF.x, p1[1] + dirF.y, p1[2] + dirF.z];
             const q2 = [p2[0] + dirF.x, p2[1] + dirF.y, p2[2] + dirF.z];
-            this.addTriangle(endName, q0, q1, q2);
+            // If forward vector is zero, this cap lies on the base face
+            const isEndBase = Math.abs(dirF.x) < 1e-20 && Math.abs(dirF.y) < 1e-20 && Math.abs(dirF.z) < 1e-20;
+            if (!(omitBaseCap && isEndBase)) this.addTriangle(endName, q0, q1, q2);
           }
         }
       }
@@ -733,14 +736,16 @@ export class Sweep extends FacesSolid {
             const b0 = [p0[0] + dirB.x, p0[1] + dirB.y, p0[2] + dirB.z];
             const b1 = [p1[0] + dirB.x, p1[1] + dirB.y, p1[2] + dirB.z];
             const b2 = [p2[0] + dirB.x, p2[1] + dirB.y, p2[2] + dirB.z];
+            // back-offset cap is not at base; always keep
             this.addTriangle(startName, b0, b2, b1);
           } else {
-            this.addTriangle(startName, p0, p2, p1);
+            if (!omitBaseCap) this.addTriangle(startName, p0, p2, p1);
           }
           const q0 = [p0[0] + dirF.x, p0[1] + dirF.y, p0[2] + dirF.z];
           const q1 = [p1[0] + dirF.x, p1[1] + dirF.y, p1[2] + dirF.z];
           const q2 = [p2[0] + dirF.x, p2[1] + dirF.y, p2[2] + dirF.z];
-          this.addTriangle(endName, q0, q1, q2);
+          const isEndBase = Math.abs(dirF.x) < 1e-20 && Math.abs(dirF.y) < 1e-20 && Math.abs(dirF.z) < 1e-20;
+          if (!(omitBaseCap && isEndBase)) this.addTriangle(endName, q0, q1, q2);
         }
       };
       if (hasIndex) {
@@ -773,13 +778,30 @@ export class Sweep extends FacesSolid {
       const world = new Array(pos.count);
       const v = new THREE.Vector3();
       for (let i = 0; i < pos.count; i++) { v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(faceObj.matrixWorld); world[i] = [v.x, v.y, v.z]; }
+      // Canonicalize coincident vertices (handles non-indexed geometry):
+      // Map unique world positions -> canonical vertex index used for boundary detection.
+      const keyOf = (p) => `${p[0].toFixed(7)},${p[1].toFixed(7)},${p[2].toFixed(7)}`;
+      const canonMap = new Map(); // key -> canonical index
+      const canonPts = [];        // canonical index -> world point
+      const origToCanon = new Array(world.length);
+      for (let i = 0; i < world.length; i++) {
+        const k = keyOf(world[i]);
+        let ci = canonMap.get(k);
+        if (ci === undefined) { ci = canonPts.length; canonMap.set(k, ci); canonPts.push(world[i]); }
+        origToCanon[i] = ci;
+      }
       // Count undirected triangle edges
       const edgeCount = new Map(); // key min,max -> count
       const triIter = (cb)=>{
         if (idx) { for (let t=0;t<idx.count;t+=3){ cb(idx.getX(t+0)>>>0, idx.getX(t+1)>>>0, idx.getX(t+2)>>>0); } }
         else { const triCount=(pos.count/3)|0; for(let t=0;t<triCount;t++){ cb(3*t+0,3*t+1,3*t+2); } }
       };
-      const inc = (a,b)=>{ const i=Math.min(a,b), j=Math.max(a,b); const k=`${i},${j}`; edgeCount.set(k, (edgeCount.get(k)||0)+1); };
+      const inc = (a,b)=>{
+        // Use canonical indices so shared positions are treated as one vertex
+        const A = origToCanon[a] >>> 0; const B = origToCanon[b] >>> 0;
+        const i=Math.min(A,B), j=Math.max(A,B); const k=`${i},${j}`;
+        edgeCount.set(k, (edgeCount.get(k)||0)+1);
+      };
       triIter((i0,i1,i2)=>{ inc(i0,i1); inc(i1,i2); inc(i2,i0); });
       // Keep only boundary edges (count==1) and build adjacency for both directions
       const adj = new Map(); // index -> Set(neighbor indices)
@@ -814,7 +836,7 @@ export class Sweep extends FacesSolid {
             // Dedup consecutive duplicates and convert to points
             const pts = [];
             for (let i = 0; i < ring.length; i++) {
-              const p = world[ring[i]];
+              const p = canonPts[ring[i]];
               if (pts.length) { const q = pts[pts.length - 1]; if (q[0]===p[0] && q[1]===p[1] && q[2]===p[2]) continue; }
               pts.push([p[0], p[1], p[2]]);
             }
@@ -1086,6 +1108,17 @@ export class Sweep extends FacesSolid {
         djson('Anchor', { anchorU, anchorV, frame0: { origin: _v3(f0.origin), X: _v3(f0.X), Y: _v3(f0.Y), Z: _v3(f0.Z) } });
       }
 
+      // Deduplicate per-boundary segments so each undirected edge [A,B]
+      // emits exactly one side-wall ribbon. This avoids duplicate walls when
+      // loop reconstruction yields overlapping segments or when edge-name
+      // mapping falls back to the generic face name on the same [A,B].
+      const keyPt = (p) => `${Number(p[0]).toFixed(7)},${Number(p[1]).toFixed(7)},${Number(p[2]).toFixed(7)}`;
+      const segKey = (A,B) => {
+        const a = keyPt(A), b = keyPt(B);
+        return (a < b) ? `${a}|${b}` : `${b}|${a}`;
+      };
+      const seenSegments = new Set();
+
       for (const loop of boundaryLoops) {
         const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
         const isHole = !!(loop && loop.isHole);
@@ -1109,6 +1142,7 @@ export class Sweep extends FacesSolid {
               const a = base[i];
               const b = base[i + 1];
               if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+              const sk = segKey(a,b); if (seenSegments.has(sk)) continue; seenSegments.add(sk);
               const A0 = [a[0] + dirB.x, a[1] + dirB.y, a[2] + dirB.z];
               const B0 = [b[0] + dirB.x, b[1] + dirB.y, b[2] + dirB.z];
               const A1 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
@@ -1125,6 +1159,7 @@ export class Sweep extends FacesSolid {
               const a = base[i];
               const b = base[i + 1];
               if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) continue;
+              const sk = segKey(a,b); if (seenSegments.has(sk)) continue; seenSegments.add(sk);
               const a2 = [a[0] + dirF.x, a[1] + dirF.y, a[2] + dirF.z];
               const b2 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
               const setA = pointToEdgeNames.get(key(a));
