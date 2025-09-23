@@ -657,14 +657,24 @@ export class Sweep extends FacesSolid {
       dirF = dir.clone();
     }
     // Two-sided only applies to translate extrude (no path offsets)
-    const twoSided = (offsets.length < 2) && typeof distanceBack === 'number' && isFinite(distanceBack) && distanceBack > 0;
+    // Two-sided: allow any non-zero signed back distance so start can be
+    // offset on either side of the base face.
+    const twoSided = (offsets.length < 2) && typeof distanceBack === 'number' && isFinite(distanceBack) && Math.abs(distanceBack) > 1e-12;
     if (twoSided) {
+      // If the forward vector is extremely small (e.g. distance ~ 0 with a tiny
+      // bias from certain boolean modes), derive the back direction from the
+      // face normal instead of the sign of dirF to avoid flipping semantics.
+      const EPS_FWD = 1e-8;
       let n = null;
-      if (dirF && dirF.lengthSq() > 1e-20) {
+      if (dirF && dirF.length() > EPS_FWD) {
         n = dirF.clone().normalize();
       } else {
         n = (typeof face.getAverageNormal === 'function') ? face.getAverageNormal().clone() : new THREE.Vector3(0, 1, 0);
+        if (n.lengthSq() < 1e-20) n.set(0, 1, 0);
+        n.normalize();
       }
+      // Preserve the sign of distanceBack: positive means offset "behind"
+      // the base along -n; negative moves the start cap in the +n direction.
       dirB = n.multiplyScalar(-distanceBack);
     }
 

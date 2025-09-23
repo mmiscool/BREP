@@ -63,7 +63,7 @@ export class PrimitiveCubeFeature {
             if (this.inputParams.transform) {
                 cube.bakeTRS(this.inputParams.transform);
             }
-        } catch (_) { }
+        } catch (_) { alert("Error applying transform"); }
         cube.visualize();
 
         // Apply optional boolean operation

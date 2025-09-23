@@ -1024,9 +1024,20 @@ class genFeatureUI {
             s.controls.detach();
             if (s.viewer && s.viewer.scene) {
                 try { if (s.controls && s.controls.isObject3D) s.viewer.scene.remove(s.controls); } catch (_) {}
+                try { if (s.controls && s.controls.__helper && s.controls.__helper.isObject3D) s.viewer.scene.remove(s.controls.__helper); } catch (_) {}
                 try { if (s.group && s.group.isObject3D) s.viewer.scene.remove(s.group); } catch (_) {}
             }
             try { s.controls.dispose(); } catch (_) {}
+        } catch (_) { }
+        try {
+            // Remove any capture-phase event listeners installed during activation
+            const h = s.captureHandlers;
+            if (h && h.canvas && h.onDownCapture) {
+                h.canvas.removeEventListener('pointerdown', h.onDownCapture, true);
+            }
+            if (h && h.win && h.onUpCapture) {
+                h.win.removeEventListener('pointerup', h.onUpCapture, true);
+            }
         } catch (_) { }
         try {
             // Remove target object
@@ -1043,7 +1054,7 @@ class genFeatureUI {
             const wrap = s.wrapEl;
             if (wrap) wrap.classList.remove('ref-active');
         } catch (_) { }
-        genFeatureUI.__activeXform = { owner: null, key: null, inputEl: null, wrapEl: null, target: null, controls: null, viewer: null };
+        genFeatureUI.__activeXform = { owner: null, key: null, inputEl: null, wrapEl: null, target: null, controls: null, viewer: null, captureHandlers: null };
     }
     /**
      * @param {Object} schema - e.g. { sizeX: {type:'number', default_value:'2*t', hint:'Width formula' }, ... }
@@ -1174,8 +1185,7 @@ class genFeatureUI {
                     };
                     const p = Array.isArray(v?.position) ? v.position : [0,0,0];
                     const r = Array.isArray(v?.rotationEuler) ? v.rotationEuler : [0,0,0];
-                    const s = Array.isArray(v?.scale) ? v.scale : [1,1,1];
-                    info.textContent = `pos(${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])})  rot(${fmt(r[0])}, ${fmt(r[1])}, ${fmt(r[2])})  scale(${fmt(s[0])}, ${fmt(s[1])}, ${fmt(s[2])})`;
+                    info.textContent = `pos(${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])})  rot(${fmt(r[0])}, ${fmt(r[1])}, ${fmt(r[2])})`;
                 }
                 continue;
             }
@@ -1407,8 +1417,7 @@ class genFeatureUI {
                         const v = this._pickInitialValue(key, def) || {};
                         const p = Array.isArray(v.position) ? v.position : [0, 0, 0];
                         const r = Array.isArray(v.rotationEuler) ? v.rotationEuler : [0, 0, 0];
-                        const s = Array.isArray(v.scale) ? v.scale : [1, 1, 1];
-                        info.textContent = `pos(${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])})  rot(${fmt(r[0])}, ${fmt(r[1])}, ${fmt(r[2])})  scale(${fmt(s[0])}, ${fmt(s[1])}, ${fmt(s[2])})`;
+                        info.textContent = `pos(${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])})  rot(${fmt(r[0])}, ${fmt(r[1])}, ${fmt(r[2])})`;
                     };
                     updateInfo();
 
@@ -1434,11 +1443,10 @@ class genFeatureUI {
                     };
                     const bT = mkModeBtn('Move', 'translate');
                     const bR = mkModeBtn('Rotate', 'rotate');
-                    const bS = mkModeBtn('Scale', 'scale');
-                    modes.appendChild(bT); modes.appendChild(bR); modes.appendChild(bS);
-                    // Default selected
+                    modes.appendChild(bT); modes.appendChild(bR);
+                    // Default selected (fallback to translate if unrecognized or 'scale')
                     const defMode = inputEl.dataset.xformMode || 'translate';
-                    ({ translate: bT, rotate: bR, scale: bS }[defMode] || bT).classList.add('selected');
+                    ({ translate: bT, rotate: bR }[defMode] || bT).classList.add('selected');
 
                     const activate = () => this._activateTransformWidget({ inputEl, wrapEl: wrap, key, def });
                     btn.addEventListener('click', activate);
@@ -1831,10 +1839,48 @@ class genFeatureUI {
         }
         const tc = new TCctor(viewer.camera, viewer.renderer.domElement);
         const desiredMode = (inputEl && inputEl.dataset && inputEl.dataset.xformMode) ? String(inputEl.dataset.xformMode) : 'translate';
-        tc.setMode(desiredMode);
-        tc.addEventListener('dragging-changed', (ev) => {
-            try { if (viewer.controls) viewer.controls.enabled = !ev.value; } catch (_) { }
-        });
+        const safeMode = (desiredMode === 'scale') ? 'translate' : desiredMode;
+        tc.setMode(safeMode);
+        // Newer three.js TransformControls emit mouseDown/mouseUp instead of dragging-changed
+        let __lastCommitAt = 0;
+        const commitTransform = () => {
+            const now = Date.now();
+            if (now - __lastCommitAt < 5) return; // dedupe if two events fire together
+            __lastCommitAt = now;
+            try {
+                const featureID = (this.params && Object.prototype.hasOwnProperty.call(this.params, 'featureID'))
+                    ? this.params.featureID
+                    : null;
+                if (typeof this.options.onChange === 'function') {
+                    this.options.onChange(featureID);
+                }
+            } catch (_) { }
+            // After history re-runs (which clears the scene), re-add the gizmo and target so it stays active
+            try {
+                const addBack = () => {
+                    try {
+                        if (!viewer || !viewer.scene) return;
+                        if (target && target.isObject3D) { try { viewer.scene.add(target); } catch (_) { } }
+                        const helper = (typeof tc.getHelper === 'function') ? tc.getHelper() : null;
+                        if (helper && helper.isObject3D) { try { viewer.scene.add(helper); tc.__helper = helper; } catch (_) { } }
+                        else if (tc && tc.isObject3D) { try { viewer.scene.add(tc); } catch (_) { } }
+                        else if (tc.__fallbackGroup && tc.__fallbackGroup.isObject3D) { try { viewer.scene.add(tc.__fallbackGroup); } catch (_) { } }
+                        try { if (typeof tc.attach === 'function') tc.attach(target); } catch (_) { }
+                        try {
+                            const m = (typeof tc.getMode === 'function') ? tc.getMode() : (tc.mode || 'translate');
+                            if (typeof tc.setMode === 'function') tc.setMode(m);
+                        } catch (_) { }
+                        try { viewer.render && viewer.render(); } catch (_) { }
+                    } catch (_) { }
+                };
+                if (typeof requestAnimationFrame === 'function') requestAnimationFrame(addBack);
+                else setTimeout(addBack, 0);
+            } catch (_) { }
+        };
+        try { tc.addEventListener('mouseDown', () => { try { if (viewer.controls) viewer.controls.enabled = false; } catch (_) {} }); } catch (_) {}
+        try { tc.addEventListener('mouseUp',   () => { try { if (viewer.controls) viewer.controls.enabled = true;  } catch (_) {} commitTransform(); }); } catch (_) {}
+        // Backward/compat: older builds fire dragging-changed
+        try { tc.addEventListener('dragging-changed', (ev) => { try { if (viewer.controls) viewer.controls.enabled = !ev.value; } catch (_) {} if (!ev.value) commitTransform(); }); } catch (_) {}
 
         const updateParamFromTarget = () => {
             const pos = [target.position.x, target.position.y, target.position.z];
@@ -1854,11 +1900,13 @@ class genFeatureUI {
                         const prec = a >= 100 ? 0 : (a >= 10 ? 1 : 2);
                         return String(x.toFixed(prec));
                     };
-                    info.textContent = `pos(${fmt(pos[0])}, ${fmt(pos[1])}, ${fmt(pos[2])})  rot(${fmt(rot[0])}, ${fmt(rot[1])}, ${fmt(rot[2])})  scale(${fmt(scl[0])}, ${fmt(scl[1])}, ${fmt(scl[2])})`;
+                    info.textContent = `pos(${fmt(pos[0])}, ${fmt(pos[1])}, ${fmt(pos[2])})  rot(${fmt(rot[0])}, ${fmt(rot[1])}, ${fmt(rot[2])})`;
                 }
             } catch (_) { }
         };
         tc.addEventListener('change', updateParamFromTarget);
+        // Fallback commit for cases where mouseUp/dragging-changed are unreliable (some builds)
+        try { tc.addEventListener('objectChange', () => { try { if (!tc.dragging) commitTransform(); } catch (_) {} }); } catch (_) {}
 
         // Expose an isOver helper for Viewer to suppress its own handlers when interacting with gizmo
         const isOver = (ev) => {
@@ -1867,9 +1915,16 @@ class genFeatureUI {
                 const rect = canvas.getBoundingClientRect();
                 const x = (ev.clientX - rect.left) / rect.width; // 0..1
                 const y = (ev.clientY - rect.top) / rect.height; // 0..1
-                const ndc = new THREE.Vector2(x * 2 - 1, -(y * 2 - 1));
+                // Use viewer helper for consistent NDC mapping
+                const ndc = (typeof viewer._getPointerNDC === 'function')
+                    ? viewer._getPointerNDC({ clientX: ev.clientX, clientY: ev.clientY })
+                    : new THREE.Vector2(x * 2 - 1, -(y * 2 - 1));
                 viewer.raycaster.setFromCamera(ndc, viewer.camera);
-                const pickRoot = tc.picker || tc._picker || tc.gizmo || tc._gizmo;
+                // Prefer precise picker meshes for the current mode; fallback to whole gizmo
+                const mode = (typeof tc.getMode === 'function') ? tc.getMode() : (tc.mode || desiredMode || 'translate');
+                const giz = tc._gizmo || tc.gizmo || null;
+                const pick = (giz && giz.picker) ? (giz.picker[mode] || giz.picker.translate || giz.picker.rotate) : null;
+                const pickRoot = pick || giz || tc.__fallbackGroup || null;
                 if (!pickRoot) return false;
                 const hits = viewer.raycaster.intersectObject(pickRoot, true) || [];
                 return hits.length > 0;
@@ -1879,7 +1934,10 @@ class genFeatureUI {
 
         let addedToScene = false;
         try {
-            if (tc && tc.isObject3D) { viewer.scene.add(tc); addedToScene = true; }
+            // Preferred modern API: helper root on the controls
+            const helper = (typeof tc.getHelper === 'function') ? tc.getHelper() : null;
+            if (helper && helper.isObject3D) { viewer.scene.add(helper); addedToScene = true; tc.__helper = helper; }
+            else if (tc && tc.isObject3D) { viewer.scene.add(tc); addedToScene = true; }
         } catch (_) { /* tolerate builds where controls aren't Object3D */ }
         if (!addedToScene) {
             // Fallback: try adding known internal object3D parts if present
@@ -1918,6 +1976,29 @@ class genFeatureUI {
             group: tc.__fallbackGroup || (tc && tc.isObject3D ? tc : null),
             captureHandlers: null,
         };
+
+        // Install capture-phase listeners to disable ArcballControls early when pressing gizmo
+        try {
+            const canvas = viewer && viewer.renderer ? viewer.renderer.domElement : null;
+            if (canvas && typeof canvas.addEventListener === 'function') {
+                const onDownCapture = (ev) => {
+                    try {
+                        if (isOver(ev)) {
+                            if (viewer && viewer.controls) viewer.controls.enabled = false;
+                        }
+                    } catch (_) { }
+                };
+                const onUpCapture = (ev) => {
+                    // Re-enable controls on pointer release to be safe
+                    try { if (viewer && viewer.controls) viewer.controls.enabled = true; } catch (_) { }
+                    void ev;
+                };
+                canvas.addEventListener('pointerdown', onDownCapture, { passive: true, capture: true });
+                // Use window to ensure we catch release even if released off-canvas
+                window.addEventListener('pointerup', onUpCapture, { passive: true, capture: true });
+                genFeatureUI.__activeXform.captureHandlers = { canvas, win: window, onDownCapture, onUpCapture };
+            }
+        } catch (_) { /* ignore */ }
     }
 
     _stopActiveTransformWidget() {

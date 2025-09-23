@@ -72,7 +72,7 @@ export class ExtrudeFeature {
 
     const extrude = new BREP.Sweep({
       face: faceObj,
-      distance: distance,
+      distance: distance + (op === 'SUBTRACT' ? 0.00001 : 0) + (op === 'UNION' ? 0.00001 : 0), // small nudge to avoid z-fighting with original face when subtracting
       distanceBack: distanceBack,
       mode: 'translate',
       name: this.inputParams.featureID,

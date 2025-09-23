@@ -55,6 +55,20 @@ export class Viewer {
         this.sidebar = sidebar;
         this.scene = partHistory instanceof PartHistory ? partHistory.scene : new THREE.Scene();
 
+        // Apply persisted sidebar width early (before building UI)
+        try {
+            if (this.sidebar && typeof localStorage !== 'undefined') {
+                const raw = localStorage.getItem('__CAD_MATERIAL_SETTINGS__');
+                if (raw) {
+                    try {
+                        const obj = JSON.parse(raw);
+                        const w = parseInt(obj && obj['__SIDEBAR_WIDTH__']);
+                        if (Number.isFinite(w) && w > 0) this.sidebar.style.width = `${w}px`;
+                    } catch { /* ignore parse errors */ }
+                }
+            }
+        } catch { /* ignore */ }
+
         // Renderer
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true, });
         this.renderer.setClearColor(new THREE.Color(clearColor), 1);

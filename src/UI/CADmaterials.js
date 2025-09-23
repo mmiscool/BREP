@@ -129,6 +129,62 @@ export class CADmaterialWidget {
         hoverRow.appendChild(hoverInput);
         this.uiElement.appendChild(hoverRow);
 
+        // Sidebar width control (global persistent setting)
+        const widthRow = makeRightSpan();
+        const widthLabel = document.createElement('label');
+        widthLabel.className = 'cmw-label';
+        widthLabel.textContent = 'Sidebar Width';
+        widthRow.appendChild(widthLabel);
+
+        // Determine initial width
+        let initialWidth = 300;
+        try {
+            const savedW = parseInt(this._settings['__SIDEBAR_WIDTH__']);
+            if (Number.isFinite(savedW) && savedW > 0) initialWidth = savedW;
+            else {
+                const sb = document.getElementById('sidebar');
+                const cs = sb ? (sb.style.width || getComputedStyle(sb).width) : '';
+                const w = parseInt(cs);
+                if (Number.isFinite(w) && w > 0) initialWidth = w;
+            }
+        } catch { /* keep default */ }
+
+        const widthInput = document.createElement('input');
+        widthInput.type = 'number';
+        widthInput.inputMode = 'numeric';
+        widthInput.className = 'cmw-input';
+        widthInput.min = 200;
+        widthInput.max = 600;
+        widthInput.step = 1;
+        widthInput.value = String(initialWidth);
+        const widthVal = document.createElement('span');
+        widthVal.className = 'cmw-val';
+        widthVal.textContent = `${initialWidth}px`;
+        const applySidebarWidth = (px) => {
+            try {
+                const sb = document.getElementById('sidebar');
+                if (sb && Number.isFinite(px) && px > 0) sb.style.width = `${px}px`;
+            } catch { /* ignore */ }
+        };
+        // Apply saved width immediately
+        applySidebarWidth(initialWidth);
+        const commitWidth = (raw) => {
+            let v = parseInt(raw);
+            if (!Number.isFinite(v)) return; // ignore incomplete input
+            const min = Number(widthInput.min) || 200;
+            const max = Number(widthInput.max) || 600;
+            if (v < min) v = min; else if (v > max) v = max;
+            widthInput.value = String(v);
+            widthVal.textContent = `${v}px`;
+            applySidebarWidth(v);
+            this._settings['__SIDEBAR_WIDTH__'] = v;
+            this._saveAllSettings();
+        };
+        widthInput.addEventListener('change', (event) => commitWidth(event.target.value));
+        widthRow.appendChild(widthInput);
+        widthRow.appendChild(widthVal);
+        this.uiElement.appendChild(widthRow);
+
         // For each top-level group (e.g., EDGE, LOOP, FACE), render variants (e.g., BASE, SELECTED)
         for (const [groupName, groupVal] of Object.entries(CADmaterials)) {
             const groupContainer = document.createElement("div");
