@@ -755,6 +755,14 @@ function triangulateCapWithEarcut(solid, faceName, polygon, normalHint = null, b
     if (!normal || normal.lengthSq() < 1e-20) return false;
     normal.normalize();
 
+    // Decouple bulge direction from polygon winding adjustments below.
+    // Always prefer the provided hint for bulge direction so both end caps
+    // bulge outward consistently, regardless of any loop reversal we perform
+    // for triangulation stability.
+    const bulgeDir = (normalHint && normalHint.lengthSq() > 1e-20)
+        ? normalHint.clone().normalize()
+        : normal.clone();
+
     const origin = outer[0].clone();
     let u = null;
     for (let i = 1; i < outer.length; i++) {
@@ -780,10 +788,10 @@ function triangulateCapWithEarcut(solid, faceName, polygon, normalHint = null, b
 
     let points2D = outer.map(project2D);
     let area = THREE.ShapeUtils.area(points2D);
-    // Ensure CCW for positive area (consistent with outward normal)
+    // Ensure CCW for positive area for earcut. If we reverse the loop to fix
+    // area sign, do NOT flip the bulge direction; bulge uses `bulgeDir` above.
     if (area < 0) {
         outer.reverse();
-        normal.negate();
         points2D = outer.map(project2D);
         area = THREE.ShapeUtils.area(points2D);
     }
@@ -830,7 +838,9 @@ function triangulateCapWithEarcut(solid, faceName, polygon, normalHint = null, b
         avgLen = (outer.length > 0) ? (avgLen / outer.length) : 0;
         const maxAllowed = (avgLen > 0) ? 0.25 * avgLen : Math.abs(bulge);
         const d = Math.sign(bulge) * Math.min(Math.abs(bulge), maxAllowed);
-        anchorBulged = anchor3D.clone().addScaledVector(normal, d);
+        // Use `bulgeDir` so the bump direction follows the intended outward hint
+        // even if the polygon loop was reversed for triangulation.
+        anchorBulged = anchor3D.clone().addScaledVector(bulgeDir, d);
     }
 
     // Triangulate as a full fan along the border: (anchor, vi, v(i+1))
