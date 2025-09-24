@@ -21,6 +21,8 @@ import { SketchMode3D } from './SketchMode3D.js';
 import { ViewCube } from './ViewCube.js';
 import { FloatingWindow } from './FloatingWindow.js';
 import { generateObjectUI } from './objectDump.js';
+import { PluginsWidget } from './PluginsWidget.js';
+import { loadSavedPlugins } from '../plugins/pluginManager.js';
 
 export class Viewer {
     /**
@@ -156,6 +158,8 @@ export class Viewer {
         this._inspectorOpen = false;
         this._inspectorEl = null;
         this._inspectorContent = null;
+        // Plugin-related state
+        this._pendingToolbarButtons = [];
 
         // Raycaster for picking
         this.raycaster = new THREE.Raycaster();
@@ -215,9 +219,11 @@ export class Viewer {
         await this.sidebar.appendChild(this.accordion.uiElement);
 
 
-
-
-
+        // Load saved plugins early (before File Manager autoloads last model)
+        // Defer rendering of plugin side panels until proper placement later.
+        try {
+            await loadSavedPlugins(this);
+        } catch (e) { console.warn('Plugin auto-load failed:', e); }
 
         const fm = new FileManagerWidget(this);
         const fmSection = await this.accordion.addSection('File Manager');
@@ -248,10 +254,28 @@ export class Viewer {
 
 
 
-        // CADmaterials
+        // CADmaterials (Settings panel)
         this.cadMaterialsUi = await new CADmaterialWidget();
         const displaySection = await this.accordion.addSection("Display Settings");
         await displaySection.uiElement.appendChild(this.cadMaterialsUi.uiElement);
+
+        // From this point on, plugin UI can be added immediately,
+        // and should be inserted just before the "Display Settings" panel.
+        this._pluginUiReady = true;
+
+        // Drain any queued plugin side panels so they appear immediately before settings
+        try {
+            const q = Array.isArray(this._pendingSidePanels) ? this._pendingSidePanels : [];
+            this._pendingSidePanels = [];
+            for (const it of q) {
+                try { await this._applyPluginSidePanel(it); } catch {}
+            }
+        } catch {}
+
+        // Plugin setup panel (after settings)
+        const pluginsSection = await this.accordion.addSection('Plugins');
+        const pluginsWidget = new PluginsWidget(this);
+        pluginsSection.uiElement.appendChild(pluginsWidget.uiElement);
 
         await this.accordion.collapseAll();
         await this.accordion.expandSection("Scene Manager");
@@ -262,9 +286,72 @@ export class Viewer {
 
         // Mount the main toolbar (includes inline Selection Filter on the left)
         this.mainToolbar = new MainToolbar(this);
+        // Drain any queued custom toolbar buttons from early plugin registration
+        try {
+            const q = Array.isArray(this._pendingToolbarButtons) ? this._pendingToolbarButtons : [];
+            this._pendingToolbarButtons = [];
+            for (const it of q) {
+                try { this.mainToolbar.addCustomButton(it); } catch {}
+            }
+        } catch {}
 
         // Ensure toolbar sits above the canvas and doesn't block controls when not hovered
         try { this.renderer.domElement.style.marginTop = '0px'; } catch {}
+    }
+
+    // Public: allow plugins to add toolbar buttons even before MainToolbar is constructed
+    addToolbarButton(label, title, onClick) {
+        const item = { label, title, onClick };
+        if (this.mainToolbar && typeof this.mainToolbar.addCustomButton === 'function') {
+            try { return this.mainToolbar.addCustomButton(item); } catch { return null; }
+        }
+        this._pendingToolbarButtons = this._pendingToolbarButtons || [];
+        this._pendingToolbarButtons.push(item);
+        return null;
+    }
+
+    // Apply a single queued plugin side panel entry
+    async _applyPluginSidePanel({ title, content }) {
+        if (!this.accordion || typeof this.accordion.addSection !== 'function') return null;
+        const t = String(title || 'Plugin');
+        const sec = await this.accordion.addSection(t);
+        if (!sec) return null;
+        try {
+            if (typeof content === 'function') {
+                const el = await content();
+                if (el) sec.uiElement.appendChild(el);
+            } else if (content instanceof HTMLElement) {
+                sec.uiElement.appendChild(content);
+            } else if (content != null) {
+                const pre = document.createElement('pre');
+                pre.textContent = String(content);
+                sec.uiElement.appendChild(pre);
+            }
+            // Reposition this plugin section to immediately before the Display Settings panel, if present
+            try {
+                const root = this.accordion.uiElement;
+                const targetTitle = root.querySelector('.accordion-title[name="accordion-title-Display Settings"]');
+                if (targetTitle) {
+                    const secTitle = root.querySelector(`.accordion-title[name="accordion-title-${t}"]`);
+                    if (secTitle && sec.uiElement && secTitle !== targetTitle) {
+                        root.insertBefore(secTitle, targetTitle);
+                        root.insertBefore(sec.uiElement, targetTitle);
+                    }
+                }
+            } catch {}
+        } catch {}
+        return sec;
+    }
+
+    // Public: allow plugins to register side panels; queued until core UI/toolbar are ready
+    async addPluginSidePanel(title, content) {
+        const item = { title, content };
+        if (this._pluginUiReady) {
+            try { return await this._applyPluginSidePanel(item); } catch { return null; }
+        }
+        this._pendingSidePanels = this._pendingSidePanels || [];
+        this._pendingSidePanels.push(item);
+        return null;
     }
 
     // ————————————————————————————————————————
@@ -511,6 +598,9 @@ export class Viewer {
             const dpr = (window.devicePixelRatio || 1);
             this.raycaster.params.Line2 = this.raycaster.params.Line2 || {};
             this.raycaster.params.Line2.threshold = Math.max(1, 2 * dpr);
+            // Improve point picking tolerance using world-units per pixel
+            this.raycaster.params.Points = this.raycaster.params.Points || {};
+            this.raycaster.params.Points.threshold = Math.max(0.05, wpp * 6);
         } catch { }
         // Shift the ray origin far behind the camera along the ray direction
         try {

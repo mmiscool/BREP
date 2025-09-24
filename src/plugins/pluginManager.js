@@ -1,0 +1,179 @@
+// Lightweight GitHub plugin loader: try GitHub Raw first, then fall back to jsDelivr.
+
+// Parse common GitHub URL shapes.
+// Supports:
+//  - https://github.com/USER/REPO
+//  - https://github.com/USER/REPO/tree/REF
+//  - https://github.com/USER/REPO/tree/REF/sub/dir
+import { BREP } from "../BREP/BREP.js";
+
+
+
+
+export function parseGithubUrl(input) {
+  const url = new URL(input);
+  const parts = url.pathname.split('/').filter(Boolean);
+  const user = parts[0];
+  const repo = parts[1];
+  let ref = null;
+  let subdir = '';
+  const idx = parts.indexOf('tree');
+  if (idx !== -1) {
+    ref = parts[idx + 1] || null;
+    const rest = parts.slice(idx + 2);
+    subdir = rest.length ? '/' + rest.join('/') : '';
+  }
+  if (!user || !repo) throw new Error('Invalid GitHub repo URL');
+  return { user, repo, ref, subdir };
+}
+
+async function fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, ts) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./ghLoader.worker.js', import.meta.url), { type: 'module' });
+    const cleanup = () => { try { worker.terminate(); } catch {} };
+    worker.onmessage = (ev) => {
+      const data = ev.data || {};
+      if (data.ok) { cleanup(); resolve(data); }
+      else { cleanup(); reject(new Error(data.error || 'Worker failed')); }
+    };
+    worker.onerror = (e) => { cleanup(); reject(new Error(String(e?.message || e))); };
+    worker.postMessage({ type: 'load', urls: entryUrls, bases: baseUrls, ts: ts ?? Date.now() });
+  });
+}
+
+export async function importGithubPlugin(repoUrl) {
+  const { user, repo, ref, subdir } = parseGithubUrl(repoUrl);
+  const t = Date.now();
+
+  // Build candidate sources in order: GitHub Raw first (ref/main/master), then jsDelivr (ref/latest)
+  const entryUrls = [];
+  const baseUrls = [];
+
+  // 1) GitHub Raw candidates
+  if (ref) {
+    const rawBase = `https://raw.githubusercontent.com/${user}/${repo}/${ref}${subdir || ''}`;
+    entryUrls.push(`${rawBase}/plugin.js?t=${t}`);
+    baseUrls.push(rawBase);
+  } else {
+    for (const branch of ['main', 'master']) {
+      const rawBase = `https://raw.githubusercontent.com/${user}/${repo}/${branch}${subdir || ''}`;
+      entryUrls.push(`${rawBase}/plugin.js?t=${t}`);
+      baseUrls.push(rawBase);
+    }
+  }
+
+  // 2) jsDelivr fallback (prefer specific ref if provided, else @latest)
+  const cdnRef = ref ? ref : 'latest';
+  const jsdBase = `https://cdn.jsdelivr.net/gh/${user}/${repo}@${cdnRef}${subdir || ''}`;
+  entryUrls.push(`${jsdBase}/plugin.js?t=${t}`);
+  baseUrls.push(jsdBase);
+
+  try { console.log('[PluginLoader] Candidates:', entryUrls); } catch {}
+  // Web worker fetch + rewrite to absolute imports for the chosen base
+  const { code, usedUrl, usedBase } = await fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, t);
+  try { console.log('[PluginLoader] Fetched from:', usedUrl, ' (base:', usedBase, ')'); } catch {}
+  try {
+    console.log('[PluginLoader] Downloaded code length:', (code && code.length) || 0);
+    //console.log('[PluginLoader] Downloaded code:\n' + String(code || ''));
+  } catch {}
+  const blob = new Blob([code], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  try { console.log('[PluginLoader] Importing module from blob:', url); } catch {}
+  try {
+    const mod = await import(/* webpackIgnore: true */ url);
+    return mod;
+  } finally {
+    // Clean up the blob URL; module stays cached
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 0);
+  }
+}
+
+// Plugin app object: exposes the full viewer and helper hooks for plugins.
+function buildApp(viewer) {
+  const app = {
+    BREP,
+    viewer,
+    registerFeature(FeatureClass) {
+      try { viewer?.partHistory?.featureRegistry?.register?.(FeatureClass); } catch {}
+    },
+    addToolbarButton(label, title, onClick) {
+      if (!viewer) return;
+      try { viewer.addToolbarButton(label, title, onClick); } catch {}
+    },
+    async addSidePanel(title, content) {
+      try {
+        if (typeof viewer?.addPluginSidePanel === 'function') {
+          return await viewer.addPluginSidePanel(title, content);
+        }
+        // Fallback: add immediately if helper is unavailable
+        const sec = await viewer?.accordion?.addSection?.(String(title || 'Plugin'));
+        if (!sec) return null;
+        if (typeof content === 'function') {
+          const el = await content();
+          if (el) sec.uiElement.appendChild(el);
+        } else if (content instanceof HTMLElement) {
+          sec.uiElement.appendChild(content);
+        } else if (content != null) {
+          const pre = document.createElement('pre');
+          pre.textContent = String(content);
+          sec.uiElement.appendChild(pre);
+        }
+        return sec;
+      } catch { return null; }
+    },
+  };
+  return app;
+}
+
+export async function loadPluginFromRepoUrl(viewer, repoUrl) {
+  const mod = await importGithubPlugin(repoUrl);
+  const app = buildApp(viewer);
+  if (typeof mod?.default === 'function') {
+    await mod.default(app);
+    return true;
+  }
+  if (typeof mod?.install === 'function') {
+    await mod.install(app);
+    return true;
+  }
+  console.warn('Plugin loaded but no default() or install() found:', repoUrl);
+  return false;
+}
+
+export async function loadPlugins(viewer, repoUrls) {
+  const urls = (Array.isArray(repoUrls) ? repoUrls : []).map(s => String(s || '').trim()).filter(Boolean);
+  const results = [];
+  for (const u of urls) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await loadPluginFromRepoUrl(viewer, u);
+      results.push({ url: u, ok, error: null });
+    } catch (e) {
+      console.error('Failed to load plugin:', u, e);
+      results.push({ url: u, ok: false, error: e });
+    }
+  }
+  return results;
+}
+
+const STORAGE_KEY = '__BREP_PLUGIN_URLS__';
+
+export function getSavedPluginUrls() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.map(s => String(s || '').trim()).filter(Boolean);
+  } catch { return []; }
+}
+
+export function savePluginUrls(urls) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify((urls || []).map(s => String(s || '').trim()).filter(Boolean))); } catch {}
+}
+
+export async function loadSavedPlugins(viewer) {
+  const urls = getSavedPluginUrls();
+  if (!urls.length) return [];
+  return loadPlugins(viewer, urls);
+}

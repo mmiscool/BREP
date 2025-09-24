@@ -1,5 +1,5 @@
 
-import { Edge, Face, Solid } from "./BetterSolid.js";
+import { Edge, Face, Solid, Vertex } from "./BetterSolid.js";
 import { Cube, Pyramid, Sphere, Cylinder, Cone, Torus } from "./primitives.js";
 import { Sweep } from "./Sweep.js";
 import { ChamferSolid } from "./chamfer.js";
@@ -15,6 +15,7 @@ export const BREP = {
     Solid,
     Face,
     Edge,
+    Vertex,
     Cube,
     Pyramid,
     Sphere,

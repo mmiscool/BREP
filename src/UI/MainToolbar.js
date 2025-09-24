@@ -72,6 +72,7 @@ export class MainToolbar {
   _buildUI() {
     const left = document.createElement('div');
     left.className = 'mtb-left';
+    this._left = left;
 
     // Buttons (modular; add more later)
     // use unicode icons for compactness
@@ -107,6 +108,15 @@ export class MainToolbar {
     b.title = title || label;
     b.addEventListener('click', (e) => { e.stopPropagation(); try { onClick && onClick(); } catch {} });
     return b;
+  }
+
+  // Public: allow plugins to add custom buttons to the left cluster
+  addCustomButton({ label, title, onClick }) {
+    try {
+      const btn = this._btn(String(label ?? '🔧'), String(title || ''), onClick);
+      this._left?.appendChild(btn);
+      return btn;
+    } catch { return null; }
   }
 
   async _onSave() {

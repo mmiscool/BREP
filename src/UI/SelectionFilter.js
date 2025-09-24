@@ -6,6 +6,7 @@ export class SelectionFilter {
     static SKETCH = "SKETCH";
     static EDGE = "EDGE";
     static LOOP = "LOOP";
+    static VERTEX = "VERTEX";
     static ALL = "ALL";
 
     // The set (or ALL) of types available in the current context
@@ -22,7 +23,7 @@ export class SelectionFilter {
         throw new Error("SelectionFilter is static and cannot be instantiated.");
     }
 
-    static get TYPES() { return [this.SOLID, this.FACE, this.PLANE, this.SKETCH, this.EDGE, this.LOOP, this.ALL]; }
+    static get TYPES() { return [this.SOLID, this.FACE, this.PLANE, this.SKETCH, this.EDGE, this.LOOP, this.VERTEX, this.ALL]; }
 
     // Convenience: return the list of selectable types for the dropdown (excludes ALL)
     static getAvailableTypes() {
@@ -247,6 +248,8 @@ export class SelectionFilter {
                     objectToToggleSelectionOn.material = CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? objectToToggleSelectionOn.material;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.EDGE) {
                     objectToToggleSelectionOn.material = CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE;
+                } else if (objectToToggleSelectionOn.type === SelectionFilter.VERTEX) {
+                    // Vertex visuals are handled by its selected accessor (point + sphere)
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.SOLID) {
                     parentSelectedAction = true;
                     objectToToggleSelectionOn.children.forEach(child => {
@@ -264,6 +267,8 @@ export class SelectionFilter {
                     objectToToggleSelectionOn.material = CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? objectToToggleSelectionOn.material;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.EDGE) {
                     objectToToggleSelectionOn.material = CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
+                } else if (objectToToggleSelectionOn.type === SelectionFilter.VERTEX) {
+                    // Vertex accessor handles its own visual reset
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.SOLID) {
                     parentSelectedAction = true;
                     objectToToggleSelectionOn.children.forEach(child => {

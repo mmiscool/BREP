@@ -108,6 +108,7 @@ export class SceneListing {
     #isFace(obj) { return obj && obj.type === "FACE"; }
     #isEdge(obj) { return obj && obj.type === "EDGE"; }
     #isLoop(obj) { return obj && obj.type === "LOOP"; }
+    #isVertex(obj) { return obj && obj.type === "VERTEX"; }
 
     #syncMembership() {
         const present = new Set();
@@ -120,9 +121,9 @@ export class SceneListing {
             if (this.#isSolid(o)) {
                 // Ensure node for Solid
                 this.#ensureNodeFor(o, null);
-                // Ensure children nodes for faces/edges/loops (direct children of Solid)
+                // Ensure children nodes for faces/edges/loops/vertices (direct children of Solid/Sketch)
                 for (const child of o.children) {
-                    if (this.#isFace(child) || this.#isEdge(child) || this.#isLoop(child)) {
+                    if (this.#isFace(child) || this.#isEdge(child) || this.#isLoop(child) || this.#isVertex(child)) {
                         this.#ensureNodeFor(child, o);
                     }
                 }
@@ -310,6 +311,7 @@ export class SceneListing {
                 this.#isFace(obj) ? (obj.name || "Face") :
                     this.#isEdge(obj) ? (obj.name || "Edge") :
                         this.#isLoop(obj) ? (obj.name || "Loop") :
+                            this.#isVertex(obj) ? (obj.name || "Vertex") :
                             (obj.name || obj.type || "Item");
         return base;
     }
@@ -319,6 +321,7 @@ export class SceneListing {
         else if (this.#isFace(obj)) li.classList.add("t-face");
         else if (this.#isEdge(obj)) li.classList.add("t-edge");
         else if (this.#isLoop(obj)) li.classList.add("t-loop");
+        else if (this.#isVertex(obj)) li.classList.add("t-vertex");
     }
 
     #setOpen(li, open) {
@@ -437,6 +440,7 @@ export class SceneListing {
 .t-face  .st-name{ color:#c7e0ff; }
 .t-edge  .st-name{ color:#bfe4d0; }
 .t-loop  .st-name{ color:#e7ced6; }
+.t-vertex .st-name{ color:#ffe6a6; }
 
 `;
         document.head.appendChild(style);

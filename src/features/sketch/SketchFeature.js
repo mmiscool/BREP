@@ -275,9 +275,26 @@ export class SketchFeature {
         // Helper: 2D → 3D
         const to3D = (u, v) => new THREE.Vector3().copy(bO).addScaledVector(bX, u).addScaledVector(bY, v);
 
-        // Do not add point/curve debug visuals in scene; editor handles those.
+        // Add vertex visuals in 3D for every sketch point (including isolated points)
+        try {
+            const worldPts = [];
+            if (Array.isArray(sketch?.points)) {
+                for (const p of sketch.points) {
+                    if (p == null) continue;
+                    const u = Number(p.x); const v = Number(p.y);
+                    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+                    const w = to3D(u, v);
+                    worldPts.push([w.x, w.y, w.z]);
+                }
+            }
+            if (worldPts.length) {
+                for (const p of worldPts) {
+                    try { sceneGroup.add(new BREP.Vertex(p)); } catch {}
+                }
+            }
+        } catch {}
 
-        // (no curve preview lines added)
+        // Do not add curve preview lines in scene; editor handles those.
 
         // ---- Build PROFILE face from sketch with loop detection + holes ----
         const pointById = new Map(sketch.points.map(p => [p.id, { x: p.x, y: p.y }]));

@@ -81,6 +81,20 @@ export const CADmaterials = {
             polygonOffset: true,
         })
     },
+    VERTEX: {
+        BASE: new THREE.PointsMaterial({
+            color: '#ffb703',
+            size: 6,
+            sizeAttenuation: false, // keep a consistent pixel size
+            transparent: true
+        }),
+        SELECTED: new THREE.PointsMaterial({
+            color: '#00ffff',
+            size: 7,
+            sizeAttenuation: false,
+            transparent: true
+        })
+    },
 
 };
 
@@ -265,6 +279,9 @@ export class CADmaterialWidget {
         if (material instanceof THREE.LineBasicMaterial || material instanceof LineMaterial) {
             if (s.linewidth != null) material.linewidth = Number(s.linewidth);
         }
+        if (material instanceof THREE.PointsMaterial) {
+            if (s.pointSize != null) material.size = Number(s.pointSize);
+        }
         if (
             material instanceof THREE.MeshBasicMaterial ||
             material instanceof THREE.MeshMatcapMaterial ||
@@ -332,6 +349,34 @@ export class CADmaterialWidget {
             lineWidthRow.appendChild(lwInput);
             lineWidthRow.appendChild(lwVal);
             container.appendChild(lineWidthRow);
+        }
+
+        // Points-specific controls
+        if (material instanceof THREE.PointsMaterial) {
+            const pointSizeRow = makeRightSpan();
+            const psLabel = document.createElement('label');
+            psLabel.className = 'cmw-label';
+            psLabel.textContent = 'Point Size';
+            pointSizeRow.appendChild(psLabel);
+            const psVal = document.createElement('span');
+            psVal.className = 'cmw-val';
+            psVal.textContent = String(material.size ?? '');
+            const psInput = document.createElement('input');
+            psInput.type = 'range';
+            psInput.className = 'cmw-range';
+            psInput.min = 1;
+            psInput.max = 30;
+            psInput.step = 0.5;
+            psInput.value = material.size ?? 6;
+            psInput.addEventListener('input', (event) => {
+                const v = parseFloat(event.target.value);
+                material.size = v;
+                psVal.textContent = String(v);
+                this._setSettingsFor(labelText, { pointSize: v });
+            });
+            pointSizeRow.appendChild(psInput);
+            pointSizeRow.appendChild(psVal);
+            container.appendChild(pointSizeRow);
         }
 
         // Mesh material common controls
