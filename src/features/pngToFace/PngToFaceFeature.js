@@ -1,4 +1,3 @@
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 import { LineGeometry } from 'three/examples/jsm/Addons.js';
@@ -60,7 +59,7 @@ export class PngToFaceFeature {
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
-    this.inputParams = extractDefaultValues(inputParamsSchema);
+    this.inputParams = {};
     this.persistentData = {};
   }
 

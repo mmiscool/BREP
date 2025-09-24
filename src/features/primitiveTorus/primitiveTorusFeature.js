@@ -4,7 +4,6 @@
 // the original orientation (start cap built at θ=0 with normal (0,-1,0),
 // end cap is a rotated clone about +Z by the sweep arc).
 
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
 
 const inputParamsSchema = {
@@ -51,8 +50,7 @@ export class PrimitiveTorusFeature {
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {
-        this.inputParams = extractDefaultValues(inputParamsSchema);
-        
+        this.inputParams = {};
         this.persistentData = {};
     }
 

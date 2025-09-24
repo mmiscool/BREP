@@ -2,7 +2,6 @@
 // Creates a primitive cone/frustum as separate meshes per surface: lateral (side) and caps.
 // Aligned along the Y axis with base at y=0 and top at y=height (not centered).
 
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
 
 const inputParamsSchema = {
@@ -49,8 +48,7 @@ export class PrimitiveConeFeature {
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
-    this.inputParams = extractDefaultValues(inputParamsSchema);
-    
+    this.inputParams = {};
     this.persistentData = {};
   }
 

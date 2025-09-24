@@ -1,4 +1,3 @@
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
 
 const inputParamsSchema = {
@@ -28,9 +27,8 @@ export class BooleanFeature {
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {
-        this.inputParams = extractDefaultValues(inputParamsSchema);
+        this.inputParams = {};
         this.persistentData = {};
-
     }
 
     async run(partHistory) {

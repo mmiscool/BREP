@@ -1,4 +1,3 @@
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 
@@ -41,7 +40,7 @@ export class LoftFeature {
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
-    this.inputParams = extractDefaultValues(inputParamsSchema);
+    this.inputParams = {};
     this.persistentData = {};
   }
 

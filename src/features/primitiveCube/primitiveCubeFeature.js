@@ -2,7 +2,6 @@
 // Creates a primitive axis-aligned rectangular prism (cube) composed of six Face objects.
 // Positioned with its minimum corner at the origin (0,0,0). Dimensions extend +sizeX, +sizeY, +sizeZ along X/Y/Z.
 
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
 
 const inputParamsSchema = {
@@ -44,8 +43,7 @@ export class PrimitiveCubeFeature {
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {
-        this.inputParams = extractDefaultValues(inputParamsSchema);
-        
+        this.inputParams = {};
         this.persistentData = {};
     }
 

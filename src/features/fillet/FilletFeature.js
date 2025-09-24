@@ -1,4 +1,3 @@
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
 
 
@@ -43,8 +42,7 @@ export class FilletFeature {
 
 
     constructor() {
-        this.inputParams = extractDefaultValues(inputParamsSchema);
-
+        this.inputParams = {};
         this.persistentData = {};
     }
     async run(partHistory) {

@@ -1,4 +1,4 @@
-import { extractDefaultValues } from "../../PartHistory.js";
+ 
 
 const inputParamsSchema = {
   featureID: {
@@ -33,7 +33,7 @@ export class RemeshFeature {
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
-    this.inputParams = extractDefaultValues(inputParamsSchema);
+    this.inputParams = {};
     this.persistentData = {};
   }
 

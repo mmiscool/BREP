@@ -1,4 +1,4 @@
-import { extractDefaultValues } from "../../PartHistory.js";
+ 
 
 const inputParamsSchema = {
     featureID: {
@@ -32,7 +32,7 @@ export class DatiumFeature {
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {
-        this.inputParams = extractDefaultValues(inputParamsSchema);
+        this.inputParams = {};
         
     }
     async run() {

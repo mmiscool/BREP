@@ -1,4 +1,3 @@
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
 
 const inputParamsSchema = {
@@ -45,8 +44,7 @@ export class SweepFeature {
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
-    this.inputParams = extractDefaultValues(inputParamsSchema);
-
+    this.inputParams = {};
     this.persistentData = {};
   }
 

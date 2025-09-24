@@ -1,6 +1,5 @@
 
 import { ConstraintEngine } from './sketchSolver2D/ConstraintEngine.js';
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 import { LineGeometry } from 'three/examples/jsm/Addons.js';
@@ -48,7 +47,7 @@ export class SketchFeature {
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {
-        this.inputParams = extractDefaultValues(inputParamsSchema);
+        this.inputParams = {};
 
         // Persisted between edits: { basis, sketch }
         this.persistentData = this.persistentData || {};

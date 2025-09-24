@@ -1,4 +1,3 @@
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 // no direct BREP usage here
@@ -38,7 +37,7 @@ export class MirrorFeature {
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {
-        this.inputParams = extractDefaultValues(inputParamsSchema);
+        this.inputParams = {};
         this.persistentData = {};
     }
     async run(partHistory) {

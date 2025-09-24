@@ -5,7 +5,6 @@
 // Aligned along the Y axis, centered at the origin,
 // with the apex at +height/2 and the base plane at -height/2.
 
-import { extractDefaultValues } from "../../PartHistory.js";
 import { BREP } from '../../BREP/BREP.js'
 
 const inputParamsSchema = {
@@ -47,7 +46,7 @@ export class PrimitivePyramidFeature {
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {
-        this.inputParams = extractDefaultValues(inputParamsSchema);
+        this.inputParams = {};
         
         this.persistentData = {};
     }
