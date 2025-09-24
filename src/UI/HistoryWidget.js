@@ -1936,8 +1936,14 @@ class genFeatureUI {
         try {
             // Preferred modern API: helper root on the controls
             const helper = (typeof tc.getHelper === 'function') ? tc.getHelper() : null;
-            if (helper && helper.isObject3D) { viewer.scene.add(helper); addedToScene = true; tc.__helper = helper; }
-            else if (tc && tc.isObject3D) { viewer.scene.add(tc); addedToScene = true; }
+            if (helper && helper.isObject3D) {
+                try { helper.userData = helper.userData || {}; helper.userData.excludeFromFit = true; } catch (_) {}
+                viewer.scene.add(helper); addedToScene = true; tc.__helper = helper;
+            }
+            else if (tc && tc.isObject3D) {
+                try { tc.userData = tc.userData || {}; tc.userData.excludeFromFit = true; } catch (_) {}
+                viewer.scene.add(tc); addedToScene = true;
+            }
         } catch (_) { /* tolerate builds where controls aren't Object3D */ }
         if (!addedToScene) {
             // Fallback: try adding known internal object3D parts if present
@@ -1949,7 +1955,10 @@ class genFeatureUI {
                 for (const cand of candidates) {
                     if (cand && cand.isObject3D) { try { group.add(cand); attached++; } catch (_) {} }
                 }
-                if (attached > 0) { viewer.scene.add(group); addedToScene = true; tc.__fallbackGroup = group; }
+                if (attached > 0) {
+                    try { group.userData = group.userData || {}; group.userData.excludeFromFit = true; } catch (_) {}
+                    viewer.scene.add(group); addedToScene = true; tc.__fallbackGroup = group;
+                }
             } catch (_) { /* ignore */ }
             if (!addedToScene) {
                 // eslint-disable-next-line no-console

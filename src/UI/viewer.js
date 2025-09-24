@@ -437,11 +437,14 @@ export class Viewer {
             const c = this.controls;
             if (!c) return;
 
-            // Build world-space bounds of all visible geometry
+            // Build world-space bounds of all visible geometry (exclude UI + groups)
             const box = new THREE.Box3();
             box.makeEmpty();
             this.scene.traverse((obj) => {
                 if (!obj || !obj.visible) return;
+                // Only include leaf geometry objects to avoid pulling in excluded children via parents
+                const isGeom = !!(obj.isMesh || obj.isLine || obj.isLineSegments || obj.isLineLoop || obj.isLine2 || obj.isPoints);
+                if (!isGeom) return;
                 // Exclude Arcball gizmos/grid from fitting
                 if (this.controls) {
                     const giz = this.controls._gizmos;
@@ -452,8 +455,46 @@ export class Viewer {
                         p = p.parent;
                     }
                 }
-                // Skip empty groups without children
-                if (!obj.geometry && (!obj.children || obj.children.length === 0) && !obj.isLine && !obj.isMesh && !obj.isPoints) return;
+                // Exclude active TransformControls gizmo/helper from fitting
+                try {
+                    const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
+                    if (ax) {
+                        const tc = ax.controls || null;
+                        const group = ax.group || null;
+                        // Collect likely Object3D parts across three versions
+                        const parts = new Set();
+                        const addIfObj = (o)=>{ try { if (o && o.isObject3D) parts.add(o); } catch(_){} };
+                        addIfObj(group);
+                        addIfObj(tc);
+                        addIfObj(tc && tc.getHelper ? tc.getHelper() : null);
+                        addIfObj(tc && tc.__helper);
+                        addIfObj(tc && tc.__fallbackGroup);
+                        addIfObj(tc && tc.gizmo);
+                        addIfObj(tc && tc._gizmo);
+                        addIfObj(tc && tc.picker);
+                        addIfObj(tc && tc._picker);
+                        addIfObj(tc && tc.helper);
+                        addIfObj(tc && tc._helper);
+                        let p = obj;
+                        while (p) {
+                            if (parts.has(p)) return;
+                            // Also skip well-known fallback group name
+                            if (p.name === 'TransformControlsGroup') return;
+                            p = p.parent;
+                        }
+                    }
+                } catch { /* ignore */ }
+                // Heuristic: skip any objects named like TransformControls (defensive against unknown builds)
+                try {
+                    let p = obj;
+                    while (p) {
+                        const n = (p.name || '');
+                        if (typeof n === 'string' && /TransformControls/i.test(n)) return;
+                        p = p.parent;
+                    }
+                } catch { }
+                // Custom opt-out
+                try { if (obj.userData && obj.userData.excludeFromFit) return; } catch { }
                 try { box.expandByObject(obj); } catch { /* ignore */ }
             });
             if (box.isEmpty()) return;

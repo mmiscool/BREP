@@ -49,6 +49,7 @@ export class PartHistory {
     const whatStepToStopAt = this.currentHistoryStepId;
 
     await this.scene.clear();
+    const startTime = Date.now();
     // add ambient light to scene
     const ambientLight = new THREE.AmbientLight(0xffffff, 2);
     this.scene.add(ambientLight);
@@ -171,6 +172,11 @@ export class PartHistory {
       // monitored code goes here
       stats.end();
     }
+
+    const endTime = Date.now();
+    const totalDuration = endTime - startTime;
+    console.log(`[PartHistory] runHistory completed in ${totalDuration} ms for ${this.features.length} features.`);
+    this.currentHistoryStepId = null;
 
     return this;
   }

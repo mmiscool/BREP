@@ -30,7 +30,7 @@ export function parseGithubUrl(input) {
 async function fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, ts) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./ghLoader.worker.js', import.meta.url), { type: 'module' });
-    const cleanup = () => { try { worker.terminate(); } catch {} };
+    const cleanup = () => { try { worker.terminate(); } catch { } };
     worker.onmessage = (ev) => {
       const data = ev.data || {};
       if (data.ok) { cleanup(); resolve(data); }
@@ -68,23 +68,23 @@ export async function importGithubPlugin(repoUrl) {
   entryUrls.push(`${jsdBase}/plugin.js?t=${t}`);
   baseUrls.push(jsdBase);
 
-  try { console.log('[PluginLoader] Candidates:', entryUrls); } catch {}
+  try { console.log('[PluginLoader] Candidates:', entryUrls); } catch { }
   // Web worker fetch + rewrite to absolute imports for the chosen base
   const { code, usedUrl, usedBase } = await fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, t);
-  try { console.log('[PluginLoader] Fetched from:', usedUrl, ' (base:', usedBase, ')'); } catch {}
+  try { console.log('[PluginLoader] Fetched from:', usedUrl, ' (base:', usedBase, ')'); } catch { }
   try {
     console.log('[PluginLoader] Downloaded code length:', (code && code.length) || 0);
     //console.log('[PluginLoader] Downloaded code:\n' + String(code || ''));
-  } catch {}
+  } catch { }
   const blob = new Blob([code], { type: 'application/javascript' });
   const url = URL.createObjectURL(blob);
-  try { console.log('[PluginLoader] Importing module from blob:', url); } catch {}
+  try { console.log('[PluginLoader] Importing module from blob:', url); } catch { }
   try {
     const mod = await import(/* webpackIgnore: true */ url);
     return mod;
   } finally {
     // Clean up the blob URL; module stays cached
-    setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 0);
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch { } }, 0);
   }
 }
 
@@ -94,11 +94,20 @@ function buildApp(viewer) {
     BREP,
     viewer,
     registerFeature(FeatureClass) {
-      try { viewer?.partHistory?.featureRegistry?.register?.(FeatureClass); } catch {}
+      try {
+        FeatureClass.fromPlugin = true;
+
+        FeatureClass.featureShortName = "🔌" + (FeatureClass.featureShortName || "Feature");
+
+        FeatureClass.featureName = "🔌 " + FeatureClass.featureName;
+
+        viewer?.partHistory?.featureRegistry?.register?.(FeatureClass);
+
+      } catch { }
     },
     addToolbarButton(label, title, onClick) {
       if (!viewer) return;
-      try { viewer.addToolbarButton(label, title, onClick); } catch {}
+      try { viewer.addToolbarButton(label, title, onClick); } catch { }
     },
     async addSidePanel(title, content) {
       try {
@@ -169,7 +178,7 @@ export function getSavedPluginUrls() {
 }
 
 export function savePluginUrls(urls) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify((urls || []).map(s => String(s || '').trim()).filter(Boolean))); } catch {}
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify((urls || []).map(s => String(s || '').trim()).filter(Boolean))); } catch { }
 }
 
 export async function loadSavedPlugins(viewer) {
