@@ -18,6 +18,13 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Browser test runner captures per-test canvas snapshots (with auto Zoom‑to‑Fit) and shows them in the log dialog.
 - Easy to use plugin system lets you import your own plugins from github repos. 
 
+## Plugins and Example
+
+- Example plugin repository: [BREPpluginExample](../BREPpluginExample)
+- Example plugin README: [BREPpluginExample/README.md](../BREPpluginExample/README.md)
+- Entrypoint: [BREPpluginExample/plugin.js](../BREPpluginExample/plugin.js)
+- Feature example: [BREPpluginExample/exampleFeature.js](../BREPpluginExample/exampleFeature.js)
+
 ## Features Status
 
 - Primitive Cube: Implemented
