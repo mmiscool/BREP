@@ -16,6 +16,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Modular main toolbar with: Save, Zoom to Fit, Wireframe toggle, About, and STL export.
 - Selection Filter surfaced in the toolbar for quick access.
 - Browser test runner captures per-test canvas snapshots (with auto Zoom‑to‑Fit) and shows them in the log dialog.
+- Easy to use plugin system lets you import your own plugins from github repos. 
 
 ## Features Status
 

@@ -79,13 +79,9 @@ export class PluginsWidget {
     actions.appendChild(this.delBtn);
     actions.appendChild(loadBtn);
 
-    const hint = document.createElement('div');
-    hint.className = 'plg-hint';
-    hint.textContent = 'No manifest; loader expects plugin.js at that path. Uses jsDelivr + a worker; relative imports are rewritten to absolute.';
 
     col.appendChild(this.select);
     col.appendChild(actions);
-    col.appendChild(hint);
     col.appendChild(this.statusEl);
     this.uiElement.appendChild(col);
   }

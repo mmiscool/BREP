@@ -33,8 +33,14 @@ async function fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, ts) {
     const cleanup = () => { try { worker.terminate(); } catch { } };
     worker.onmessage = (ev) => {
       const data = ev.data || {};
-      if (data.ok) { cleanup(); resolve(data); }
-      else { cleanup(); reject(new Error(data.error || 'Worker failed')); }
+      if (data.ok) {
+        // Do NOT terminate here; caller will keep the worker alive
+        // long enough for blob: dependencies to load.
+        resolve({ ...data, __worker: worker, __cleanup: cleanup });
+      } else {
+        cleanup();
+        reject(new Error(data.error || 'Worker failed'));
+      }
     };
     worker.onerror = (e) => { cleanup(); reject(new Error(String(e?.message || e))); };
     worker.postMessage({ type: 'load', urls: entryUrls, bases: baseUrls, ts: ts ?? Date.now() });
@@ -70,11 +76,11 @@ export async function importGithubPlugin(repoUrl) {
 
   try { console.log('[PluginLoader] Candidates:', entryUrls); } catch { }
   // Web worker fetch + rewrite to absolute imports for the chosen base
-  const { code, usedUrl, usedBase } = await fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, t);
+  const { code, usedUrl, usedBase, __worker, __cleanup } = await fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, t);
   try { console.log('[PluginLoader] Fetched from:', usedUrl, ' (base:', usedBase, ')'); } catch { }
   try {
     console.log('[PluginLoader] Downloaded code length:', (code && code.length) || 0);
-    //console.log('[PluginLoader] Downloaded code:\n' + String(code || ''));
+    console.log('[PluginLoader] Downloaded code:\n' + String(code || ''));
   } catch { }
   const blob = new Blob([code], { type: 'application/javascript' });
   const url = URL.createObjectURL(blob);
@@ -84,7 +90,12 @@ export async function importGithubPlugin(repoUrl) {
     return mod;
   } finally {
     // Clean up the blob URL; module stays cached
-    setTimeout(() => { try { URL.revokeObjectURL(url); } catch { } }, 0);
+    setTimeout(() => {
+      try { URL.revokeObjectURL(url); } catch { }
+      // Now safe to terminate worker that created dependency blob: URLs.
+      try { (__cleanup || (()=>{}))(); } catch { }
+      try { __worker && __worker.terminate && __worker.terminate(); } catch { }
+    }, 0);
   }
 }
 
