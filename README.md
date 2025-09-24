@@ -20,10 +20,10 @@ This project is actively evolving; expect rough edges while APIs settle.
 
 ## Plugins and Example
 
-- Example plugin repository: [BREPpluginExample](../BREPpluginExample)
-- Example plugin README: [BREPpluginExample/README.md](../BREPpluginExample/README.md)
-- Entrypoint: [BREPpluginExample/plugin.js](../BREPpluginExample/plugin.js)
-- Feature example: [BREPpluginExample/exampleFeature.js](../BREPpluginExample/exampleFeature.js)
+- Example plugin repository: https://github.com/mmiscool/BREPpluginExample
+- Example plugin README: https://github.com/mmiscool/BREPpluginExample/blob/main/README.md
+- Entrypoint: https://github.com/mmiscool/BREPpluginExample/blob/main/plugin.js
+- Feature example: https://github.com/mmiscool/BREPpluginExample/blob/main/exampleFeature.js
 
 ## Features Status
 
