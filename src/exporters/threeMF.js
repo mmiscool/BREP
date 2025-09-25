@@ -5,6 +5,36 @@
 
 import JSZip from 'jszip';
 
+function _parseDataUrl(dataUrl) {
+  try {
+    if (typeof dataUrl !== 'string') return null;
+    if (!dataUrl.startsWith('data:')) return null;
+    const comma = dataUrl.indexOf(',');
+    if (comma < 0) return null;
+    const header = dataUrl.slice(5, comma); // after 'data:' up to comma
+    const payload = dataUrl.slice(comma + 1);
+    const isBase64 = /;base64/i.test(header);
+    const mime = header.split(';')[0] || 'application/octet-stream';
+    const ext = (mime === 'image/png') ? 'png' : (mime === 'image/jpeg' ? 'jpg' : 'bin');
+    let bytes;
+    if (isBase64) {
+      const bin = atob(payload);
+      const u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      bytes = u8;
+    } else {
+      // URI-encoded data
+      const str = decodeURIComponent(payload);
+      const u8 = new Uint8Array(str.length);
+      for (let i = 0; i < str.length; i++) u8[i] = str.charCodeAt(i) & 0xFF;
+      bytes = u8;
+    }
+    return { bytes, mime, ext };
+  } catch {
+    return null;
+  }
+}
+
 function xmlEsc(s) {
   return String(s ?? '').replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -102,6 +132,9 @@ function contentTypesXML() {
     '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
     '  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>',
     '  <Default Extension="xml" ContentType="application/xml"/>',
+    '  <Default Extension="png" ContentType="image/png"/>',
+    '  <Default Extension="jpg" ContentType="image/jpeg"/>',
+    '  <Default Extension="jpeg" ContentType="image/jpeg"/>',
     '</Types>'
   ].join('\n');
 }
@@ -113,6 +146,17 @@ function rootRelsXML() {
     '  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>',
     '</Relationships>'
   ].join('\n');
+}
+
+function modelPartRelsXML({ thumbnailPath } = {}) {
+  const lines = [];
+  lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+  lines.push('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">');
+  if (thumbnailPath) {
+    lines.push(`  <Relationship Target="${xmlEsc(thumbnailPath)}" Id="relThumb" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"/>`);
+  }
+  lines.push('</Relationships>');
+  return lines.join('\n');
 }
 
 /**
@@ -127,6 +171,31 @@ export async function generate3MF(solids, opts = {}) {
   zip.file('[Content_Types].xml', contentTypesXML());
   zip.folder('_rels').file('.rels', rootRelsXML());
   zip.folder('3D').file('3dmodel.model', modelXml);
+  // Optional thumbnail embedding (PNG/JPEG)
+  let thumbRelPath = null;
+  if (opts.thumbnail) {
+    try {
+      let bytes = null;
+      let ext = 'png';
+      if (typeof opts.thumbnail === 'string') {
+        const parsed = _parseDataUrl(opts.thumbnail);
+        if (parsed && parsed.bytes) { bytes = parsed.bytes; ext = (parsed.ext || 'png'); }
+      } else if (opts.thumbnail instanceof Uint8Array) {
+        bytes = opts.thumbnail;
+        ext = 'png';
+      }
+      if (bytes && bytes.length > 0) {
+        const fname = `thumbnail.${ext}`;
+        const path = `Thumbnails/${fname}`;
+        zip.folder('Thumbnails').file(fname, bytes);
+        thumbRelPath = `/${path}`; // absolute target from model part
+      }
+    } catch { /* ignore thumbnail errors */ }
+  }
+  // Add model part relationships if needed (e.g., thumbnail)
+  if (thumbRelPath) {
+    zip.folder('3D').folder('_rels').file('3dmodel.model.rels', modelPartRelsXML({ thumbnailPath: thumbRelPath }));
+  }
   // Additional attachments (e.g., Metadata/featureHistory.xml)
   const extra = opts.additionalFiles && typeof opts.additionalFiles === 'object' ? opts.additionalFiles : null;
   if (extra) {

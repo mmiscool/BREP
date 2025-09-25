@@ -2,6 +2,28 @@ import JSZip from 'jszip';
 import { generate3MF } from '../../exporters/threeMF.js';
 import { jsonToXml } from '../../utils/jsonXml.js';
 
+async function _captureThumbnail(viewer, size = 256) {
+  try {
+    const canvas = viewer?.renderer?.domElement;
+    if (!canvas) return null;
+    const srcW = canvas.width || canvas.clientWidth || 1;
+    const srcH = canvas.height || canvas.clientHeight || 1;
+    const dst = document.createElement('canvas');
+    dst.width = size; dst.height = size;
+    const ctx = dst.getContext('2d');
+    if (!ctx) return null;
+    try { ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, size, size); } catch {}
+    const scale = Math.min(size / srcW, size / srcH);
+    const dw = Math.max(1, Math.floor(srcW * scale));
+    const dh = Math.max(1, Math.floor(srcH * scale));
+    const dx = Math.floor((size - dw) / 2);
+    const dy = Math.floor((size - dh) / 2);
+    try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch {}
+    ctx.drawImage(canvas, 0, 0, srcW, srcH, dx, dy, dw, dh);
+    return dst.toDataURL('image/png');
+  } catch { return null; }
+}
+
 export function createExportButton(viewer) {
   const onClick = () => _openExportDialog(viewer);
   return { label: '📤', title: 'Export…', onClick };
@@ -257,13 +279,16 @@ function _openExportDialog(viewer) {
           }
         });
 
+        // Capture a preview thumbnail to embed (best-effort)
+        const thumbnail = await _captureThumbnail(viewer, 256);
+
         let data;
         try {
-          data = await generate3MF(solidsForExport, { unit, precision: 6, scale, additionalFiles, modelMetadata });
+          data = await generate3MF(solidsForExport, { unit, precision: 6, scale, additionalFiles, modelMetadata, thumbnail });
         } catch (e) {
           // As a last resort, attempt exporting only the feature history (no solids)
           try {
-            data = await generate3MF([], { unit, precision: 6, scale, additionalFiles, modelMetadata });
+            data = await generate3MF([], { unit, precision: 6, scale, additionalFiles, modelMetadata, thumbnail });
           } catch (e2) {
             throw e; // fall back to outer error handler
           }

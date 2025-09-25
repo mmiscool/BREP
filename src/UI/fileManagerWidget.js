@@ -18,6 +18,7 @@ export class FileManagerWidget {
     this.currentName = this._loadLastName() || '';
     this._iconsOnly = this._loadIconsPref();
     this._loadSeq = 0; // guards async load races
+    this._thumbCache = new Map();
     this._ensureStyles();
     this._buildUI();
     // Attempt migration from legacy single-key storage to per-model keys
@@ -57,7 +58,8 @@ export class FileManagerWidget {
           const encName = k.slice(this._modelPrefix.length);
           const name = decodeURIComponent(encName);
           // Keep both legacy JSON (data) and new 3MF (data3mf) fields
-          items.push({ name, savedAt: parsed?.savedAt, data: parsed?.data, data3mf: parsed?.data3mf, thumbnail: parsed?.thumbnail });
+          // Do NOT persist thumbnail separately anymore; extract from 3MF when needed.
+          items.push({ name, savedAt: parsed?.savedAt, data: parsed?.data, data3mf: parsed?.data3mf });
         } catch {
           // skip malformed entries
         }
@@ -73,7 +75,8 @@ export class FileManagerWidget {
       const raw = localStorage.getItem(this._modelKey(name));
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      return { name, savedAt: parsed?.savedAt, data: parsed?.data, data3mf: parsed?.data3mf, thumbnail: parsed?.thumbnail };
+      // Do not surface legacy 'thumbnail' field anymore; we derive from 3MF on demand
+      return { name, savedAt: parsed?.savedAt, data: parsed?.data, data3mf: parsed?.data3mf };
     } catch { return null; }
   }
   // Persist one model record
@@ -252,18 +255,19 @@ export class FileManagerWidget {
       additionalFiles = { 'Metadata/featureHistory.xml': fhXml };
       modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.xml' };
     }
-    // Generate a compact 3MF. For local storage we only need history (no meshes).
-    const threeMfBytes = await generate3MF([], { unit: 'millimeter', precision: 6, scale: 1, additionalFiles, modelMetadata });
-    const threeMfB64 = this._uint8ToBase64(threeMfBytes);
-    const now = new Date().toISOString();
-
     // Capture a 60x60 thumbnail of the current view
     let thumbnail = null;
     try {
       thumbnail = await this._captureThumbnail(60);
     } catch { /* ignore thumbnail failures */ }
 
-    const record = { savedAt: now, data3mf: threeMfB64, thumbnail };
+    // Generate a compact 3MF. For local storage we only need history (no meshes), but we do embed a thumbnail.
+    const threeMfBytes = await generate3MF([], { unit: 'millimeter', precision: 6, scale: 1, additionalFiles, modelMetadata, thumbnail });
+    const threeMfB64 = this._uint8ToBase64(threeMfBytes);
+    const now = new Date().toISOString();
+
+    // Store only the 3MF (with embedded thumbnail) and timestamp
+    const record = { savedAt: now, data3mf: threeMfB64 };
     this._setModel(name, record);
     this.currentName = name;
     this._saveLastName(name);
@@ -432,13 +436,9 @@ export class FileManagerWidget {
       // Thumbnail (60x60) if available
       const thumb = document.createElement('img');
       thumb.className = 'fm-thumb';
-      if (it && it.thumbnail && typeof it.thumbnail === 'string') {
-        thumb.src = it.thumbnail;
-        thumb.alt = `${it.name} thumbnail`;
-      } else {
-        // Fallback: empty background block
-        thumb.alt = 'thumbnail';
-      }
+      // Defer loading: extract from embedded 3MF thumbnail
+      thumb.alt = `${it.name} thumbnail`;
+      this._applyThumbnailToImg(it, thumb);
       // Make thumbnail clickable to open
       thumb.addEventListener('click', () => this.loadModel(it.name));
       row.appendChild(thumb);
@@ -488,12 +488,9 @@ export class FileManagerWidget {
 
       const img = document.createElement('img');
       img.className = 'fm-thumb';
-      if (it && it.thumbnail && typeof it.thumbnail === 'string') {
-        img.src = it.thumbnail;
-        img.alt = `${it.name} thumbnail`;
-      } else {
-        img.alt = 'thumbnail';
-      }
+      img.alt = `${it.name} thumbnail`;
+      // Load embedded 3MF thumbnail on demand
+      this._applyThumbnailToImg(it, img);
       cell.appendChild(img);
 
       const del = document.createElement('button');
@@ -525,6 +522,85 @@ export class FileManagerWidget {
   }
 
   // ----- Thumbnail helpers -----
+  async _extractThumbnailFrom3MFBase64(b64) {
+    try {
+      if (!b64) return null;
+      if (b64.startsWith('data:') && b64.includes(';base64,')) {
+        // Extract the base64 payload from a data URL
+        b64 = b64.split(';base64,')[1];
+      }
+      const bytes = this._base64ToUint8(b64);
+      const zip = await JSZip.loadAsync(bytes.buffer);
+      const files = {};
+      Object.keys(zip.files || {}).forEach(p => files[p.toLowerCase()] = p);
+
+      // 1) Check model part relationships for a thumbnail target
+      let relsKey = files['3d/_rels/3dmodel.model.rels'];
+      if (relsKey) {
+        try {
+          const relsXml = await zip.file(relsKey).async('string');
+          // Lightweight parse for Target with thumbnail relationship type
+          const relRe = /<Relationship\s+[^>]*Type="[^"]*metadata\/thumbnail[^"]*"[^>]*>/ig;
+          const tgtRe = /Target="([^"]+)"/i;
+          let m;
+          while ((m = relRe.exec(relsXml))) {
+            const tag = m[0];
+            const tm = tgtRe.exec(tag);
+            if (tm && tm[1]) {
+              let target = tm[1];
+              // Resolve relative to 3D/ (model part location)
+              if (target.startsWith('/')) {
+                target = target.replace(/^\/+/, '');
+              } else {
+                // e.g., '../Thumbnails/thumbnail.png' or 'Thumbnails/thumbnail.png'
+                target = '3D/' + target;
+                // Normalize '../'
+                target = target.replace(/(^|\/)\.{2}\/(?!\.{2}|$)/g, '/');
+                target = target.replace(/^\/+/, '');
+              }
+              const lf = target.toLowerCase();
+              const real = files[lf];
+              if (real) {
+                // Determine mime by extension
+                const mime = lf.endsWith('.png') ? 'image/png' : (lf.match(/\.(jpe?g)$/) ? 'image/jpeg' : 'application/octet-stream');
+                const imgU8 = await zip.file(real).async('uint8array');
+                const imgB64 = this._uint8ToBase64(imgU8);
+                return `data:${mime};base64,${imgB64}`;
+              }
+            }
+          }
+        } catch { /* ignore rels parse errors */ }
+      }
+
+      // 2) Fallback: first image under Thumbnails/
+      const thumbPath = Object.keys(files).find(k => k.startsWith('thumbnails/') && (k.endsWith('.png') || k.endsWith('.jpg') || k.endsWith('.jpeg')));
+      if (thumbPath) {
+        const real = files[thumbPath];
+        const mime = thumbPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        const imgU8 = await zip.file(real).async('uint8array');
+        const imgB64 = this._uint8ToBase64(imgU8);
+        return `data:${mime};base64,${imgB64}`;
+      }
+      return null;
+    } catch { return null; }
+  }
+
+  async _applyThumbnailToImg(rec, imgEl) {
+    try {
+      if (!rec?.data3mf || !imgEl) return;
+      if (this._thumbCache && this._thumbCache.has(rec.name)) {
+        const cached = this._thumbCache.get(rec.name);
+        if (cached) imgEl.src = cached;
+        return;
+      }
+      const src = await this._extractThumbnailFrom3MFBase64(rec.data3mf);
+      if (src) {
+        imgEl.src = src;
+        if (this._thumbCache) this._thumbCache.set(rec.name, src);
+      }
+    } catch {}
+  }
+
   async _captureThumbnail(size = 60) {
     try {
       const renderer = this.viewer?.renderer;

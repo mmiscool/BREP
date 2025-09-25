@@ -12,6 +12,27 @@ function _uint8ToBase64(uint8) {
 }
 
 export function createSaveButton(viewer) {
+  async function _captureThumbnail(size = 60) {
+    try {
+      const canvas = viewer?.renderer?.domElement;
+      if (!canvas) return null;
+      const srcW = canvas.width || canvas.clientWidth || 1;
+      const srcH = canvas.height || canvas.clientHeight || 1;
+      const dst = document.createElement('canvas');
+      dst.width = size; dst.height = size;
+      const ctx = dst.getContext('2d');
+      if (!ctx) return null;
+      try { ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, size, size); } catch {}
+      const scale = Math.min(size / srcW, size / srcH);
+      const dw = Math.max(1, Math.floor(srcW * scale));
+      const dh = Math.max(1, Math.floor(srcH * scale));
+      const dx = Math.floor((size - dw) / 2);
+      const dy = Math.floor((size - dh) / 2);
+      try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch {}
+      ctx.drawImage(canvas, 0, 0, srcW, srcH, dx, dy, dw, dh);
+      return dst.toDataURL('image/png');
+    } catch { return null; }
+  }
   async function onClick() {
     // Prefer the FileManagerWidget if present
     try {
@@ -36,8 +57,10 @@ export function createSaveButton(viewer) {
           }
         }
       } catch {}
-      const bytes = await generate3MF([], { unit: 'millimeter', precision: 6, scale: 1, additionalFiles, modelMetadata });
+      const thumbnail = await _captureThumbnail(60);
+      const bytes = await generate3MF([], { unit: 'millimeter', precision: 6, scale: 1, additionalFiles, modelMetadata, thumbnail });
       const b64 = _uint8ToBase64(bytes);
+      // Do not persist a separate thumbnail; it's embedded in the 3MF
       const payload = { savedAt: new Date().toISOString(), data3mf: b64 };
       localStorage.setItem('__BREP_MODEL__:autosave', JSON.stringify(payload));
       localStorage.setItem('__BREP_MODELS_LASTNAME__', 'autosave');
