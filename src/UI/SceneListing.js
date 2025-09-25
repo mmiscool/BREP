@@ -102,13 +102,14 @@ export class SceneListing {
     // Internal -----------------------------------------------------------------
 
     #isSolid(obj) {
-        // Treat SOLID and SKETCH groups as top-level items in the tree
-        return obj && obj.isObject3D && (obj.type === "SOLID" || obj.type === "SKETCH");
+        // Treat SOLID, SKETCH, and DATUM groups as top-level items in the tree
+        return obj && obj.isObject3D && (obj.type === "SOLID" || obj.type === "SKETCH" || obj.type === "DATUM");
     }
     #isFace(obj) { return obj && obj.type === "FACE"; }
     #isEdge(obj) { return obj && obj.type === "EDGE"; }
     #isLoop(obj) { return obj && obj.type === "LOOP"; }
     #isVertex(obj) { return obj && obj.type === "VERTEX"; }
+    #isPlane(obj) { return obj && obj.type === "PLANE"; }
 
     #syncMembership() {
         const present = new Set();
@@ -121,9 +122,9 @@ export class SceneListing {
             if (this.#isSolid(o)) {
                 // Ensure node for Solid
                 this.#ensureNodeFor(o, null);
-                // Ensure children nodes for faces/edges/loops/vertices (direct children of Solid/Sketch)
+                // Ensure children nodes for faces/edges/loops/vertices/planes (direct children of Solid/Sketch/Datum)
                 for (const child of o.children) {
-                    if (this.#isFace(child) || this.#isEdge(child) || this.#isLoop(child) || this.#isVertex(child)) {
+                    if (this.#isFace(child) || this.#isEdge(child) || this.#isLoop(child) || this.#isVertex(child) || this.#isPlane(child)) {
                         this.#ensureNodeFor(child, o);
                     }
                 }
@@ -322,6 +323,7 @@ export class SceneListing {
         else if (this.#isEdge(obj)) li.classList.add("t-edge");
         else if (this.#isLoop(obj)) li.classList.add("t-loop");
         else if (this.#isVertex(obj)) li.classList.add("t-vertex");
+        else if (this.#isPlane(obj)) li.classList.add("t-plane");
     }
 
     #setOpen(li, open) {
@@ -441,6 +443,7 @@ export class SceneListing {
 .t-edge  .st-name{ color:#bfe4d0; }
 .t-loop  .st-name{ color:#e7ced6; }
 .t-vertex .st-name{ color:#ffe6a6; }
+.t-plane .st-name{ color:#c7ffcf; }
 
 `;
         document.head.appendChild(style);
