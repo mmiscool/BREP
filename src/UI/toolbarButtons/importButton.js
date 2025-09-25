@@ -65,6 +65,8 @@ export function createImportButton(viewer) {
             } catch {}
             await viewer?.partHistory?.reset?.();
             await viewer?.partHistory?.fromJSON?.(payload);
+            // Sync Expressions UI with imported code
+            try { if (viewer?.expressionsManager?.textArea) viewer.expressionsManager.textArea.value = viewer.partHistory.expressions || ''; } catch {}
             await viewer?.partHistory?.runHistory?.();
             try { viewer?.zoomToFit?.(1.1); } catch {}
             try { _updateCurrentNameFromFile(viewer, file); } catch {}
@@ -130,9 +132,19 @@ export function createImportButton(viewer) {
                 return h;
               };
               if (root) root = normalizeHistory(root);
+              // Ensure expressions is a string (some XML → JSON tools might wrap differently)
+              if (root && root.expressions != null && typeof root.expressions !== 'string') {
+                try {
+                  if (Array.isArray(root.expressions)) root.expressions = root.expressions.join('\n');
+                  else if (typeof root.expressions === 'object' && Array.isArray(root.expressions.item)) root.expressions = root.expressions.item.join('\n');
+                  else root.expressions = String(root.expressions);
+                } catch { root.expressions = String(root.expressions); }
+              }
               if (root) {
                 await viewer?.partHistory?.reset?.();
                 await viewer?.partHistory?.fromJSON?.(JSON.stringify(root));
+                // Sync Expressions UI with imported code
+                try { if (viewer?.expressionsManager?.textArea) viewer.expressionsManager.textArea.value = viewer.partHistory.expressions || ''; } catch {}
                 await viewer?.partHistory?.runHistory?.();
                 try { viewer?.zoomToFit?.(1.1); } catch {}
                 try { _updateCurrentNameFromFile(viewer, file); } catch {}
@@ -181,4 +193,3 @@ function _updateCurrentNameFromFile(viewer, file) {
   fm.refreshList && fm.refreshList();
   fm._saveLastName && fm._saveLastName(name);
 }
-

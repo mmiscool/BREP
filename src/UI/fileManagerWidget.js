@@ -2,6 +2,9 @@
 // A lightweight widget to save/load/delete models from browser localStorage.
 // Designed to be embedded as an Accordion section (similar to expressionsManager).
 import * as THREE from 'three';
+import JSZip from 'jszip';
+import { generate3MF } from '../exporters/threeMF.js';
+import { jsonToXml, xmlToJson } from '../utils/jsonXml.js';
 
 export class FileManagerWidget {
   constructor(viewer) {
@@ -53,7 +56,8 @@ export class FileManagerWidget {
           const parsed = JSON.parse(raw);
           const encName = k.slice(this._modelPrefix.length);
           const name = decodeURIComponent(encName);
-          items.push({ name, savedAt: parsed?.savedAt, data: parsed?.data, thumbnail: parsed?.thumbnail });
+          // Keep both legacy JSON (data) and new 3MF (data3mf) fields
+          items.push({ name, savedAt: parsed?.savedAt, data: parsed?.data, data3mf: parsed?.data3mf, thumbnail: parsed?.thumbnail });
         } catch {
           // skip malformed entries
         }
@@ -69,7 +73,7 @@ export class FileManagerWidget {
       const raw = localStorage.getItem(this._modelKey(name));
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      return { name, savedAt: parsed?.savedAt, data: parsed?.data, thumbnail: parsed?.thumbnail };
+      return { name, savedAt: parsed?.savedAt, data: parsed?.data, data3mf: parsed?.data3mf, thumbnail: parsed?.thumbnail };
     } catch { return null; }
   }
   // Persist one model record
@@ -208,6 +212,24 @@ export class FileManagerWidget {
     this.nameInput.value = '';
   }
 
+  // Convert Uint8Array to base64 string in chunks (browser-safe)
+  _uint8ToBase64(uint8) {
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < uint8.length; i += chunk) {
+      const sub = uint8.subarray(i, i + chunk);
+      binary += String.fromCharCode.apply(null, sub);
+    }
+    return btoa(binary);
+  }
+  // Convert base64 string back to Uint8Array
+  _base64ToUint8(b64) {
+    const binary = atob(b64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+  }
+
   async saveCurrent() {
     if (!this.viewer || !this.viewer.partHistory) return;
     let name = (this.nameInput.value || '').trim();
@@ -218,15 +240,21 @@ export class FileManagerWidget {
       this.nameInput.value = name;
     }
 
+    // Get feature history JSON and embed into a 3MF archive as Metadata/featureHistory.xml
     const jsonString = await this.viewer.partHistory.toJSON();
-    // Store structured data (object), not a JSON string, to avoid double-encoding
-    let jsonObj;
-    try {
-      jsonObj = JSON.parse(jsonString);
-    } catch {
-      // Fallback: if parsing fails, keep the raw string
-      jsonObj = jsonString;
+    let featureHistoryObj = null;
+    try { featureHistoryObj = JSON.parse(jsonString); } catch {}
+    // Build additional files map only if JSON parsed cleanly
+    let additionalFiles = undefined;
+    let modelMetadata = undefined;
+    if (featureHistoryObj && typeof featureHistoryObj === 'object') {
+      const fhXml = jsonToXml(featureHistoryObj, 'featureHistory');
+      additionalFiles = { 'Metadata/featureHistory.xml': fhXml };
+      modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.xml' };
     }
+    // Generate a compact 3MF. For local storage we only need history (no meshes).
+    const threeMfBytes = await generate3MF([], { unit: 'millimeter', precision: 6, scale: 1, additionalFiles, modelMetadata });
+    const threeMfB64 = this._uint8ToBase64(threeMfBytes);
     const now = new Date().toISOString();
 
     // Capture a 60x60 thumbnail of the current view
@@ -235,7 +263,7 @@ export class FileManagerWidget {
       thumbnail = await this._captureThumbnail(60);
     } catch { /* ignore thumbnail failures */ }
 
-    const record = { savedAt: now, data: jsonObj, thumbnail };
+    const record = { savedAt: now, data3mf: threeMfB64, thumbnail };
     this._setModel(name, record);
     this.currentName = name;
     this._saveLastName(name);
@@ -248,9 +276,116 @@ export class FileManagerWidget {
     const rec = this._getModel(name);
     if (!rec) return alert('Model not found.');
     await this.viewer.partHistory.reset();
-    // Support both legacy string payloads and structured objects
-    const payload = (typeof rec.data === 'string') ? rec.data : JSON.stringify(rec.data);
-    await this.viewer.partHistory.fromJSON(payload);
+    // Prefer new 3MF-based storage
+    if (rec.data3mf && typeof rec.data3mf === 'string') {
+      try {
+        let b64 = rec.data3mf;
+        if (b64.startsWith('data:') && b64.includes(';base64,')) {
+          b64 = b64.split(';base64,')[1];
+        }
+        const bytes = this._base64ToUint8(b64);
+        // Try to extract feature history from 3MF
+        const zip = await JSZip.loadAsync(bytes.buffer);
+        const files = {};
+        Object.keys(zip.files || {}).forEach(p => files[p.toLowerCase()] = p);
+        let fhKey = files['metadata/featurehistory.xml'];
+        if (!fhKey) {
+          for (const k of Object.keys(files)) { if (k.endsWith('featurehistory.xml')) { fhKey = files[k]; break; } }
+        }
+        if (fhKey) {
+          const xml = await zip.file(fhKey).async('string');
+          const obj = xmlToJson(xml);
+          let root = obj && (obj.featureHistory || obj.FeatureHistory || null);
+          // Normalize any arrays possibly collapsed by XML round-trip
+          const ensureArray = (v) => (Array.isArray(v) ? v : (v == null ? [] : [v]));
+          const normalizeSketch = (sk) => {
+            if (!sk || typeof sk !== 'object') return sk;
+            sk.points = ensureArray(sk.points);
+            sk.geometries = ensureArray(sk.geometries);
+            sk.constraints = ensureArray(sk.constraints);
+            if (Array.isArray(sk.geometries)) {
+              for (const g of sk.geometries) {
+                if (!g) continue;
+                g.points = Array.isArray(g?.points) ? g.points : (g?.points != null ? [g.points] : []);
+                if (Array.isArray(g.points)) g.points = g.points.map((x) => Number(x));
+              }
+            }
+            if (Array.isArray(sk.constraints)) {
+              for (const c of sk.constraints) {
+                if (!c) continue;
+                c.points = Array.isArray(c?.points) ? c.points : (c?.points != null ? [c.points] : []);
+                if (Array.isArray(c.points)) c.points = c.points.map((x) => Number(x));
+              }
+            }
+            return sk;
+          };
+          const normalizeHistory = (h) => {
+            if (!h || typeof h !== 'object') return h;
+            h.features = ensureArray(h.features);
+            for (const f of h.features) {
+              if (!f || typeof f !== 'object') continue;
+              if (f.persistentData && typeof f.persistentData === 'object') {
+                if (f.persistentData.sketch) f.persistentData.sketch = normalizeSketch(f.persistentData.sketch);
+                if (Array.isArray(f.persistentData.externalRefs)) {
+                  // ok
+                } else if (f.persistentData.externalRefs != null) {
+                  f.persistentData.externalRefs = ensureArray(f.persistentData.externalRefs);
+                }
+              }
+            }
+            return h;
+          };
+          if (root) root = normalizeHistory(root);
+          // Ensure expressions is a string if present
+          if (root && root.expressions != null && typeof root.expressions !== 'string') {
+            try {
+              if (Array.isArray(root.expressions)) root.expressions = root.expressions.join('\n');
+              else if (typeof root.expressions === 'object' && Array.isArray(root.expressions.item)) root.expressions = root.expressions.item.join('\n');
+              else root.expressions = String(root.expressions);
+            } catch { root.expressions = String(root.expressions); }
+          }
+          if (root) {
+            await this.viewer.partHistory.fromJSON(JSON.stringify(root));
+            // Sync Expressions UI with imported code
+            try { if (this.viewer?.expressionsManager?.textArea) this.viewer.expressionsManager.textArea.value = this.viewer.partHistory.expressions || ''; } catch {}
+            if (seq !== this._loadSeq) return;
+            this.currentName = name;
+            this.nameInput.value = name;
+            this._saveLastName(name);
+            await this.viewer.partHistory.runHistory();
+            return;
+          }
+        }
+        // No feature history found → fallback to import raw 3MF as mesh via STL feature
+        try {
+          const feat = await this.viewer?.partHistory?.newFeature?.('STL');
+          if (feat) {
+            feat.inputParams.fileToImport = bytes.buffer; // stlImport can auto-detect 3MF zip
+            feat.inputParams.deflectionAngle = 15;
+            feat.inputParams.centerMesh = true;
+          }
+          await this.viewer?.partHistory?.runHistory?.();
+          if (seq !== this._loadSeq) return;
+          this.currentName = name;
+          this.nameInput.value = name;
+          this._saveLastName(name);
+          return;
+        } catch {}
+      } catch (e) {
+        console.warn('[FileManagerWidget] Failed to load 3MF from localStorage; falling back to legacy JSON if present.', e);
+      }
+    }
+    // Legacy JSON path
+    try {
+      const payload = (typeof rec.data === 'string') ? rec.data : JSON.stringify(rec.data);
+      await this.viewer.partHistory.fromJSON(payload);
+      // Sync Expressions UI with imported code
+      try { if (this.viewer?.expressionsManager?.textArea) this.viewer.expressionsManager.textArea.value = this.viewer.partHistory.expressions || ''; } catch {}
+    } catch (e) {
+      alert('Failed to load model (invalid data).');
+      console.error(e);
+      return;
+    }
     if (seq !== this._loadSeq) return;
     this.currentName = name;
     this.nameInput.value = name;
