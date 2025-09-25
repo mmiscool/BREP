@@ -1497,24 +1497,141 @@ class genFeatureUI {
                                 const s = genFeatureUI.__activeXform;
                                 if (s && s.inputEl === inputEl && s.controls) s.controls.setMode(mode);
                             } catch (_) { }
-                            // update visual selected state
-                            modes.querySelectorAll('button').forEach(x => x.classList.toggle('selected', x === b));
+                            // update visual selected state (only for mode buttons)
+                            modes.querySelectorAll('button[data-mode]').forEach(x => x.classList.toggle('selected', x === b));
                         });
                         return b;
                     };
                     const bT = mkModeBtn('Move', 'translate');
                     const bR = mkModeBtn('Rotate', 'rotate');
+                    bT.setAttribute('data-mode', 'translate');
+                    bR.setAttribute('data-mode', 'rotate');
                     modes.appendChild(bT); modes.appendChild(bR);
                     // Default selected (fallback to translate if unrecognized or 'scale')
                     const defMode = inputEl.dataset.xformMode || 'translate';
                     ({ translate: bT, rotate: bR }[defMode] || bT).classList.add('selected');
 
+                    // Numeric-like helper for inline TRS inputs
+                    const numericPattern = /^-?\d*\.?\d*$/;
+                    const isNumericLike = (value) => {
+                        if (value === '' || value == null) return true;
+                        return numericPattern.test(String(value));
+                    };
+                    const onFocusToggleType = (el) => {
+                        try {
+                            if (isNumericLike(el.value)) {
+                                el.type = 'number';
+                            } else {
+                                el.type = 'text';
+                            }
+                        } catch (_) { }
+                    };
+
+                    // Helper to get current TRS from params safely
+                    const getTRS = () => {
+                        const v = this._pickInitialValue(key, def) || {};
+                        return {
+                            position: Array.isArray(v.position) ? v.position.slice(0, 3) : [0, 0, 0],
+                            rotationEuler: Array.isArray(v.rotationEuler) ? v.rotationEuler.slice(0, 3) : [0, 0, 0],
+                            scale: Array.isArray(v.scale) ? v.scale.slice(0, 3) : [1, 1, 1],
+                        };
+                    };
+                    // Helper to set TRS in params and optionally update active gizmo target
+                    const setTRS = (next, applyTarget = true) => {
+                        this.params[key] = { position: next.position.slice(0,3), rotationEuler: next.rotationEuler.slice(0,3), scale: next.scale.slice(0,3) };
+                        // update info
+                        try { updateInfo(); } catch (_) {}
+                        // update inputs
+                        try {
+                            const row = this._fieldsWrap.querySelector(`[data-key="${key}"]`);
+                            const map = [
+                                ['.tf-pos-x', next.position[0]],
+                                ['.tf-pos-y', next.position[1]],
+                                ['.tf-pos-z', next.position[2]],
+                                ['.tf-rot-x', next.rotationEuler[0]],
+                                ['.tf-rot-y', next.rotationEuler[1]],
+                                ['.tf-rot-z', next.rotationEuler[2]],
+                            ];
+                            for (const [sel, val] of map) {
+                                const el = row ? row.querySelector(sel) : null;
+                                if (el) this._setInputValue(el, 'number', val);
+                            }
+                        } catch (_) {}
+                        // update active gizmo target
+                        if (applyTarget) {
+                            try {
+                                const s = genFeatureUI.__activeXform;
+                                if (s && s.inputEl === inputEl && s.target) {
+                                    const toNum = (v) => (typeof v === 'number' ? v : (isNumericLike(v) ? Number(v) : 0));
+                                    s.target.position.set(toNum(next.position[0]), toNum(next.position[1]), toNum(next.position[2]));
+                                    s.target.rotation.set(toNum(next.rotationEuler[0]), toNum(next.rotationEuler[1]), toNum(next.rotationEuler[2]));
+                                }
+                            } catch (_) { }
+                        }
+                    };
+
+                    // Inline TRS input grid (Position/Rotation)
+                    const grid = document.createElement('div');
+                    grid.className = 'transform-grid';
+                    const addRow = (labelTxt, clsPrefix, valuesArr) => {
+                        const rowEl = document.createElement('div');
+                        rowEl.className = 'transform-row';
+                        const lab = document.createElement('div');
+                        lab.className = 'transform-label';
+                        lab.textContent = labelTxt;
+                        const inputs = document.createElement('div');
+                        inputs.className = 'transform-inputs';
+                        const axes = ['x','y','z'];
+                        for (let i = 0; i < 3; i++) {
+                            const inp = document.createElement('input');
+                            inp.className = 'input transform-input ' + `tf-${clsPrefix}-${axes[i]}`;
+                            inp.type = 'number';
+                            inp.step = 'any';
+                            this._setInputValue(inp, 'number', valuesArr[i] ?? 0);
+                            inp.addEventListener('focus', () => { onFocusToggleType(inp); this._stopActiveReferenceSelection(); });
+                            inp.addEventListener('change', () => {
+                                const cur = getTRS();
+                                const val = inp.value;
+                                if (clsPrefix === 'pos') cur.position[i] = val;
+                                else cur.rotationEuler[i] = val;
+                                setTRS(cur, true);
+                                this._emitParamsChange(key, this.params[key]);
+                            });
+                            inputs.appendChild(inp);
+                        }
+                        rowEl.appendChild(lab);
+                        rowEl.appendChild(inputs);
+                        grid.appendChild(rowEl);
+                    };
+                    const curTRS = getTRS();
+                    addRow('Position', 'pos', curTRS.position);
+                    addRow('Rotation', 'rot', curTRS.rotationEuler);
+
+                    // Reset button: zero out position and rotation
+                    const resetBtn = document.createElement('button');
+                    resetBtn.type = 'button';
+                    resetBtn.className = 'btn btn-slim';
+                    resetBtn.textContent = 'Reset';
+                    resetBtn.title = 'Reset translation and rotation to 0';
+                    resetBtn.addEventListener('click', () => {
+                        const cur = getTRS();
+                        const next = { position: [0,0,0], rotationEuler: [0,0,0], scale: cur.scale };
+                        setTRS(next, true);
+                        this._emitParamsChange(key, this.params[key]);
+                    });
+                    modes.appendChild(resetBtn);
+
                     const activate = () => this._activateTransformWidget({ inputEl, wrapEl: wrap, key, def });
                     btn.addEventListener('click', activate);
 
+                    // Compose
                     wrap.appendChild(btn);
-                    wrap.appendChild(modes);
-                    wrap.appendChild(info);
+                    const details = document.createElement('div');
+                    details.className = 'transform-details';
+                    details.appendChild(modes);
+                    details.appendChild(grid);
+                    details.appendChild(info);
+                    wrap.appendChild(details);
                     // Keep hidden input inside to aid traversal
                     wrap.appendChild(inputEl);
                     controlWrap.appendChild(wrap);
@@ -1858,13 +1975,7 @@ class genFeatureUI {
     // Activate a TransformControls session for a transform widget
     _activateTransformWidget({ inputEl, wrapEl, key, def }) {
         try { this._stopActiveReferenceSelection(); } catch (_) {}
-        // Stop any existing transform session (global singleton)
-        try { genFeatureUI.__stopGlobalActiveXform(); } catch (_) {}
-
-        const viewer = this.options?.viewer || null;
-        if (!viewer || !viewer.scene || !viewer.camera || !viewer.renderer) return;
-
-        // Toggle: if already active for this input, stop and commit
+        // Toggle logic: if already active for this input, stop and hide
         try {
             const s = genFeatureUI.__activeXform;
             if (s && s.inputEl === inputEl) {
@@ -1873,7 +1984,16 @@ class genFeatureUI {
                 this._emitParamsChange(key, currentVal);
                 return;
             }
+            // If a different transform is active, stop it before starting this one
+            if (s && s.inputEl !== inputEl) {
+                genFeatureUI.__stopGlobalActiveXform();
+            }
         } catch (_) { }
+
+        const viewer = this.options?.viewer || null;
+        if (!viewer || !viewer.scene || !viewer.camera || !viewer.renderer) return;
+
+        // (Toggle handled above)
 
         // Build or reuse target object from current param value
         const cur = this._pickInitialValue(key, def) || {};
@@ -1963,6 +2083,21 @@ class genFeatureUI {
                     };
                     info.textContent = `pos(${fmt(pos[0])}, ${fmt(pos[1])}, ${fmt(pos[2])})  rot(${fmt(rot[0])}, ${fmt(rot[1])}, ${fmt(rot[2])})`;
                 }
+                // Sync inline inputs if present
+                try {
+                    const pairs = [
+                        ['.tf-pos-x', pos[0]],
+                        ['.tf-pos-y', pos[1]],
+                        ['.tf-pos-z', pos[2]],
+                        ['.tf-rot-x', rot[0]],
+                        ['.tf-rot-y', rot[1]],
+                        ['.tf-rot-z', rot[2]],
+                    ];
+                    for (const [sel, val] of pairs) {
+                        const el = row ? row.querySelector(sel) : null;
+                        if (el) this._setInputValue(el, 'number', val);
+                    }
+                } catch (_) { }
             } catch (_) { }
         };
         tc.addEventListener('change', updateParamFromTarget);
@@ -2368,9 +2503,16 @@ class genFeatureUI {
       .ref-chip-remove:hover { color: var(--danger); }
 
       /* Transform widget */
-      .transform-wrap { display: flex; flex-direction: column; gap: 6px; }
-      .transform-modes { display: flex; gap: 6px; }
+      .transform-wrap { display: flex; flex-direction: column; gap: 8px; }
+      .transform-modes { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
       .transform-info { font-size: 12px; color: var(--muted); }
+      .transform-details { display: none; }
+      .transform-wrap.ref-active .transform-details { display: block; }
+      .transform-grid { display: flex; flex-direction: column; gap: 6px; }
+      .transform-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; }
+      .transform-label { color: var(--muted); font-size: 12px; }
+      .transform-inputs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; }
+      .transform-input { padding: 6px 8px; }
       .transform-wrap.ref-active .btn { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
     `;
         return style;

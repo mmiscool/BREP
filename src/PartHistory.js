@@ -382,6 +382,19 @@ export class PartHistory {
           if (offsetCapFlag !== undefined) out.offsetCoplanarCap = offsetCapFlag;
           if (Number.isFinite(offsetDistance)) out.offsetDistance = offsetDistance;
           sanitized[key] = out;
+        } else if (schema[key].type === "transform") {
+          // Evaluate each component; allow expressions in position/rotation/scale entries
+          const raw = inputParams[key] || {};
+          const evalOne = (v) => {
+            if (typeof v === 'number' && Number.isFinite(v)) return v;
+            if (typeof v === 'string') return runCodeAndGetNumber(this.expressions, v);
+            const n = Number(v);
+            return Number.isFinite(n) ? n : 0;
+          };
+          const pos = Array.isArray(raw.position) ? raw.position.map(evalOne) : [0, 0, 0];
+          const rot = Array.isArray(raw.rotationEuler) ? raw.rotationEuler.map(evalOne) : [0, 0, 0];
+          const scl = Array.isArray(raw.scale) ? raw.scale.map(evalOne) : [1, 1, 1];
+          sanitized[key] = { position: pos, rotationEuler: rot, scale: scl };
         } else {
           sanitized[key] = inputParams[key];
         }
