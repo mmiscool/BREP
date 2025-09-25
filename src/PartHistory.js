@@ -69,7 +69,12 @@ export class PartHistory {
         skipAllFeatures = true; // stop after this feature
       }
 
-      this.currentHistoryStepId = feature.inputParams.featureID;
+      // Do NOT mutate currentHistoryStepId while running.
+      // It is used by the UI to indicate which panel the user wants open
+      // (and to determine the stop-at step). Updating it here caused the
+      // HistoryWidget to constantly switch the open panel to whatever
+      // feature happened to be executing, which made it impossible to
+      // expand items after PNG imports and similar long-running steps.
 
       if (this.callbacks.run) {
         await this.callbacks.run(feature.inputParams.featureID);
