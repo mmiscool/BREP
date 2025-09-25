@@ -75,6 +75,43 @@ function _meshToAsciiSTL(mesh, name = 'solid', precision = 6, scale = 1) {
   return out.join('\n');
 }
 
+function _meshToAsciiOBJ(mesh, name = 'object', precision = 6, scale = 1) {
+  const vp = mesh.vertProperties;
+  const tv = mesh.triVerts;
+  const fmt = (n) => Number.isFinite(n) ? n.toFixed(precision) : '0';
+  const out = [];
+  // Object/group name (safe ASCII)
+  out.push(`# Exported by BREP`);
+  out.push(`o ${name}`);
+  // Emit unique vertices referenced by triVerts to keep file smaller
+  const indexMap = new Map(); // original index -> 1-based OBJ index
+  let nextIndex = 1;
+  const faces = []; // store triples of mapped indices
+  const triCount = (tv.length / 3) | 0;
+  for (let t = 0; t < triCount; t++) {
+    const i0 = tv[t * 3 + 0] >>> 0;
+    const i1 = tv[t * 3 + 1] >>> 0;
+    const i2 = tv[t * 3 + 2] >>> 0;
+    const mapIndex = (i) => {
+      let id = indexMap.get(i);
+      if (!id) {
+        const x = vp[i * 3 + 0] * scale;
+        const y = vp[i * 3 + 1] * scale;
+        const z = vp[i * 3 + 2] * scale;
+        out.push(`v ${fmt(x)} ${fmt(y)} ${fmt(z)}`);
+        id = nextIndex++;
+        indexMap.set(i, id);
+      }
+      return id;
+    };
+    const a = mapIndex(i0), b = mapIndex(i1), c = mapIndex(i2);
+    faces.push([a, b, c]);
+  }
+  // Faces (referencing v indices; no normals/UVs)
+  for (const f of faces) out.push(`f ${f[0]} ${f[1]} ${f[2]}`);
+  return out.join('\n');
+}
+
 function _collectSolids(viewer) {
   const scene = viewer?.partHistory?.scene || viewer?.scene;
   if (!scene) return [];
@@ -131,6 +168,8 @@ function _openExportDialog(viewer) {
   const selFmt = document.createElement('select'); selFmt.className = 'exp-select';
   const opt3mf = document.createElement('option'); opt3mf.value = '3mf'; opt3mf.textContent = '3MF (+history)'; selFmt.appendChild(opt3mf);
   const optStl = document.createElement('option'); optStl.value = 'stl'; optStl.textContent = 'STL (ASCII)'; selFmt.appendChild(optStl);
+  const optJson = document.createElement('option'); optJson.value = 'json'; optJson.textContent = 'BREP JSON (history only)'; selFmt.appendChild(optJson);
+  const optObj = document.createElement('option'); optObj.value = 'obj'; optObj.textContent = 'OBJ (ASCII)'; selFmt.appendChild(optObj);
   rowFmt.appendChild(labFmt); rowFmt.appendChild(selFmt);
 
   // Units
@@ -149,7 +188,15 @@ function _openExportDialog(viewer) {
   try { selUnit.value = 'millimeter'; } catch {}
   rowUnit.appendChild(labUnit); rowUnit.appendChild(selUnit);
 
-  const hint = document.createElement('div'); hint.className = 'exp-hint'; hint.textContent = '3MF includes feature history when available. STL exports triangulated meshes.';
+  // Toggle unit row visibility based on format
+  const updateUnitVisibility = () => {
+    const fmt = selFmt.value;
+    rowUnit.style.display = (fmt === 'stl' || fmt === '3mf' || fmt === 'obj') ? 'flex' : 'none';
+  };
+  selFmt.addEventListener('change', updateUnitVisibility);
+  updateUnitVisibility();
+
+  const hint = document.createElement('div'); hint.className = 'exp-hint'; hint.textContent = '3MF includes feature history when available. STL/OBJ export triangulated meshes. BREP JSON saves editable feature history only.';
 
   // Buttons
   const buttons = document.createElement('div'); buttons.className = 'exp-buttons';
@@ -165,6 +212,16 @@ function _openExportDialog(viewer) {
       const fmt = selFmt.value;
       const unit = selUnit.value;
       const scale = _unitScale(unit);
+
+      if (fmt === 'json') {
+        try {
+          const json = await viewer?.partHistory?.toJSON?.();
+          const text = typeof json === 'string' ? json : JSON.stringify(json || {});
+          _download(`${base}.BREP.json`, text, 'application/json');
+          close();
+          return;
+        } catch (e) { /* fall through to show alert below */ }
+      }
 
       if (fmt === '3mf') {
         // Possibly include feature history in metadata
@@ -223,6 +280,32 @@ function _openExportDialog(viewer) {
         return;
       }
 
+      if (fmt === 'obj') {
+        // Single solid -> OBJ
+        if (solids.length === 1) {
+          const s = solids[0];
+          const mesh = s.getMesh();
+          const obj = _meshToAsciiOBJ(mesh, base, 6, scale);
+          _download(`${base}.obj`, obj, 'text/plain');
+          close();
+          return;
+        }
+        // Multiple solids -> ZIP of individual OBJs
+        const zip = new JSZip();
+        solids.forEach((s, idx) => {
+          try {
+            const safe = _safeName(s.name || `solid_${idx}`);
+            const mesh = s.getMesh();
+            const obj = _meshToAsciiOBJ(mesh, safe, 6, scale);
+            zip.file(`${safe}.obj`, obj);
+          } catch {}
+        });
+        const blob = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+        _download(`${base}_obj.zip`, blob, 'application/zip');
+        close();
+        return;
+      }
+
       // STL path
       if (solids.length === 1) {
         const s = solids[0];
@@ -265,4 +348,3 @@ function _openExportDialog(viewer) {
 
   try { inpName.focus(); inpName.select(); } catch {}
 }
-

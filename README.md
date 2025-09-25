@@ -11,7 +11,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Robust CSG powered by `manifold-3d` with face-label provenance carried through booleans.
 - Mesh-to-BREP conversion that groups triangles into faces by normal deflection.
 - Mesh repair pipeline: weld, T‑junction fix, overlap removal, hole fill, and consistent normals.
-- Import/export: STL and feature‑aware 3MF (embedded history).
+- Import/export: STL, OBJ and feature‑aware 3MF (embedded history).
 - Primitive solids (cube, sphere, cylinder, cone, torus, pyramid) and typical CAD features (sketch/extrude, sweep, loft, revolve, fillet, chamfer, mirror, boolean ops).
 - Modular main toolbar with: Save, Zoom to Fit, Wireframe toggle, Import/Export, and About.
 - Selection Filter surfaced in the toolbar for quick access.
@@ -65,7 +65,7 @@ Prereqs: Node.js 18+ and `pnpm` installed.
   - Wireframe: toggles mesh wireframe rendering for a quick inspection.
   - About: opens the third‑party license report.
   - Import…: opens a file picker for 3MF (with optional embedded history) or BREP JSON.
-  - Export…: opens a dialog to export as 3MF, STL, or BREP JSON.
+- Export…: opens a dialog to export as 3MF, STL, OBJ, or BREP JSON.
   - Selection Filter: now lives in the toolbar (right side) for quick changes; Esc clears selection.
 
 ## Importing Models (STL and 3MF)
@@ -103,6 +103,9 @@ Supported formats and how they round‑trip through BREP:
 - STL:
   - Export: ASCII STL. If multiple solids are selected, the Export dialog produces a ZIP with one STL per solid. Unit scaling is applied at export time.
   - Import: ASCII or binary supported. STL imports as geometry only (no feature history).
+
+- OBJ:
+  - Export: ASCII OBJ. If multiple solids are selected, the Export dialog produces a ZIP with one OBJ per solid. Unit scaling is applied at export time.
 
 - BREP JSON:
   - Export: Saves only the feature history as JSON (`.BREP.json`) with no mesh. Useful for versioning or quick backups.
