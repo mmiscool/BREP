@@ -1413,7 +1413,7 @@ export class SketchMode3D {
     bar.appendChild(mk("Circle", "circle"));
     bar.appendChild(mk("Arc", "arc"));
     bar.appendChild(mk("Bezier", "bezier"));
-    bar.appendChild(mk("Pick Edges", "pickEdges"));
+    bar.appendChild(mk("Link external edge", "pickEdges"));
     this._topbar = bar;
     host.appendChild(bar);
 

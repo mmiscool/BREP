@@ -65,4 +65,23 @@ export class FeatureRegistry {
     }
     return FeatureClass;
   }
+
+  // Tolerant lookup: returns null instead of throwing, and also
+  // accepts the class constructor name as an alias.
+  getSafe(featureName) {
+    const searchName = String(featureName || '').trim().toUpperCase();
+    for (const fc of this.features) {
+      if (!fc) continue;
+      let shortName = null, longName = null, className = null;
+      try { shortName = fc.featureShortName != null ? String(fc.featureShortName).trim().toUpperCase() : null; } catch { shortName = null; }
+      try { longName = fc.featureName != null ? String(fc.featureName).trim().toUpperCase() : null; } catch { longName = null; }
+      try { className = fc.name ? String(fc.name).trim().toUpperCase() : null; } catch { className = null; }
+      if (shortName === searchName || longName === searchName || className === searchName) return fc;
+    }
+    return null;
+  }
+
+  has(featureName) {
+    return !!this.getSafe(featureName);
+  }
 }

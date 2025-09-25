@@ -227,7 +227,11 @@ export class HistoryWidget {
     async _addSectionForFeature(id, feature) {
         const ph = this._getPartHistory();
         const fr = ph && ph.featureRegistry ? ph.featureRegistry : null;
-        const def = fr && typeof fr.get === "function" ? fr.get(feature.type) : null;
+        let def = null;
+        try {
+            if (fr && typeof fr.getSafe === 'function') def = fr.getSafe(feature.type);
+            else if (fr && typeof fr.get === 'function') def = fr.get(feature.type);
+        } catch (_) { def = null; }
         const schema = def && def.inputParamsSchema ? def.inputParamsSchema : {};
 
         // DOM: item
@@ -252,9 +256,14 @@ export class HistoryWidget {
             this._setItemOpen(entry, openNext, /*exclusive*/ true);
             // update currentHistoryStepId when user opens a panel
             const ph2 = this._getPartHistory();
-            if (openNext && ph2) {
-                ph2.currentHistoryStepId = String(id);
-                // execute the feature history
+            if (ph2) {
+                if (openNext) {
+                    ph2.currentHistoryStepId = String(id);
+                } else {
+                    // No feature expanded → clear stop-at pointer
+                    ph2.currentHistoryStepId = null;
+                }
+                // execute the feature history (will stop at pointer if set)
                 ph2.runHistory();
             }
         });
@@ -350,11 +359,16 @@ export class HistoryWidget {
             isOpen: false,
             paramsSig: this._computeParamsSig(feature.inputParams),
             type: feature.type,
-            statusText
+            statusText,
+            missing: !def
         };
-        // Mark error state if present
-        if (feature && feature.lastRun && feature.lastRun.ok === false) {
+        // Mark error state if present or feature type is missing
+        if ((feature && feature.lastRun && feature.lastRun.ok === false) || !def) {
             item.classList.add('has-error');
+        }
+        if (!def) {
+            try { statusText.textContent = 'Missing'; } catch (_) {}
+            try { statusText.title = `Feature type "${feature.type}" not available`; } catch (_) {}
         }
         this._sections.set(String(id), entry);
     }
@@ -401,18 +415,33 @@ export class HistoryWidget {
                 entry.titleText.textContent = this._composeTitle(f, id);
             }
 
-            // Update status (runtime + errors)
+            // Update status (runtime + errors, and mark missing features)
+            let isMissing = false;
+            try {
+                const ph = this._getPartHistory();
+                const fr = ph && ph.featureRegistry ? ph.featureRegistry : null;
+                if (fr) {
+                    if (typeof fr.has === 'function') isMissing = !fr.has(f.type);
+                    else if (typeof fr.getSafe === 'function') isMissing = !fr.getSafe(f.type);
+                    else { try { fr.get(f.type); isMissing = false; } catch (_) { isMissing = true; } }
+                }
+            } catch (_) { isMissing = false; }
+            entry.missing = isMissing;
             if (entry.statusText) {
-                entry.statusText.textContent = this._composeStatus(f);
-                if (f && f.lastRun && f.lastRun.ok === false && f.lastRun.error && f.lastRun.error.message) {
+                const status = isMissing ? 'Missing' : this._composeStatus(f);
+                entry.statusText.textContent = status;
+                if (isMissing) {
+                    entry.statusText.title = `Feature type "${f.type}" not available`;
+                } else if (f && f.lastRun && f.lastRun.ok === false && f.lastRun.error && f.lastRun.error.message) {
                     entry.statusText.title = String(f.lastRun.error.message);
                 } else {
                     entry.statusText.removeAttribute('title');
                 }
             }
-            // Toggle error state class
+            // Toggle error state class (error or missing)
             try {
-                entry.root.classList.toggle('has-error', !!(f && f.lastRun && f.lastRun.ok === false));
+                const hasErr = !!(f && f.lastRun && f.lastRun.ok === false);
+                entry.root.classList.toggle('has-error', hasErr || isMissing);
             } catch (_) {}
 
             // Params changed?
@@ -473,9 +502,30 @@ export class HistoryWidget {
                     const features = this._safeFeatures(ph);
                     const feature = features.find(f => f && f.inputParams && String(f.inputParams.featureID) === String(entry.id));
                     const fr = ph && ph.featureRegistry ? ph.featureRegistry : null;
-                    const def = fr && feature ? fr.get(feature.type) : null;
-                    const schema = def && def.inputParamsSchema ? def.inputParamsSchema : (entry.schema || {});
-                    const ui = new genFeatureUI(schema, feature ? feature.inputParams : {}, {
+                    let def = null;
+                    try {
+                        if (fr && typeof fr.getSafe === 'function') def = fr.getSafe(feature.type);
+                        else if (fr && typeof fr.get === 'function') def = fr.get(feature.type);
+                    } catch (_) { def = null; }
+                    entry.missing = !def;
+                    if (!def) {
+                        const wrap = document.createElement('div');
+                        wrap.className = 'missing-feature-panel';
+                        const msg = document.createElement('div');
+                        msg.className = 'missing-msg';
+                        msg.textContent = `Feature type "${feature?.type || ''}" is not available. You can remove it or install a plugin that provides it.`;
+                        wrap.appendChild(msg);
+                        const del = document.createElement('button');
+                        del.type = 'button';
+                        del.className = 'btn btn-slim';
+                        del.textContent = 'Remove from history';
+                        del.addEventListener('click', (ev) => { ev.stopPropagation(); this._handleDeleteFeature(String(entry.id)); });
+                        wrap.appendChild(del);
+                        entry.body.appendChild(wrap);
+                        entry.ui = wrap; // minimal marker
+                    } else {
+                        const schema = def && def.inputParamsSchema ? def.inputParamsSchema : (entry.schema || {});
+                        const ui = new genFeatureUI(schema, feature ? feature.inputParams : {}, {
                         onChange: (featureID) => {
                             const ph2 = this._getPartHistory();
                             if (!ph2) return;
@@ -506,9 +556,10 @@ export class HistoryWidget {
                         viewer: this.viewer || null,
                         partHistory: this._getPartHistory() || null,
                         featureRef: feature || null,
-                    });
-                    entry.body.appendChild(ui.uiElement);
-                    entry.ui = ui;
+                        });
+                        entry.body.appendChild(ui.uiElement);
+                        entry.ui = ui;
+                    }
                 } catch (_) { }
             }
         } else {
@@ -922,6 +973,10 @@ export class HistoryWidget {
         display: block;
       }
 
+      /* Missing feature placeholder panel */
+      .missing-feature-panel { display: flex; flex-direction: column; gap: 8px; }
+      .missing-feature-panel .missing-msg { color: var(--muted); font-size: 13px; }
+
       /* Footer add button + menu */
       .footer {
         position: relative;
@@ -1241,17 +1296,24 @@ class genFeatureUI {
                     inputEl.className = 'input';
                     // Optional numeric attributes from schema
                     try {
-                        if (def && (typeof def.step === 'number' || (typeof def.step === 'string' && def.step.trim() !== '')))
+                        if (def && (typeof def.step === 'number' || (typeof def.step === 'string' && def.step.trim() !== ''))) {
                             inputEl.step = String(def.step);
-                        if (def && (typeof def.min === 'number' || (typeof def.min === 'string' && def.min !== '')))
+                            inputEl.dataset.step = String(def.step);
+                        }
+                        if (def && (typeof def.min === 'number' || (typeof def.min === 'string' && def.min !== ''))) {
                             inputEl.min = String(def.min);
-                        if (def && (typeof def.max === 'number' || (typeof def.max === 'string' && def.max !== '')))
+                            inputEl.dataset.min = String(def.min);
+                        }
+                        if (def && (typeof def.max === 'number' || (typeof def.max === 'string' && def.max !== ''))) {
                             inputEl.max = String(def.max);
+                            inputEl.dataset.max = String(def.max);
+                        }
                     } catch (_) { }
 
                     const numericPattern = /^-?\d*\.?\d*$/;
 
                     function isNumericLike(value) {
+                        console.log("isNumericLike:", value);
                         return numericPattern.test(value);
                     }
 
@@ -1276,6 +1338,8 @@ class genFeatureUI {
                         }
 
                     });
+                    // Ensure initial type matches content: if value is an equation
+                    // or any non-numeric string, render as text so the equation is visible.
                     this._setInputValue(inputEl, def.type, this._pickInitialValue(key, def));
                     inputEl.addEventListener('change', () => {
                         this.params[key] = inputEl.value;
@@ -1288,12 +1352,9 @@ class genFeatureUI {
                             inputEl.type = "number";
                             // Re-apply numeric attributes on type toggle
                             try {
-                                if (def && (typeof def.step === 'number' || (typeof def.step === 'string' && def.step.trim() !== '')))
-                                    inputEl.step = String(def.step);
-                                if (def && (typeof def.min === 'number' || (typeof def.min === 'string' && def.min !== '')))
-                                    inputEl.min = String(def.min);
-                                if (def && (typeof def.max === 'number' || (typeof def.max === 'string' && def.max !== '')))
-                                    inputEl.max = String(def.max);
+                                if (inputEl.dataset && inputEl.dataset.step) inputEl.step = inputEl.dataset.step;
+                                if (inputEl.dataset && inputEl.dataset.min) inputEl.min = inputEl.dataset.min;
+                                if (inputEl.dataset && inputEl.dataset.max) inputEl.max = inputEl.dataset.max;
                             } catch (_) { }
                         } else {
                             //console.log("is not numeric like on focus");
@@ -2131,6 +2192,25 @@ class genFeatureUI {
             case 'boolean':
                 el.checked = Boolean(value);
                 break;
+            case 'number': {
+                // Accept formulas or plain numbers. If the value is not purely numeric,
+                // render the input as text so the expression is visible.
+                const str = value == null ? '' : String(value);
+                const numericLike = /^\s*[-+]?((\d+(?:\.\d*)?)|(\.\d+))(?:[eE][-+]?\d+)?\s*$/.test(str);
+                try {
+                    if (numericLike) {
+                        if (el.type !== 'number') el.type = 'number';
+                        // Re-apply numeric attributes if we previously toggled away
+                        if (el.dataset && el.dataset.step) el.step = el.dataset.step;
+                        if (el.dataset && el.dataset.min) el.min = el.dataset.min;
+                        if (el.dataset && el.dataset.max) el.max = el.dataset.max;
+                    } else {
+                        if (el.type !== 'text') el.type = 'text';
+                    }
+                } catch (_) { /* ignore */ }
+                el.value = str;
+                break;
+            }
             case 'options': {
                 const asStr = String(value == null ? '' : value);
                 let has = false;

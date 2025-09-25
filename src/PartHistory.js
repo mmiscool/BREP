@@ -79,7 +79,21 @@ export class PartHistory {
       if (this.callbacks.run) {
         await this.callbacks.run(feature.inputParams.featureID);
       }
-      const FeatureClass = await this.featureRegistry.get(feature.type);
+      let FeatureClass = null;
+      try {
+        FeatureClass = (this.featureRegistry && typeof this.featureRegistry.getSafe === 'function')
+          ? this.featureRegistry.getSafe(feature.type)
+          : (this.featureRegistry && typeof this.featureRegistry.get === 'function' ? this.featureRegistry.get(feature.type) : null);
+      } catch (_) { FeatureClass = null; }
+      if (!FeatureClass) {
+        // Record an error on the feature but do not abort the whole run.
+        const t1 = nowMs();
+        const msg = `Feature type \"${feature.type}\" is not installed`;
+        try { feature.lastRun = { ok: false, startedAt: t1, endedAt: t1, durationMs: 0, error: { name: 'MissingFeature', message: msg, stack: null } }; } catch { }
+        // Skip visualization/add/remove steps for this feature
+        stats.end();
+        continue;
+      }
       const instance = new FeatureClass(this);
 
       await Object.assign(instance.inputParams, feature.inputParams);
@@ -181,7 +195,9 @@ export class PartHistory {
     const endTime = Date.now();
     const totalDuration = endTime - startTime;
     console.log(`[PartHistory] runHistory completed in ${totalDuration} ms for ${this.features.length} features.`);
-    this.currentHistoryStepId = null;
+    // Do not clear currentHistoryStepId here. Keeping it preserves the UX of
+    // "stop at the currently expanded feature" across subsequent runs. The
+    // UI will explicitly clear it when no section is expanded.
 
     return this;
   }
