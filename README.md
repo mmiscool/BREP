@@ -110,7 +110,8 @@ Supported formats and how they round‑trip through BREP:
 
 Where this lives in the code:
 - 3MF exporter: `src/exporters/threeMF.js` (packages geometry and optional attachments using JSZip).
-- Export dialog and import logic: `src/UI/MainToolbar.js`.
+- Export dialog: `src/UI/toolbarButtons/exportButton.js`.
+- Import logic: `src/UI/toolbarButtons/importButton.js`.
 - JSON ↔ XML helpers for the embedded history: `src/utils/jsonXml.js`.
 
 Notes and limitations

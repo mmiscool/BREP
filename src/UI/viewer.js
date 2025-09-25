@@ -15,6 +15,7 @@ import { SelectionFilter } from './SelectionFilter.js';
 import './expressionsManager.js'
 import { expressionsManager } from './expressionsManager.js';
 import { MainToolbar } from './MainToolbar.js';
+import { registerDefaultToolbarButtons } from './toolbarButtons/registerDefaultButtons.js';
 import { FileManagerWidget } from './fileManagerWidget.js';
 import './mobile.js';
 import { SketchMode3D } from './SketchMode3D.js';
@@ -284,8 +285,10 @@ export class Viewer {
 
 
 
-        // Mount the main toolbar (includes inline Selection Filter on the left)
+        // Mount the main toolbar (layout only; buttons registered externally)
         this.mainToolbar = new MainToolbar(this);
+        // Register core/default toolbar buttons via the public API
+        try { registerDefaultToolbarButtons(this); } catch {}
         // Drain any queued custom toolbar buttons from early plugin registration
         try {
             const q = Array.isArray(this._pendingToolbarButtons) ? this._pendingToolbarButtons : [];
