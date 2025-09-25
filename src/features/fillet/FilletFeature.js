@@ -275,6 +275,7 @@ export class FilletFeature {
 
         finalSolid.name = `${targetSolid.name}`;
         finalSolid.removeSmallInternalIslands(100);
+        finalSolid.removeSmallIslands();
 
         //const actualFinalSolid = await finalSolid.simplify(0.00001);
         const actualFinalSolid = await finalSolid.simplify(0.0001);
