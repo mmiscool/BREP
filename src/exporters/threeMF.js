@@ -30,10 +30,17 @@ export function build3MFModelXML(solids, opts = {}) {
   const unit = opts.unit || 'millimeter';
   const precision = Number.isFinite(opts.precision) ? opts.precision : 6;
   const scale = Number.isFinite(opts.scale) ? opts.scale : 1.0;
+  const modelMetadata = opts.modelMetadata && typeof opts.modelMetadata === 'object' ? opts.modelMetadata : null;
 
   const lines = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
   lines.push('<model xml:lang="en-US" unit="' + xmlEsc(unit) + '" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">');
+  if (modelMetadata) {
+    for (const k of Object.keys(modelMetadata)) {
+      const v = modelMetadata[k];
+      lines.push(`  <metadata name="${xmlEsc(k)}">${xmlEsc(v)}</metadata>`);
+    }
+  }
   lines.push('  <resources>');
 
   let objId = 1;
@@ -94,6 +101,7 @@ function contentTypesXML() {
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
     '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>',
     '  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>',
+    '  <Default Extension="xml" ContentType="application/xml"/>',
     '</Types>'
   ].join('\n');
 }
@@ -119,6 +127,20 @@ export async function generate3MF(solids, opts = {}) {
   zip.file('[Content_Types].xml', contentTypesXML());
   zip.folder('_rels').file('.rels', rootRelsXML());
   zip.folder('3D').file('3dmodel.model', modelXml);
+  // Additional attachments (e.g., Metadata/featureHistory.xml)
+  const extra = opts.additionalFiles && typeof opts.additionalFiles === 'object' ? opts.additionalFiles : null;
+  if (extra) {
+    for (const p of Object.keys(extra)) {
+      const path = String(p).replace(/^\/+/, '');
+      const data = extra[p];
+      // Detect if binary/Uint8Array; otherwise treat as string
+      if (data instanceof Uint8Array) {
+        zip.file(path, data);
+      } else {
+        zip.file(path, String(data));
+      }
+    }
+  }
   const data = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   return data;
 }

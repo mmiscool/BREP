@@ -3,6 +3,7 @@
 
 import { SelectionFilterWidget } from './selectionFilterWidget.js';
 import { generate3MF } from '../exporters/threeMF.js';
+import { jsonToXml, xmlToJson } from '../utils/jsonXml.js';
 import JSZip from 'jszip';
 
 export class MainToolbar {
@@ -86,9 +87,8 @@ export class MainToolbar {
     left.appendChild(this._btn('🧪', 'Toggle Inspector panel', () => {
       try { this.viewer && this.viewer.toggleInspectorPanel && this.viewer.toggleInspectorPanel(); } catch {}
     }));
-    // Export/Import Part JSON
-    left.appendChild(this._btn('📦', 'Export part JSON', () => this._onExportPartJSON()));
-    left.appendChild(this._btn('📥', 'Import part JSON', () => this._onImportPartJSON()));
+    // Import / Export
+    left.appendChild(this._btn('📥', 'Import… (3MF/JSON)', () => this._onImport3MFOrJSON()));
     left.appendChild(this._btn('📤', 'Export…', () => this._openExportDialog()));
     left.appendChild(this._btn('ℹ️', 'Open About page', () => window.open('about.html', '_blank')));
 
@@ -178,74 +178,10 @@ export class MainToolbar {
     return (s.length ? s : fallback).replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80);
   }
 
-  async _onExportPartJSON() {
-    try {
-      const json = await this.viewer?.partHistory?.toJSON?.();
-      if (!json) { alert('Nothing to export.'); return; }
-      const base = this._safeName(this.viewer?.fileManagerWidget?.currentName || 'part');
-      this._download(`${base}.part.json`, json, 'application/json');
-    } catch (e) {
-      alert('Export failed. See console for details.');
-      console.error(e);
-    }
-  }
+  // removed dedicated JSON export; JSON is available via Export dialog
 
   _onImportPartJSON() {
-    try {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.json,application/json';
-      input.style.display = 'none';
-      input.addEventListener('change', async () => {
-        try {
-          const file = input.files && input.files[0];
-          try { if (input.parentNode) input.parentNode.removeChild(input); } catch {}
-          if (!file) return;
-          const text = await file.text();
-          // Allow both raw PartHistory JSON and wrapper objects with { data }
-          let payload = text;
-          try {
-            const obj = JSON.parse(text);
-            if (obj && typeof obj === 'object') {
-              if (Array.isArray(obj.features)) {
-                payload = JSON.stringify(obj);
-              } else if (obj.data) {
-                payload = (typeof obj.data === 'string') ? obj.data : JSON.stringify(obj.data);
-              }
-            }
-          } catch { /* keep raw text */ }
-
-          await this.viewer?.partHistory?.reset?.();
-          await this.viewer?.partHistory?.fromJSON?.(payload);
-          await this.viewer?.partHistory?.runHistory?.();
-          try { this.viewer?.zoomToFit?.(1.1); } catch {}
-
-          // Optionally update File Manager current name to the imported filename (sans extension)
-          try {
-            const fm = this.viewer?.fileManagerWidget;
-            if (fm) {
-              const name = String(file.name || '').replace(/\.[^.]+$/, '');
-              if (name) {
-                fm.currentName = name;
-                if (fm.nameInput) fm.nameInput.value = name;
-                fm.refreshList && fm.refreshList();
-                fm._saveLastName && fm._saveLastName(name);
-              }
-            }
-          } catch { /* non-fatal */ }
-
-          alert('Import complete.');
-        } catch (e) {
-          alert('Import failed. See console for details.');
-          console.error(e);
-        }
-      }, { once: true });
-      document.body.appendChild(input);
-      input.click();
-    } catch (e) {
-      alert('Unable to open file dialog.');
-      console.error(e);
-    }
+    return this._onImport3MFOrJSON();
   }
 
   _onExportSTL() {
@@ -375,7 +311,8 @@ export class MainToolbar {
     const selFmt = document.createElement('select'); selFmt.className = 'exp-select';
     const opt3mf = document.createElement('option'); opt3mf.value = '3mf'; opt3mf.textContent = '3MF (*.3mf)';
     const optStl = document.createElement('option'); optStl.value = 'stl'; optStl.textContent = 'STL (ASCII) (*.stl)';
-    selFmt.appendChild(opt3mf); selFmt.appendChild(optStl);
+    const optJson = document.createElement('option'); optJson.value = 'json'; optJson.textContent = 'BREP JSON (*.BREP.json)';
+    selFmt.appendChild(opt3mf); selFmt.appendChild(optStl); selFmt.appendChild(optJson);
     rowFmt.appendChild(labFmt); rowFmt.appendChild(selFmt);
 
     // Units
@@ -393,9 +330,13 @@ export class MainToolbar {
       const fmt = selFmt.value;
       if (fmt === 'stl' && solids.length > 1) {
         hint.textContent = `Note: ${solids.length} solids selected — will export a ZIP with one STL per solid.`;
+      } else if (fmt === 'json') {
+        hint.textContent = 'Exports only the feature history as JSON (.BREP.json).';
       } else {
         hint.textContent = '';
       }
+      // Units are not used for JSON; disable the units row when JSON is selected
+      try { rowUnit.style.opacity = (fmt === 'json') ? '0.6' : '1'; } catch {}
     };
     selFmt.addEventListener('change', updateHint);
     updateHint();
@@ -410,16 +351,73 @@ export class MainToolbar {
 
     btnExport.addEventListener('click', async () => {
       try {
-        const fmt = selFmt.value; // '3mf' | 'stl'
+        const fmt = selFmt.value; // '3mf' | 'stl' | 'json'
         const unit = selUnit.value; // text value
         const scale = this._unitScale(unit);
         let base = this._safeName(inpName.value || baseDefault);
         if (!base) base = 'part';
 
+        if (fmt === 'json') {
+          const json = await this.viewer?.partHistory?.toJSON?.();
+          if (!json) { alert('Nothing to export.'); return; }
+          this._download(`${base}.BREP.json`, json, 'application/json');
+          close();
+          return;
+        }
+
         if (fmt === '3mf') {
-          const data = await generate3MF(solids, { unit, precision: 6, scale });
+          let additionalFiles = null;
+          let modelMetadata = null;
+          try {
+            const json = await this.viewer?.partHistory?.toJSON?.();
+            if (json) {
+              const obj = JSON.parse(json);
+              const fhXml = jsonToXml(obj, 'featureHistory');
+              additionalFiles = { 'Metadata/featureHistory.xml': fhXml };
+              modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.xml' };
+            }
+          } catch {}
+
+          // Gracefully handle non-manifold solids by skipping them
+          const solidsForExport = [];
+          const skipped = [];
+          solids.forEach((s, idx) => {
+            try {
+              const mesh = s?.getMesh?.();
+              if (mesh && mesh.vertProperties && mesh.triVerts) {
+                // Touching getMesh() can throw; if it did not, include this solid
+                solidsForExport.push(s);
+              } else {
+                const name = this._safeName(s?.name || `solid_${idx}`);
+                skipped.push(name);
+              }
+            } catch (e) {
+              const name = this._safeName(s?.name || `solid_${idx}`);
+              skipped.push(name);
+            }
+          });
+
+          // Proceed with export even if none are manifold; the 3MF will still include feature history
+          let data;
+          try {
+            data = await generate3MF(solidsForExport, { unit, precision: 6, scale, additionalFiles, modelMetadata });
+          } catch (e) {
+            // As a last resort, attempt exporting only the feature history (no solids)
+            try {
+              data = await generate3MF([], { unit, precision: 6, scale, additionalFiles, modelMetadata });
+            } catch (e2) {
+              throw e; // fall back to outer error handler
+            }
+          }
+
           this._download(`${base}.3mf`, data, 'model/3mf');
           close();
+          if (skipped.length > 0) {
+            const msg = (solidsForExport.length === 0)
+              ? `Exported 3MF with feature history only. Skipped non-manifold solids: ${skipped.join(', ')}`
+              : `Exported 3MF. Skipped non-manifold solids: ${skipped.join(', ')}`;
+            try { alert(msg); } catch {}
+          }
           return;
         }
 
@@ -464,5 +462,186 @@ export class MainToolbar {
     document.body.appendChild(overlay);
 
     try { inpName.focus(); inpName.select(); } catch {}
+  }
+
+  async _onImport3MFOrJSON() {
+    try {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.3mf,model/3mf,application/vnd.ms-package.3dmanufacturing-3dmodel+xml,.json,application/json';
+      input.style.display = 'none';
+      input.addEventListener('change', async () => {
+        try {
+          const file = input.files && input.files[0];
+          try { if (input.parentNode) input.parentNode.removeChild(input); } catch {}
+          if (!file) return;
+
+          const buf = await file.arrayBuffer();
+          const u8 = new Uint8Array(buf);
+          const isZip = u8.length >= 2 && u8[0] === 0x50 && u8[1] === 0x4b; // 'PK'
+          const isJSON = String(file.name || '').toLowerCase().endsWith('.json');
+
+          if (!isZip && isJSON) {
+            // JSON path (backward compatible)
+            const text = await new Response(buf).text();
+            let payload = text;
+            try {
+              const obj = JSON.parse(text);
+              if (obj && typeof obj === 'object') {
+                // Normalize sketch arrays if present
+                const ensureArray = (v) => (Array.isArray(v) ? v : (v == null ? [] : [v]));
+                const normalizeSketch = (sk) => {
+                  if (!sk || typeof sk !== 'object') return sk;
+                  sk.points = ensureArray(sk.points);
+                  sk.geometries = ensureArray(sk.geometries);
+                  sk.constraints = ensureArray(sk.constraints);
+                  if (Array.isArray(sk.geometries)) {
+                    for (const g of sk.geometries) {
+                      if (!g) continue;
+                      g.points = Array.isArray(g?.points) ? g.points : (g?.points != null ? [g.points] : []);
+                      if (Array.isArray(g.points)) g.points = g.points.map((x) => Number(x));
+                    }
+                  }
+                  if (Array.isArray(sk.constraints)) {
+                    for (const c of sk.constraints) {
+                      if (!c) continue;
+                      c.points = Array.isArray(c?.points) ? c.points : (c?.points != null ? [c.points] : []);
+                      if (Array.isArray(c.points)) c.points = c.points.map((x) => Number(x));
+                    }
+                  }
+                  return sk;
+                };
+                if (Array.isArray(obj.features)) {
+                  for (const f of obj.features) {
+                    if (f?.persistentData?.sketch) f.persistentData.sketch = normalizeSketch(f.persistentData.sketch);
+                  }
+                } else if (obj.data && Array.isArray(obj.data.features)) {
+                  for (const f of obj.data.features) {
+                    if (f?.persistentData?.sketch) f.persistentData.sketch = normalizeSketch(f.persistentData.sketch);
+                  }
+                }
+                // Re-stringify payload
+                if (Array.isArray(obj.features)) payload = JSON.stringify(obj);
+                else if (obj.data) payload = (typeof obj.data === 'string') ? obj.data : JSON.stringify(obj.data);
+              }
+            } catch {}
+            await this.viewer?.partHistory?.reset?.();
+            await this.viewer?.partHistory?.fromJSON?.(payload);
+            await this.viewer?.partHistory?.runHistory?.();
+            try { this.viewer?.zoomToFit?.(1.1); } catch {}
+            // Update current name
+            try { this._updateCurrentNameFromFile(file); } catch {}
+            //alert('Import complete.');
+            return;
+          }
+
+          if (isZip) {
+            // 3MF path → check for embedded feature history first
+            const zip = await JSZip.loadAsync(buf);
+            // Build lower-case path map
+            const files = {};
+            Object.keys(zip.files || {}).forEach(p => files[p.toLowerCase()] = p);
+            let fhKey = files['metadata/featurehistory.xml'];
+            if (!fhKey) {
+              // search any *featurehistory.xml
+              for (const k of Object.keys(files)) { if (k.endsWith('featurehistory.xml')) { fhKey = files[k]; break; } }
+            }
+            if (fhKey) {
+              const xml = await zip.file(fhKey).async('string');
+              const obj = xmlToJson(xml);
+              // Expect shape { featureHistory: { ...original json... } }
+              let root = obj && (obj.featureHistory || obj.FeatureHistory || null);
+              // Normalize arrays possibly collapsed by XML → JSON round-trip
+              const ensureArray = (v) => (Array.isArray(v) ? v : (v == null ? [] : [v]));
+              const normalizeSketch = (sk) => {
+                if (!sk || typeof sk !== 'object') return sk;
+                sk.points = ensureArray(sk.points);
+                sk.geometries = ensureArray(sk.geometries);
+                sk.constraints = ensureArray(sk.constraints);
+                // Normalize geometry.points (indices) possibly collapsed
+                if (Array.isArray(sk.geometries)) {
+                  for (const g of sk.geometries) {
+                    if (!g) continue;
+                    g.points = Array.isArray(g?.points) ? g.points : (g?.points != null ? [g.points] : []);
+                    // Coerce to numbers if strings
+                    if (Array.isArray(g.points)) g.points = g.points.map((x) => Number(x));
+                  }
+                }
+                // Normalize constraint.points similarly
+                if (Array.isArray(sk.constraints)) {
+                  for (const c of sk.constraints) {
+                    if (!c) continue;
+                    c.points = Array.isArray(c?.points) ? c.points : (c?.points != null ? [c.points] : []);
+                    if (Array.isArray(c.points)) c.points = c.points.map((x) => Number(x));
+                  }
+                }
+                return sk;
+              };
+              const normalizeHistory = (h) => {
+                if (!h || typeof h !== 'object') return h;
+                h.features = ensureArray(h.features);
+                for (const f of h.features) {
+                  if (!f || typeof f !== 'object') continue;
+                  if (f.persistentData && typeof f.persistentData === 'object') {
+                    if (f.persistentData.sketch) f.persistentData.sketch = normalizeSketch(f.persistentData.sketch);
+                    if (Array.isArray(f.persistentData.externalRefs)) {
+                      // ok
+                    } else if (f.persistentData.externalRefs != null) {
+                      f.persistentData.externalRefs = ensureArray(f.persistentData.externalRefs);
+                    }
+                  }
+                }
+                return h;
+              };
+              if (root) root = normalizeHistory(root);
+              if (root) {
+                await this.viewer?.partHistory?.reset?.();
+                await this.viewer?.partHistory?.fromJSON?.(JSON.stringify(root));
+                await this.viewer?.partHistory?.runHistory?.();
+                try { this.viewer?.zoomToFit?.(1.1); } catch {}
+                try { this._updateCurrentNameFromFile(file); } catch {}
+                //alert('Import complete.');
+                return;
+              }
+            }
+
+            // No feature history → create a new STL Import feature with the raw 3MF
+            await this.viewer?.partHistory?.reset?.();
+            const feat = await this.viewer?.partHistory?.newFeature?.('STL');
+            if (feat) {
+              feat.inputParams.fileToImport = buf; // stlImport can auto-detect 3MF zip
+              feat.inputParams.deflectionAngle = 15;
+              feat.inputParams.centerMesh = true;
+            }
+            await this.viewer?.partHistory?.runHistory?.();
+            try { this.viewer?.zoomToFit?.(1.1); } catch {}
+            try { this._updateCurrentNameFromFile(file); } catch {}
+            //alert('Import complete.');
+            return;
+          }
+
+          alert('Unsupported file format. Please select a 3MF or JSON file.');
+        } catch (e) {
+          alert('Import failed. See console for details.');
+          console.error(e);
+        }
+      }, { once: true });
+      document.body.appendChild(input);
+      input.click();
+    } catch (e) {
+      alert('Unable to open file dialog.');
+      console.error(e);
+    }
+  }
+
+  _updateCurrentNameFromFile(file) {
+    const fm = this.viewer?.fileManagerWidget;
+    if (!fm) return;
+    const name = String(file?.name || '').replace(/\.[^.]+$/, '');
+    if (!name) return;
+    fm.currentName = name;
+    if (fm.nameInput) fm.nameInput.value = name;
+    fm.refreshList && fm.refreshList();
+    fm._saveLastName && fm._saveLastName(name);
   }
 }

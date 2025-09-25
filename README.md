@@ -11,9 +11,9 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Robust CSG powered by `manifold-3d` with face-label provenance carried through booleans.
 - Mesh-to-BREP conversion that groups triangles into faces by normal deflection.
 - Mesh repair pipeline: weld, T‑junction fix, overlap removal, hole fill, and consistent normals.
-- Importers for STL and 3MF (via Three.js loaders).
+- Import/export: STL and feature‑aware 3MF (embedded history).
 - Primitive solids (cube, sphere, cylinder, cone, torus, pyramid) and typical CAD features (sketch/extrude, sweep, loft, revolve, fillet, chamfer, mirror, boolean ops).
-- Modular main toolbar with: Save, Zoom to Fit, Wireframe toggle, About, and STL export.
+- Modular main toolbar with: Save, Zoom to Fit, Wireframe toggle, Import/Export, and About.
 - Selection Filter surfaced in the toolbar for quick access.
 - Browser test runner captures per-test canvas snapshots (with auto Zoom‑to‑Fit) and shows them in the log dialog.
 - Easy to use plugin system lets you import your own plugins from github repos. 
@@ -64,12 +64,15 @@ Prereqs: Node.js 18+ and `pnpm` installed.
   - Zoom to Fit: pans and zooms using ArcballControls to frame all visible geometry without changing orientation.
   - Wireframe: toggles mesh wireframe rendering for a quick inspection.
   - About: opens the third‑party license report.
-  - Export STL: downloads an ASCII STL of the current part(s). If multiple solids are present, you can export each individually. If you have solids selected, only the selected ones are exported.
-- Selection Filter: now lives in the toolbar (right side) for quick changes; Esc clears selection.
+  - Import…: opens a file picker for 3MF (with optional embedded history) or BREP JSON.
+  - Export…: opens a dialog to export as 3MF, STL, or BREP JSON.
+  - Selection Filter: now lives in the toolbar (right side) for quick changes; Esc clears selection.
 
 ## Importing Models (STL and 3MF)
 
 Use the “STL Import” feature in the history panel. It now supports both STL and 3MF:
+
+Alternatively, use the top‑toolbar “Import…” button to open 3MF (with or without embedded history) or BREP JSON. For STL files, add an “STL Import” feature to the history.
 
 - STL: ASCII or binary. Parsed with `three/examples/jsm/loaders/STLLoader.js`.
 - 3MF: ZIP-based format. Parsed with `three/examples/jsm/loaders/3MFLoader.js` and merged.
@@ -87,6 +90,33 @@ importFeature.inputParams.fileToImport = someStlOr3mfData; // string (ASCII or d
 importFeature.inputParams.deflectionAngle = 15; // degrees to group triangles into faces
 await ph.runHistory();
 ```
+
+## File Formats: Import & Export
+
+Supported formats and how they round‑trip through BREP:
+
+- 3MF (feature‑aware):
+  - Export: Generates a valid 3MF container that includes the triangulated geometry plus an embedded copy of your feature history so the file remains editable later in this app. Non‑manifold solids are detected and skipped (you will be notified), and the export still proceeds so you can share the file or fix later. The history is stored as XML at `Metadata/featureHistory.xml`, and a model metadata entry `featureHistoryPath` points to it. Multiple solids export as separate `<object>` items in a single 3MF. Units are configurable (default `millimeter`).
+  - Import: If a 3MF contains `Metadata/featureHistory.xml` (or any `*featureHistory.xml`), BREP loads that history and rebuilds the model, preserving editable features. If not present, the 3MF is imported as pure geometry (mesh only).
+  - Compatibility: The embedded history is non‑standard metadata; other 3MF viewers will ignore it, but the 3MF remains fully valid and viewable elsewhere.
+
+- STL:
+  - Export: ASCII STL. If multiple solids are selected, the Export dialog produces a ZIP with one STL per solid. Unit scaling is applied at export time.
+  - Import: ASCII or binary supported. STL imports as geometry only (no feature history).
+
+- BREP JSON:
+  - Export: Saves only the feature history as JSON (`.BREP.json`) with no mesh. Useful for versioning or quick backups.
+  - Import: Loads the saved history and recomputes the model. The Import button accepts `.json` files of this shape.
+
+Where this lives in the code:
+- 3MF exporter: `src/exporters/threeMF.js` (packages geometry and optional attachments using JSZip).
+- Export dialog and import logic: `src/UI/MainToolbar.js`.
+- JSON ↔ XML helpers for the embedded history: `src/utils/jsonXml.js`.
+
+Notes and limitations
+- 3MF export focuses on geometry and editable history; materials/textures are not currently exported.
+- 3MF import merges geometry for editing and does not reconstruct materials.
+- Embedded feature history is specific to BREP and may change as the project evolves.
 
 ## PNG to Face (Image Trace)
 
@@ -195,6 +225,7 @@ Roadmap
   - Geometry utilities: `three/examples/jsm/utils/BufferGeometryUtils.js`
 - Manifold (`manifold-3d`): WASM CSG/mesh library used for manifold construction, boolean operations, and mesh queries. Repo: https://github.com/elalish/manifold/
   - Loaded via `src/BREP/setupManifold.js` with `vite-plugin-wasm` in the browser.
+- JSZip (`jszip`): packages 3MF containers and ZIPs of multiple STLs.
 - Vite (`vite`): dev server and build tooling.
 - Nodemon (`nodemon`): convenient live testing for Node-based checks.
 
@@ -231,7 +262,7 @@ The project also includes a simple license report generator (`pnpm generateLicen
 ## Status and Limitations
 
 - Mesh repair is heuristic and may need tuning for specific models.
-- 3MF: geometry is merged into one mesh; materials/textures are not preserved for editing (visualization only).
+- 3MF: geometry is merged into one mesh; materials/textures are not preserved for editing (visualization only). 3MF files exported by BREP include an embedded feature history for round‑tripping in BREP; other apps will ignore this metadata.
 - APIs and file formats are subject to change as the project evolves.
 
 ## License
