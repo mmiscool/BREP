@@ -34,7 +34,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Primitive Torus: Implemented
 - Primitive Pyramid: Implemented
 - Plane: Implemented
-- Datium: Planned
+- Datum: Planned
 - Sketch: Implemented
 - Extrude: Implemented
 - Sweep: Implemented
