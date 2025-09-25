@@ -61,6 +61,7 @@ export function build3MFModelXML(solids, opts = {}) {
   const precision = Number.isFinite(opts.precision) ? opts.precision : 6;
   const scale = Number.isFinite(opts.scale) ? opts.scale : 1.0;
   const modelMetadata = opts.modelMetadata && typeof opts.modelMetadata === 'object' ? opts.modelMetadata : null;
+  const includeFaceTags = opts.includeFaceTags !== false; // default on
 
   const lines = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
@@ -73,16 +74,71 @@ export function build3MFModelXML(solids, opts = {}) {
   }
   lines.push('  <resources>');
 
-  let objId = 1;
-  const ids = [];
+  // Resource/object id allocator (unique across the model)
+  let nextId = 1;
+  const buildItems = [];
+
+  let solidIdx = 0;
   for (const s of (solids || [])) {
     if (!s || typeof s.getMesh !== 'function') continue;
     const mesh = s.getMesh();
     if (!mesh || !mesh.vertProperties || !mesh.triVerts) continue;
-    const name = xmlEsc(s.name || `solid_${objId}`);
+    const name = xmlEsc(s.name || `solid_${solidIdx + 1}`);
     const vp = mesh.vertProperties; // Float32Array
     const tv = mesh.triVerts;       // Uint32Array
 
+    // Optional: build a per-object BaseMaterials resource to tag faces
+    // We rely on mesh.faceID (Uint32Array) and, if available, a mapping on the Solid instance.
+    let matPid = null; // resource id for this object's material group
+    let faceIndexOf = null; // function: id -> material index
+    if (includeFaceTags && mesh.faceID && mesh.faceID.length === (tv.length / 3 | 0)) {
+      // Gather unique face IDs present on this mesh
+      const faceIDs = mesh.faceID;
+      const uniqueIds = [];
+      const seen = new Set();
+      for (let t = 0; t < faceIDs.length; t++) {
+        const fid = faceIDs[t] >>> 0;
+        if (!seen.has(fid)) { seen.add(fid); uniqueIds.push(fid); }
+      }
+      if (uniqueIds.length > 0) {
+        // Map each ID to a readable name if available on the Solid, else fallback
+        const idToName = new Map();
+        const map = s && s._idToFaceName instanceof Map ? s._idToFaceName : null;
+        for (let i = 0; i < uniqueIds.length; i++) {
+          const fid = uniqueIds[i];
+          const nm = (map && map.get(fid)) || `FACE_${fid}`;
+          idToName.set(fid, String(nm));
+        }
+
+        // Assign contiguous indices in encounter order
+        const idToMatIdx = new Map();
+        for (let i = 0; i < uniqueIds.length; i++) idToMatIdx.set(uniqueIds[i], i);
+        faceIndexOf = (fid) => idToMatIdx.get(fid) ?? 0;
+
+        // Emit basematerials resource
+        matPid = nextId++;
+        lines.push(`    <basematerials id="${matPid}">`);
+        for (let i = 0; i < uniqueIds.length; i++) {
+          const fid = uniqueIds[i];
+          const nm = idToName.get(fid);
+          // Optional: deterministic color derived from name hash for readability
+          let color = '#808080';
+          try {
+            let h = 2166136261 >>> 0;
+            const sname = nm || '';
+            for (let k = 0; k < sname.length; k++) { h ^= sname.charCodeAt(k); h = (h * 16777619) >>> 0; }
+            const r = ((h      ) & 0xFF);
+            const g = ((h >>  8) & 0xFF);
+            const b = ((h >> 16) & 0xFF);
+            color = `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+          } catch {}
+          lines.push(`      <base name="${xmlEsc(nm)}" displaycolor="${color}"/>`);
+        }
+        lines.push('    </basematerials>');
+      }
+    }
+
+    const objId = nextId++;
     lines.push(`    <object id="${objId}" type="model" name="${name}">`);
     lines.push('      <mesh>');
 
@@ -100,23 +156,34 @@ export function build3MFModelXML(solids, opts = {}) {
     // Triangles
     lines.push('        <triangles>');
     const tCount = (tv.length / 3) | 0;
-    for (let t = 0; t < tCount; t++) {
-      const v1 = tv[t * 3 + 0] >>> 0;
-      const v2 = tv[t * 3 + 1] >>> 0;
-      const v3 = tv[t * 3 + 2] >>> 0;
-      lines.push(`          <triangle v1="${v1}" v2="${v2}" v3="${v3}"/>`);
+    if (matPid != null && mesh.faceID && mesh.faceID.length === tCount && faceIndexOf) {
+      const faceIDs = mesh.faceID;
+      for (let t = 0; t < tCount; t++) {
+        const v1 = tv[t * 3 + 0] >>> 0;
+        const v2 = tv[t * 3 + 1] >>> 0;
+        const v3 = tv[t * 3 + 2] >>> 0;
+        const idx = faceIndexOf(faceIDs[t] >>> 0) >>> 0;
+        lines.push(`          <triangle v1="${v1}" v2="${v2}" v3="${v3}" pid="${matPid}" p1="${idx}" p2="${idx}" p3="${idx}"/>`);
+      }
+    } else {
+      for (let t = 0; t < tCount; t++) {
+        const v1 = tv[t * 3 + 0] >>> 0;
+        const v2 = tv[t * 3 + 1] >>> 0;
+        const v3 = tv[t * 3 + 2] >>> 0;
+        lines.push(`          <triangle v1="${v1}" v2="${v2}" v3="${v3}"/>`);
+      }
     }
     lines.push('        </triangles>');
 
     lines.push('      </mesh>');
     lines.push('    </object>');
-    ids.push(objId);
-    objId++;
+    buildItems.push(objId);
+    solidIdx++;
   }
 
   lines.push('  </resources>');
   lines.push('  <build>');
-  for (const id of ids) {
+  for (const id of buildItems) {
     lines.push(`    <item objectid="${id}"/>`);
   }
   lines.push('  </build>');

@@ -118,7 +118,7 @@ Where this lives in the code:
 - JSON ↔ XML helpers for the embedded history: `src/utils/jsonXml.js`.
 
 Notes and limitations
-- 3MF export focuses on geometry and editable history; materials/textures are not currently exported.
+- 3MF export focuses on geometry and editable history. It also tags each triangle with its originating face label using a per-object BaseMaterials resource (face names appear as material names). No physically-accurate materials or textures are exported.
 - 3MF import merges geometry for editing and does not reconstruct materials.
 - Embedded feature history is specific to BREP and may change as the project evolves.
 
