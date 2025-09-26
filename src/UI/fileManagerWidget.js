@@ -1,10 +1,11 @@
 // fileManagerWidget.js
-// A lightweight widget to save/load/delete models from browser localStorage.
+// A lightweight widget to save/load/delete models using localStorage shim.
 // Designed to be embedded as an Accordion section (similar to expressionsManager).
 import * as THREE from 'three';
 import JSZip from 'jszip';
 import { generate3MF } from '../exporters/threeMF.js';
 import { jsonToXml, xmlToJson } from '../utils/jsonXml.js';
+import { localStorage as LS } from '../localStorageShim.js';
 
 export class FileManagerWidget {
   constructor(viewer) {
@@ -24,6 +25,45 @@ export class FileManagerWidget {
     // Attempt migration from legacy single-key storage to per-model keys
     this._migrateFromLegacy();
     this.refreshList();
+
+    // Refresh UI thumbnails/list when any model key changes via storage events (cross-tab and other code paths)
+    try {
+      this._onStorage = (ev) => {
+        try {
+          const key = (ev && (ev.key ?? (ev.detail && ev.detail.key))) || '';
+          if (!key) return;
+          if (key.startsWith(this._modelPrefix)) {
+            // Invalidate cache for this model and refresh list
+            try {
+              const encName = key.slice(this._modelPrefix.length);
+              const name = decodeURIComponent(encName);
+              if (name) this._thumbCache.delete(name);
+            } catch {}
+            this.refreshList();
+          } else if (key === this._lastKey || key === '__BREP_FM_ICONSVIEW__') {
+            // Preferences updated elsewhere; re-sync
+            this.currentName = this._loadLastName() || this.currentName || '';
+            this._iconsOnly = this._loadIconsPref();
+            this.refreshList();
+          }
+        } catch { /* ignore */ }
+      };
+      window.addEventListener('storage', this._onStorage);
+    } catch { /* ignore */ }
+
+    // Ensure shim hydration completes, then re-sync prefs/list and auto-load last
+    try {
+      Promise.resolve(LS.ready()).then(() => {
+        try {
+          this.currentName = this._loadLastName() || this.currentName || '';
+          this._iconsOnly = this._loadIconsPref();
+          this._migrateFromLegacy();
+          this.refreshList();
+          const last = this._loadLastName();
+          if (last && this._getModel(last)) this.loadModel(last);
+        } catch { /* ignore */ }
+      });
+    } catch { /* ignore */ }
 
     // Auto-load the last opened/saved model (if present)
     // Keeps the UX seamless across page reloads.
@@ -48,11 +88,11 @@ export class FileManagerWidget {
   _listModels() {
     const items = [];
     try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
+      for (let i = 0; i < LS.length; i++) {
+        const k = LS.key(i);
         if (!k || !k.startsWith(this._modelPrefix)) continue;
         try {
-          const raw = localStorage.getItem(k);
+          const raw = LS.getItem(k);
           if (!raw) continue;
           const parsed = JSON.parse(raw);
           const encName = k.slice(this._modelPrefix.length);
@@ -72,7 +112,7 @@ export class FileManagerWidget {
   // Fetch one model record
   _getModel(name) {
     try {
-      const raw = localStorage.getItem(this._modelKey(name));
+      const raw = LS.getItem(this._modelKey(name));
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       // Do not surface legacy 'thumbnail' field anymore; we derive from 3MF on demand
@@ -81,43 +121,43 @@ export class FileManagerWidget {
   }
   // Persist one model record
   _setModel(name, dataObj) {
-    localStorage.setItem(this._modelKey(name), JSON.stringify(dataObj));
+    LS.setItem(this._modelKey(name), JSON.stringify(dataObj));
   }
   // Remove one model record
   _removeModel(name) {
-    localStorage.removeItem(this._modelKey(name));
+    LS.removeItem(this._modelKey(name));
   }
   // One-time migration from legacy aggregate index array to per-model keys
   _migrateFromLegacy() {
     try {
-      const raw = localStorage.getItem(this._storageKey);
+      const raw = LS.getItem(this._storageKey);
       if (!raw) return;
       const arr = JSON.parse(raw);
       if (!Array.isArray(arr)) return;
       for (const it of arr) {
         if (!it || !it.name) continue;
-        const existing = localStorage.getItem(this._modelKey(it.name));
+        const existing = LS.getItem(this._modelKey(it.name));
         if (existing) continue; // don't overwrite existing per-model
         const record = { savedAt: it.savedAt || new Date().toISOString(), data: it.data };
         this._setModel(it.name, record);
       }
       // Remove legacy blob after migrating
-      localStorage.removeItem(this._storageKey);
+      LS.removeItem(this._storageKey);
     } catch {
       // ignore migration failures
     }
   }
   _saveLastName(name) {
-    if (name) localStorage.setItem(this._lastKey, name);
+    if (name) LS.setItem(this._lastKey, name);
   }
   _loadLastName() {
-    return localStorage.getItem(this._lastKey) || '';
+    return LS.getItem(this._lastKey) || '';
   }
   _saveIconsPref(v) {
-    try { localStorage.setItem('__BREP_FM_ICONSVIEW__', v ? '1' : '0'); } catch {}
+    try { LS.setItem('__BREP_FM_ICONSVIEW__', v ? '1' : '0'); } catch {}
   }
   _loadIconsPref() {
-    try { return localStorage.getItem('__BREP_FM_ICONSVIEW__') === '1'; } catch { return false; }
+    try { return LS.getItem('__BREP_FM_ICONSVIEW__') === '1'; } catch { return false; }
   }
 
   // ----- UI -----
@@ -269,6 +309,8 @@ export class FileManagerWidget {
     // Store only the 3MF (with embedded thumbnail) and timestamp
     const record = { savedAt: now, data3mf: threeMfB64 };
     this._setModel(name, record);
+    // Update in-memory thumbnail cache so UI reflects the new preview immediately
+    try { if (thumbnail) this._thumbCache.set(name, thumbnail); } catch { }
     this.currentName = name;
     this._saveLastName(name);
     this.refreshList();

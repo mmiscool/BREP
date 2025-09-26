@@ -1,5 +1,6 @@
 import { generate3MF } from '../../exporters/threeMF.js';
 import { jsonToXml } from '../../utils/jsonXml.js';
+import { localStorage as LS } from '../../localStorageShim.js';
 
 function _uint8ToBase64(uint8) {
   let binary = '';
@@ -41,7 +42,7 @@ export function createSaveButton(viewer) {
         return;
       }
     } catch {}
-    // Fallback: quick autosave to localStorage
+    // Fallback: quick autosave to localStorage shim
     try {
       // Produce a compact 3MF that embeds feature history only
       const json = await viewer?.partHistory?.toJSON?.();
@@ -62,8 +63,8 @@ export function createSaveButton(viewer) {
       const b64 = _uint8ToBase64(bytes);
       // Do not persist a separate thumbnail; it's embedded in the 3MF
       const payload = { savedAt: new Date().toISOString(), data3mf: b64 };
-      localStorage.setItem('__BREP_MODEL__:autosave', JSON.stringify(payload));
-      localStorage.setItem('__BREP_MODELS_LASTNAME__', 'autosave');
+      LS.setItem('__BREP_MODEL__:autosave', JSON.stringify(payload));
+      LS.setItem('__BREP_MODELS_LASTNAME__', 'autosave');
       alert('Saved as "autosave"');
     } catch {
       alert('Save failed.');

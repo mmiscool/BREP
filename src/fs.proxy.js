@@ -1,6 +1,7 @@
 // fs.proxy.js — ESM-safe, works in Node (CJS & ESM) and browser.
 // - Node: proxies native fs (sync, callback, and promises).
 // - Browser: localStorage-backed VFS for a common subset.
+import { localStorage as LS } from './localStorageShim.js';
 
 const isNode =
   typeof process !== 'undefined' &&
@@ -131,7 +132,7 @@ function nowMs() { return Date.now(); }
 class LocalStorageFS {
   constructor() { this._init(); }
   _init() {
-    const raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(VFS_KEY) : null;
+    const raw = LS.getItem(VFS_KEY);
     if (raw) {
       try { this.index = JSON.parse(raw); } catch { this.index = { entries: {} }; }
     } else {
@@ -142,7 +143,7 @@ class LocalStorageFS {
       this._save();
     }
   }
-  _save() { if (typeof localStorage === 'undefined') return; localStorage.setItem(VFS_KEY, JSON.stringify(this.index)); }
+  _save() { LS.setItem(VFS_KEY, JSON.stringify(this.index)); }
   _enoent(code, path) { const err = new Error(`${code}: no such file or directory, ${path}`); err.code = code; return err; }
   _eexist(code, path) { const err = new Error(`${code}: file already exists, ${path}`); err.code = code; return err; }
   _linkIntoParent(p) {

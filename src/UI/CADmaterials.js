@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { LineMaterial } from 'three/examples/jsm/Addons.js';
 import { SelectionFilter } from './SelectionFilter.js';
+import { localStorage as LS } from '../localStorageShim.js';
 
 // CADmaterials for each entity type
 
@@ -237,16 +238,14 @@ export class CADmaterialWidget {
     // --- Persistence helpers (browser only) ---
     _loadAllSettings() {
         try {
-            if (typeof localStorage === 'undefined') return {};
-            const raw = localStorage.getItem(this._storageKey);
+            const raw = LS.getItem(this._storageKey);
             const obj = raw ? JSON.parse(raw) : {};
             return (obj && typeof obj === 'object') ? obj : {};
         } catch { return {}; }
     }
     _saveAllSettings() {
         try {
-            if (typeof localStorage === 'undefined') return;
-            localStorage.setItem(this._storageKey, JSON.stringify(this._settings));
+            LS.setItem(this._storageKey, JSON.stringify(this._settings));
         } catch {/* ignore */}
     }
     _getMatKey(labelText) {

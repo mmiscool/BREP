@@ -23,6 +23,7 @@ import { ViewCube } from './ViewCube.js';
 import { FloatingWindow } from './FloatingWindow.js';
 import { generateObjectUI } from './objectDump.js';
 import { PluginsWidget } from './PluginsWidget.js';
+import { localStorage as LS } from '../localStorageShim.js';
 import { loadSavedPlugins } from '../plugins/pluginManager.js';
 
 export class Viewer {
@@ -60,8 +61,8 @@ export class Viewer {
 
         // Apply persisted sidebar width early (before building UI)
         try {
-            if (this.sidebar && typeof localStorage !== 'undefined') {
-                const raw = localStorage.getItem('__CAD_MATERIAL_SETTINGS__');
+            if (this.sidebar) {
+                const raw = LS.getItem('__CAD_MATERIAL_SETTINGS__');
                 if (raw) {
                     try {
                         const obj = JSON.parse(raw);
