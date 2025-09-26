@@ -223,13 +223,7 @@ export class SketchMode3D {
     this._dim3D.name = `__SKETCH_DIMS__:${this.featureID}`;
     v.scene.add(this._dim3D);
 
-    // Ensure camera renders the sketch layer (31) in addition to default
-    try {
-      this._camLayersPrev = v.camera?.layers?.mask;
-      if (v.camera?.layers && typeof v.camera.layers.enable === 'function') {
-        v.camera.layers.enable(31);
-      }
-    } catch { }
+    // No special camera layers needed
     this.#rebuildSketchGraphics();
 
     // Refresh external reference points to current model projection
@@ -366,13 +360,7 @@ export class SketchMode3D {
     this._dimRoot = null;
     this._dimOffsets.clear();
 
-    // Restore camera layers visibility
-    try {
-      if (v?.camera?.layers && this._camLayersPrev !== undefined) {
-        v.camera.layers.mask = this._camLayersPrev;
-      }
-    } catch { }
-    this._camLayersPrev = undefined;
+    // No camera layer changes to restore
 
     // Restore visibility of any SKETCH groups we hid on open
     try {
@@ -1650,12 +1638,33 @@ export class SketchMode3D {
       return;
     }
 
-    // Geometry x Geometry (2 lines) → Parallel / Perp / Angle
+    // Geometry x Geometry (2 lines) → Parallel / Perp / Angle / Equal Length
     const twoLines = geos.length === 2 && geos.every((g) => g?.type === "line");
     if (twoLines) {
       this._ctxBar.appendChild(mk("Parallel ∥", "∥"));
       this._ctxBar.appendChild(mk("Perpendicular ⟂", "⟂"));
       this._ctxBar.appendChild(mk("Angle ∠", "∠"));
+      this._ctxBar.appendChild(mk("Equal Distance ⇌", "⇌"));
+      // Also allow delete when any selection exists
+      if (items.length) {
+        const del = document.createElement("button");
+        del.textContent = "Delete";
+        del.style.color = "#ff8b8b";
+        del.style.background = "transparent";
+        del.style.border = "1px solid #5b2b2b";
+        del.style.borderRadius = "6px";
+        del.style.padding = "4px 8px";
+        del.onclick = () => this.#deleteSelection();
+        this._ctxBar.appendChild(del);
+      }
+      return;
+    }
+
+    // Geometry x Geometry (2 arcs/circles) → Equal Radius
+    const twoRadial = geos.length === 2 && geos.every((g) => g && (g.type === "arc" || g.type === "circle"));
+    if (twoRadial) {
+      // Equal distance between center→rim pairs implies equal radii
+      this._ctxBar.appendChild(mk("Equal Distance ⇌", "⇌"));
       // Also allow delete when any selection exists
       if (items.length) {
         const del = document.createElement("button");
@@ -2107,7 +2116,7 @@ export class SketchMode3D {
         const ln = new THREE.Line(bg, mat);
         if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        try { ln.layers.set(31); } catch { }
+        
         ln.userData = { kind: "geometry", id: geo.id, type: "line" };
         grp.add(ln);
       } else if (geo.type === "circle") {
@@ -2136,7 +2145,7 @@ export class SketchMode3D {
         const ln = new THREE.Line(bg, mat);
         if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        try { ln.layers.set(31); } catch { }
+        
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
       } else if (geo.type === "arc") {
@@ -2174,7 +2183,7 @@ export class SketchMode3D {
         const ln = new THREE.Line(bg, mat);
         if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        try { ln.layers.set(31); } catch { }
+        
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
       } else if (geo.type === "bezier") {
@@ -2205,7 +2214,7 @@ export class SketchMode3D {
         const ln = new THREE.Line(bg, mat);
         if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        try { ln.layers.set(31); } catch { }
+        
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
 
@@ -2229,7 +2238,7 @@ export class SketchMode3D {
       });
       const m = new THREE.Mesh(this._handleGeom, mat);
       m.renderOrder = 10001;
-      try { m.layers.set(31); } catch { }
+      
       m.position.copy(to3(p.x, p.y));
       m.userData = { kind: "point", id: p.id };
       m.scale.setScalar(r);

@@ -524,7 +524,7 @@ export function dimDistance3D(inst, p0, p1, cid, color = 0x67e667) {
   const d = typeof off.d === 'number' ? off.d : (off.du || 0) * nx + (off.dv || 0) * ny;
   const ou = nx * (base + d), ov = ny * (base + d);
   const P = (u, v) => new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
-  const addLine = (pts, mat) => { const g = new THREE.BufferGeometry().setFromPoints(pts.map(p => P(p.u, p.v))); const ln = new THREE.Line(g, mat); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; try { ln.layers.set(31); } catch { } inst._dim3D.add(ln); };
+  const addLine = (pts, mat) => { const g = new THREE.BufferGeometry().setFromPoints(pts.map(p => P(p.u, p.v))); const ln = new THREE.Line(g, mat); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; inst._dim3D.add(ln); };
   const green = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
   addLine([{ u: u0 + ou, v: v0 + ov }, { u: u1 + ou, v: v1 + ov }], green);
   addLine([{ u: u0, v: v0 }, { u: u0 + ou, v: v0 + ov }], green.clone());
@@ -540,7 +540,7 @@ export function dimRadius3D(inst, pc, pr, cid, color = 0x69a8ff) {
   const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin;
   const P = (u, v) => new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
   const blue = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
-  const add = (uvs) => { const g = new THREE.BufferGeometry().setFromPoints(uvs.map(q => P(q.u, q.v))); const ln = new THREE.Line(g, blue); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; try { ln.layers.set(31); } catch { } inst._dim3D.add(ln); };
+  const add = (uvs) => { const g = new THREE.BufferGeometry().setFromPoints(uvs.map(q => P(q.u, q.v))); const ln = new THREE.Line(g, blue); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; inst._dim3D.add(ln); };
   const vx = pr.x - pc.x, vy = pr.y - pc.y; const L = Math.hypot(vx, vy) || 1; const rx = vx / L, ry = vy / L; const nx = -ry, ny = rx;
   // Support both {dr,dp} and generic {du,dv}
   let dr = 0, dp = 0;
@@ -610,7 +610,7 @@ export function dimAngle3D(inst, p0, p1, p2, p3, cid, I, color = 0x69a8ff, value
   const uvs = []; for (let i = 0; i <= segs; i++) { const t = aStart + d * (i / segs); uvs.push({ u: cx + Math.cos(t) * r, v: cy + Math.sin(t) * r }); }
   const blue = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
   const g = new THREE.BufferGeometry().setFromPoints(uvs.map(q => P(q.u, q.v)));
-  const ln = new THREE.Line(g, blue); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; try { ln.layers.set(31); } catch { } inst._dim3D.add(ln);
+  const ln = new THREE.Line(g, blue); ln.userData = { kind: 'dim', cid }; ln.renderOrder = 10020; inst._dim3D.add(ln);
 
   // Persist geometry info for label centering at arc midpoint
   try {
@@ -632,7 +632,7 @@ export function dimAngle3D(inst, p0, p1, p2, p3, cid, I, color = 0x69a8ff, value
     const gg1 = new THREE.BufferGeometry().setFromPoints([P(tip.u, tip.v), P(A.u, A.v)]);
     const gg2 = new THREE.BufferGeometry().setFromPoints([P(tip.u, tip.v), P(B.u, B.v)]);
     const la = new THREE.Line(gg1, blue.clone()); const lb = new THREE.Line(gg2, blue.clone());
-    la.renderOrder = 10020; lb.renderOrder = 10020; try { la.layers.set(31); lb.layers.set(31); } catch { }
+    la.renderOrder = 10020; lb.renderOrder = 10020;
     inst._dim3D.add(la); inst._dim3D.add(lb);
   };
   // Orient arrowheads to face each other along the drawn arc

@@ -212,7 +212,7 @@ export function drawConstraintGlyphs(inst, constraints) {
         const mesh = new THREE.Mesh(g, mat);
         mesh.applyMatrix4(m);
         mesh.renderOrder = 10030;
-        try { mesh.layers.set(31); } catch { }
+        
         mesh.userData = { kind: 'glyphHit', cid: c.id };
         inst._dim3D.add(mesh);
       } catch { }
