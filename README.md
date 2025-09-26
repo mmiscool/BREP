@@ -18,6 +18,20 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Browser test runner captures per-test canvas snapshots (with auto Zoom‑to‑Fit) and shows them in the log dialog.
 - Easy to use plugin system lets you import your own plugins from github repos. 
 
+## What's New
+
+- 3D Model Import improvements
+  - Import button prefers 3MF with embedded feature history; falls back to pure geometry when no history is present. BREP JSON is still supported for history‑only import.
+  - The Import 3D Model feature auto‑detects STL vs 3MF from strings, data URLs, or ArrayBuffers. 3MFs are merged to a single editable mesh; STLs import as geometry only.
+  - File Manager save/load now uses compact 3MF with embedded feature history and thumbnail; legacy JSON remains compatible for older saves.
+- Image to Face + Image Editor
+  - “Edit Image” launches an in‑app paint‑like editor. If no image is set, it starts with a 300×300 white canvas by default.
+  - Editor UI prefers dark mode (image unaffected), renders at true 1:1 pixels with DPR‑aware crispness, and shows immediately on open.
+  - Resize handle on the bottom‑right lets you expand or crop the working canvas; edits are preserved when growing, cropped when shrinking.
+  - Brush improvements: live cursor outline, shapes (round/square/diamond), eraser honors brush shape, smooth dabbed strokes.
+  - Paint Bucket tool with tolerance slider (0–255) fills contiguous regions based on the composited image (background + edits) while applying paint only to the draw layer.
+  - Finish/Cancel close the editor; Finish updates the feature image and triggers a recompute.
+
 ## Plugins and Example
 
 - Example plugin repository: https://github.com/mmiscool/BREPpluginExample
@@ -34,18 +48,19 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Primitive Torus: Implemented
 - Primitive Pyramid: Implemented
 - Plane: Implemented
-- Datum: Planned
+- Datum: Implemented
 - Sketch: Implemented
 - Extrude: Implemented
 - Sweep: Implemented
-- Loft: Planned
+- Loft: Implemented
 - Revolve: Implemented
 - Mirror: Implemented
 - Boolean: Implemented
 - Fillet: Implemented
 - Chamfer: Implemented
-- STL/3MF Import: Implemented
-- PNG to Face (image trace): Implemented
+- Remesh: Implemented
+- Import 3D Model (STL/3MF): Implemented
+- Image to Face (image trace): Implemented
 
 ## Getting Started
 
@@ -70,9 +85,9 @@ Prereqs: Node.js 18+ and `pnpm` installed.
 
 ## Importing Models (STL and 3MF)
 
-Use the “STL Import” feature in the history panel. It now supports both STL and 3MF:
+Use the “Import 3D Model” feature in the history panel. It supports both STL and 3MF:
 
-Alternatively, use the top‑toolbar “Import…” button to open 3MF (with or without embedded history) or BREP JSON. For STL files, add an “STL Import” feature to the history.
+Alternatively, use the top‑toolbar “Import…” button to open 3MF (with or without embedded history) or BREP JSON. If a 3MF includes embedded feature history, BREP restores and runs it; if not, it imports as geometry. For STL files, add an “Import 3D Model” feature to the history (auto‑detects STL vs 3MF).
 
 - STL: ASCII or binary. Parsed with `three/examples/jsm/loaders/STLLoader.js`.
 - 3MF: ZIP-based format. Parsed with `three/examples/jsm/loaders/3MFLoader.js` and merged.
@@ -85,7 +100,7 @@ Programmatic example (from tests):
 import { PartHistory } from './src/PartHistory.js';
 
 const ph = new PartHistory();
-const importFeature = await ph.newFeature('STL'); // also accepts 3MF
+const importFeature = await ph.newFeature('IMPORT3D');
 importFeature.inputParams.fileToImport = someStlOr3mfData; // string (ASCII or data URL) or ArrayBuffer
 importFeature.inputParams.deflectionAngle = 15; // degrees to group triangles into faces
 await ph.runHistory();
@@ -99,6 +114,19 @@ Supported formats and how they round‑trip through BREP:
   - Export: Generates a valid 3MF container that includes the triangulated geometry plus an embedded copy of your feature history so the file remains editable later in this app. Non‑manifold solids are detected and skipped (you will be notified), and the export still proceeds so you can share the file or fix later. The history is stored as XML at `Metadata/featureHistory.xml`, and a model metadata entry `featureHistoryPath` points to it. Multiple solids export as separate `<object>` items in a single 3MF. Units are configurable (default `millimeter`).
   - Import: If a 3MF contains `Metadata/featureHistory.xml` (or any `*featureHistory.xml`), BREP loads that history and rebuilds the model, preserving editable features. If not present, the 3MF is imported as pure geometry (mesh only).
   - Compatibility: The embedded history is non‑standard metadata; other 3MF viewers will ignore it, but the 3MF remains fully valid and viewable elsewhere.
+
+## Image to Face & Image Editor
+
+The Image to Face feature traces a monochrome image to create planar geometry that can be placed on a selected plane/face and used downstream.
+
+- Parameters: threshold (0–255), invert, pixelScale, center, simplify options, and an “Edit Image” button.
+- Edit Image opens the paint‑like editor:
+  - Starts with your current image; if none, uses a 300×300 white canvas.
+  - Dark‑mode UI, 1:1 pixel rendering by default (DPR‑aware), and immediate display.
+  - Tools: Brush, Eraser, Pan (Space), Paint Bucket (G) with tolerance slider.
+  - Brush: size slider, shape selector (round/square/diamond), live outline preview.
+  - Canvas: bottom‑right resize handle to expand/crop the working area.
+  - Undo/Redo, Fit view, Finish (saves back to the feature and recomputes), Cancel.
 
 - STL:
   - Export: ASCII STL. If multiple solids are selected, the Export dialog produces a ZIP with one STL per solid. Unit scaling is applied at export time.
@@ -122,23 +150,7 @@ Notes and limitations
 - 3MF import merges geometry for editing and does not reconstruct materials.
 - Embedded feature history is specific to BREP and may change as the project evolves.
 
-## PNG to Face (Image Trace)
-
-Use the “PNG to Face” feature to convert a monochrome PNG into a planar Face with boundary edges suitable for Extrude or Sweep. The image is binarized at a threshold and the foreground region is traced into closed loops with automatic hole detection. The result is returned as a SKETCH-like group containing:
-
-- A triangulated Face (`...:PROFILE`) in the XY plane (Z=0)
-- Edge loops for the outer boundary and holes
-
-Parameters:
-- fileToImport: PNG data (file picker or data URL)
-- threshold: 0–255 cutoff (default 128)
-- invert: swap foreground/background
-- pixelScale: world units per pixel (default 1)
-- center: center geometry at the origin (default on)
-- rdpTolerance: optional simplification in world units (0 disables)
-- placementPlane: select a PLANE or FACE to place the traced profile on (default is world XY)
-
-Then select the produced Face (or the SKETCH group) as the `profile` for the Extrude feature.
+<!-- Consolidated into the section above: Image to Face & Image Editor -->
 
 ## How It Works
 
