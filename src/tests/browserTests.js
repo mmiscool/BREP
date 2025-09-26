@@ -14,12 +14,13 @@ export class BrowserTesting {
     containerEl = document.getElementById('viewport'),
     sidebarEl = document.getElementById('sidebar'),
     exposeEnvOnWindow = true,
+    viewer = null, // optional: reuse existing Viewer instance if provided
   } = {}) {
     // URL flag to auto-progress (kept from previous behavior)
     this.autoProgress = window.location.href.includes("autoNext=true");
 
-    // Initialize Viewer env
-    this.env = new Viewer({ container: containerEl, sidebar: sidebarEl });
+    // Initialize Viewer env (reuse provided viewer when available)
+    this.env = viewer instanceof Viewer ? viewer : new Viewer({ container: containerEl, sidebar: sidebarEl });
     if (exposeEnvOnWindow) window.env = this.env;
 
     // Test registry (names in stable order)
@@ -68,6 +69,17 @@ export class BrowserTesting {
     await this.sleep(2000);
     const image = this.env.renderer.domElement.toDataURL();
     return image;
+  }
+
+  // ====== Visibility helpers ======
+  show() { try { if (this.ui?.window?.root) this.ui.window.root.style.display = ''; } catch {} }
+  hide() { try { if (this.ui?.window?.root) this.ui.window.root.style.display = 'none'; } catch {} }
+  toggle() {
+    try {
+      if (!this.ui?.window?.root) return;
+      const cur = this.ui.window.root.style.display;
+      this.ui.window.root.style.display = (cur === 'none') ? '' : 'none';
+    } catch {}
   }
 
   // ====== Hook invoked between tests (kept & extended) ======
@@ -587,11 +599,5 @@ function updateStatusCell(cell, value) {
 }
 
 
-// ====== Optional default instance (auto-mount widget immediately) ======
-const defaultTester = new BrowserTesting({
-  containerEl: document.getElementById('viewport'),
-  sidebarEl: document.getElementById('sidebar'),
-});
-// (No automatic full run here; user can use the widget)
-// If you still want auto-run like before, uncomment:
-//defaultTester.run();
+// Note: No default instance is created here.
+// The BrowserTesting UI is now launched on-demand from a toolbar button.

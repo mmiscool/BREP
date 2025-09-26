@@ -8,6 +8,7 @@ import { createInspectorToggleButton } from './inspectorToggleButton.js';
 import { createImportButton } from './importButton.js';
 import { createExportButton } from './exportButton.js';
 import { createAboutButton } from './aboutButton.js';
+import { createTestsButton } from './testsButton.js';
 
 export function registerDefaultToolbarButtons(viewer) {
   if (!viewer || typeof viewer.addToolbarButton !== 'function') return;
@@ -20,6 +21,7 @@ export function registerDefaultToolbarButtons(viewer) {
     createImportButton,
     createExportButton,
     createAboutButton,
+    createTestsButton,
   ];
 
   for (const make of creators) {
@@ -31,4 +33,3 @@ export function registerDefaultToolbarButtons(viewer) {
     } catch {}
   }
 }
-
