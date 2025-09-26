@@ -177,6 +177,7 @@ export async function loadPlugins(viewer, repoUrls) {
 }
 
 const STORAGE_KEY = '__BREP_PLUGIN_URLS__';
+const STORAGE_ENABLED_KEY = '__BREP_PLUGIN_ENABLED__';
 
 export function getSavedPluginUrls() {
   try {
@@ -192,8 +193,37 @@ export function savePluginUrls(urls) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify((urls || []).map(s => String(s || '').trim()).filter(Boolean))); } catch { }
 }
 
+// Enabled/disabled state per plugin URL. Defaults to enabled if missing.
+export function getPluginEnabledMap() {
+  try {
+    const raw = localStorage.getItem(STORAGE_ENABLED_KEY);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object') ? obj : {};
+  } catch { return {}; }
+}
+
+export function savePluginEnabledMap(map) {
+  try {
+    const obj = (map && typeof map === 'object') ? map : {};
+    localStorage.setItem(STORAGE_ENABLED_KEY, JSON.stringify(obj));
+  } catch { }
+}
+
+export function setPluginEnabled(url, enabled) {
+  try {
+    const m = getPluginEnabledMap();
+    if (!url) return;
+    m[String(url)] = Boolean(enabled);
+    savePluginEnabledMap(m);
+  } catch { }
+}
+
 export async function loadSavedPlugins(viewer) {
   const urls = getSavedPluginUrls();
   if (!urls.length) return [];
-  return loadPlugins(viewer, urls);
+  const enabled = getPluginEnabledMap();
+  // Default to enabled when state not yet saved
+  const urlsToLoad = urls.filter(u => enabled[u] !== false);
+  return loadPlugins(viewer, urlsToLoad);
 }

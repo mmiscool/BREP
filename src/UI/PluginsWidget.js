@@ -1,5 +1,5 @@
 // PluginsWidget — manage GitHub plugin repo URLs with a list+actions UI
-import { getSavedPluginUrls, savePluginUrls, loadPlugins, parseGithubUrl } from '../plugins/pluginManager.js';
+import { getSavedPluginUrls, savePluginUrls, loadPlugins, parseGithubUrl, getPluginEnabledMap, savePluginEnabledMap } from '../plugins/pluginManager.js';
 
 export class PluginsWidget {
   constructor(viewer) {
@@ -16,7 +16,11 @@ export class PluginsWidget {
     style.textContent = `
       .plg-col { display: flex; flex-direction: column; gap: 6px; }
       .plg-row { display: flex; gap: 6px; align-items: center; }
-      .plg-select { width: 100%; min-height: 120px; background: #0b0e14; color: #e5e7eb; border: 1px solid #1f2937; border-radius: 8px; padding: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; }
+      .plg-list { width: 100%; min-height: 120px; max-height: 220px; overflow: auto; background: #0b0e14; color: #e5e7eb; border: 1px solid #1f2937; border-radius: 8px; padding: 4px; }
+      .plg-item { display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px; cursor: default; }
+      .plg-item:hover { background: rgba(255,255,255,.03); }
+      .plg-item.selected { outline: 1px solid #374151; background: rgba(59,130,246,.08); }
+      .plg-url { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; user-select: text; }
       .plg-btn { background: rgba(255,255,255,.03); color: #f9fafb; border: 1px solid #374151; padding: 4px 8px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 12px; line-height: 1; transition: border-color .15s ease, background-color .15s ease, transform .05s ease; }
       .plg-btn:hover { border-color: #3b82f6; background: rgba(59,130,246,.12); }
       .plg-btn:active { transform: translateY(1px); }
@@ -41,16 +45,13 @@ export class PluginsWidget {
     col.className = 'plg-col';
     // internal list state
     this.urls = getSavedPluginUrls();
+    this.enabledMap = getPluginEnabledMap();
+    this._selectedIndex = -1;
 
-    // List of plugins as a <select> instead of free-form textarea
-    this.select = document.createElement('select');
-    this.select.className = 'plg-select';
-    this.select.size = 7;
-    this._refreshSelect();
-    this.select.addEventListener('change', () => {
-      const list = Array.isArray(this.urls) ? this.urls : [];
-      if (this.delBtn) this.delBtn.disabled = list.length === 0 || this.select.selectedIndex < 0;
-    });
+    // List of plugins as a custom list with checkboxes
+    this.listEl = document.createElement('div');
+    this.listEl.className = 'plg-list';
+    this._refreshList();
 
     const actions = document.createElement('div');
     actions.className = 'plg-row';
@@ -70,7 +71,10 @@ export class PluginsWidget {
     this.delBtn.addEventListener('click', () => this._deleteSelected());
     loadBtn.addEventListener('click', async () => {
       this._setStatus('Loading...');
-      const res = await loadPlugins(this.viewer, this.urls || []);
+      const list = Array.isArray(this.urls) ? this.urls : [];
+      const enabled = this.enabledMap && typeof this.enabledMap === 'object' ? this.enabledMap : {};
+      const toLoad = list.filter(u => enabled[u] !== false);
+      const res = await loadPlugins(this.viewer, toLoad || []);
       const lines = res.map(r => `${r.ok ? 'OK' : 'ERR'}  ${r.url}${r.ok ? '' : '  ' + (r.error?.message || r.error)}`);
       this._setStatus(lines.join('\n') || 'No plugins listed.');
     });
@@ -80,32 +84,63 @@ export class PluginsWidget {
     actions.appendChild(loadBtn);
 
 
-    col.appendChild(this.select);
+    col.appendChild(this.listEl);
     col.appendChild(actions);
     col.appendChild(this.statusEl);
     this.uiElement.appendChild(col);
   }
 
-  _refreshSelect() {
-    try { this.select.innerHTML = ''; } catch { }
+  _refreshList() {
+    try { this.listEl.innerHTML = ''; } catch { }
     const list = Array.isArray(this.urls) ? this.urls : [];
+    const enabled = this.enabledMap && typeof this.enabledMap === 'object' ? this.enabledMap : {};
     if (!list.length) {
-      const opt = document.createElement('option');
-      opt.disabled = true;
-      opt.textContent = 'No plugins saved';
-      this.select.appendChild(opt);
+      const empty = document.createElement('div');
+      empty.className = 'plg-item';
+      empty.style.opacity = '0.7';
+      empty.textContent = 'No plugins saved';
+      this.listEl.appendChild(empty);
+      this._selectedIndex = -1;
     } else {
-      for (const url of list) {
-        const opt = document.createElement('option');
-        opt.value = url;
-        opt.textContent = url;
-        this.select.appendChild(opt);
+      list.forEach((url, idx) => {
+        const row = document.createElement('div');
+        row.className = 'plg-item' + (idx === this._selectedIndex ? ' selected' : '');
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = enabled[url] !== false; // default to true
+        cb.title = 'Enable/disable loading this plugin';
+        cb.addEventListener('change', () => {
+          this.enabledMap[url] = Boolean(cb.checked);
+          try { savePluginEnabledMap(this.enabledMap); } catch {}
+        });
+
+        const label = document.createElement('div');
+        label.className = 'plg-url';
+        label.textContent = url;
+
+        const selectRow = (e) => {
+          // Avoid toggling selection when clicking checkbox intentionally
+          if (e && e.target === cb) return;
+          this._selectedIndex = idx;
+          Array.from(this.listEl.children).forEach((child, i) => {
+            if (!(child instanceof HTMLElement)) return;
+            child.classList.toggle('selected', i === idx);
+          });
+          if (this.delBtn) this.delBtn.disabled = list.length === 0 || this._selectedIndex < 0;
+        };
+        row.addEventListener('click', selectRow);
+
+        row.appendChild(cb);
+        row.appendChild(label);
+        this.listEl.appendChild(row);
+      });
+      if (this._selectedIndex < 0 && list.length > 0) {
+        this._selectedIndex = 0;
+        if (this.listEl.firstChild) this.listEl.firstChild.classList.add('selected');
       }
-      // Select the first by default
-      this.select.selectedIndex = Math.min(this.select.selectedIndex, list.length - 1);
     }
-    // Toggle delete availability
-    if (this.delBtn) this.delBtn.disabled = list.length === 0 || this.select.selectedIndex < 0;
+    if (this.delBtn) this.delBtn.disabled = list.length === 0 || this._selectedIndex < 0;
   }
 
   _save() { try { savePluginUrls(this.urls || []); } catch { } }
@@ -176,7 +211,13 @@ export class PluginsWidget {
       this.urls = Array.isArray(this.urls) ? this.urls : [];
       if (!this.urls.includes(v)) this.urls.push(v);
       this._save();
-      this._refreshSelect();
+      // Default to enabled when adding
+      try {
+        this.enabledMap = this.enabledMap && typeof this.enabledMap === 'object' ? this.enabledMap : {};
+        this.enabledMap[v] = true;
+        savePluginEnabledMap(this.enabledMap);
+      } catch { }
+      this._refreshList();
       this._setStatus('Saved.');
       close();
     });
@@ -197,13 +238,20 @@ export class PluginsWidget {
   }
 
   _deleteSelected() {
-    const idx = this.select ? this.select.selectedIndex : -1;
+    const idx = this._selectedIndex;
     const list = Array.isArray(this.urls) ? this.urls : [];
     if (idx < 0 || idx >= list.length) return;
-    list.splice(idx, 1);
+    const [removed] = list.splice(idx, 1);
     this.urls = list;
     this._save();
-    this._refreshSelect();
+    try {
+      if (removed && this.enabledMap && typeof this.enabledMap === 'object') {
+        delete this.enabledMap[removed];
+        savePluginEnabledMap(this.enabledMap);
+      }
+    } catch { }
+    this._selectedIndex = Math.min(idx, Math.max(0, list.length - 1));
+    this._refreshList();
     this._setStatus('Deleted.');
   }
 

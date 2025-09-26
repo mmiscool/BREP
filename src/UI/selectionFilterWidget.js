@@ -244,10 +244,6 @@ export class SelectionFilterWidget {
         const spacer = document.createElement('div');
         spacer.className = 'sfw-spacer';
         wrap.appendChild(spacer);
-        const hint = document.createElement('div');
-        hint.className = 'sfw-kbd';
-        hint.textContent = 'Esc: clear';
-        wrap.appendChild(hint);
         this.uiElement.innerHTML = ""; // Clear existing UI
         this.uiElement.appendChild(wrap);
     }
