@@ -214,10 +214,12 @@ export class SketchMode3D {
 
     // Build editing group
     this._sketchGroup = new THREE.Group();
+    this._sketchGroup.renderOrder = 9999; // render last
     this._sketchGroup.name = `__SKETCH_EDIT__:${this.featureID}`;
     v.scene.add(this._sketchGroup);
     // Dimension 3D group
     this._dim3D = new THREE.Group();
+    this._dim3D.renderOrder = 9998; // just before sketch group
     this._dim3D.name = `__SKETCH_DIMS__:${this.featureID}`;
     v.scene.add(this._dim3D);
 
@@ -1423,8 +1425,8 @@ export class SketchMode3D {
   #setTool(tool) {
     this._tool = tool;
     // Clear any pending creation state when switching tools
-    try { this._arcSel = null; } catch {}
-    try { this._bezierSel = null; } catch {}
+    try { this._arcSel = null; } catch { }
+    try { this._bezierSel = null; } catch { }
     this.#refreshTopToolbarActive();
   }
 
@@ -1924,8 +1926,8 @@ export class SketchMode3D {
         for (let i = 1; i <= segs; i++) {
           const t = i / segs;
           const mt = 1 - t;
-          const bx = mt*mt*mt*p0.x + 3*mt*mt*t*p1.x + 3*mt*t*t*p2.x + t*t*t*p3.x;
-          const by = mt*mt*mt*p0.y + 3*mt*mt*t*p1.y + 3*mt*t*t*p2.y + t*t*t*p3.y;
+          const bx = mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x;
+          const by = mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y;
           const d = distToSeg(prevx, prevy, bx, by, uv.u, uv.v);
           if (d < bestDist) { bestDist = d; best = { id: geo.id, type: 'bezier' }; }
           prevx = bx; prevy = by;
@@ -2066,14 +2068,14 @@ export class SketchMode3D {
     // Sketch curves should always render on top of scene geometry
     const lineMat = new THREE.LineBasicMaterial({
       color: 0xffff88,
-      depthTest: false,
-      depthWrite: false,
+      depthTest: false,        // <- renders on top regardless of depth
+      depthWrite: false,       // <- doesn't modify the depth buffer
       transparent: true,
     });
     const dashedMatBase = new THREE.LineDashedMaterial({
       color: 0xffff88,
-      depthTest: false,
-      depthWrite: false,
+      depthTest: false,        // <- renders on top regardless of depth
+      depthWrite: false,       // <- doesn't modify the depth buffer
       transparent: true,
       dashSize: 0.1, // placeholder; scaled per viewport below
       gapSize: 0.08,

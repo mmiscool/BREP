@@ -12,14 +12,14 @@ export const CADmaterials = {
             color: "#2eff2e",
             side: THREE.DoubleSide,
             transparent: true,
-            opacity: 1,
+            opacity: .5,
             depthWrite: false
         }),
         SELECTED: new THREE.MeshBasicMaterial({
             color: "#2eff2e",
             side: THREE.DoubleSide,
             transparent: true,
-            opacity: 1,
+            opacity: .5,
             wireframe: true,
             depthWrite: false
         }),
@@ -31,9 +31,6 @@ export const CADmaterials = {
             //linecap: "round",
             //linejoin: "round",
             transparent: true,
-
-  
-
         }),
         SELECTED: new LineMaterial({
             color: "#ff00ff",

@@ -108,7 +108,7 @@ export class ViewCube {
       ctx.fillStyle = faceCss;
       ctx.fillRect(0, 0, size, size);
       // Imprinted text effect: shadow + highlight to look engraved
-      const fontSize = 140; // smaller labels for better balance
+      const fontSize = 100; // smaller labels for better balance
       ctx.font = `bold ${fontSize}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
