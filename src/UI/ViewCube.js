@@ -271,7 +271,9 @@ export class ViewCube {
   // Keep cube orientation in sync with target camera
   syncWithCamera() {
     if (!this.targetCamera) return;
-    this.root.quaternion.copy(this.targetCamera.quaternion);
+    // Use the inverse of the target camera's rotation so the widget
+    // represents world orientation as seen from the camera (avoids mirroring).
+    this.root.quaternion.copy(this.targetCamera.quaternion).invert();
   }
 
   // Compute viewport rectangle (bottom-right). Returns both CSS(top-left) and GL(bottom-left) coords.
