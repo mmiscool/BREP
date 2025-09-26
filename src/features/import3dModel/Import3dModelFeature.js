@@ -9,7 +9,7 @@ const inputParamsSchema = {
     featureID: {
         type: "string",
         default_value: null,
-        hint: "unique identifier for the boolean feature",
+        hint: "unique identifier for the import feature",
     },
     fileToImport: {
         type: "file",
@@ -36,9 +36,9 @@ const inputParamsSchema = {
 
 };
 
-export class stlImport {
-    static featureShortName = "STL";
-    static featureName = "STL Import";
+export class Import3dModelFeature {
+    static featureShortName = "IMPORT3D";
+    static featureName = "Import 3D Model";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {
@@ -53,7 +53,7 @@ export class stlImport {
         const threeMFLoader = new ThreeMFLoader();
         const raw = this.inputParams.fileToImport;
         if (!raw || (typeof raw !== 'string' && !(raw instanceof ArrayBuffer))) {
-            console.warn('[stlImport] No STL data provided');
+            console.warn('[Import3D] No model data provided');
             return [];
         }
 
@@ -71,7 +71,7 @@ export class stlImport {
                 for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i) & 0xff;
                 dataForLoader = bytes.buffer; // ArrayBuffer
             } catch (e) {
-                console.warn('[stlImport] Failed to decode base64 data URL:', e);
+                console.warn('[Import3D] Failed to decode base64 data URL:', e);
                 dataForLoader = raw; // fallback to string
             }
         }
@@ -98,7 +98,7 @@ export class stlImport {
                         }
                     });
                     if (geometries.length === 0) {
-                        console.warn('[stlImport] 3MF file contained no meshes');
+                        console.warn('[Import3D] 3MF file contained no meshes');
                         return [];
                     }
                     const merged = BufferGeometryUtils.mergeGeometries(geometries, false);
@@ -108,11 +108,11 @@ export class stlImport {
                     geometry = await stlLoader.parse(dataForLoader);
                 }
             } else {
-                console.warn('[stlImport] Unsupported input type for fileToImport');
+                console.warn('[Import3D] Unsupported input type for fileToImport');
                 return [];
             }
         } catch (e) {
-            console.warn('[stlImport] Failed to parse input as STL/3MF:', e);
+            console.warn('[Import3D] Failed to parse input as STL/3MF:', e);
             return [];
         }
         
@@ -150,3 +150,4 @@ export class stlImport {
         return [solid];
     }
 }
+

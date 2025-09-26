@@ -1,7 +1,7 @@
 export async function test_stlLoader(partHistory) {
-    const stlImport = await partHistory.newFeature("STL");
-    stlImport.inputParams.fileToImport = stlFileContents;
-    stlImport.inputParams.deflectionAngle = 15;
+    const import3d = await partHistory.newFeature("IMPORT3D");
+    import3d.inputParams.fileToImport = stlFileContents;
+    import3d.inputParams.deflectionAngle = 15;
 
     return partHistory;
 }

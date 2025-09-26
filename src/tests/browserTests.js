@@ -325,7 +325,7 @@ export class BrowserTesting {
     Object.assign(overlay.style, {
       position: "fixed", inset: "0",
       background: "rgba(0,0,0,0.65)",
-      zIndex: "2147483647",
+      zIndex: "7",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",

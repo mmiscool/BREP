@@ -25,7 +25,7 @@ export class PluginsWidget {
       .plg-status { color: #9ca3af; font-size: 11px; white-space: pre-wrap; }
 
       /* Modal styles */
-      .plg-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 10000; }
+      .plg-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 10; }
       .plg-modal { background: #0b0e14; color: #e5e7eb; border: 1px solid #1f2937; border-radius: 10px; padding: 14px; width: min(520px, calc(100vw - 32px)); box-shadow: 0 10px 40px rgba(0,0,0,.5); }
       .plg-modal h3 { margin: 0 0 8px 0; font-size: 14px; }
       .plg-modal p { margin: 6px 0; color: #9aa0aa; font-size: 12px; }

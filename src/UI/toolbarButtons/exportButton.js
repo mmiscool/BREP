@@ -35,7 +35,7 @@ function _ensureExportDialogStyles() {
   const style = document.createElement('style');
   style.id = 'export-dialog-styles';
   style.textContent = `
-      .exp-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 10001; }
+      .exp-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; z-index: 11; }
       .exp-modal { background: #0b0e14; color: #e5e7eb; border: 1px solid #1f2937; border-radius: 10px; padding: 14px; width: min(480px, calc(100vw - 32px)); box-shadow: 0 10px 40px rgba(0,0,0,.5); }
       .exp-title { margin: 0 0 8px 0; font-size: 14px; font-weight: 700; }
       .exp-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }

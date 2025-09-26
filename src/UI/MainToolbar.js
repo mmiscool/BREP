@@ -44,7 +44,7 @@ export class MainToolbar {
         background: rgba(11,13,16,0.92);
         border-bottom: 1px solid #1e2430;
         backdrop-filter: blur(6px);
-        z-index: 2147483646;
+        z-index: 10;
         pointer-events: auto;
       }
       .mtb-left, .mtb-right { display: flex; align-items: center; gap: 8px; }

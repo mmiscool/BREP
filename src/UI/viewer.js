@@ -413,7 +413,7 @@ export class Viewer {
                 this.sidebar.style.visibility = 'visible';
                 this.sidebar.style.opacity = .9;
                 // Ensure sidebar is drawn above everything else again
-                this.sidebar.style.zIndex = String(2147483646);
+                this.sidebar.style.zIndex = String(7);
             }
         } catch { }
         try { if (this.controls) this.controls.enabled = true; } catch { }
@@ -1159,7 +1159,7 @@ export class Viewer {
         try {
             const el = document.createElement('div');
             el.textContent = msg;
-            el.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);background:#111c;backdrop-filter:blur(6px);color:#e5e7eb;padding:6px 10px;border:1px solid #2a3442;border-radius:8px;z-index:2147483647;font:12px/1.2 system-ui;';
+            el.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);background:#111c;backdrop-filter:blur(6px);color:#e5e7eb;padding:6px 10px;border:1px solid #2a3442;border-radius:8px;z-index:7;font:12px/1.2 system-ui;';
             document.body.appendChild(el);
             setTimeout(()=>{ try{ el.parentNode && el.parentNode.removeChild(el);}catch{} }, ms);
         } catch {}
@@ -1167,7 +1167,7 @@ export class Viewer {
 
     _showModal(title, text, opts = {}) {
         const mask = document.createElement('div');
-        mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(2px);z-index:2147483647;display:flex;align-items:center;justify-content:center;';
+        mask.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(2px);z-index:7;display:flex;align-items:center;justify-content:center;';
         const box = document.createElement('div');
         box.style.cssText = 'width:min(980px,90vw);height:min(70vh,720px);background:#0b0d10;border:1px solid #2a3442;border-radius:10px;box-shadow:0 12px 28px rgba(0,0,0,.35);display:flex;flex-direction:column;overflow:hidden;';
         const header = document.createElement('div');

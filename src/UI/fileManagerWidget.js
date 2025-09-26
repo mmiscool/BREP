@@ -360,11 +360,11 @@ export class FileManagerWidget {
             return;
           }
         }
-        // No feature history found → fallback to import raw 3MF as mesh via STL feature
+        // No feature history found → fallback to import raw 3MF as mesh via Import3D feature
         try {
-          const feat = await this.viewer?.partHistory?.newFeature?.('STL');
+          const feat = await this.viewer?.partHistory?.newFeature?.('IMPORT3D');
           if (feat) {
-            feat.inputParams.fileToImport = bytes.buffer; // stlImport can auto-detect 3MF zip
+            feat.inputParams.fileToImport = bytes.buffer; // Import3dModelFeature can auto-detect 3MF zip
             feat.inputParams.deflectionAngle = 15;
             feat.inputParams.centerMesh = true;
           }

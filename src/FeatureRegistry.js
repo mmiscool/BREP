@@ -14,10 +14,10 @@ import { PrimitiveSphereFeature } from './features/primitiveSphere/primitiveSphe
 import { PrimitiveTorusFeature } from './features/primitiveTorus/primitiveTorusFeature.js';
 import { RevolveFeature } from './features/revolve/RevolveFeature.js';
 import { SketchFeature } from './features/sketch/SketchFeature.js';
-import { stlImport } from './features/stlImport/stlImport.js';
+import { Import3dModelFeature } from './features/import3dModel/Import3dModelFeature.js';
 import { SweepFeature } from './features/sweep/SweepFeature.js';
 import { RemeshFeature } from './features/remesh/RemeshFeature.js';
-import { PngToFaceFeature } from './features/pngToFace/PngToFaceFeature.js';
+import { ImageToFaceFeature } from './features/imageToFace/ImageToFaceFeature.js';
 
 /* ========================================================================
    FeatureRegistry
@@ -28,6 +28,7 @@ import { PngToFaceFeature } from './features/pngToFace/PngToFaceFeature.js';
 export class FeatureRegistry {
   constructor() {
     this.features = [];
+    this.aliases = new Map();
     this.register(DatiumFeature);
     this.register(PlaneFeature);
     this.register(PrimitiveCubeFeature);
@@ -36,7 +37,7 @@ export class FeatureRegistry {
     this.register(PrimitiveSphereFeature);
     this.register(PrimitiveTorusFeature);
     this.register(PrimitivePyramidFeature);
-    this.register(stlImport);
+    this.register(Import3dModelFeature);
     this.register(SketchFeature);
     this.register(ExtrudeFeature);
     this.register(BooleanFeature);
@@ -47,7 +48,18 @@ export class FeatureRegistry {
     this.register(RevolveFeature);
     this.register(SweepFeature);
     this.register(RemeshFeature);
-    this.register(PngToFaceFeature);
+    this.register(ImageToFaceFeature);
+
+    // Backward-compat aliases for renamed features
+    // Image-to-Face (formerly PNG to Face)
+    this.aliases.set('PNG', ImageToFaceFeature);
+    this.aliases.set('PNG TO FACE', ImageToFaceFeature);
+    this.aliases.set('PNGTOFACEFEATURE', ImageToFaceFeature);
+    // Import 3D Model (formerly STL Import)
+    this.aliases.set('STL', Import3dModelFeature);
+    this.aliases.set('STL IMPORT', Import3dModelFeature);
+    this.aliases.set('STLIMPORT', Import3dModelFeature);
+    this.aliases.set('STLIMPORTFEATURE', Import3dModelFeature);
   }
 
   register(FeatureClass) {
@@ -78,7 +90,7 @@ export class FeatureRegistry {
       try { className = fc.name ? String(fc.name).trim().toUpperCase() : null; } catch { className = null; }
       if (shortName === searchName || longName === searchName || className === searchName) return fc;
     }
-    return null;
+    return this.aliases.get(searchName) || null;
   }
 
   has(featureName) {

@@ -277,7 +277,9 @@ export class PartHistory {
   }
 
   async newFeature(featureType) {
-    const FeatureClass = this.featureRegistry.get(featureType);
+    const FeatureClass = (this.featureRegistry && typeof this.featureRegistry.getSafe === 'function')
+      ? (this.featureRegistry.getSafe(featureType) || this.featureRegistry.get(featureType))
+      : this.featureRegistry.get(featureType);
     const feature = {
       type: featureType,
       inputParams: await extractDefaultValues(FeatureClass.inputParamsSchema),

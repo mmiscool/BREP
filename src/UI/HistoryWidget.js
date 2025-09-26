@@ -1010,7 +1010,7 @@ export class HistoryWidget {
         border-radius: 10px;
         box-shadow: 0 10px 30px rgba(0,0,0,.45);
         padding: 6px;
-        z-index: 1000;
+        z-index: 6;
       }
       .menu-item {
         appearance: none;

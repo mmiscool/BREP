@@ -1014,7 +1014,7 @@ export class SketchMode3D {
     wrap.style.width = "300px";
     wrap.style.maxHeight = "85%";
     wrap.style.overflow = "auto";
-    wrap.style.zIndex = "2147483646";
+    wrap.style.zIndex = "6";
     const title = document.createElement("div");
     title.textContent = "Sketch";
     title.style.color = "#e6e6e6";
@@ -1389,7 +1389,7 @@ export class SketchMode3D {
     bar.style.border = "1px solid #262b36";
     bar.style.borderRadius = "8px";
     bar.style.padding = "6px";
-    bar.style.zIndex = "5000";
+    bar.style.zIndex = "5";
     bar.style.userSelect = "none";
     // Track buttons to reflect active tool
     this._toolButtons = this._toolButtons || new Map();

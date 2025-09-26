@@ -152,11 +152,11 @@ export function createImportButton(viewer) {
               }
             }
 
-            // No feature history → create a new STL Import feature with the raw 3MF
+            // No feature history → create a new Import 3D Model feature with the raw 3MF
             await viewer?.partHistory?.reset?.();
-            const feat = await viewer?.partHistory?.newFeature?.('STL');
+            const feat = await viewer?.partHistory?.newFeature?.('IMPORT3D');
             if (feat) {
-              feat.inputParams.fileToImport = buf; // stlImport can auto-detect 3MF zip
+              feat.inputParams.fileToImport = buf; // Import3dModelFeature can auto-detect 3MF zip
               feat.inputParams.deflectionAngle = 15;
               feat.inputParams.centerMesh = true;
             }

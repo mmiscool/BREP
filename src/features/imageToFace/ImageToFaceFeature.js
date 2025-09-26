@@ -1,12 +1,13 @@
 import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 import { LineGeometry } from 'three/examples/jsm/Addons.js';
+import { ImageEditorUI } from './imageEditor.js';
 
 const inputParamsSchema = {
   featureID: {
     type: "string",
     default_value: null,
-    hint: "unique identifier for the PNG trace feature",
+    hint: "unique identifier for the image trace feature",
   },
   fileToImport: {
     type: "file",
@@ -14,6 +15,43 @@ const inputParamsSchema = {
     accept: ".png,image/png",
     hint: "Monochrome PNG data (click to choose a file)",
   },
+  editImage: {
+    type: "button",
+    label: "Edit Image",
+    default_value: null,
+    hint: "Launch the paint like image editor",
+    actionFunction: (ctx) => {
+      let { fileToImport } = ctx.feature.inputParams;
+      // If no image, start with a blank 300x300 transparent canvas
+      if (!fileToImport) {
+        try {
+          const c = document.createElement('canvas');
+          c.width = 300; c.height = 300;
+          const ctx2d = c.getContext('2d');
+          ctx2d.fillStyle = '#ffffff';
+          ctx2d.fillRect(0, 0, c.width, c.height);
+          fileToImport = c.toDataURL('image/png');
+        } catch (_) { fileToImport = null; }
+      }
+      const imageEditor = new ImageEditorUI(fileToImport, {
+        onSave: (editedImage) => {
+          // Update both live feature params and dialog params
+          try { ctx.feature.inputParams.fileToImport = editedImage; } catch (_) {}
+          try { if (ctx.params) ctx.params.fileToImport = editedImage; } catch (_) {}
+          // Trigger recompute akin to onChange
+          try {
+            if (ctx.partHistory) {
+              ctx.partHistory.currentHistoryStepId = ctx.feature.inputParams.featureID;
+              if (typeof ctx.partHistory.runHistory === 'function') ctx.partHistory.runHistory();
+            }
+          } catch (_) {}
+        },
+        onCancel: () => { /* no-op */ }
+      });
+      imageEditor.open();
+    }
+  },
+
   threshold: {
     type: "number",
     default_value: 128,
@@ -41,7 +79,7 @@ const inputParamsSchema = {
   },
   rdpTolerance: {
     type: "number",
-    default_value: 0,
+    default_value: 1,
     hint: "Optional Ramer–Douglas–Peucker tolerance in world units (0 to disable)",
   },
   placementPlane: {
@@ -53,9 +91,9 @@ const inputParamsSchema = {
   },
 };
 
-export class PngToFaceFeature {
-  static featureShortName = "PNG";
-  static featureName = "PNG to Face";
+export class ImageToFaceFeature {
+  static featureShortName = "IMAGE";
+  static featureName = "Image to Face";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
@@ -68,14 +106,14 @@ export class PngToFaceFeature {
 
     const imageData = await decodeToImageData(fileToImport);
     if (!imageData) {
-      console.warn('[PNG] No image data decoded');
+      console.warn('[IMAGE] No image data decoded');
       return [];
     }
 
     const mask = rasterToMask(imageData, Number(threshold) || 0, !!invert);
     const loopsGrid = extractLoopsFromMask(mask.width, mask.height, mask.data);
     if (!loopsGrid.length) {
-      console.warn('[PNG] No contours found in image');
+      console.warn('[IMAGE] No contours found in image');
       return [];
     }
 
@@ -118,9 +156,9 @@ export class PngToFaceFeature {
 
     // Build triangulated Face and boundary Edges
     const sceneGroup = new THREE.Group();
-    sceneGroup.name = this.inputParams.featureID || 'PNG_Sketch';
+    sceneGroup.name = this.inputParams.featureID || 'IMAGE_Sketch';
     sceneGroup.type = 'SKETCH';
-    sceneGroup.onClick = () => {};
+    sceneGroup.onClick = () => { };
 
     // Build triangulation using THREE.ShapeUtils
     const triPositions = [];
@@ -156,11 +194,11 @@ export class PngToFaceFeature {
       }
 
       // Boundary loop records for downstream Sweep side construction
-      const contourClosed = (contour.length && (contour[0][0]===contour[contour.length-1][0] && contour[0][1]===contour[contour.length-1][1])) ? contour : contour.concat([contour[0]]);
-      const contourClosedW = contourClosed.map(([x,y]) => toW(x,y));
+      const contourClosed = (contour.length && (contour[0][0] === contour[contour.length - 1][0] && contour[0][1] === contour[contour.length - 1][1])) ? contour : contour.concat([contour[0]]);
+      const contourClosedW = contourClosed.map(([x, y]) => toW(x, y));
       boundaryLoopsWorld.push({ pts: contourClosedW, isHole: false });
-      const holesClosed = holes.map((h) => (h.length && (h[0][0]===h[h.length-1][0] && h[0][1]===h[h.length-1][1])) ? h : h.concat([h[0]]));
-      const holesClosedW = holesClosed.map((h)=> h.map(([x,y]) => toW(x,y)));
+      const holesClosed = holes.map((h) => (h.length && (h[0][0] === h[h.length - 1][0] && h[0][1] === h[h.length - 1][1])) ? h : h.concat([h[0]]));
+      const holesClosedW = holesClosed.map((h) => h.map(([x, y]) => toW(x, y)));
       for (const hw of holesClosedW) boundaryLoopsWorld.push({ pts: hw, isHole: true });
 
       // For profileGroups used by Sweep caps, store OPEN loops (no duplicate last point)
@@ -175,7 +213,7 @@ export class PngToFaceFeature {
     }
 
     if (!triPositions.length) {
-      console.warn('[PNG] Triangulation produced no area');
+      console.warn('[IMAGE] Triangulation produced no area');
       return [];
     }
 
@@ -212,7 +250,7 @@ export class PngToFaceFeature {
       }
       const lg = new LineGeometry();
       lg.setPositions(positions);
-      try { lg.computeBoundingSphere(); } catch {}
+      try { lg.computeBoundingSphere(); } catch { }
       const e = new BREP.Edge(lg);
       e.name = `${sceneGroup.name}:L${edgeIdx++}`;
       e.closedLoop = true;
@@ -229,7 +267,7 @@ export class PngToFaceFeature {
       }
       const lg = new LineGeometry();
       lg.setPositions(positions);
-      try { lg.computeBoundingSphere(); } catch {}
+      try { lg.computeBoundingSphere(); } catch { }
       const e = new BREP.Edge(lg);
       e.name = `${sceneGroup.name}:E${edgeIdx++}`;
       e.closedLoop = false;
@@ -292,25 +330,25 @@ export class PngToFaceFeature {
 
     // Emit one closed edge for outer, and one for each hole
     for (const grp of groups) {
-      const outerClosed = grp.outer[0] && grp.outer[grp.outer.length-1] && (grp.outer[0][0]===grp.outer[grp.outer.length-1][0] && grp.outer[0][1]===grp.outer[grp.outer.length-1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
+      const outerClosed = grp.outer[0] && grp.outer[grp.outer.length - 1] && (grp.outer[0][0] === grp.outer[grp.outer.length - 1][0] && grp.outer[0][1] === grp.outer[grp.outer.length - 1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
       addClosedLoopEdge(outerClosed, false);
       for (const h of grp.holes) {
-        const hClosed = h[0] && h[h.length-1] && (h[0][0]===h[h.length-1][0] && h[0][1]===h[h.length-1][1]) ? h : h.concat([h[0]]);
+        const hClosed = h[0] && h[h.length - 1] && (h[0][0] === h[h.length - 1][0] && h[0][1] === h[h.length - 1][1]) ? h : h.concat([h[0]]);
         addClosedLoopEdge(hClosed, true);
       }
     }
 
     for (const grp of groups) {
-      const outerClosed = grp.outer[0] && grp.outer[grp.outer.length-1] && (grp.outer[0][0]===grp.outer[grp.outer.length-1][0] && grp.outer[0][1]===grp.outer[grp.outer.length-1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
+      const outerClosed = grp.outer[0] && grp.outer[grp.outer.length - 1] && (grp.outer[0][0] === grp.outer[grp.outer.length - 1][0] && grp.outer[0][1] === grp.outer[grp.outer.length - 1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
       for (const seg of makeSegments(outerClosed)) addEdgeSegment(seg, false);
       for (const h of grp.holes) {
-        const hClosed = h[0] && h[h.length-1] && (h[0][0]===h[h.length-1][0] && h[0][1]===h[h.length-1][1]) ? h : h.concat([h[0]]);
+        const hClosed = h[0] && h[h.length - 1] && (h[0][0] === h[h.length - 1][0] && h[0][1] === h[h.length - 1][1]) ? h : h.concat([h[0]]);
         for (const seg of makeSegments(hClosed)) addEdgeSegment(seg, true);
       }
     }
 
     // Attach edge references to face for convenience
-    try { face.edges = edges.slice(); } catch {}
+    try { face.edges = edges.slice(); } catch { }
 
     sceneGroup.add(face);
     for (const e of edges) sceneGroup.add(e);
@@ -324,74 +362,76 @@ export class PngToFaceFeature {
 async function decodeToImageData(raw) {
   try {
     if (!raw) return null;
-    let src = null;
-    if (typeof raw === 'string') {
-      if (raw.startsWith('data:')) {
-        src = raw;
-      } else {
-        // Try to detect base64 without data URL header, fallback to as-is
-        const looksB64 = /^[A-Za-z0-9+/=\s]+$/.test(raw) && raw.length > 256;
-        if (looksB64 && typeof window !== 'undefined' && window.atob) {
-          const bin = atob(raw);
-          const bytes = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i) & 0xff;
-          const blob = new Blob([bytes], { type: 'image/png' });
-          src = URL.createObjectURL(blob);
-        } else {
-          // Hope it's a URL or path resolved by the app
-          src = raw;
-        }
-      }
-    } else if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
-      const buf = raw instanceof ArrayBuffer ? raw : raw.buffer;
-      const blob = new Blob([buf], { type: 'image/png' });
-      src = URL.createObjectURL(blob);
-    } else {
+    if (raw instanceof ImageData) return raw;
+    if (raw instanceof ArrayBuffer) {
+      // Attempt to decode as PNG
+      try {
+        const blob = new Blob([raw], { type: 'image/png' });
+        const img = await createImageBitmap(blob);
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const id = ctx.getImageData(0, 0, img.width, img.height);
+        try { img.close && img.close(); } catch { }
+        return id;
+      } catch { }
       return null;
     }
-
-    // Browser path: draw to canvas to get ImageData
-    if (typeof document !== 'undefined') {
-      const img = await loadImage(src);
-      const c = document.createElement('canvas');
-      c.width = img.width; c.height = img.height;
-      const ctx = c.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      const id = ctx.getImageData(0, 0, c.width, c.height);
-      try { if (src.startsWith('blob:')) URL.revokeObjectURL(src); } catch {}
-      return id;
+    if (typeof raw === 'string') {
+      if (raw.startsWith('data:')) {
+        const img = await createImageBitmap(await (await fetch(raw)).blob());
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const id = ctx.getImageData(0, 0, img.width, img.height);
+        try { img.close && img.close(); } catch { }
+        return id;
+      }
+      // Try to parse as binary base64 (png)
+      try {
+        const b64 = raw;
+        const binaryStr = (typeof atob === 'function') ? atob(b64) : (typeof Buffer !== 'undefined' ? Buffer.from(b64, 'base64').toString('binary') : '');
+        const len = binaryStr.length | 0;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i) & 0xff;
+        const blob = new Blob([bytes], { type: 'image/png' });
+        const img = await createImageBitmap(blob);
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const id = ctx.getImageData(0, 0, img.width, img.height);
+        try { img.close && img.close(); } catch { }
+        return id;
+      } catch { }
+      return null;
     }
   } catch (e) {
-    console.warn('[PNG] Failed to decode image:', e);
-    return null;
+    console.warn('[IMAGE] Failed to decode input as image data', e);
   }
   return null;
 }
 
-function loadImage(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(e);
-    img.src = src;
-  });
-}
-
 function rasterToMask(imageData, threshold = 128, invert = false) {
-  const { width, height, data } = imageData; // RGBA Uint8ClampedArray
+  const width = imageData.width | 0;
+  const height = imageData.height | 0;
+  const src = imageData.data;
   const out = new Uint8Array(width * height);
-  const thr = Math.max(0, Math.min(255, threshold | 0));
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4;
-      const r = data[i + 0], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-      // Treat mostly-transparent as background
-      const alphaMask = (a >= 10) ? 1 : 0;
-      const lum = ((r * 299 + g * 587 + b * 114) / 1000) | 0; // integer luma
-      let fg = (lum >= thr ? 1 : 0);
-      if (invert) fg = 1 - fg;
-      out[y * width + x] = (fg & alphaMask);
+      const idx = (y * width + x) * 4;
+      const r = src[idx] | 0;
+      const g = src[idx + 1] | 0;
+      const b = src[idx + 2] | 0;
+      const a = src[idx + 3] | 0;
+      const gray = (r * 0.2126 + g * 0.7152 + b * 0.0722) | 0;
+      const fg = gray < threshold ? 1 : 0;
+      const alphaMask = (a >= 16) ? 1 : 0;
+      let v = fg;
+      if (invert) v = 1 - v;
+      out[y * width + x] = (v & alphaMask);
     }
   }
   return { width, height, data: out };
@@ -644,48 +684,57 @@ function pointLineDist(p, a, b) {
 }
 
 function signedArea(loop) {
-  let a = 0;
+  let area = 0;
   for (let i = 0; i < loop.length - 1; i++) {
-    const x1 = loop[i][0], y1 = loop[i][1];
-    const x2 = loop[i + 1][0], y2 = loop[i + 1][1];
-    a += (x1 * y2 - x2 * y1);
+    const a = loop[i], b = loop[i + 1];
+    area += a[0] * b[1] - a[1] * b[0];
   }
-  return 0.5 * a;
-}
-
-function pointInPoly(p, loop) {
-  // Ray casting
-  let inside = false;
-  const x = p[0], y = p[1];
-  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
-    const xi = loop[i][0], yi = loop[i][1];
-    const xj = loop[j][0], yj = loop[j][1];
-    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-18) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
+  return 0.5 * area;
 }
 
 function bounds2D(pts) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const [x, y] of pts) {
-    if (x < minX) minX = x; if (x > maxX) maxX = x;
-    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  for (const p of pts) {
+    if (p[0] < minX) minX = p[0];
+    if (p[1] < minY) minY = p[1];
+    if (p[0] > maxX) maxX = p[0];
+    if (p[1] > maxY) maxY = p[1];
   }
   return { minX, minY, maxX, maxY };
 }
 
-function groupLoopsOuterHoles(loops) {
-  // Normalize: ensure closed (repeat first) and drop degenerate
-  const norm = loops.map((l) => {
-    const pts = l.slice();
-    if (!pts.length) return null;
-    if (pts[0][0] !== pts[pts.length - 1][0] || pts[0][1] !== pts[pts.length - 1][1]) pts.push([pts[0][0], pts[0][1]]);
-    if (Math.abs(signedArea(pts)) < 1e-12) return null;
-    return pts;
-  }).filter(Boolean);
+// Point-in-polygon using winding number. Accepts closed or open polygon arrays.
+function pointInPoly(pt, poly) {
+  const n = Array.isArray(poly) ? poly.length : 0;
+  if (n < 3) return false;
+  let ring = poly;
+  const first = ring[0], last = ring[ring.length - 1];
+  if (first && last && first[0] === last[0] && first[1] === last[1]) ring = ring.slice(0, ring.length - 1);
+  const x = pt[0], y = pt[1];
+  let wn = 0;
+  const isLeft = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    if ((a[1] <= y) && (b[1] > y) && isLeft(a[0], a[1], b[0], b[1], x, y) > 0) wn++;
+    else if ((a[1] > y) && (b[1] <= y) && isLeft(a[0], a[1], b[0], b[1], x, y) < 0) wn--;
+  }
+  return wn !== 0;
+}
 
-  // Representative point per loop
+function groupLoopsOuterHoles(loops) {
+  // Normalize: ensure each loop is closed and oriented CCW for holes, CW for outers
+  const closed = loops.map((l) => {
+    const c = l.slice();
+    if (c.length && (c[0][0] !== c[c.length - 1][0] || c[0][1] !== c[c.length - 1][1])) c.push([c[0][0], c[0][1]]);
+    return c;
+  });
+  const norm = closed.map((l) => {
+    const A = signedArea(l);
+    if (A < 0) return l.slice();
+    const r = l.slice(); r.reverse(); return r;
+  });
+
   const reps = norm.map((l) => l[0]);
   const depth = new Array(norm.length).fill(0);
   for (let i = 0; i < norm.length; i++) {
@@ -693,56 +742,7 @@ function groupLoopsOuterHoles(loops) {
       if (i === j) continue;
       if (pointInPoly(reps[i], norm[j])) depth[i]++;
     }
-}
-
-// Fallback helper for older code paths or HMR cache: same logic as inlined makeSegments.
-function splitLoopIntoLinearRegions(closedLoop, eps = 1e-12) {
-  if (!Array.isArray(closedLoop) || closedLoop.length < 2) return [];
-  // Ensure closed ring
-  const ring = (closedLoop[0][0] === closedLoop[closedLoop.length - 1][0] && closedLoop[0][1] === closedLoop[closedLoop.length - 1][1])
-    ? closedLoop.slice()
-    : closedLoop.concat([closedLoop[0]]);
-  const n = ring.length - 1;
-  if (n < 2) return [];
-  const dir = (a, b) => [b[0] - a[0], b[1] - a[1]];
-  const collinear = (u, v) => Math.abs(u[0] * v[1] - u[1] * v[0]) <= eps;
-  const segs = [];
-  let cur = [ring[0]];
-  let prevDir = dir(ring[0], ring[1]);
-  for (let i = 1; i < n; i++) {
-    const b = ring[i];
-    const c = ring[i + 1];
-    const d = dir(b, c);
-    if (collinear(prevDir, d)) { cur.push(b); prevDir = d; }
-    else { cur.push(b); if (cur.length >= 2) segs.push(cur.slice()); cur = [b]; prevDir = d; }
   }
-  cur.push(ring[n]);
-  if (cur.length >= 2) segs.push(cur);
-  // Merge first/last if collinear
-  if (segs.length >= 2) {
-    const first = segs[0];
-    const last = segs[segs.length - 1];
-    const u = dir(last[last.length - 2], last[last.length - 1]);
-    const v = dir(first[0], first[1]);
-    if (collinear(u, v)) {
-      const merged = last.slice();
-      for (let i = 1; i < first.length; i++) merged.push(first[i]);
-      segs[0] = merged; segs.pop();
-    }
-  }
-  // Dedup consecutive points
-  const cleaned = [];
-  for (const s of segs) {
-    const out = [];
-    for (let i = 0; i < s.length; i++) { const p = s[i]; if (!out.length || out[out.length - 1][0] !== p[0] || out[out.length - 1][1] !== p[1]) out.push(p); }
-    if (out.length >= 2) cleaned.push(out);
-  }
-  return cleaned;
-}
-
-// Split a closed loop [ [x,y], ... , [x0,y0] ] into maximal straight-line regions.
-// Returns array of segments, each an array of [x,y] with at least 2 points.
-// splitLoopIntoLinearRegions was inlined into run() as makeSegments to avoid hoisting issues with HMR.
 
   // Even depth -> outer; holes are immediate odd-depth children
   const groups = [];
@@ -772,20 +772,20 @@ function positionsToTriples(arr) {
 
 function getPlacementBasis(ref, partHistory) {
   // Returns { origin:[x,y,z], x:[x,y,z], y:[x,y,z], z:[x,y,z] }
-  const x = new THREE.Vector3(1,0,0);
-  const y = new THREE.Vector3(0,1,0);
-  const z = new THREE.Vector3(0,0,1);
-  const origin = new THREE.Vector3(0,0,0);
+  const x = new THREE.Vector3(1, 0, 0);
+  const y = new THREE.Vector3(0, 1, 0);
+  const z = new THREE.Vector3(0, 0, 1);
+  const origin = new THREE.Vector3(0, 0, 0);
 
   let refObj = null;
   try {
     if (Array.isArray(ref)) refObj = ref[0] || null;
     else if (ref && typeof ref === 'object') refObj = ref;
     else if (ref) refObj = partHistory?.scene?.getObjectByName(ref);
-  } catch {}
+  } catch { }
 
   if (refObj) {
-    try { refObj.updateWorldMatrix(true, true); } catch {}
+    try { refObj.updateWorldMatrix(true, true); } catch { }
     // Origin: geometric center if available else world pos
     try {
       const g = refObj.geometry;
@@ -802,11 +802,11 @@ function getPlacementBasis(ref, partHistory) {
       try { n = refObj.getAverageNormal().normalize(); } catch { n = null; }
     }
     if (!n) {
-      try { n = new THREE.Vector3(0,0,1).applyQuaternion(refObj.getWorldQuaternion(new THREE.Quaternion())).normalize(); } catch { n = new THREE.Vector3(0,0,1); }
+      try { n = new THREE.Vector3(0, 0, 1).applyQuaternion(refObj.getWorldQuaternion(new THREE.Quaternion())).normalize(); } catch { n = new THREE.Vector3(0, 0, 1); }
     }
-    const worldUp = new THREE.Vector3(0,1,0);
+    const worldUp = new THREE.Vector3(0, 1, 0);
     const tmp = new THREE.Vector3();
-    const zx = Math.abs(n.dot(worldUp)) > 0.9 ? new THREE.Vector3(1,0,0) : worldUp;
+    const zx = Math.abs(n.dot(worldUp)) > 0.9 ? new THREE.Vector3(1, 0, 0) : worldUp;
     x.copy(tmp.crossVectors(zx, n).normalize());
     y.copy(tmp.crossVectors(n, x).normalize());
     z.copy(n);

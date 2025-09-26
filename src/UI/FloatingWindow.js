@@ -14,7 +14,7 @@ export class FloatingWindow {
     top = 40,      // default top if y not provided
     bottom = null, // if provided and y is null, compute from viewport height
     shaded = false,
-    zIndex = 2147483646,
+    zIndex = 6,
   } = {}) {
     this._minW = Math.max(160, Number(minWidth) || 260);
     this._minH = Math.max(100, Number(minHeight) || 140);
