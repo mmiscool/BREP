@@ -12,7 +12,7 @@
 // - If edgeName refers to an open path => end caps are added.
 // - If it's a closed loop => no caps.
 // - booleanType auto: convex => SUBTRACT, concave => UNION (override in adapter if needed).
-import { Solid as BetterSolid } from './BetterSolid.js';
+import { Solid as BetterSolid } from '../BetterSolid.js';
 
 /* ------------------------------ Adapter ------------------------------ */
 /* Minimal interface to your Solid. If your class differs, edit here.   */

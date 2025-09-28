@@ -1,6 +1,6 @@
-import { Solid } from "./BetterSolid.js";
-import manifold from "./setupManifold.js";
-import { buildTightPointCloudWrap } from "./PointCloudWrap.js";
+import { Solid } from "../BetterSolid.js";
+import manifold from "../setupManifold.js";
+import { buildTightPointCloudWrap } from "../PointCloudWrap.js";
 import * as THREE from 'three';
 
 // Shared scratch vectors to reduce allocations in tight loops
