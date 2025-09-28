@@ -21,6 +21,18 @@ const inputParamsSchema = {
         default_value: 0.1,
         hint: "Grow the cutting solid by this amount (units). Keep tiny (e.g. 0.0005). Closed loops ignore inflation to avoid self‑intersection.",
     },
+    capBulgeStart: {
+        type: "number",
+        step: 0.01,
+        default_value: 0,
+        hint: "Outward bulge distance for the START end cap (0 disables; fallback uses ~5% of radius for INSET).",
+    },
+    capBulgeEnd: {
+        type: "number",
+        step: 0.01,
+        default_value: 0,
+        hint: "Outward bulge distance for the END end cap (0 disables; fallback uses ~5% of radius for INSET).",
+    },
     direction: {
         type: "options",
         options: ["INSET", "OUTSET"],
@@ -208,7 +220,9 @@ export class FilletFeature {
                 this.inputParams.radius,
                 this.inputParams.inflate,
                 this.inputParams.direction,
-                this.inputParams.debug);
+                this.inputParams.debug,
+                -this.inputParams.capBulgeStart,
+                -this.inputParams.capBulgeEnd);
             if (dbg) { try { filletSolid.visualize(); } catch {} }
             objectsForBoolean.push(filletSolid);
             if (dbg) {
@@ -308,7 +322,7 @@ export class FilletFeature {
         toRemove.add(targetSolid);
 
         // Mark removals via flag for PartHistory to collect
-        try { for (const r of toRemove) { if (r) r.remove = true; } } catch { }
+        try { for (const r of toRemove) { if (r) r.__removeFlag = true; } } catch { }
 
         // Return only the resulting artifacts to add
         const out = [];
@@ -327,7 +341,9 @@ function makeSingleFilletSolid(edgeObj,
     radius = 1,
     inflate = 0,
     direction = 'INSET',
-    debug = false) {
+    debug = false,
+    capBulgeStart = 0,
+    capBulgeEnd = 0) {
     // Only UI params are accepted; all robustness knobs are internal.
     const tool = new BREP.FilletSolid({
         edgeToFillet: edgeObj,
@@ -335,6 +351,8 @@ function makeSingleFilletSolid(edgeObj,
         inflate,
         sideMode: direction,
         debug,
+        capBulgeStart,
+        capBulgeEnd,
     });
     // tool.fixTriangleWindingsByAdjacency();
     // tool.invertNormals();

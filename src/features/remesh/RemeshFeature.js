@@ -63,7 +63,7 @@ export class RemeshFeature {
     try { remeshed.name = `(${target.name || 'Solid'})`; } catch (_) {}
     try { remeshed.visualize(); } catch (_) {}
 
-    try { target.remove = true; } catch {}
+    try { target.__removeFlag = true; } catch {}
     return [remeshed];
   }
 }

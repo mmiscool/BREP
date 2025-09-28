@@ -1688,7 +1688,7 @@ export class SketchMode3D {
       this._ctxBar.appendChild(mk("Distance ⟺", "⟺"));
     }
     if (pointCount === 3) {
-      this._ctxBar.appendChild(mk("Colinear ⋯", "⋯"));
+      this._ctxBar.appendChild(mk("Colinear ⏛", "⋯"));
       this._ctxBar.appendChild(mk("Angle ∠", "∠"));
     }
 
@@ -2241,7 +2241,8 @@ export class SketchMode3D {
       
       m.position.copy(to3(p.x, p.y));
       m.userData = { kind: "point", id: p.id };
-      m.scale.setScalar(r);
+      // Enlarge selected points 2x for better visibility
+      m.scale.setScalar(selected ? r * 2 : r);
       grp.add(m);
     }
     this.#refreshLists();
@@ -2261,7 +2262,12 @@ export class SketchMode3D {
     if (Math.abs(r - this._lastHandleScale) < 1e-4) return;
     this._lastHandleScale = r;
     for (const ch of this._sketchGroup.children) {
-      if (ch?.userData?.kind === "point") ch.scale.setScalar(r);
+      if (ch?.userData?.kind === "point") {
+        const isSelected = Array.from(this._selection).some(
+          (it) => it.type === 'point' && it.id === ch.userData.id,
+        );
+        ch.scale.setScalar(isSelected ? r * 2 : r);
+      }
     }
   }
 

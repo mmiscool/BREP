@@ -53,7 +53,7 @@ function getCachedFaceDataForTris(tris) {
 
 export class FilletSolid extends Solid {
     // Public API accepts only UI-driven parameters; all other knobs are internal.
-    constructor({ edgeToFillet, radius = 1, sideMode = 'INSET', debug = false, inflate = 0 }) {
+    constructor({ edgeToFillet, radius = 1, sideMode = 'INSET', debug = false, inflate = 0, capBulgeStart = 0, capBulgeEnd = 0 }) {
         super();
         this.edgeToFillet = edgeToFillet;
         this.radius = radius;
@@ -71,6 +71,10 @@ export class FilletSolid extends Solid {
         this._debugObjects = [];
         this.operationTargetSolid = null;
         this.filletType = null; // will be set to either "UNION" or "SUBTRACT" 
+        // Optional outward bulge distances for end caps (absolute units).
+        // If 0 or not set, a default of ~5% radius is used for INSET only.
+        this.capBulgeStart = Number.isFinite(capBulgeStart) ? +capBulgeStart : 0;
+        this.capBulgeEnd   = Number.isFinite(capBulgeEnd) ? +capBulgeEnd   : 0;
         // Side-strip grid resolution and seam inset tuning
         this.sideStripSubdiv = 8;
         // Scale used to bias seams/side strips just inside the source faces
@@ -128,6 +132,17 @@ export class FilletSolid extends Solid {
         // Fetch cached face data for faster point projections and normal calculations
         const faceDataA = getCachedFaceDataForTris(trisA);
         const faceDataB = getCachedFaceDataForTris(trisB);
+
+        // Use a consistent outward hint for cap normals based on the average
+        // of adjacent face outward normals. This avoids per-end frame flips
+        // and keeps both end caps bulging in the same outward direction.
+        this.capNormalHint = (() => {
+            try {
+                const h = nAavg.clone().add(nBavg);
+                if (h.lengthSq() > 1e-20) return h.normalize();
+            } catch {}
+            return null;
+        })();
 
         // Build the section samples along the edge from the original edge
         // vertices so the P‑rail used by side strips matches the input edge
@@ -699,12 +714,12 @@ export class FilletSolid extends Solid {
     }
 }
 
-function buildEndCapEarcut(solid, faceName, arcRing, rowA, rowB, normalHint = null, bulge = 0) {
+function buildEndCapEarcut(solid, faceName, arcRing, rowA, rowB, normalHint = null, bulge = 0, mirror = false) {
     if (!Array.isArray(arcRing) || arcRing.length < 2) return false;
     if (!Array.isArray(rowA) || !Array.isArray(rowB)) return false;
     if (rowA.length < 2 || rowB.length < 2) return false;
 
-    const loop = buildEndCapLoop(arcRing, rowA, rowB);
+    const loop = buildEndCapLoop(arcRing, rowA, rowB, mirror);
     if (!loop || loop.length < 3) return false;
 
     if (triangulateCapWithEarcut(solid, faceName, loop, normalHint, bulge)) return true;
@@ -712,7 +727,7 @@ function buildEndCapEarcut(solid, faceName, arcRing, rowA, rowB, normalHint = nu
     return true;
 }
 
-function buildEndCapLoop(arcRing, rowA, rowB) {
+function buildEndCapLoop(arcRing, rowA, rowB, mirror = false) {
     const loop = [];
     const eps2 = 1e-20;
     const pushUnique = (pt) => {
@@ -722,22 +737,52 @@ function buildEndCapLoop(arcRing, rowA, rowB) {
         loop.push(pt.clone());
     };
 
-    for (let i = 0; i < arcRing.length; i++) {
-        const pt = arcRing[i];
-        if (!pt) continue;
-        if (i === arcRing.length - 1 && pt.distanceToSquared(arcRing[0]) <= eps2) continue;
-        pushUnique(pt);
-    }
+    const pushArc = (ring, reverse) => {
+        if (!Array.isArray(ring) || ring.length === 0) return;
+        if (!reverse) {
+            for (let i = 0; i < ring.length; i++) {
+                const pt = ring[i];
+                if (!pt) continue;
+                if (i === ring.length - 1 && pt.distanceToSquared(ring[0]) <= eps2) continue;
+                pushUnique(pt);
+            }
+        } else {
+            for (let i = ring.length - 1; i >= 0; i--) {
+                const pt = ring[i];
+                if (!pt) continue;
+                if (i === 0 && ring[ring.length - 1] && pt.distanceToSquared(ring[ring.length - 1]) <= eps2) continue;
+                pushUnique(pt);
+            }
+        }
+    };
 
-    if (Array.isArray(rowB)) {
-        for (let k = rowB.length - 1; k >= 0; k--) pushUnique(rowB[k]);
-    }
-    if (Array.isArray(rowA)) {
-        for (let k = 1; k < rowA.length; k++) pushUnique(rowA[k]);
+    if (!mirror) {
+        // Start end: arc A->B, then B seam -> rail, then rail -> A seam
+        pushArc(arcRing, false);
+        if (Array.isArray(rowB)) { for (let k = rowB.length - 1; k >= 0; k--) pushUnique(rowB[k]); }
+        if (Array.isArray(rowA)) { for (let k = 1; k < rowA.length; k++) pushUnique(rowA[k]); }
+    } else {
+        // End end (mirrored): arc B->A, then A seam -> rail, then rail -> B seam
+        pushArc(arcRing, true);
+        if (Array.isArray(rowA)) { for (let k = rowA.length - 1; k >= 0; k--) pushUnique(rowA[k]); }
+        if (Array.isArray(rowB)) { for (let k = 1; k < rowB.length; k++) pushUnique(rowB[k]); }
     }
 
     if (loop.length > 2 && loop[loop.length - 1].distanceToSquared(loop[0]) <= eps2) loop.pop();
     return loop;
+}
+
+// Estimate the cap plane normal from the current arc ring and boundary rows.
+// Uses the same vertex ordering as buildEndCapLoop() for stability.
+function computeCapPlaneNormal(arcRing, rowA, rowB, mirror = false, alignHint = null) {
+    const loop = buildEndCapLoop(arcRing, rowA, rowB, mirror);
+    if (!loop || loop.length < 3) return alignHint ? alignHint.clone() : null;
+    let n = computeLoopNormal(loop);
+    if (!n || n.lengthSq() < 1e-20) n = estimateLoopNormal(loop);
+    if (!n || n.lengthSq() < 1e-20) return alignHint ? alignHint.clone() : null;
+    n.normalize();
+    if (alignHint && n.dot(alignHint) < 0) n.negate();
+    return n;
 }
 
 // Triangulate the polygonal cap using Three.js earcut helper. Ensures every
@@ -797,61 +842,24 @@ function triangulateCapWithEarcut(solid, faceName, polygon, normalHint = null, b
     }
     if (Math.abs(area) < 1e-16) return false;
 
-    // Use earcut to find a centroid inside the polygon, then triangulate
-    // as a fan from that interior anchor so EVERY boundary edge is a triangle
-    // edge, preventing T junctions with neighboring faces.
+    // Triangulate polygon with earcut (uses current CCW orientation)
     const earTris = THREE.ShapeUtils.triangulateShape(points2D, []);
+    if (!earTris || earTris.length === 0) return false;
 
-    // Compute area-weighted 2D centroid from earcut triangles (inside polygon)
-    let cx = 0, cy = 0, aSum = 0;
-    if (earTris && earTris.length) {
-        for (const tri of earTris) {
-            const A = points2D[tri[0]];
-            const B = points2D[tri[1]];
-            const C = points2D[tri[2]];
-            const triArea = 0.5 * ((B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x));
-            if (!Number.isFinite(triArea) || Math.abs(triArea) < 1e-20) continue;
-            const tx = (A.x + B.x + C.x) / 3;
-            const ty = (A.y + B.y + C.y) / 3;
-            cx += tx * triArea;
-            cy += ty * triArea;
-            aSum += triArea;
-        }
-    }
-    if (Math.abs(aSum) < 1e-20) {
-        // Fallback: simple average of polygon points
-        for (const p of points2D) { cx += p.x; cy += p.y; }
-        cx /= points2D.length; cy /= points2D.length;
-    } else {
-        cx /= aSum; cy /= aSum;
-    }
-    // Map anchor back to 3D
-    const anchor3D = origin.clone().addScaledVector(u, cx).addScaledVector(v, cy);
+    // Planar cap offset: translate the whole cap along the outward direction
+    // by the requested bulge distance, preserving planarity and topology.
+    // Keep boundary vertices EXACTLY on the original seam/side edges to ensure
+    // perfect coincidence with adjacent faces. Any outward bias for SUBTRACT
+    // is handled later during boolean via offsetCoplanarCap; do not move
+    // boundary vertices here.
+    const offsetOuter = outer;
 
-    // Apply a slight outward bulge by offsetting the anchor along the cap normal.
-    // Clamp magnitude to a fraction of the average anchor->border distance.
-    let anchorBulged = anchor3D;
-    if (Number.isFinite(bulge) && Math.abs(bulge) > 0) {
-        // Average ray length from anchor to border (3D)
-        let avgLen = 0;
-        for (const p of outer) avgLen += anchor3D.distanceTo(p);
-        avgLen = (outer.length > 0) ? (avgLen / outer.length) : 0;
-        const maxAllowed = (avgLen > 0) ? 0.25 * avgLen : Math.abs(bulge);
-        const d = Math.sign(bulge) * Math.min(Math.abs(bulge), maxAllowed);
-        // Use `bulgeDir` so the bump direction follows the intended outward hint
-        // even if the polygon loop was reversed for triangulation.
-        anchorBulged = anchor3D.clone().addScaledVector(bulgeDir, d);
-    }
-
-    // Triangulate as a full fan along the border: (anchor, vi, v(i+1))
-    const N = outer.length;
-    // Consistent orientation: for CCW border, (anchor, i, i+1) yields outward facing if normal is outward
-    for (let i = 0; i < N; i++) {
-        const j = (i + 1) % N;
-        const a = anchorBulged;
-        const b = outer[i];
-        const c = outer[j];
-        solid.addTriangle(faceName, vToArr(a), vToArr(b), vToArr(c));
+    for (const tri of earTris) {
+        const i0 = tri[0], i1 = tri[1], i2 = tri[2];
+        const A = offsetOuter[i0];
+        const B = offsetOuter[i1];
+        const C = offsetOuter[i2];
+        solid.addTriangle(faceName, vToArr(A), vToArr(B), vToArr(C));
     }
     return true;
 }
@@ -1655,6 +1663,49 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         if (seamB && seamB[i]) ring[arcSegments] = seamB[i].clone();
     }
 
+    // Apply end-cap offsets BEFORE generating any triangles so surfaces stay
+    // watertight. Offset the entire end section (arc ring + boundary rows)
+    // along the cap plane normal, with sign chosen to point outward.
+    if (!closeLoop) {
+        const rowsA0 = sideStripData?.rowsA || null;
+        const rowsB0 = sideStripData?.rowsB || null;
+        const startRowA0 = rowsA0?.[0] || null;
+        const startRowB0 = rowsB0?.[0] || null;
+        const endRowA0   = rowsA0?.[rowsA0.length - 1] || null;
+        const endRowB0   = rowsB0?.[rowsB0.length - 1] || null;
+
+        const applySectionOffset = (dir, dist, ring, rowA, rowB) => {
+            if (!(dir && Number.isFinite(dist) && Math.abs(dist) > 0)) return;
+            const nrm = dir.clone().normalize();
+            const shift = (pt) => { if (pt) pt.addScaledVector(nrm, dist); };
+            if (Array.isArray(ring)) for (let j = 0; j < ring.length; j++) shift(ring[j]);
+            if (Array.isArray(rowA)) for (let k = 0; k < rowA.length; k++) shift(rowA[k]);
+            if (Array.isArray(rowB)) for (let k = 0; k < rowB.length; k++) shift(rowB[k]);
+        };
+
+        const defaultBulge = (String(solid?.sideMode || '').toUpperCase() === 'INSET') ? (0.05 * radius) : 0;
+        const hasStart0 = (solid?.capBulgeStart !== undefined && solid?.capBulgeStart !== null);
+        const hasEnd0   = (solid?.capBulgeEnd   !== undefined && solid?.capBulgeEnd   !== null);
+        const bulgeStart0 = hasStart0 && Number.isFinite(+solid.capBulgeStart)
+            ? (+solid.capBulgeStart)
+            : defaultBulge;
+        const bulgeEnd0 = hasEnd0 && Number.isFinite(+solid.capBulgeEnd)
+            ? (+solid.capBulgeEnd)
+            : defaultBulge;
+
+        const capNStart0 = computeCapPlaneNormal(arcRings[0], startRowA0, startRowB0, false, solid.capNormalHint);
+        const capNEnd0   = computeCapPlaneNormal(arcRings[n-1], endRowA0,   endRowB0,   true,  solid.capNormalHint);
+
+        if (capNStart0 && Math.abs(bulgeStart0) > 0) {
+            let d = bulgeStart0; if (solid.capNormalHint && capNStart0.dot(solid.capNormalHint) < 0) d = -d;
+            applySectionOffset(capNStart0, d, arcRings[0], startRowA0, startRowB0);
+        }
+        if (capNEnd0 && Math.abs(bulgeEnd0) > 0) {
+            let d = bulgeEnd0; if (solid.capNormalHint && capNEnd0.dot(solid.capNormalHint) < 0) d = -d;
+            applySectionOffset(capNEnd0, d, arcRings[n-1], endRowA0, endRowB0);
+        }
+    }
+
     // Curved surface between successive arc rings. Alternate the quad
     // triangulation to avoid long zig-zag artifacts in the wireframe.
     const triArea2 = (p, q, r) => {
@@ -1756,15 +1807,30 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
             ? new THREE.Vector3().subVectors(arcRings[n - 1][arcSegments - 1], arcRings[n - 1][arcSegments]).normalize()
             : null;
 
-        let normalHintStart = (startTangent && arcDirStart)
+        // Prefer a global outward hint derived from face normals to avoid
+        // flips coming from local frame differences at each end. Fall back
+        // to the per-end cross-product estimates if not available.
+        let normalHintStart = solid.capNormalHint || ((startTangent && arcDirStart)
             ? new THREE.Vector3().crossVectors(startTangent, arcDirStart).normalize()
-            : null;
-        let normalHintEnd = (endTangent && arcDirEnd)
+            : null);
+        let normalHintEnd = solid.capNormalHint || ((endTangent && arcDirEnd)
             ? new THREE.Vector3().crossVectors(endTangent, arcDirEnd).normalize()
-            : null;
-        // Keep original hint conventions: start uses cross(startTangent, arcDirStart),
-        // end uses cross(endTangent, arcDirEnd) but is negated when passed below.
-        // This ensures consistent outward orientation across both caps.
+            : null);
+
+        // Determine bulge distances per-end for triangulation hints and face naming
+        const defaultBulge = (String(solid?.sideMode || '').toUpperCase() === 'INSET') ? (0.05 * radius) : 0;
+        const hasStart = (solid?.capBulgeStart !== undefined && solid?.capBulgeStart !== null);
+        const hasEnd   = (solid?.capBulgeEnd   !== undefined && solid?.capBulgeEnd   !== null);
+        const bulgeStart = hasStart && Number.isFinite(+solid.capBulgeStart)
+            ? (+solid.capBulgeStart)
+            : defaultBulge;
+        const bulgeEnd = hasEnd && Number.isFinite(+solid.capBulgeEnd)
+            ? (+solid.capBulgeEnd)
+            : defaultBulge;
+
+        // Recompute normals after potential offset (direction only)
+        let capNormalStart = computeCapPlaneNormal(arcRings[0], startRowA, startRowB, /*mirror*/ false, solid.capNormalHint);
+        let capNormalEnd   = computeCapPlaneNormal(arcRings[n-1], endRowA,   endRowB,   /*mirror*/ true,  solid.capNormalHint);
 
         const builtStart = buildEndCapEarcut(
             solid,
@@ -1772,9 +1838,9 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
             arcRings[0],
             startRowA,
             startRowB,
-            normalHintStart,
-            // Slight outward bulge for INSET caps
-            (String(solid?.sideMode || '').toUpperCase() === 'INSET') ? (0.05 * radius) : 0
+            capNormalStart || normalHintStart,
+            bulgeStart,
+            /*mirror*/ false
         );
         if (!builtStart) {
             const Pstart = railP[0];
@@ -1791,8 +1857,9 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
             arcRings[n - 1],
             endRowA,
             endRowB,
-            normalHintEnd ? normalHintEnd.clone().negate() : null,
-            (String(solid?.sideMode || '').toUpperCase() === 'INSET') ? (0.05 * radius) : 0
+            capNormalEnd || normalHintEnd || normalHintStart || null,
+            bulgeEnd,
+            /*mirror*/ true
         );
         if (!builtEnd) {
             const Pend = railP[n - 1];

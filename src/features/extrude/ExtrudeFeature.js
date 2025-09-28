@@ -81,7 +81,7 @@ export class ExtrudeFeature {
     // Apply optional boolean operation via shared helper
     const effects = await BREP.applyBooleanOperation(partHistory || {}, extrude, this.inputParams.boolean, this.inputParams.featureID);
     // Flag removals (sketch parent + boolean effects) for PartHistory to collect
-    try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch {}
+    try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.__removeFlag = true; } } catch {}
     // Return only artifacts to add
     return effects.added || [];
   }

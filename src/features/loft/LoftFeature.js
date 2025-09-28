@@ -246,7 +246,7 @@ export class LoftFeature {
     solid.visualize();
     const effects = await BREP.applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
     // Flag removals (sketch parents + boolean effects)
-    try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch {}
+    try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.__removeFlag = true; } } catch {}
     // Return only artifacts to add
     return effects.added || [];
   }

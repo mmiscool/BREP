@@ -330,7 +330,7 @@ export class RevolveFeature {
         solid.visualize();
         const effects = await BREP.applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
         // Flag removals (sketch parent + boolean effects)
-        try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.remove = true; } } catch { }
+        try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.__removeFlag = true; } } catch { }
         return effects.added || [];
     }
 }

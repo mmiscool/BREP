@@ -106,7 +106,7 @@ export class ChamferFeature {
         finalSolid.name = `${targetSolid.name}`;
         finalSolid.visualize();
         // Flag the original solid for removal; PartHistory will handle it
-        try { targetSolid.remove = true; } catch {}
+        try { targetSolid.__removeFlag = true; } catch {}
         const out = [];
         if (this.inputParams.debug) out.push(...objectsForBoolean);
         out.push(finalSolid);

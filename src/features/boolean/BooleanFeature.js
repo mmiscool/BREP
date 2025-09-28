@@ -85,7 +85,7 @@ export class BooleanFeature {
         }
 
         // Mark removals and return only additions
-        try { for (const obj of effects.removed || []) { if (obj) obj.remove = true; } } catch { }
+        try { for (const obj of effects.removed || []) { if (obj) obj.__removeFlag = true; } } catch { }
         return effects.added || [];
     }
 }

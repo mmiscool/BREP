@@ -110,7 +110,7 @@ export class PartHistory {
           instance.resultArtifacts = await instance.run(this);
           // Normalize compatibility with legacy returns { added, removed }
           const effects = this._normalizeRunResult(instance.resultArtifacts, feature.inputParams.featureID);
-          try { for (const r of effects.removed) { if (r) r.remove = true; } } catch { }
+          try { for (const r of effects.removed) { if (r) r.__removeFlag = true; } } catch { }
           instance.resultArtifacts = effects.added;
           const t1 = nowMs();
           const dur = Math.max(0, Math.round(t1 - t0));
@@ -132,7 +132,7 @@ export class PartHistory {
         instance.resultArtifacts = await instance.run(this);
         // Normalize compatibility with legacy returns { added, removed }
         const effects = this._normalizeRunResult(instance.resultArtifacts, feature.inputParams.featureID);
-        try { for (const r of effects.removed) { if (r) r.remove = true; } } catch { }
+        try { for (const r of effects.removed) { if (r) r.__removeFlag = true; } } catch { }
         instance.resultArtifacts = effects.added;
         const t1 = nowMs();
         const dur = Math.max(0, Math.round(t1 - t0));
@@ -158,7 +158,7 @@ export class PartHistory {
       }
 
       // Also remove any scene children flagged for removal (e.g., boolean inputs)
-      const flagged = this.scene.children.slice().filter(ch => ch?.remove === true);
+      const flagged = this.scene.children.slice().filter(ch => ch?.__removeFlag === true);
       if (flagged.length) {
         for (const ch of flagged) this.scene.remove(ch);
       }
@@ -180,8 +180,8 @@ export class PartHistory {
         }
       }
 
-      // Final sweep: remove any newly-flagged .remove items after adding artifacts
-      const flaggedAfter = this.scene.children.slice().filter(ch => ch?.remove === true);
+      // Final sweep: remove any newly-flagged items after adding artifacts
+      const flaggedAfter = this.scene.children.slice().filter(ch => ch?.__removeFlag === true);
       if (flaggedAfter.length) {
         for (const ch of flaggedAfter) {
           try { this.scene.remove(ch); }

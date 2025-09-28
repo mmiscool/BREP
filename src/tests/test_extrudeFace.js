@@ -8,13 +8,17 @@ export async function test_ExtrudeFace(partHistory) {
 
     const extrude = await partHistory.newFeature("E");
     extrude.inputParams.profile = `${cone.inputParams.featureID}_T`;
-    extrude.inputParams.distance = 5;
+    // Use back distance instead of negative distance
+    extrude.inputParams.distance = 0;
+    extrude.inputParams.distanceBack = 5;
 
-    // perform a boolean operation between the 2 solids.
-    const boolean = await partHistory.newFeature("B");
-    boolean.inputParams.targetSolid = cone.inputParams.featureID;
-    boolean.inputParams.toolSolid = extrude.inputParams.featureID;
-    boolean.inputParams.operation = "UNION";
+    // Use internal boolean on the extrude feature to union with the cone
+    extrude.inputParams.boolean = {
+        targets: [cone.inputParams.featureID],
+        operation: "UNION",
+    };
+
+    // No separate boolean feature; handled internally by the extrude
 
     return partHistory;
 }
