@@ -20,6 +20,8 @@ import { RemeshFeature } from './features/remesh/RemeshFeature.js';
 import { ImageToFaceFeature } from './features/imageToFace/ImageToFaceFeature.js';
 import { TransformFeature } from './features/transform/TransformFeature.js';
 import { PatternFeature } from './features/pattern/PatternFeature.js';
+import { PatternLinearFeature } from './features/patternLinear/PatternLinearFeature.js';
+import { PatternRadialFeature } from './features/patternRadial/PatternRadialFeature.js';
 
 /* ========================================================================
    FeatureRegistry
@@ -52,6 +54,9 @@ export class FeatureRegistry {
     this.register(RemeshFeature);
     this.register(ImageToFaceFeature);
     this.register(TransformFeature);
+    this.register(PatternLinearFeature);
+    this.register(PatternRadialFeature);
+    // Keep legacy combined Pattern for backward compatibility
     this.register(PatternFeature);
 
     // Backward-compat aliases for renamed features
@@ -94,6 +99,10 @@ export class FeatureRegistry {
       try { className = fc.name ? String(fc.name).trim().toUpperCase() : null; } catch { className = null; }
       if (shortName === searchName || longName === searchName || className === searchName) return fc;
     }
+    // Aliases for new split pattern features
+    if (searchName === 'PATTERN' || searchName === 'PATTERN FEATURE') return PatternLinearFeature;
+    if (searchName === 'PATTERN LINEAR') return PatternLinearFeature;
+    if (searchName === 'PATTERN RADIAL') return PatternRadialFeature;
     return this.aliases.get(searchName) || null;
   }
 
