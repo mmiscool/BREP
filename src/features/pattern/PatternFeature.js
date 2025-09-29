@@ -139,6 +139,8 @@ export class PatternFeature {
       const t = new THREE.Matrix4().makeTranslation(d.x * i, d.y * i, d.z * i);
       const c = src.clone();
       c.bakeTransform(t);
+      // Retag face names for uniqueness per instance
+      try { retagSolidFaces(c, `PAT_LIN_${i}`); } catch (_) {}
       c.name = `${src.name || 'Solid'}::PAT_LIN_${i}`;
       if (doVisualize) c.visualize();
       out.push(c);
@@ -165,6 +167,8 @@ export class PatternFeature {
 
       const c = src.clone();
       c.bakeTransform(M);
+      // Retag face names for uniqueness per instance
+      try { retagSolidFaces(c, `PAT_CIR_${i}`); } catch (_) {}
       c.name = `${src.name || 'Solid'}::PAT_CIR_${i}`;
       if (doVisualize) c.visualize();
       out.push(c);
@@ -221,4 +225,24 @@ function computeRefPlane(refObj) {
     const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
     return { point, normal };
   } catch (_) { return null; }
+}
+
+// Retag all face labels in a Solid with a unique suffix so IDs remain distinct
+// across patterned instances when booleaned together.
+function retagSolidFaces(solid, suffix) {
+  if (!solid || !suffix) return;
+  try {
+    const srcMap = solid._idToFaceName instanceof Map ? solid._idToFaceName : null;
+    if (!srcMap) return;
+    const newIdToFace = new Map();
+    const newFaceToId = new Map();
+    for (const [fid, fname] of srcMap.entries()) {
+      const base = (fname != null) ? String(fname) : `FACE_${fid}`;
+      const tagged = `${base}::${suffix}`;
+      newIdToFace.set(fid, tagged);
+      newFaceToId.set(tagged, fid);
+    }
+    solid._idToFaceName = newIdToFace;
+    solid._faceNameToID = newFaceToId;
+  } catch (_) { /* best-effort */ }
 }

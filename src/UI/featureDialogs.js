@@ -251,7 +251,8 @@ export class genFeatureUI {
             const label = document.createElement('label');
             label.className = 'label';
             label.setAttribute('for', id);
-            label.textContent = this._prettyLabel(key);
+            // Allow schema to override the row label via `label`
+            label.textContent = String((def && def.label) ? def.label : this._prettyLabel(key));
             row.appendChild(label);
 
             const controlWrap = document.createElement('div');
@@ -753,6 +754,111 @@ export class genFeatureUI {
                         this._emitParamsChange(key, v);
                         this._stopActiveReferenceSelection();
                     });
+                    break;
+                }
+                case 'vec3': {
+                    // Triple numeric inputs for [x,y,z], optional uniform-lock and step
+                    inputEl = document.createElement('div');
+                    inputEl.className = 'transform-grid';
+
+                    // Optional uniform checkbox
+                    const showUniform = Boolean(def && (def.uniformToggle === true));
+                    let uniformChecked = Boolean(def && (def.uniformDefault === true));
+                    let uniformWrap = null;
+                    let uniformCb = null;
+                    if (showUniform) {
+                        uniformWrap = document.createElement('div');
+                        uniformWrap.className = 'transform-row';
+                        const spacer = document.createElement('div');
+                        spacer.className = 'transform-label';
+                        spacer.textContent = '';
+                        const controls = document.createElement('div');
+                        controls.className = 'transform-inputs';
+                        const cbLabel = document.createElement('label');
+                        cbLabel.style.display = 'inline-flex';
+                        cbLabel.style.alignItems = 'center';
+                        cbLabel.style.gap = '6px';
+                        uniformCb = document.createElement('input');
+                        uniformCb.type = 'checkbox';
+                        uniformCb.checked = uniformChecked;
+                        const txt = document.createElement('span');
+                        txt.textContent = String(def.uniformLockLabel || 'Uniform');
+                        cbLabel.appendChild(uniformCb);
+                        cbLabel.appendChild(txt);
+                        controls.appendChild(cbLabel);
+                        uniformWrap.appendChild(spacer);
+                        uniformWrap.appendChild(controls);
+                        inputEl.appendChild(uniformWrap);
+                    }
+
+                    const mkRow = (labelText) => {
+                        const rowEl = document.createElement('div');
+                        rowEl.className = 'transform-row';
+                        const lab = document.createElement('div');
+                        lab.className = 'transform-label';
+                        lab.textContent = labelText;
+                        const inputsWrap = document.createElement('div');
+                        inputsWrap.className = 'transform-inputs';
+                        rowEl.appendChild(lab);
+                        rowEl.appendChild(inputsWrap);
+                        return { rowEl, inputsWrap };
+                    };
+
+                    const { rowEl, inputsWrap } = mkRow('XYZ');
+                    inputEl.appendChild(rowEl);
+
+                    // Create three inputs X,Y,Z
+                    const valuesArr = (() => {
+                        const v = this._pickInitialValue(key, def);
+                        if (Array.isArray(v)) return [v[0] ?? 0, v[1] ?? 0, v[2] ?? 0];
+                        if (v && typeof v === 'object') return [v.x ?? 0, v.y ?? 0, v.z ?? 0];
+                        return [0, 0, 0];
+                    })();
+
+                    // Step support: use schema step if provided, else 'any'
+                    const stepStr = (def && (def.step != null)) ? String(def.step) : 'any';
+
+                    const setParamFromInputs = () => {
+                        const inps = Array.from(inputsWrap.querySelectorAll('input'));
+                        const arr = inps.map((el) => {
+                            const n = Number(el.value);
+                            return Number.isFinite(n) ? n : 0;
+                        });
+                        this.params[key] = [arr[0] || 0, arr[1] || 0, arr[2] || 0];
+                        this._emitParamsChange(key, this.params[key]);
+                    };
+
+                    const inputs = [];
+                    for (let i = 0; i < 3; i++) {
+                        const inp = document.createElement('input');
+                        inp.type = 'number';
+                        inp.className = 'input transform-input';
+                        inp.step = stepStr;
+                        this._setInputValue(inp, 'number', valuesArr[i] ?? 0);
+                        inp.addEventListener('change', () => {
+                            if (showUniform && uniformCb && uniformCb.checked) {
+                                // In uniform mode, propagate the edited value to all components
+                                const v = inp.value;
+                                for (const other of inputsWrap.querySelectorAll('input')) other.value = v;
+                            }
+                            setParamFromInputs();
+                        });
+                        inputsWrap.appendChild(inp);
+                        inputs.push(inp);
+                    }
+
+                    if (showUniform && uniformCb) {
+                        const enforceUniformNow = () => {
+                            if (uniformCb.checked && inputs.length) {
+                                const v = Number(inputs[0].value);
+                                for (let i = 0; i < inputs.length; i++) inputs[i].value = String(v);
+                                setParamFromInputs();
+                            }
+                        };
+                        uniformCb.addEventListener('change', () => enforceUniformNow());
+                        if (uniformChecked) enforceUniformNow();
+                    }
+
                     break;
                 }
                 case 'file': {
@@ -1289,6 +1395,7 @@ export class genFeatureUI {
             case 'options': return '';
             case 'reference_selection': return null;
             case 'transform': return { position: [0, 0, 0], rotationEuler: [0, 0, 0], scale: [1, 1, 1] };
+            case 'vec3': return [0, 0, 0];
             default: return '';
         }
     }

@@ -35,11 +35,16 @@ const inputParamsSchema = {
     type: "vec3",
     default_value: [1, 1, 1],
     hint: "Non-uniform scale [sx,sy,sz] about pivot",
+    step: 0.1,
+    uniformToggle: true,
+    uniformDefault: true,
+    uniformLockLabel: 'Uniform scale',
   },
-  replaceOriginal: {
+  copy: {
     type: "boolean",
     default_value: false,
-    hint: "If true, replaces selected solids; otherwise creates new ones",
+    label: "Copy",
+    hint: "Create a new transformed copy; keep the original",
   },
 };
 
@@ -62,11 +67,15 @@ export class TransformFeature {
     const t = toVec3(this.inputParams.translate, 0, 0, 0);
     const rDeg = toVec3(this.inputParams.rotateEulerDeg, 0, 0, 0);
     const s = toVec3(this.inputParams.scale, 1, 1, 1);
-    const replace = !!this.inputParams.replaceOriginal;
+    // New flag: copy (default false). Back-compat: invert legacy replaceOriginal if present.
+    const copy = (this.inputParams.copy !== undefined)
+      ? !!this.inputParams.copy
+      : (this.inputParams.replaceOriginal !== undefined ? !this.inputParams.replaceOriginal : false);
+    const replace = !copy;
 
     const out = [];
     for (const src of solids) {
-      const dst = replace ? src.clone() : src.clone();
+      const dst = src.clone();
 
       // Compute pivot point in world
       const pivotPoint = (pivot === 'BBOX_CENTER') ? bboxCenterWorld(src) : new THREE.Vector3(0, 0, 0);
@@ -97,7 +106,14 @@ export class TransformFeature {
       M.multiply(Tmove).multiply(Tpivot).multiply(RS).multiply(Tnp);
 
       dst.bakeTransform(M); // bake into geometry arrays
-      dst.name = `${src.name || 'Solid'}::XFORM`;
+      if (replace) {
+        // Keep the original name when replacing
+        dst.name = src.name || dst.name || 'Solid';
+      } else {
+        // Name copies with _COPY suffix
+        const base = src.name || 'Solid';
+        dst.name = base.endsWith('_COPY') ? base : `${base}_COPY`;
+      }
       dst.visualize();
 
       if (replace) {
@@ -130,4 +146,3 @@ function bboxCenterWorld(solid) {
     return bbMin.add(bbMax).multiplyScalar(0.5);
   } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
 }
-
