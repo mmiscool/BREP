@@ -678,8 +678,9 @@ export class Sweep extends FacesSolid {
       dirB = n.multiplyScalar(-distanceBack);
     }
 
-    const startName = `${face.name || 'Face'}_START`;
-    const endName = `${face.name || 'Face'}_END`;
+    const featureTag = (this.params && this.params.name) ? `${this.params.name}:` : '';
+    const startName = `${featureTag}${face.name || 'Face'}_START`;
+    const endName = `${featureTag}${face.name || 'Face'}_END`;
 
     // Note: pathAlign support removed. If reintroducing, add helpers here.
 
@@ -892,7 +893,7 @@ export class Sweep extends FacesSolid {
       const edges = (Array.isArray(face?.edges) ? face.edges : []).filter(e => !e.closedLoop);
       const pointToEdgeNames = new Map(); // key -> Set(edgeName)
       for (const e of edges) {
-        const name = `${e?.name || 'EDGE'}_SW`;
+        const name = `${featureTag}${e?.name || 'EDGE'}_SW`;
         const poly = e?.userData?.polylineLocal;
         const isWorld = !!(e?.userData?.polylineWorld);
         if (Array.isArray(poly) && poly.length >= 2) {
@@ -1159,7 +1160,7 @@ export class Sweep extends FacesSolid {
               const B1 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
               const setA = pointToEdgeNames.get(key(a));
               const setB = pointToEdgeNames.get(key(b));
-              let name = `${face.name || 'FACE'}_SW`;
+              let name = `${featureTag}${face.name || 'FACE'}_SW`;
               if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
               addQuad(name, A0, B0, B1, A1, isHole);
             }
@@ -1174,7 +1175,7 @@ export class Sweep extends FacesSolid {
               const b2 = [b[0] + dirF.x, b[1] + dirF.y, b[2] + dirF.z];
               const setA = pointToEdgeNames.get(key(a));
               const setB = pointToEdgeNames.get(key(b));
-              let name = `${face.name || 'FACE'}_SW`;
+              let name = `${featureTag}${face.name || 'FACE'}_SW`;
               if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
               if (isHole) {
                 this.addTriangle(name, a, b2, b);
@@ -1199,7 +1200,7 @@ export class Sweep extends FacesSolid {
                 const B1 = placeAt(b, seg + 1);
                 const setA = pointToEdgeNames.get(key(a));
                 const setB = pointToEdgeNames.get(key(b));
-                let name = `${face.name || 'FACE'}_SW`;
+                let name = `${featureTag}${face.name || 'FACE'}_SW`;
                 if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
                 addQuad(name, A0, B0, B1, A1, isHole);
               }
@@ -1219,7 +1220,7 @@ export class Sweep extends FacesSolid {
                 const B1 = [b[0] + off1.x, b[1] + off1.y, b[2] + off1.z];
                 const setA = pointToEdgeNames.get(key(a));
                 const setB = pointToEdgeNames.get(key(b));
-                let name = `${face.name || 'FACE'}_SW`;
+                let name = `${featureTag}${face.name || 'FACE'}_SW`;
                 if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
                 // Use robust splitting to avoid skinny/inside-crossing diagonals
                 addQuad(name, A0, B0, B1, A1, isHole);
@@ -1300,7 +1301,7 @@ export class Sweep extends FacesSolid {
       if (edges.length) {
         // Per-edge fallback; support translate and pathAlign
         for (const edge of edges) {
-          const name = `${edge.name || 'EDGE'}_SW`;
+          const name = `${featureTag}${edge.name || 'EDGE'}_SW`;
 
           // Robustly extract world-space polyline points
           const pA = [];

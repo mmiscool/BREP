@@ -398,6 +398,38 @@ export class PartHistory {
           const rot = Array.isArray(raw.rotationEuler) ? raw.rotationEuler.map(evalOne) : [0, 0, 0];
           const scl = Array.isArray(raw.scale) ? raw.scale.map(evalOne) : [1, 1, 1];
           sanitized[key] = { position: pos, rotationEuler: rot, scale: scl };
+        } else if (schema[key].type === "vec3") {
+          // Evaluate vec3 entries; accept array [x,y,z] or object {x,y,z}
+          const raw = inputParams[key];
+          const evalOne = (v) => {
+            if (typeof v === 'number' && Number.isFinite(v)) return v;
+            if (typeof v === 'string') return runCodeAndGetNumber(this.expressions, v);
+            const n = Number(v);
+            return Number.isFinite(n) ? n : 0;
+          };
+          if (Array.isArray(raw)) {
+            sanitized[key] = [evalOne(raw[0]), evalOne(raw[1]), evalOne(raw[2])];
+          } else if (raw && typeof raw === 'object') {
+            sanitized[key] = [evalOne(raw.x), evalOne(raw.y), evalOne(raw.z)];
+          } else {
+            sanitized[key] = [0, 0, 0];
+          }
+        } else if (schema[key].type === "boolean") {
+          // Generic boolean handling with alias for Transform.copy
+          if (key === 'copy') {
+            let v;
+            if (Object.prototype.hasOwnProperty.call(inputParams, 'copy')) {
+              v = inputParams.copy;
+            } else if (Object.prototype.hasOwnProperty.call(inputParams, 'replaceOriginal')) {
+              // Legacy: replaceOriginal means NOT copy
+              v = !inputParams.replaceOriginal;
+            } else {
+              v = schema[key].default_value === true;
+            }
+            sanitized[key] = Boolean(v);
+          } else {
+            sanitized[key] = Boolean(inputParams[key]);
+          }
         } else {
           sanitized[key] = inputParams[key];
         }

@@ -48,8 +48,9 @@ export class ExtrudeSolid extends Solid {
       }
     }
 
-    const startName = `${face.name || 'Face'}_START`;
-    const endName = `${face.name || 'Face'}_END`;
+    const featureTag = this.name ? `${this.name}:` : '';
+    const startName = `${featureTag}${face.name || 'Face'}_START`;
+    const endName = `${featureTag}${face.name || 'Face'}_END`;
 
     // Helper: add two triangles for a quad using the better diagonal.
     const addQuad = (faceName, A0, B0, B1, A1, isHole) => {
@@ -182,7 +183,7 @@ export class ExtrudeSolid extends Solid {
           });
           const p0 = P[0], p1 = P[P.length - 1];
           if ((samePt(p0, A) && samePt(p1, B)) || (samePt(p0, B) && samePt(p1, A))) {
-            return `${e?.name || 'EDGE'}_SW`;
+            return `${featureTag}${e?.name || 'EDGE'}_SW`;
           }
         }
       }
@@ -201,7 +202,7 @@ export class ExtrudeSolid extends Solid {
         const M = pts.length;
         if (M < 2) continue;
         const emitSeg = (A, B, segIdx) => {
-          const nm = findEdgeNameFor(A, B) || `${face.name || 'Face'}_${li}_SEG${segIdx}_SW`;
+          const nm = findEdgeNameFor(A, B) || `${featureTag}${face.name || 'Face'}_${li}_SEG${segIdx}_SW`;
           sideSegments.push({ name: nm, poly: [A, B], isHole: !!l.isHole });
         };
         for (let i = 0; i < M - 1; i++) emitSeg(pts[i], pts[i + 1], i);
@@ -213,7 +214,7 @@ export class ExtrudeSolid extends Solid {
       for (const edge of edges) {
         const poly = extractPolylineWorld(edge);
         // Keep as a single ribbon for legacy faces
-        sideSegments.push({ name: `${edge?.name || 'EDGE'}_SW`, poly, isHole: !!(edge && edge.userData && edge.userData.isHole) });
+        sideSegments.push({ name: `${featureTag}${edge?.name || 'EDGE'}_SW`, poly, isHole: !!(edge && edge.userData && edge.userData.isHole) });
       }
     }
 
