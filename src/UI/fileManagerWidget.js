@@ -576,7 +576,35 @@ export class FileManagerWidget {
       const files = {};
       Object.keys(zip.files || {}).forEach(p => files[p.toLowerCase()] = p);
 
-      // 1) Check model part relationships for a thumbnail target
+      // 1) Check root package relationships for a thumbnail target (recommended by 3MF/OPC)
+      let relsKeyRoot = files['_rels/.rels'];
+      if (relsKeyRoot) {
+        try {
+          const relsXml = await zip.file(relsKeyRoot).async('string');
+          const relRe = /<Relationship\s+[^>]*Type="[^"]*metadata\/thumbnail[^"]*"[^>]*>/ig;
+          const tgtRe = /Target="([^"]+)"/i;
+          let m;
+          while ((m = relRe.exec(relsXml))) {
+            const tag = m[0];
+            const tm = tgtRe.exec(tag);
+            if (tm && tm[1]) {
+              let target = tm[1];
+              // Resolve relative to package root
+              if (target.startsWith('/')) target = target.replace(/^\/+/, '');
+              const lf = target.toLowerCase();
+              const real = files[lf];
+              if (real) {
+                const mime = lf.endsWith('.png') ? 'image/png' : (lf.match(/\.(jpe?g)$/) ? 'image/jpeg' : 'application/octet-stream');
+                const imgU8 = await zip.file(real).async('uint8array');
+                const imgB64 = this._uint8ToBase64(imgU8);
+                return `data:${mime};base64,${imgB64}`;
+              }
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      }
+
+      // 2) Check model part relationships for a thumbnail target
       let relsKey = files['3d/_rels/3dmodel.model.rels'];
       if (relsKey) {
         try {
@@ -614,8 +642,9 @@ export class FileManagerWidget {
         } catch { /* ignore rels parse errors */ }
       }
 
-      // 2) Fallback: first image under Thumbnails/
-      const thumbPath = Object.keys(files).find(k => k.startsWith('thumbnails/') && (k.endsWith('.png') || k.endsWith('.jpg') || k.endsWith('.jpeg')));
+      // 3) Fallback: first image under Metadata/ or Thumbnails/
+      let thumbPath = Object.keys(files).find(k => k.startsWith('metadata/') && (k.endsWith('.png') || k.endsWith('.jpg') || k.endsWith('.jpeg')));
+      if (!thumbPath) thumbPath = Object.keys(files).find(k => k.startsWith('thumbnails/') && (k.endsWith('.png') || k.endsWith('.jpg') || k.endsWith('.jpeg')));
       if (thumbPath) {
         const real = files[thumbPath];
         const mime = thumbPath.endsWith('.png') ? 'image/png' : 'image/jpeg';

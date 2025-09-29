@@ -208,13 +208,16 @@ function contentTypesXML() {
   ].join('\n');
 }
 
-function rootRelsXML() {
-  return [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
-    '  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>',
-    '</Relationships>'
-  ].join('\n');
+function rootRelsXML({ thumbnailPath } = {}) {
+  const lines = [];
+  lines.push('<?xml version="1.0" encoding="UTF-8"?>');
+  lines.push('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">');
+  lines.push('  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>');
+  if (thumbnailPath) {
+    lines.push(`  <Relationship Target="${xmlEsc(thumbnailPath)}" Id="relThumb" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"/>`);
+  }
+  lines.push('</Relationships>');
+  return lines.join('\n');
 }
 
 function modelPartRelsXML({ thumbnailPath } = {}) {
@@ -238,10 +241,9 @@ export async function generate3MF(solids, opts = {}) {
   const modelXml = build3MFModelXML(solids, opts);
   const zip = new JSZip();
   zip.file('[Content_Types].xml', contentTypesXML());
-  zip.folder('_rels').file('.rels', rootRelsXML());
   zip.folder('3D').file('3dmodel.model', modelXml);
   // Optional thumbnail embedding (PNG/JPEG)
-  let thumbRelPath = null;
+  let thumbPkgRelPath = null;
   if (opts.thumbnail) {
     try {
       let bytes = null;
@@ -255,16 +257,15 @@ export async function generate3MF(solids, opts = {}) {
       }
       if (bytes && bytes.length > 0) {
         const fname = `thumbnail.${ext}`;
-        const path = `Thumbnails/${fname}`;
-        zip.folder('Thumbnails').file(fname, bytes);
-        thumbRelPath = `/${path}`; // absolute target from model part
+        const path = `Metadata/${fname}`;
+        zip.folder('Metadata').file(fname, bytes);
+        // Root/package-level relationship target (absolute from package root)
+        thumbPkgRelPath = `/${path}`;
       }
     } catch { /* ignore thumbnail errors */ }
   }
-  // Add model part relationships if needed (e.g., thumbnail)
-  if (thumbRelPath) {
-    zip.folder('3D').folder('_rels').file('3dmodel.model.rels', modelPartRelsXML({ thumbnailPath: thumbRelPath }));
-  }
+  // Root-level relationships (3D model and optional thumbnail)
+  zip.folder('_rels').file('.rels', rootRelsXML({ thumbnailPath: thumbPkgRelPath }));
   // Additional attachments (e.g., Metadata/featureHistory.xml)
   const extra = opts.additionalFiles && typeof opts.additionalFiles === 'object' ? opts.additionalFiles : null;
   if (extra) {
