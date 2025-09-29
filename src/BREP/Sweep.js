@@ -1530,7 +1530,8 @@ export class Sweep extends FacesSolid {
       let ok = false; let attempt = 0; let errLast = null;
       while (!ok && attempt < 3) {
         try {
-          this.getMesh();
+          const __tmpMesh = this.getMesh();
+          try { /* probe only */ } finally { try { if (__tmpMesh && typeof __tmpMesh.delete === 'function') __tmpMesh.delete(); } catch {} }
           ok = true;
         } catch (err) {
           errLast = err;

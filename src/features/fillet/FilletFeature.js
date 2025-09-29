@@ -238,6 +238,7 @@ export class FilletFeature {
                     faceLabels: (mesh.faceID?.length || 0) / 1 | 0
                 };
                 fjson('BuildToolDone', { idx, edge: edgeName, filletType: filletSolid.filletType || null, counts });
+                try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
             } catch (e) {
                 fjson('BuildToolError', { idx, edge: edgeName, message: e?.message || String(e) });
             }
@@ -314,6 +315,7 @@ export class FilletFeature {
                     else console.warn(msg);
                 }
             }
+            try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
         } catch (e) {
             // Non-fatal; continue pipeline
             console.warn('[FilletFeature] Face-name check failed:', e?.message || e);

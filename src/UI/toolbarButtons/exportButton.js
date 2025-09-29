@@ -311,6 +311,7 @@ function _openExportDialog(viewer) {
           const s = solids[0];
           const mesh = s.getMesh();
           const obj = _meshToAsciiOBJ(mesh, base, 6, scale);
+          try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
           _download(`${base}.obj`, obj, 'text/plain');
           close();
           return;
@@ -322,6 +323,7 @@ function _openExportDialog(viewer) {
             const safe = _safeName(s.name || `solid_${idx}`);
             const mesh = s.getMesh();
             const obj = _meshToAsciiOBJ(mesh, safe, 6, scale);
+            try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
             zip.file(`${safe}.obj`, obj);
           } catch {}
         });
@@ -336,6 +338,7 @@ function _openExportDialog(viewer) {
         const s = solids[0];
         const mesh = s.getMesh();
         const stl = _meshToAsciiSTL(mesh, base, 6, scale);
+        try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
         _download(`${base}.stl`, stl, 'model/stl');
         close();
         return;
@@ -347,6 +350,7 @@ function _openExportDialog(viewer) {
           const safe = _safeName(s.name || `solid_${idx}`);
           const mesh = s.getMesh();
           const stl = _meshToAsciiSTL(mesh, safe, 6, scale);
+          try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
           zip.file(`${safe}.stl`, stl);
         } catch {}
       });

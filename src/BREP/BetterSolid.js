@@ -328,6 +328,7 @@ export class Solid extends THREE.Group {
         this._manifold = null;            // cached Manifold object built from arrays
         this._faceIndex = null;           // lazy cache: id -> [triIndices]
         this._epsilon = 0;                // optional vertex weld tolerance (off by default)
+        this._freeTimer = null;           // handle for scheduled wasm cleanup
 
         this.type = 'SOLID';
         this.renderOrder = 1;
@@ -861,9 +862,10 @@ export class Solid extends THREE.Group {
             : new THREE.Vector3(normal[0], normal[1], normal[2]).normalize();
 
         const mesh = this.getMesh();
-        const vp = mesh.vertProperties; // Float32Array
-        const tv = mesh.triVerts;       // Uint32Array
-        const faceIDs = mesh.faceID && mesh.faceID.length ? Array.from(mesh.faceID) : [];
+        try {
+            const vp = mesh.vertProperties; // Float32Array
+            const tv = mesh.triVerts;       // Uint32Array
+            const faceIDs = mesh.faceID && mesh.faceID.length ? Array.from(mesh.faceID) : [];
 
         const mirrored = new Solid();
         mirrored._numProp = mesh.numProp || 3;
@@ -903,6 +905,7 @@ export class Solid extends THREE.Group {
         mirrored._faceIndex = null;
         mirrored._manifold = null;
         return mirrored;
+        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
     }
 
 
@@ -1406,6 +1409,13 @@ export class Solid extends THREE.Group {
         // Measure timing for manifoldization (cache hits vs rebuilds)
         const nowMs = () => (typeof performance !== 'undefined' && performance?.now ? performance.now() : Date.now());
         const __t0 = nowMs();
+        // Reset the auto-free timer: always schedule cleanup 60s after last use
+        try { if (this._freeTimer) { clearTimeout(this._freeTimer); } } catch { }
+        try {
+            this._freeTimer = setTimeout(() => {
+                try { this.free(); } catch { }
+            }, 60 * 1000);
+        } catch { }
         if (!this._dirty && this._manifold) {
             const __t1 = nowMs();
             try { if (debugMode) console.log(`[Solid] _manifoldize cache-hit in ${Math.round(__t1 - __t0)} ms`); } catch { }
@@ -1509,6 +1519,9 @@ export class Solid extends THREE.Group {
             __logDone(false);
             throw err;
         }
+        finally {
+            try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { }
+        }
         this._dirty = false;
         this._faceIndex = null; // will rebuild on demand
         __logDone(true);
@@ -1526,6 +1539,34 @@ export class Solid extends THREE.Group {
      */
     getMesh() {
         return this._manifoldize().getMesh();
+    }
+
+    /**
+     * Free wasm resources associated with this Solid.
+     *
+     * Disposes the underlying Manifold instance (if any) to prevent
+     * accumulating wasm memory across rebuilds. After calling free(),
+     * the Solid remains usable — any subsequent call that needs the
+     * manifold will trigger a fresh _manifoldize().
+     *
+     * Note: Callers who obtain Mesh objects directly via getMesh()
+     * are responsible for deleting those Mesh objects themselves.
+     *
+     * @returns {Solid} this
+     */
+    free() {
+        try {
+            // Clear any pending auto-free timer first
+            try { if (this._freeTimer) { clearTimeout(this._freeTimer); } } catch (_) {}
+            this._freeTimer = null;
+            if (this._manifold) {
+                try { if (typeof this._manifold.delete === 'function') this._manifold.delete(); } catch (_) {}
+                this._manifold = null;
+            }
+            this._dirty = true;
+            this._faceIndex = null;
+        } catch (_) { /* noop */ }
+        return this;
     }
 
     /**
@@ -1601,7 +1642,7 @@ export class Solid extends THREE.Group {
         }
         this._dirty = true;
         this._faceIndex = null;
-        return this;
+        try { return this; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
     }
 
     // Build a cache: faceID -> array of triangle indices
@@ -1620,6 +1661,7 @@ export class Solid extends THREE.Group {
             }
         }
         this._faceIndex = map;
+        try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
     }
 
     /**
@@ -1662,7 +1704,7 @@ export class Solid extends THREE.Group {
 
             out.push({ faceName: name, indices: [i0, i1, i2], p1: p0, p2: p1, p3: p2 });
         }
-        return out;
+        try { return out; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
     }
 
     /** Convenience: list all face names present in this solid (known to the wrapper). */
@@ -1728,7 +1770,7 @@ export class Solid extends THREE.Group {
         }
 
         parts.push(`endsolid ${name}`);
-        return parts.join("\n");
+        try { return parts.join("\n"); } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
     }
 
     /**
@@ -2050,6 +2092,7 @@ export class Solid extends THREE.Group {
      */
     getBoundaryEdgePolylines() {
         const mesh = this.getMesh();
+        try {
         const { vertProperties, triVerts, faceID } = mesh;
         const triCount = (triVerts.length / 3) | 0;
         const nv = (vertProperties.length / 3) | 0;
@@ -2201,6 +2244,7 @@ export class Solid extends THREE.Group {
         }
 
         return polylines;
+        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
     }
 
 
@@ -2268,7 +2312,7 @@ export class Solid extends THREE.Group {
 
         solid._manifold = manifoldObj;
         solid._dirty = false;
-        return solid;
+        try { return solid; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
     }
 
     union(other) {
@@ -2340,6 +2384,7 @@ export class Solid extends THREE.Group {
     // Compute closed volume from oriented triangles (MeshGL from manifold)
     volume() {
         const mesh = this.getMesh();
+        try {
         const vp = mesh.vertProperties;
         const tv = mesh.triVerts;
         let vol6 = 0;
@@ -2353,11 +2398,13 @@ export class Solid extends THREE.Group {
                   + z0 * (x1 * y2 - y1 * x2);
         }
         return Math.abs(vol6) / 6.0;
+        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
     }
 
     // Sum of triangle areas on the surface
     surfaceArea() {
         const mesh = this.getMesh();
+        try {
         const vp = mesh.vertProperties;
         const tv = mesh.triVerts;
         let area = 0;
@@ -2374,6 +2421,7 @@ export class Solid extends THREE.Group {
             area += 0.5 * Math.hypot(nx, ny, nz);
         }
         return area;
+        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
     }
 }
 

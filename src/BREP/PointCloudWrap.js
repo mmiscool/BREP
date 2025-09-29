@@ -280,7 +280,8 @@ export function buildTightPointCloudWrap(rawPoints, opts = {}) {
     out = buildAtScale(scales[s]);
     try {
       // Probe manifoldization
-      out.getMesh();
+      const __m = out.getMesh();
+      try { /* probe */ } finally { try { if (__m && typeof __m.delete === 'function') __m.delete(); } catch {} }
       break; // success
     } catch (e) {
       if (s === scales.length - 1) {

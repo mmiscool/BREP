@@ -82,6 +82,7 @@ export function build3MFModelXML(solids, opts = {}) {
   for (const s of (solids || [])) {
     if (!s || typeof s.getMesh !== 'function') continue;
     const mesh = s.getMesh();
+    try {
     if (!mesh || !mesh.vertProperties || !mesh.triVerts) continue;
     const name = xmlEsc(s.name || `solid_${solidIdx + 1}`);
     const vp = mesh.vertProperties; // Float32Array
@@ -179,6 +180,7 @@ export function build3MFModelXML(solids, opts = {}) {
     lines.push('    </object>');
     buildItems.push(objId);
     solidIdx++;
+    } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
   }
 
   lines.push('  </resources>');

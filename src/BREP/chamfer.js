@@ -456,6 +456,8 @@ function inflateSolidInPlace(solid, distance) {
         );
     }
     copyFromSolid(solid, rebuilt);
+    try { /* fallthrough */ }
+    finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
 }
 
 // Triangular prism between rails P, A, B; caps on ends if open.
@@ -581,6 +583,8 @@ function inflateSolidFacesInPlace(solid, distance, namePredicate) {
 
     // Copy rebuilt into original
     copyFromSolid(solid, rebuilt);
+    try { /* fallthrough */ }
+    finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
 }
 
 function copyFromSolid(dst, src) {
@@ -602,4 +606,5 @@ function copyFromSolid(dst, src) {
     dst._faceNameToID = new Map(src._faceNameToID);
     dst._dirty = true;
     dst._faceIndex = null;
+    try { /* done */ } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
 }

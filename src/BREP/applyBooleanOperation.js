@@ -86,19 +86,21 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
           const getSolidScale = (solid) => {
             try {
               const mesh = solid.getMesh();
-              const vp = mesh?.vertProperties;
-              if (!vp || !vp.length) return 1;
-              let minX = +Infinity, minY = +Infinity, minZ = +Infinity;
-              let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-              for (let i = 0; i < vp.length; i += 3) {
-                const x = vp[i], y = vp[i + 1], z = vp[i + 2];
-                if (x < minX) minX = x; if (x > maxX) maxX = x;
-                if (y < minY) minY = y; if (y > maxY) maxY = y;
-                if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-              }
-              const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
-              const diag = Math.hypot(dx, dy, dz);
-              return (diag > 0) ? diag : Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz), 1);
+              try {
+                const vp = mesh?.vertProperties;
+                if (!vp || !vp.length) return 1;
+                let minX = +Infinity, minY = +Infinity, minZ = +Infinity;
+                let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+                for (let i = 0; i < vp.length; i += 3) {
+                  const x = vp[i], y = vp[i + 1], z = vp[i + 2];
+                  if (x < minX) minX = x; if (x > maxX) maxX = x;
+                  if (y < minY) minY = y; if (y > maxY) maxY = y;
+                  if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+                }
+                const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+                const diag = Math.hypot(dx, dy, dz);
+                return (diag > 0) ? diag : Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz), 1);
+              } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
             } catch { return 1; }
           };
 

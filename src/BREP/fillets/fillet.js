@@ -594,7 +594,8 @@ export class FilletSolid extends Solid {
         // once with a safer recipe: analytic side strips and a tiny seam inset.
         try {
             // Quick probe; throws on failure
-            this.getMesh();
+            const __m = this.getMesh();
+            try { /* probe */ } finally { try { if (__m && typeof __m.delete === 'function') __m.delete(); } catch {} }
         } catch (e) {
             const isClosed = !!(this.edgeToFillet?.closedLoop || this.edgeToFillet?.userData?.closedLoop);
             const isOutset = this.sideMode === 'OUTSET';
@@ -694,7 +695,10 @@ export class FilletSolid extends Solid {
             let nonManifold = false;
             try { if (!this._isCoherentlyOrientedManifold()) nonManifold = true; } catch { nonManifold = true; }
             if (!nonManifold) {
-                try { this.getMesh(); } catch { nonManifold = true; }
+                try {
+                    const __m2 = this.getMesh();
+                    try { /* probe */ } finally { try { if (__m2 && typeof __m2.delete === 'function') __m2.delete(); } catch {} }
+                } catch { nonManifold = true; }
             }
             if (nonManifold) {
                 const msg = `Fillet tool is non-manifold. Boolean may fail.\n` +
@@ -1877,8 +1881,9 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
 // each extension with a triangular cap. Points on A/B are projected to their
 // respective face triangle meshes to stay on-surface.
 function estimateOvershootLength(targetSolid, rEff){
+    let mesh = null;
     try {
-        const mesh = targetSolid?.getMesh();
+        mesh = targetSolid?.getMesh();
         if (!mesh) return Math.max(10*rEff, 1e-3);
         const vp = mesh.vertProperties;
         let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
@@ -1891,6 +1896,7 @@ function estimateOvershootLength(targetSolid, rEff){
         const diag = Math.hypot(dx,dy,dz);
         return Math.max(2*rEff, 0.3*diag);
     } catch { return Math.max(10*rEff, 1e-3); }
+    finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
 }
 // Build a closed triangular prism by skinning 3 rails: P (edge), A (tangent to faceA), B (tangent to faceB)
 // (removed unused buildCornerPrism)
@@ -2013,6 +2019,7 @@ function copyFromSolid(dst, src) {
 
     dst._dirty = true; // force manifold rebuild on next access
     dst._faceIndex = null;
+    try { /* done */ } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
 }
 
 // Offset every vertex of a closed solid along its outward vertex normal

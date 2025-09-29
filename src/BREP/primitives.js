@@ -79,8 +79,13 @@ export class Sphere extends PrimitiveBase {
   generate() {
     const segs = Math.max(8, (this.params.resolution | 0));
     const m = Manifold.sphere(this.params.r, segs);
-    const mesh = rotateZupToYupMesh(m.getMesh());
-    addMeshToSolid(this, mesh, () => this.params.name);
+    try {
+      const mg = m.getMesh();
+      try {
+        const mesh = rotateZupToYupMesh(mg);
+        addMeshToSolid(this, mesh, () => this.params.name);
+      } finally { try { if (mg && typeof mg.delete === 'function') mg.delete(); } catch {} }
+    } finally { try { if (m && typeof m.delete === 'function') m.delete(); } catch {} }
   }
 }
 
@@ -93,7 +98,11 @@ export class Torus extends PrimitiveBase {
     const seg = Math.max(8, (this.params.resolution | 0));
     const cs = CrossSection.circle(tR, seg / 2).translate(mR, 0);
     const m = cs.revolve(seg, arcDegrees);
-    const use = rotateZupToYupMesh(m.getMesh());
+    const use = (() => {
+      const mg = m.getMesh();
+      try { return rotateZupToYupMesh(mg); } finally { try { if (mg && typeof mg.delete === 'function') mg.delete(); } catch {} }
+    })();
+    try { if (m && typeof m.delete === 'function') m.delete(); } catch {}
 
     // classify caps if open arc
     const FULL = arcDegrees >= 360 - 1e-6;
@@ -208,4 +217,3 @@ export class Cone extends PrimitiveBase {
     }
   }
 }
-

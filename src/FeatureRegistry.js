@@ -18,6 +18,8 @@ import { Import3dModelFeature } from './features/import3dModel/Import3dModelFeat
 import { SweepFeature } from './features/sweep/SweepFeature.js';
 import { RemeshFeature } from './features/remesh/RemeshFeature.js';
 import { ImageToFaceFeature } from './features/imageToFace/ImageToFaceFeature.js';
+import { TransformFeature } from './features/transform/TransformFeature.js';
+import { PatternFeature } from './features/pattern/PatternFeature.js';
 
 /* ========================================================================
    FeatureRegistry
@@ -49,6 +51,8 @@ export class FeatureRegistry {
     this.register(SweepFeature);
     this.register(RemeshFeature);
     this.register(ImageToFaceFeature);
+    this.register(TransformFeature);
+    this.register(PatternFeature);
 
     // Backward-compat aliases for renamed features
     // Image-to-Face (formerly PNG to Face)

@@ -147,8 +147,9 @@ export class PartHistory {
       // set the owningFeatureID for each new artifact
       for (const artifact of instance.resultArtifacts) {
         artifact.owningFeatureID = feature.inputParams.featureID;
-        try {await artifact.visualize();} catch {}
-        
+        try { await artifact.visualize(); } catch { }
+        try { await artifact.free(); } catch { }
+
       }
 
       // Remove any existing scene children owned by this feature (rerun case)
@@ -450,11 +451,11 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     try { document.body.appendChild(stats.dom); } catch { /* ignore */ }
   } catch {
     // Fallback to no-op if Stats fails in a non-DOM environment
-    stats = { begin() {}, end() {}, showPanel() {} };
+    stats = { begin() { }, end() { }, showPanel() { } };
   }
 } else {
   // Node or non-DOM environments: no-op implementation
-  stats = { begin() {}, end() {}, showPanel() {} };
+  stats = { begin() { }, end() { }, showPanel() { } };
 }
 
 
