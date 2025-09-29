@@ -61,6 +61,9 @@ This project is actively evolving; expect rough edges while APIs settle.
 - Remesh: Implemented
 - Import 3D Model (STL/3MF): Implemented
 - Image to Face (image trace): Implemented
+- Transform (move/rotate/scale): Implemented
+- Pattern Linear: Implemented
+- Pattern Radial: Implemented
 
 ## Getting Started
 

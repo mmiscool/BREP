@@ -1,10 +1,11 @@
-Pull requests welcom. 
+Pull requests welcome.
 
-Please don't reformat files with out a good reason (tabs, spaces) as this just adds noise in reviewing things. 
+Please don't reformat files without a good reason (tabs vs. spaces), as this just adds noise during review.
 
-Be sure you are in complainace with the licence. 
+Be sure you comply with the license.
 
-Please discuss new dependancis before you add them. Trying to have minimal dependancies on this project. 
+Please discuss new dependencies before adding them. We're trying to keep dependencies to a minimum in this project.
 
-The BREP kernel it self is intended to be extracted out to a seperate npm package so try not o mix UI and BREP code directly.
-The tests need to be able to run in both the nodejs environement and clinet side in the browser. 
+The BREP kernel itself is intended to be extracted into a separate npm package, so try not to mix UI and BREP code directly.
+
+Tests need to run in both the Node.js environment and on the client side in the browser.
