@@ -39,6 +39,11 @@ export const CADmaterials = {
             //linejoin: "round",
             transparent: true,
         }),
+        // Overlay variant for helper/centerline edges. Uses depthTest=false so
+        // it remains visible through faces. Viewer will keep its resolution
+        // updated alongside other fat-line materials.
+        // dashed line
+        OVERLAY: (()=>{ const m = new LineMaterial({ color: "#ff0000", linewidth: 5.0, transparent: true, dashed: true , dashSize: 0.5, gapSize: 0.5 }); try{ m.depthTest=false; m.depthWrite=false; }catch{} return m; })(),
     },
     LOOP: {
         BASE: new LineMaterial({

@@ -76,6 +76,42 @@ export class ExtrudeFeature {
       name: this.inputParams.featureID,
       omitBaseCap,
     });
+    // Attach centerlines for any circular/arc sketch edges in the profile
+    try {
+      const THREE = BREP.THREE;
+      const edges = Array.isArray(faceObj?.edges) ? faceObj.edges : (faceObj?.edges ? Array.from(faceObj.edges) : []);
+      const centers = [];
+      const addCenter = (arr) => {
+        if (!Array.isArray(arr) || arr.length !== 3) return;
+        centers.push(new THREE.Vector3(arr[0], arr[1], arr[2]));
+      };
+      for (const e of edges) {
+        const kind = e?.userData?.sketchGeomType;
+        if (kind === 'arc' && Array.isArray(e?.userData?.arcCenter)) addCenter(e.userData.arcCenter);
+        else if (kind === 'circle' && Array.isArray(e?.userData?.circleCenter)) addCenter(e.userData.circleCenter);
+      }
+      // Deduplicate centers by hashing rounded coords
+      const uniq = new Map();
+      const round = (v)=> Math.round(v*1e6)/1e6;
+      const uniqueCenters = [];
+      for (const c of centers) { const k = `${round(c.x)},${round(c.y)},${round(c.z)}`; if (!uniq.has(k)) { uniq.set(k, true); uniqueCenters.push(c); } }
+
+      if (uniqueCenters.length) {
+        // Compute face normal for direction
+        const n = (typeof faceObj.getAverageNormal === 'function') ? faceObj.getAverageNormal().clone() : new THREE.Vector3(0,1,0);
+        if (n.lengthSq() < 1e-20) n.set(0,1,0); n.normalize();
+        const fwd = n.clone().multiplyScalar(Number(distance) || 0);
+        const back = n.clone().multiplyScalar(-(Number(distanceBack) || 0));
+        let idx = 0;
+        for (const c of uniqueCenters) {
+          const a = new THREE.Vector3(c.x, c.y, c.z).add(back);
+          const b = new THREE.Vector3(c.x, c.y, c.z).add(fwd);
+          if (a.distanceToSquared(b) < 1e-16) continue;
+          const name = (this.inputParams.featureID ? `${this.inputParams.featureID}_AXIS_${idx++}` : 'AXIS');
+          extrude.addCenterline([a.x, a.y, a.z], [b.x, b.y, b.z], name, { materialKey: 'OVERLAY' });
+        }
+      }
+    } catch (_) { /* best-effort centerlines */ }
     extrude.visualize();
 
     // Apply optional boolean operation via shared helper

@@ -332,6 +332,9 @@ export class Solid extends THREE.Group {
 
         this.type = 'SOLID';
         this.renderOrder = 1;
+        // Custom auxiliary edges (e.g., centerlines) to visualize with this solid
+        // Each item: { name?:string, points:[[x,y,z],...], closedLoop?:boolean, polylineWorld?:boolean, materialKey?:'OVERLAY'|'BASE' }
+        this._auxEdges = [];
     }
 
     /**
@@ -363,6 +366,22 @@ export class Solid extends THREE.Group {
             }
             this._dirty = true;
             this._faceIndex = null;
+            // Bake the same transform into any auxiliary edges
+            try {
+                if (Array.isArray(this._auxEdges) && this._auxEdges.length) {
+                    const tmp = new THREE.Vector3();
+                    for (const aux of this._auxEdges) {
+                        const pts = Array.isArray(aux?.points) ? aux.points : null;
+                        if (!pts) continue;
+                        for (let i = 0; i < pts.length; i++) {
+                            const p = pts[i];
+                            if (!Array.isArray(p) || p.length !== 3) continue;
+                            tmp.set(p[0], p[1], p[2]).applyMatrix4(m);
+                            pts[i] = [tmp.x, tmp.y, tmp.z];
+                        }
+                    }
+                }
+            } catch { /* ignore aux bake errors */ }
         } catch (_) { /* ignore */ }
         return this;
     }
@@ -431,6 +450,36 @@ export class Solid extends THREE.Group {
         this._dirty = true;
         this._faceIndex = null;
         return this;
+    }
+
+    /** Add a helper/auxiliary edge polyline to this solid (e.g., a centerline).
+     * @param {string} name
+     * @param {Array<[number,number,number]>} points At least 2 points in local space
+     * @param {{ closedLoop?:boolean, polylineWorld?:boolean, materialKey?:string }} [options]
+     * @returns {Solid} this
+     */
+    addAuxEdge(name, points, options = {}) {
+        try {
+            const pts = Array.isArray(points) ? points.filter(p => Array.isArray(p) && p.length === 3).map(p => [p[0], p[1], p[2]]) : [];
+            if (pts.length < 2) return this;
+            const entry = {
+                name: name || 'EDGE',
+                points: pts,
+                closedLoop: !!options.closedLoop,
+                polylineWorld: !!options.polylineWorld,
+                materialKey: options.materialKey || 'OVERLAY'
+            };
+            if (!Array.isArray(this._auxEdges)) this._auxEdges = [];
+            this._auxEdges.push(entry);
+        } catch { /* ignore */ }
+        return this;
+    }
+
+    /** Convenience: add a two-point centerline. */
+    addCenterline(a, b, name = 'CENTERLINE', options = {}) {
+        const A = Array.isArray(a) ? a : [a?.x || 0, a?.y || 0, a?.z || 0];
+        const B = Array.isArray(b) ? b : [b?.x || 0, b?.y || 0, b?.z || 0];
+        return this.addAuxEdge(name, [A, B], options);
     }
 
     /**
@@ -1301,6 +1350,18 @@ export class Solid extends THREE.Group {
             s._idToFaceName = new Map(this._idToFaceName);
             s._faceNameToID = new Map(this._faceNameToID);
         } catch (_) {}
+        // Copy auxiliary edges (deep copy points)
+        try {
+            s._auxEdges = Array.isArray(this._auxEdges)
+                ? this._auxEdges.map(e => ({
+                    name: e?.name,
+                    closedLoop: !!e?.closedLoop,
+                    polylineWorld: !!e?.polylineWorld,
+                    materialKey: e?.materialKey,
+                    points: Array.isArray(e?.points) ? e.points.map(p => Array.isArray(p) ? [p[0], p[1], p[2]] : p) : []
+                }))
+                : [];
+        } catch { s._auxEdges = []; }
         s._dirty = true;
         s._manifold = null;
         s._faceIndex = null;
@@ -2059,6 +2120,34 @@ export class Solid extends THREE.Group {
             }
         }
 
+        // Add auxiliary edges stored on this solid (e.g., centerlines)
+        try {
+            if (Array.isArray(this._auxEdges) && this._auxEdges.length) {
+                for (const aux of this._auxEdges) {
+                    const pts = Array.isArray(aux?.points) ? aux.points.filter(p => Array.isArray(p) && p.length === 3) : [];
+                    if (pts.length < 2) continue;
+                    const flat = [];
+                    for (const p of pts) { flat.push(p[0], p[1], p[2]); }
+                    const g = new LineGeometry();
+                    g.setPositions(flat);
+                    try { g.computeBoundingSphere(); } catch {}
+                    const edgeObj = new Edge(g);
+                    edgeObj.name = aux?.name || 'CENTERLINE';
+                    edgeObj.closedLoop = !!aux?.closedLoop;
+                    edgeObj.userData = { ...(edgeObj.userData||{}), polylineLocal: pts, polylineWorld: !!aux?.polylineWorld };
+                    edgeObj.parentSolid = this;
+                    try {
+                        const useOverlay = (aux?.materialKey || 'OVERLAY').toUpperCase() === 'OVERLAY';
+                        const mat = useOverlay ? (CADmaterials?.EDGE?.OVERLAY || CADmaterials?.EDGE?.BASE) : (CADmaterials?.EDGE?.BASE);
+                        if (mat) edgeObj.material = mat;
+                        if (useOverlay && edgeObj.material) { edgeObj.material.depthTest = false; edgeObj.material.depthWrite = false; }
+                        edgeObj.renderOrder = 10020;
+                    } catch {}
+                    this.add(edgeObj);
+                }
+            }
+        } catch { /* ignore aux edge errors */ }
+
         // Generate unique vertex objects at the start and end points of all edges
         try {
             const endpoints = new Map();
@@ -2319,14 +2408,18 @@ export class Solid extends THREE.Group {
         // Use Manifold.union per API
         const outManifold = Manifold.union(this._manifoldize(), other._manifoldize());
         const mergedMap = this._combineIdMaps(other);
-        return Solid._fromManifold(outManifold, mergedMap);
+        const out = Solid._fromManifold(outManifold, mergedMap);
+        try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        return out;
     }
 
     subtract(other) {
         // Use Manifold.subtract() per API
         const outManifold = this._manifoldize().subtract(other._manifoldize());
         const mergedMap = this._combineIdMaps(other);
-        return Solid._fromManifold(outManifold, mergedMap);
+        const out = Solid._fromManifold(outManifold, mergedMap);
+        try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        return out;
     }
 
     intersect(other) {
@@ -2334,7 +2427,9 @@ export class Solid extends THREE.Group {
         // so fall back to static here.
         const outManifold = Manifold.intersection(this._manifoldize(), other._manifoldize());
         const mergedMap = this._combineIdMaps(other);
-        return Solid._fromManifold(outManifold, mergedMap);
+        const out = Solid._fromManifold(outManifold, mergedMap);
+        try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        return out;
     }
 
     /**
@@ -2346,7 +2441,9 @@ export class Solid extends THREE.Group {
     difference(other) {
         const outManifold = Manifold.difference(this._manifoldize(), other._manifoldize());
         const mergedMap = this._combineIdMaps(other);
-        return Solid._fromManifold(outManifold, mergedMap);
+        const out = Solid._fromManifold(outManifold, mergedMap);
+        try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        return out;
     }
 
     /**
@@ -2364,7 +2461,9 @@ export class Solid extends THREE.Group {
         const outM = (tolerance === undefined) ? m.simplify() : m.simplify(tolerance);
         // Face IDs are preserved by Manifold, so we can reuse the existing id->name map
         const mapCopy = new Map(this._idToFaceName);
-        return Solid._fromManifold(outM, mapCopy);
+        const out = Solid._fromManifold(outM, mapCopy);
+        try { out._auxEdges = Array.isArray(this._auxEdges) ? this._auxEdges.slice() : []; } catch {}
+        return out;
     }
 
     /**
@@ -2378,7 +2477,9 @@ export class Solid extends THREE.Group {
         const m = this._manifoldize();
         const outM = m.setTolerance(tolerance);
         const mapCopy = new Map(this._idToFaceName);
-        return Solid._fromManifold(outM, mapCopy);
+        const out = Solid._fromManifold(outM, mapCopy);
+        try { out._auxEdges = Array.isArray(this._auxEdges) ? this._auxEdges.slice() : []; } catch {}
+        return out;
     }
 
     // Compute closed volume from oriented triangles (MeshGL from manifold)

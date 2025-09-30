@@ -1255,6 +1255,7 @@ export class Viewer {
             if (CADmaterials?.EDGE) {
                 setRes(CADmaterials.EDGE.BASE);
                 setRes(CADmaterials.EDGE.SELECTED);
+                if (CADmaterials.EDGE.OVERLAY) setRes(CADmaterials.EDGE.OVERLAY);
             }
             if (CADmaterials?.LOOP) {
                 setRes(CADmaterials.LOOP.BASE);
