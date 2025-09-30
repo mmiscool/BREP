@@ -680,28 +680,27 @@ export class FileManagerWidget {
       const controls = this.viewer?.controls;
       if (!canvas || !cam) return null;
 
-      // Save camera state to restore after capture
-      const saved = {
-        position: cam.position.clone(),
-        quaternion: cam.quaternion.clone(),
-        up: cam.up.clone(),
-        zoom: cam.zoom,
-      };
-
-      // Temporarily set an isometric orientation and zoom to fit
+      // Temporarily reorient exactly like clicking the ViewCube corner (top-front-right)
       try {
-        const pivot = (controls && controls._gizmos && controls._gizmos.position)
-          ? controls._gizmos.position.clone()
-          : new THREE.Vector3(0, 0, 0);
-        const dist = Math.max(1e-6, cam.position.distanceTo(pivot) || cam.position.length() || 10);
-        const dir = new THREE.Vector3(1, 1, 1).normalize();
-        const pos = pivot.clone().add(dir.multiplyScalar(dist));
-        cam.position.copy(pos);
-        cam.up.set(0, 1, 0); // keep default Y-up for stability
-        cam.lookAt(pivot);
-        cam.updateMatrixWorld(true);
-        if (controls?.updateMatrixState) { try { controls.updateMatrixState(); } catch {} }
-        // Fit geometry within current orientation
+        const dir = new THREE.Vector3(1, 1, 1); // matches TOP FRONT RIGHT corner
+        if (this.viewer?.viewCube && typeof this.viewer.viewCube._reorientCamera === 'function') {
+          this.viewer.viewCube._reorientCamera(dir, 'SAVE THUMBNAIL');
+        } else {
+          // Fallback: replicate ViewCube corner logic if widget unavailable
+          const pivot = (controls && controls._gizmos && controls._gizmos.position)
+            ? controls._gizmos.position.clone()
+            : new THREE.Vector3(0, 0, 0);
+          const dist = cam.position.distanceTo(pivot) || cam.position.length() || 10;
+          const pos = pivot.clone().add(dir.clone().normalize().multiplyScalar(dist));
+          const useZup = Math.abs(dir.y) > 0.9;
+          const up = useZup ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+          cam.position.copy(pos);
+          cam.up.copy(up);
+          cam.lookAt(pivot);
+          cam.updateMatrixWorld(true);
+          if (controls?.updateMatrixState) { try { controls.updateMatrixState(); } catch {} }
+        }
+        // Fit geometry within this oriented view
         try { this.viewer.zoomToFit(1.1); } catch {}
       } catch { /* ignore orientation failures */ }
 
@@ -728,19 +727,6 @@ export class FileManagerWidget {
       try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch {}
       ctx.drawImage(canvas, 0, 0, srcW, srcH, dx, dy, dw, dh);
       const dataUrl = dst.toDataURL('image/png');
-
-      // Restore camera state
-      try {
-        cam.position.copy(saved.position);
-        cam.quaternion.copy(saved.quaternion);
-        cam.up.copy(saved.up);
-        cam.zoom = saved.zoom;
-        cam.updateProjectionMatrix();
-        cam.updateMatrixWorld(true);
-        if (controls?.updateMatrixState) { try { controls.updateMatrixState(); } catch {} }
-        this.viewer.render();
-      } catch { /* ignore restore failures */ }
-
       return dataUrl;
     } catch {
       return null;
