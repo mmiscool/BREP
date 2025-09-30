@@ -560,7 +560,32 @@ export class genFeatureUI {
                             inp.type = 'number';
                             inp.step = 'any';
                             this._setInputValue(inp, 'number', valuesArr[i] ?? 0);
-                            inp.addEventListener('focus', () => { onFocusToggleType(inp); this._stopActiveReferenceSelection(); });
+                            // Allow expressions while typing (same behavior as 'number' fields)
+                            const numericPattern = /^-?\d*\.?\d*$/;
+                            const isNumericLike = (value) => {
+                                if (value === '' || value == null) return true;
+                                return numericPattern.test(String(value));
+                            };
+                            const onFocusToggleTypeLocal = (el) => {
+                                try {
+                                    if (isNumericLike(el.value)) {
+                                        el.type = 'number';
+                                    } else {
+                                        el.type = 'text';
+                                    }
+                                } catch (_) { }
+                            };
+                            inp.addEventListener('focus', () => { onFocusToggleTypeLocal(inp); this._stopActiveReferenceSelection(); });
+                            inp.addEventListener('beforeinput', (e) => {
+                                try {
+                                    const nextVal = String(inp.value || '') + String(e.data || '');
+                                    if (!isNumericLike(nextVal)) {
+                                        if (inp.type !== 'text') inp.type = 'text';
+                                    } else if (inp.type !== 'number') {
+                                        inp.type = 'number';
+                                    }
+                                } catch (_) { }
+                            });
                             inp.addEventListener('change', () => {
                                 const cur = getTRS();
                                 const val = inp.value;
@@ -820,21 +845,44 @@ export class genFeatureUI {
 
                     const setParamFromInputs = () => {
                         const inps = Array.from(inputsWrap.querySelectorAll('input'));
-                        const arr = inps.map((el) => {
-                            const n = Number(el.value);
-                            return Number.isFinite(n) ? n : 0;
-                        });
-                        this.params[key] = [arr[0] || 0, arr[1] || 0, arr[2] || 0];
+                        // Preserve raw strings so expressions are evaluated later in sanitizeInputParams
+                        const arr = inps.map((el) => el.value);
+                        this.params[key] = [arr[0], arr[1], arr[2]];
                         this._emitParamsChange(key, this.params[key]);
                     };
 
                     const inputs = [];
+                    // Expression-friendly typing helpers
+                    const numericPattern = /^-?\d*\.?\d*$/;
+                    const isNumericLike = (value) => {
+                        if (value === '' || value == null) return true;
+                        return numericPattern.test(String(value));
+                    };
+                    const toggleTypeForContent = (el) => {
+                        try {
+                            if (isNumericLike(el.value)) el.type = 'number';
+                            else el.type = 'text';
+                        } catch (_) { }
+                    };
+
                     for (let i = 0; i < 3; i++) {
                         const inp = document.createElement('input');
                         inp.type = 'number';
                         inp.className = 'input transform-input';
                         inp.step = stepStr;
                         this._setInputValue(inp, 'number', valuesArr[i] ?? 0);
+                        // Allow expressions while typing (mirror number field behavior)
+                        inp.addEventListener('focus', () => toggleTypeForContent(inp));
+                        inp.addEventListener('beforeinput', (e) => {
+                            try {
+                                const nextVal = String(inp.value || '') + String(e.data || '');
+                                if (!isNumericLike(nextVal)) {
+                                    if (inp.type !== 'text') inp.type = 'text';
+                                } else if (inp.type !== 'number') {
+                                    inp.type = 'number';
+                                }
+                            } catch (_) { }
+                        });
                         inp.addEventListener('change', () => {
                             if (showUniform && uniformCb && uniformCb.checked) {
                                 // In uniform mode, propagate the edited value to all components
@@ -850,7 +898,7 @@ export class genFeatureUI {
                     if (showUniform && uniformCb) {
                         const enforceUniformNow = () => {
                             if (uniformCb.checked && inputs.length) {
-                                const v = Number(inputs[0].value);
+                                const v = inputs[0].value;
                                 for (let i = 0; i < inputs.length; i++) inputs[i].value = String(v);
                                 setParamFromInputs();
                             }
