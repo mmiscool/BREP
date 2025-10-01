@@ -30,7 +30,7 @@ export const CADmaterials = {
             linewidth: 5.1,
             //linecap: "round",
             //linejoin: "round",
-            transparent: true,
+            transparent: true, dashed: true , dashSize: 0.5, gapSize: 0.5
         }),
         SELECTED: new LineMaterial({
             color: "#ff00ff",

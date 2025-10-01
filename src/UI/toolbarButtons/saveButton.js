@@ -1,5 +1,4 @@
 import { generate3MF } from '../../exporters/threeMF.js';
-import { jsonToXml } from '../../utils/jsonXml.js';
 import { localStorage as LS } from '../../localStorageShim.js';
 import * as THREE from 'three';
 
@@ -74,9 +73,10 @@ export function createSaveButton(viewer) {
         if (json && typeof json === 'string') {
           const obj = JSON.parse(json);
           if (obj && typeof obj === 'object') {
-            const fhXml = jsonToXml(obj, 'featureHistory');
-            additionalFiles = { 'Metadata/featureHistory.xml': fhXml };
-            modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.xml' };
+            // Store feature history as JSON instead of XML
+            const fhJson = JSON.stringify(obj, null, 2);
+            additionalFiles = { 'Metadata/featureHistory.json': fhJson };
+            modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.json' };
           }
         }
       } catch { }

@@ -25,6 +25,8 @@ import { generateObjectUI } from './objectDump.js';
 import { PluginsWidget } from './PluginsWidget.js';
 import { localStorage as LS } from '../localStorageShim.js';
 import { loadSavedPlugins } from '../plugins/pluginManager.js';
+import { PMIViewsWidget } from './PMIViewsWidget.js';
+import { PMIMode } from './PMIMode.js';
 
 export class Viewer {
     /**
@@ -254,6 +256,11 @@ export class Viewer {
         const sceneSection = await this.accordion.addSection("Scene Manager");
         await sceneSection.uiElement.appendChild(this.sceneManagerUi.uiElement);
 
+        // PMI Views (saved camera snapshots)
+        this.pmiViewsWidget = new PMIViewsWidget(this);
+        const pmiViewsSection = await this.accordion.addSection("PMI Views");
+        pmiViewsSection.uiElement.appendChild(this.pmiViewsWidget.uiElement);
+
 
 
         // CADmaterials (Settings panel)
@@ -427,6 +434,40 @@ export class Viewer {
                 leftovers.forEach(el => { try { el.parentNode && el.parentNode.removeChild(el); } catch {} });
             }
         } catch { }
+    }
+
+    // ————————————————————————————————————————
+    // PMI Edit Mode API
+    // ————————————————————————————————————————
+    startPMIMode(viewEntry, viewIndex, widget = this.pmiViewsWidget) {
+        try { if (this._pmiMode) this._pmiMode.dispose(); } catch { }
+        this._pmiMode = new PMIMode(this, viewEntry, viewIndex, widget);
+        this._pmiMode.open();
+    }
+
+    onPMIFinished(_updatedView) {
+        this.endPMIMode();
+    }
+
+    onPMICancelled() {
+        this.endPMIMode();
+    }
+
+    endPMIMode() {
+        try { if (this._pmiMode) this._pmiMode.dispose(); } catch { }
+        this._pmiMode = null;
+        // Robustly restore core UI similar to endSketchMode
+        try {
+            if (this.sidebar) {
+                this.sidebar.hidden = false;
+                try { this.sidebar.style.removeProperty('display'); } catch {}
+                this.sidebar.style.display = this.sidebar.style.display || '';
+                this.sidebar.style.visibility = 'visible';
+                this.sidebar.style.opacity = .9;
+                this.sidebar.style.zIndex = String(7);
+            }
+        } catch { }
+        try { if (this.controls) this.controls.enabled = true; } catch { }
     }
 
     render() {

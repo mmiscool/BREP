@@ -66,7 +66,7 @@ export class AccordionWidget {
       .accordion {
         border: 1px solid #1f2937;
         border-radius: 8px;
-        overflow: hidden;
+        overflow: scfroll;
         background: #0b0f13; /* dark */
         color: #e5e7eb;      /* light text */
       }

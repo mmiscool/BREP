@@ -1092,7 +1092,7 @@ export class genFeatureUI {
             if (wrap) wrap.classList.add('ref-active');
         } catch (_) { }
 
-        try { console.log('Setting selection types:', def.selectionFilter); } catch (_) { }
+        // Apply selection filter from schema
         SelectionFilter.stashAllowedSelectionTypes();
         SelectionFilter.SetSelectionTypes(def.selectionFilter);
     }

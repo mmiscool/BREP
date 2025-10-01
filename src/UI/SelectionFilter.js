@@ -233,6 +233,66 @@ export class SelectionFilter {
         const type = objectToToggleSelectionOn.type;
         if (!type) throw new Error("Object to toggle selection on must have a type.");
 
+        // Check if a reference selection is active
+        try {
+            const activeRefInput = document.querySelector('[active-reference-selection="true"],[active-reference-selection=true]');
+            if (activeRefInput) {
+                // Respect the current selection type when a reference selection is active.
+                const want = SelectionFilter.getCurrentType?.();
+                const allowed = SelectionFilter.allowedSelectionTypes;
+
+                // Helper: find first descendant matching a type
+                const findDescendantOfType = (root, desired) => {
+                    if (!root || !desired) return null;
+                    let found = null;
+                    try {
+                        root.traverse?.((ch) => {
+                            if (!found && ch && ch.type === desired) found = ch;
+                        });
+                    } catch (_) { /* ignore */ }
+                    return found;
+                };
+
+                let targetObj = objectToToggleSelectionOn;
+                // If clicked type doesn't match the desired, try to find a proper descendant
+                if (want && type !== want) {
+                    const desc = findDescendantOfType(objectToToggleSelectionOn, want);
+                    if (desc) targetObj = desc; else return false;
+                }
+
+                // As a safeguard, if no single currentType is set but a set of allowed types exists, prefer VERTEX then EDGE
+                if (!want && allowed && allowed !== SelectionFilter.ALL) {
+                    const prefer = ['VERTEX', 'EDGE'];
+                    for (const t of prefer) {
+                        if (allowed.has && allowed.has(t)) {
+                            const desc = findDescendantOfType(objectToToggleSelectionOn, t);
+                            if (desc) { targetObj = desc; break; }
+                        }
+                    }
+                }
+
+                // Update the reference input with the chosen object
+                const objType = targetObj.type;
+                const objectName = targetObj.name || `${objType}(${targetObj.position?.x || 0},${targetObj.position?.y || 0},${targetObj.position?.z || 0})`;
+                activeRefInput.value = objectName;
+                activeRefInput.dispatchEvent(new Event('change'));
+
+                // Clean up the reference selection state
+                activeRefInput.removeAttribute('active-reference-selection');
+                activeRefInput.style.filter = 'none';
+                try {
+                    const wrap = activeRefInput.closest('.ref-single-wrap, .ref-multi-wrap');
+                    if (wrap) wrap.classList.remove('ref-active');
+                } catch (_) { }
+
+                // Restore selection filter
+                SelectionFilter.restoreAllowedSelectionTypes();
+                return true; // handled as a reference selection
+            }
+        } catch (error) {
+            console.warn("Error handling reference selection:", error);
+        }
+
         let parentSelectedAction = false;
         // check if the object is selectable and if it is toggle the .selected atribute on the object. 
         // Allow toggling off even if type is currently disallowed; only block new selections
