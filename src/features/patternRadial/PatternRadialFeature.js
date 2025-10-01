@@ -1,7 +1,13 @@
 import { BREP } from "../../BREP/BREP.js";
+import manifold from "../../BREP/setupManifold.js";
 const THREE = BREP.THREE;
 
 const inputParamsSchema = {
+  featureID: {
+    type: "string",
+    default_value: null,
+    hint: "unique identifier for the pattern feature",
+  },
   solids: {
     type: "reference_selection",
     selectionFilter: ["SOLID"],
@@ -69,9 +75,10 @@ export class PatternRadialFeature {
     const center = (axisInfo?.point || new THREE.Vector3()).clone().addScaledVector(axis, centerOffset || 0);
 
     const instances = [];
-    const step = (count <= 1) ? 0 : THREE.MathUtils.degToRad(totalAngleDeg) / (count);
+    const featureID = this.inputParams.featureID || PatternRadialFeature.featureShortName || 'PatternRadial';
+    const step = (count <= 1) ? 0 : THREE.MathUtils.degToRad(totalAngleDeg) / count;
     for (const src of solids) {
-      for (let i = 0; i < count; i++) {
+      for (let i = 1; i <= count - 1; i++) {
         const theta = step * i;
         const q = new THREE.Quaternion().setFromAxisAngle(axis, theta);
         const RS = new THREE.Matrix4().makeRotationFromQuaternion(q);
@@ -81,8 +88,9 @@ export class PatternRadialFeature {
 
         const c = src.clone();
         c.bakeTransform(M);
-        try { retagSolidFaces(c, `PAT_CIR_${i}`); } catch (_) {}
-        c.name = `${src.name || 'Solid'}::PAT_CIR_${i}`;
+        const idx = i + 1;
+        try { retagSolidFaces(c, `${featureID}_${idx}`); } catch (_) {}
+        c.name = `${featureID}_${idx}`;
         c.visualize();
         instances.push(c);
       }
@@ -142,16 +150,36 @@ function computeAxisFromEdge(edgeObj) {
 function retagSolidFaces(solid, suffix) {
   if (!solid || !suffix) return;
   try {
-    const srcMap = solid._idToFaceName instanceof Map ? solid._idToFaceName : null;
-    if (!srcMap) return;
+    const { Manifold } = manifold;
+    const oldIdToFace = (solid._idToFaceName instanceof Map) ? solid._idToFaceName : new Map();
+    const triIDs = Array.isArray(solid._triIDs) ? solid._triIDs : [];
+    const presentIDs = new Set();
+    for (const k of oldIdToFace.keys()) presentIDs.add(k);
+    if (presentIDs.size === 0 && triIDs.length) { for (const id of triIDs) presentIDs.add(id >>> 0); }
+
+    const idRemap = new Map();
     const newIdToFace = new Map();
     const newFaceToId = new Map();
-    for (const [fid, fname] of srcMap.entries()) {
-      const base = (fname != null) ? String(fname) : `FACE_${fid}`;
+    for (const oldID of presentIDs) {
+      const fname = oldIdToFace.get(oldID);
+      const base = (fname != null) ? String(fname) : `FACE_${oldID}`;
       const tagged = `${base}::${suffix}`;
-      newIdToFace.set(fid, tagged);
-      newFaceToId.set(tagged, fid);
+      const newID = Manifold.reserveIDs(1);
+      idRemap.set(oldID, newID);
+      newIdToFace.set(newID, tagged);
+      newFaceToId.set(tagged, newID);
     }
+
+    if (triIDs.length && idRemap.size) {
+      for (let i = 0; i < triIDs.length; i++) {
+        const oldID = triIDs[i] >>> 0;
+        const mapped = idRemap.get(oldID);
+        if (mapped !== undefined) triIDs[i] = mapped;
+      }
+      solid._triIDs = triIDs;
+      solid._dirty = true;
+    }
+
     solid._idToFaceName = newIdToFace;
     solid._faceNameToID = newFaceToId;
   } catch (_) { /* best-effort */ }
