@@ -512,25 +512,28 @@ export class LoftFeature {
     if (scene && refNames.length) {
       for (const nm of refNames) { try { refObjs.push(scene.getObjectByName(String(nm))); } catch { refObjs.push(null); } }
     }
+    // Build aligned edge rings for all faces relative to the first face's ring
+    let refRing = getOrderedOuterEdges(faces[0]);
+    if (refObjs[0]) refRing = rotateEdgesByRef(refRing, refObjs[0]);
+    if (this.inputParams?.reverseFirstLoop) refRing = reverseEdgeRing(refRing);
+    const alignedRings = new Array(faces.length);
+    alignedRings[0] = refRing;
+    for (let j = 1; j < faces.length; j++) {
+      let ring = getOrderedOuterEdges(faces[j]);
+      if (refObjs[j]) ring = rotateEdgesByRef(ring, refObjs[j]);
+      const al = bestAlignRings(refRing, ring);
+      if (al.rev) ring = reverseEdgeRing(ring);
+      ring = rotateRing(ring, al.off);
+      alignedRings[j] = ring;
+    }
 
     for (let i = 0; i < faces.length - 1; i++) {
-      // Outer ring only for now
-      let ringA = getOrderedOuterEdges(faces[i]);
-      let ringB = getOrderedOuterEdges(faces[i+1]);
-      if (!ringA.length || !ringB.length) continue;
+      // Use rings aligned to the first face for consistent naming
+      const ringA = alignedRings[i];
+      const ringB = alignedRings[i + 1];
+      if (!ringA || !ringB || !ringA.length || !ringB.length) continue;
 
-      // Optional: rotate by user-picked reference vertex
-      if (refObjs[i]) ringA = rotateEdgesByRef(ringA, refObjs[i]);
-      if (refObjs[i+1]) ringB = rotateEdgesByRef(ringB, refObjs[i+1]);
-      // Optional: reverse first ring order
-      if (i === 0 && this.inputParams?.reverseFirstLoop) ringA = reverseEdgeRing(ringA);
-
-      // Align ringB to ringA (orientation + rotation)
-      const align = bestAlignRings(ringA, ringB);
-      if (align.rev) ringB = reverseEdgeRing(ringB);
-      ringB = rotateRing(ringB, align.off);
-
-      const N = Math.min(ringA.length, ringB.length);
+      const N = Math.min(ringA.length, ringB.length, refRing.length);
       const d2 = (a,b)=>{ const dx=a[0]-b[0], dy=a[1]-b[1], dz=a[2]-b[2]; return dx*dx+dy*dy+dz*dz; };
       const triArea2 = (p0,p1,p2)=>{
         const ux=p1[0]-p0[0], uy=p1[1]-p0[1], uz=p1[2]-p0[2];
@@ -611,7 +614,7 @@ export class LoftFeature {
       for (let ei = 0; ei < N; ei++) {
         const a = ringA[ei];
         const b = ringB[ei];
-        const fname = a.name || `${firstFace.name || 'FACE'}_LF`;
+        const fname = `${refRing[ei]?.name || 'EDGE'}_LF`;
         triangulateStripNoResample(a.pts, b.pts, false, fname);
       }
     }
