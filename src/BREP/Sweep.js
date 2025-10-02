@@ -775,6 +775,86 @@ export class Sweep extends FacesSolid {
       }
     }
 
+    const isCylindricalSketchEdge = (edge) => {
+      if (!edge || !edge.userData) return false;
+      const kind = edge.userData.sketchGeomType;
+      if (kind === 'circle' && typeof edge.userData.circleRadius === 'number') return edge.userData.circleRadius > 0;
+      if (kind === 'arc' && typeof edge.userData.arcRadius === 'number') return edge.userData.arcRadius > 0;
+      return false;
+    };
+
+    const canEmbedCylMetadata = (mode === 'translate') && !(offsets.length >= 2);
+    const cylMetadataByName = new Map();
+    const registerCylMetadata = (name, meta) => {
+      if (!name || !meta) return;
+      if (!Number.isFinite(meta.radius) || meta.radius <= 0) return;
+      if (!cylMetadataByName.has(name)) {
+        cylMetadataByName.set(name, meta);
+        try { this.setFaceMetadata(name, meta); } catch { }
+      }
+    };
+
+    const computeCylMetadataForEdge = (edge) => {
+      if (!canEmbedCylMetadata || !edge) return null;
+      const kind = edge.userData?.sketchGeomType;
+      let radius = null;
+      let centerArr = null;
+      if (kind === 'circle') {
+        radius = edge.userData?.circleRadius;
+        centerArr = edge.userData?.circleCenter;
+      } else if (kind === 'arc') {
+        radius = edge.userData?.arcRadius;
+        centerArr = edge.userData?.arcCenter;
+      } else {
+        return null;
+      }
+      if (!Array.isArray(centerArr) || !Number.isFinite(radius) || radius <= 0) return null;
+      const center = new THREE.Vector3(centerArr[0], centerArr[1], centerArr[2]);
+      if (!edge?.userData?.polylineWorld && edge?.matrixWorld) center.applyMatrix4(edge.matrixWorld);
+      const forwardVec = dirF ? dirF.clone() : new THREE.Vector3(0, 0, 0);
+      const backwardVec = dirB ? dirB.clone() : new THREE.Vector3(0, 0, 0);
+      const startPoint = center.clone().add(backwardVec);
+      const endPoint = center.clone().add(forwardVec);
+      const axisVec = endPoint.clone().sub(startPoint);
+      let height = axisVec.length();
+      let axisDir;
+      if (height > 1e-9) {
+        axisDir = axisVec.clone().normalize();
+      } else {
+        axisDir = forwardVec.clone();
+        if (axisDir.lengthSq() < 1e-12) axisDir = new THREE.Vector3(0, 1, 0);
+        axisDir.normalize();
+        if (!Number.isFinite(height) || height <= 1e-9) height = forwardVec.length();
+      }
+      if (!Number.isFinite(height)) height = 0;
+      const axisCenter = startPoint.clone().addScaledVector(axisVec, 0.5);
+      return {
+        type: 'cylindrical',
+        radius,
+        height,
+        axis: [axisDir.x, axisDir.y, axisDir.z],
+        center: [axisCenter.x, axisCenter.y, axisCenter.z],
+      };
+    };
+
+    if (canEmbedCylMetadata && Array.isArray(face?.edges)) {
+      for (const edge of face.edges) {
+        if (!isCylindricalSketchEdge(edge)) continue;
+        const meta = computeCylMetadataForEdge(edge);
+        if (!meta) continue;
+        const edgeName = `${featureTag}${edge?.name || 'EDGE'}_SW`;
+        registerCylMetadata(edgeName, meta);
+      }
+    }
+
+    const ensureMetadataForName = (name) => {
+      if (!name) return;
+      const meta = cylMetadataByName.get(name);
+      if (meta) {
+        try { this.setFaceMetadata(name, meta); } catch { }
+      }
+    };
+
     // Side faces: Prefer boundary loops to ensure vertex matching with caps.
     // This avoids T-junctions and ensures a watertight manifold. If loops are
     // unavailable (legacy faces), fall back to per-edge polylines.
@@ -890,7 +970,8 @@ export class Sweep extends FacesSolid {
       // Use only non-closed edges for per-segment naming so vertical boundaries
       // between side panels remain distinct. Closed loop edges (from PNG trace)
       // cover the whole ring and would otherwise collapse all walls under one name.
-      const edges = (Array.isArray(face?.edges) ? face.edges : []).filter(e => !e.closedLoop);
+      const edgesAll = Array.isArray(face?.edges) ? face.edges : [];
+      const edges = edgesAll.filter(e => !e.closedLoop || isCylindricalSketchEdge(e));
       const pointToEdgeNames = new Map(); // key -> Set(edgeName)
       for (const e of edges) {
         const name = `${featureTag}${e?.name || 'EDGE'}_SW`;
@@ -1162,6 +1243,7 @@ export class Sweep extends FacesSolid {
               const setB = pointToEdgeNames.get(key(b));
               let name = `${featureTag}${face.name || 'FACE'}_SW`;
               if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+              ensureMetadataForName(name);
               addQuad(name, A0, B0, B1, A1, isHole);
             }
           } else {
@@ -1177,6 +1259,7 @@ export class Sweep extends FacesSolid {
               const setB = pointToEdgeNames.get(key(b));
               let name = `${featureTag}${face.name || 'FACE'}_SW`;
               if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+              ensureMetadataForName(name);
               if (isHole) {
                 this.addTriangle(name, a, b2, b);
                 this.addTriangle(name, a, a2, b2);
@@ -1202,6 +1285,7 @@ export class Sweep extends FacesSolid {
                 const setB = pointToEdgeNames.get(key(b));
                 let name = `${featureTag}${face.name || 'FACE'}_SW`;
                 if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+                ensureMetadataForName(name);
                 addQuad(name, A0, B0, B1, A1, isHole);
               }
             }
@@ -1222,6 +1306,7 @@ export class Sweep extends FacesSolid {
                 const setB = pointToEdgeNames.get(key(b));
                 let name = `${featureTag}${face.name || 'FACE'}_SW`;
                 if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
+                ensureMetadataForName(name);
                 // Use robust splitting to avoid skinny/inside-crossing diagonals
                 addQuad(name, A0, B0, B1, A1, isHole);
                 if (sweepDebugEnabled() && seg===0 && i===0) {

@@ -306,37 +306,50 @@ export class ExtrudeSolid extends Solid {
             // If we found a circular edge, add cylindrical face metadata
             if (radius !== null && center !== null) {
               const sidewallName = `${featureTag}${edge?.name || 'EDGE'}_SW`;
-              const height = distance + distanceBack;
-              
-              // Transform center and direction to world coordinates
-              let worldCenter = center;
-              let worldDirection = dirF ? [dirF.x, dirF.y, dirF.z] : [0, 1, 0];
-              
-              // If edge has a transform, apply it to the center
-              if (edge.matrixWorld) {
-                const centerVec = new THREE.Vector3(center[0], center[1], center[2]);
-                centerVec.applyMatrix4(edge.matrixWorld);
-                worldCenter = [centerVec.x, centerVec.y, centerVec.z];
-                
-                // Transform the direction vector too
-                const dirVec = new THREE.Vector3(worldDirection[0], worldDirection[1], worldDirection[2]);
-                dirVec.transformDirection(edge.matrixWorld);
-                worldDirection = [dirVec.x, dirVec.y, dirVec.z];
+
+              // Bring the sketch-space center into the solid's coordinate system
+              const transformMatrix = edge?.matrixWorld || face?.matrixWorld || null;
+              const centerVec = new THREE.Vector3(center[0], center[1], center[2]);
+              if (transformMatrix) centerVec.applyMatrix4(transformMatrix);
+
+              // Forward/back vectors describing the sweep in world space
+              const forwardVec = dirF ? dirF.clone() : new THREE.Vector3(0, 1, 0);
+              const backwardVec = dirB ? dirB.clone() : new THREE.Vector3(0, 0, 0);
+
+              // Axis endpoints (start/end of the cylindrical wall)
+              const startPoint = centerVec.clone().add(backwardVec);
+              const endPoint = centerVec.clone().add(forwardVec);
+              const axisVec = endPoint.clone().sub(startPoint);
+
+              let height = axisVec.length();
+              if (!Number.isFinite(height) || height <= 1e-9) {
+                height = forwardVec.length() + backwardVec.length();
               }
-              
-              // Calculate center point along the extrusion axis
-              const centerPoint = [
-                worldCenter[0], 
-                worldCenter[1] + (dirB ? (dirB.y || 0) : 0) + height/2, 
-                worldCenter[2]
-              ];
-              
+
+              let axisDir = axisVec.clone();
+              if (axisDir.lengthSq() > 1e-12) {
+                axisDir.normalize();
+              } else {
+                axisDir = forwardVec.clone();
+                if (axisDir.lengthSq() > 1e-12) axisDir.normalize();
+                else axisDir.set(0, 1, 0);
+              }
+
+              const axisCenter = startPoint.clone().addScaledVector(axisVec, 0.5);
+              if (!Number.isFinite(axisCenter.x) || !Number.isFinite(axisCenter.y) || !Number.isFinite(axisCenter.z)) {
+                axisCenter.copy(centerVec);
+              }
+
+              if (!Number.isFinite(axisDir.x) || !Number.isFinite(axisDir.y) || !Number.isFinite(axisDir.z)) {
+                axisDir.set(0, 1, 0);
+              }
+
               this.setFaceMetadata(sidewallName, {
                 type: 'cylindrical',
                 radius: radius,
-                height: height,
-                axis: worldDirection,
-                center: centerPoint
+                height: Number.isFinite(height) ? height : 0,
+                axis: [axisDir.x, axisDir.y, axisDir.z],
+                center: [axisCenter.x, axisCenter.y, axisCenter.z]
               });
             }
           }

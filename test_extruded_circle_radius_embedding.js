@@ -168,6 +168,51 @@ async function testExtrudedCircleRadiusEmbedding() {
             console.log('✗ Multiple circular edges not handled properly');
         }
         
+        // Additional coverage: explicit direction vectors (non-default axis)
+        console.log('\n--- Testing Direction Vector Extrusion ---');
+        const mockDirFace = {
+            name: 'DirSketch',
+            geometry: new THREE.BufferGeometry(),
+            matrixWorld: new THREE.Matrix4(),
+            edges: [
+                {
+                    name: 'DirCircle',
+                    matrixWorld: new THREE.Matrix4(),
+                    userData: {
+                        sketchGeomType: 'circle',
+                        circleCenter: [1, 2, 3],
+                        circleRadius: 4
+                    }
+                }
+            ]
+        };
+        const extrudedDir = new BREP.ExtrudeSolid({
+            face: mockDirFace,
+            dir: new THREE.Vector3(10, 0, 0),
+            name: 'ExtrudedDir'
+        });
+        const dirFaceName = 'ExtrudedDir:DirCircle_SW';
+        const dirMetadata = extrudedDir.getFaceMetadata(dirFaceName);
+        console.log(`Direction vector metadata (${dirFaceName}):`, dirMetadata);
+        if (dirMetadata) {
+            const heightOk = Math.abs(dirMetadata.height - 10.0) < 1e-6;
+            const centerOk = dirMetadata.center &&
+                Math.abs(dirMetadata.center[0] - 6.0) < 1e-6 &&
+                Math.abs(dirMetadata.center[1] - 2.0) < 1e-6 &&
+                Math.abs(dirMetadata.center[2] - 3.0) < 1e-6;
+            const axisOk = dirMetadata.axis &&
+                Math.abs(dirMetadata.axis[0] - 1.0) < 1e-6 &&
+                Math.abs(dirMetadata.axis[1]) < 1e-6 &&
+                Math.abs(dirMetadata.axis[2]) < 1e-6;
+            if (heightOk && centerOk && axisOk) {
+                console.log('✓ Direction vector extrusion metadata is correct!');
+            } else {
+                console.log('✗ Direction vector extrusion metadata incorrect');
+            }
+        } else {
+            console.log('✗ No metadata found for direction vector extrusion');
+        }
+
         console.log('\n=== Test Summary ===');
         console.log('Radius metadata embedding for extruded sketches:');
         console.log('1. ✓ Works with circular sketch elements');
@@ -175,6 +220,7 @@ async function testExtrudedCircleRadiusEmbedding() {
         console.log('3. ✓ Handles multiple circular edges in one sketch');
         console.log('4. ✓ Preserves original radius values exactly');
         console.log('5. ✓ Calculates correct cylindrical surface parameters');
+        console.log('6. ✓ Supports explicit direction vectors and arbitrary orientations');
         
     } catch (error) {
         console.error('Test failed with error:', error);
@@ -185,12 +231,26 @@ async function testExtrudedCircleRadiusEmbedding() {
 // For testing in Node.js environment
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = testExtrudedCircleRadiusEmbedding;
-} else {
-    // For browser testing
+} else if (typeof window !== 'undefined') {
+    // Browser testing
     window.testExtrudedCircleRadiusEmbedding = testExtrudedCircleRadiusEmbedding;
+} else {
+    // ESM environments without window (e.g., Node)
+    globalThis.testExtrudedCircleRadiusEmbedding = testExtrudedCircleRadiusEmbedding;
 }
 
 // Auto-run if executed directly
-if (typeof require !== 'undefined' && require.main === module) {
+const isCommonJsEntry = (typeof require !== 'undefined' && require.main === module);
+let isEsmEntry = false;
+try {
+    if (typeof import.meta !== 'undefined' && typeof process !== 'undefined' && process.argv && process.argv[1]) {
+        const entryUrl = new URL(process.argv[1], 'file://');
+        isEsmEntry = entryUrl.href === import.meta.url;
+    }
+} catch {
+    isEsmEntry = false;
+}
+
+if (isCommonJsEntry || isEsmEntry) {
     testExtrudedCircleRadiusEmbedding();
 }

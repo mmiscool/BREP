@@ -209,6 +209,63 @@ function computeAngleElementsWithGeometry(pmimode, ann) {
   } catch { return null; }
 }
 
+function lineInPlaneForElementRef(pmimode, refName, planeNormal, planePoint) {
+  try {
+    if (!refName) return null;
+    const scene = pmimode?.viewer?.partHistory?.scene;
+    if (!scene) return null;
+    const obj = scene.getObjectByName(refName);
+    if (!obj) return null;
+
+    const N = (planeNormal && planeNormal.lengthSq() > 1e-12)
+      ? planeNormal.clone().normalize()
+      : new THREE.Vector3(0, 0, 1);
+    const basePoint = objectRepresentativePoint(pmimode.viewer, obj) || planePoint || new THREE.Vector3();
+    const planeAnchor = planePoint || basePoint;
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(N, planeAnchor);
+
+    const elementDir = getElementDirection(pmimode.viewer, obj);
+    const worldDir = elementDir ? elementDir.clone().normalize() : null;
+
+    const userData = obj?.userData || {};
+    const objType = userData.type || userData.brepType || obj.type;
+
+    if (objType === 'FACE' && worldDir && worldDir.lengthSq() > 1e-12) {
+      const faceNormal = worldDir.clone().normalize();
+      const direction = new THREE.Vector3().crossVectors(faceNormal, N);
+      const denom = direction.lengthSq();
+      if (denom > 1e-12) {
+        const d1 = faceNormal.dot(basePoint);
+        const d2 = N.dot(planeAnchor);
+        const termA = new THREE.Vector3().crossVectors(N, direction).multiplyScalar(d1);
+        const termB = new THREE.Vector3().crossVectors(direction, faceNormal).multiplyScalar(d2);
+        const pointOnIntersection = termA.add(termB).divideScalar(denom);
+        return { p: plane.projectPoint(pointOnIntersection, pointOnIntersection.clone()), d: direction.normalize() };
+      }
+    }
+
+    let planePointOnLine = basePoint.clone();
+    if (worldDir && worldDir.lengthSq() > 1e-12) {
+      const denom = worldDir.dot(N);
+      if (Math.abs(denom) > 1e-9) {
+        const target = planeAnchor.clone();
+        const t = target.clone().sub(basePoint).dot(N) / denom;
+        planePointOnLine = basePoint.clone().addScaledVector(worldDir, t);
+      }
+    }
+    const projectedPoint = plane.projectPoint(planePointOnLine, planePointOnLine.clone());
+
+    let projectedDir = worldDir ? worldDir.clone().projectOnPlane(N) : null;
+    if (!projectedDir || projectedDir.lengthSq() < 1e-12) {
+      // Fall back to a stable in-plane axis if the element is aligned with the plane normal.
+      const basis = planeBasis(N);
+      projectedDir = basis.U.clone();
+    }
+    projectedDir.normalize();
+    return { p: projectedPoint, d: projectedDir };
+  } catch { return null; }
+}
+
 function computeAngleElements(pmimode, a) {
   try {
     const scene = pmimode?.viewer?.partHistory?.scene;
@@ -241,8 +298,19 @@ function resolveAnglePlane(pmimode, ann, elements) {
         }
       }
     }
+    if (elements?.dirA && elements?.dirB) {
+      const cross = new THREE.Vector3().crossVectors(elements.dirA, elements.dirB);
+      if (cross.lengthSq() > 1e-12) {
+        const p = (elements.pointA && elements.pointB)
+          ? new THREE.Vector3().addVectors(elements.pointA, elements.pointB).multiplyScalar(0.5)
+          : (elements.pointA || elements.pointB || new THREE.Vector3());
+        return { n: cross.normalize(), p };
+      }
+    }
     const n2 = elements?.plane || alignNormal(pmimode, ann?.alignment || 'view', ann) || new THREE.Vector3(0, 0, 1);
-    const p2 = (elements?.pointA && elements?.pointB) ? new THREE.Vector3().addVectors(elements.pointA, elements.pointB).multiplyScalar(0.5) : new THREE.Vector3();
+    const p2 = (elements?.pointA && elements?.pointB)
+      ? new THREE.Vector3().addVectors(elements.pointA, elements.pointB).multiplyScalar(0.5)
+      : (elements?.pointA || elements?.pointB || new THREE.Vector3());
     return { n: n2.clone().normalize(), p: p2 };
   } catch { return { n: new THREE.Vector3(0, 0, 1), p: new THREE.Vector3() }; }
 }
