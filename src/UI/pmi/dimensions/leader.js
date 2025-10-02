@@ -65,7 +65,7 @@ export const LeaderAnnotation = {
       ann._useDraggedPosition = true;
       ctx.updateLabel(idx, txt, textPos, ann);
       // Draw leader line to dragged text
-      this._createLeaderLineToDraggedText(pmimode, group, anchorPoint, textPos, idx, ctx);
+      this._createLeaderLineToDraggedText(pmimode, group, anchorPoint, textPos, idx, ann, ctx);
     } else {
       ann._useDraggedPosition = false;
       const labelPos = this._createLeaderLineToText(pmimode, group, anchorPoint, idx, ann, ctx) || anchorPoint;
@@ -114,7 +114,7 @@ export const LeaderAnnotation = {
     return labelPos;
   },
 
-  _createLeaderLineToDraggedText(pmimode, group, anchorPoint, textPosition, labelIdx, ctx) {
+  _createLeaderLineToDraggedText(pmimode, group, anchorPoint, textPosition, labelIdx, ann, ctx) {
     try {
       const existing = group.children.filter(ch => ch.userData && ch.userData.isLeaderLine && ch.userData.labelIdx === labelIdx);
       existing.forEach(ch => group.remove(ch));

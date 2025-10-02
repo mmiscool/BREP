@@ -335,6 +335,22 @@ export class genFeatureUI {
                         this._stopActiveReferenceSelection();
                     });
                     break;
+                case 'textarea': {
+                    inputEl = document.createElement('textarea');
+                    inputEl.id = id;
+                    inputEl.className = 'input textarea';
+                    if (def && def.rows != null) {
+                        const rows = parseInt(def.rows, 10);
+                        if (Number.isFinite(rows) && rows > 0) inputEl.rows = rows;
+                    }
+                    if (def && typeof def.placeholder === 'string') inputEl.placeholder = def.placeholder;
+                    this._setInputValue(inputEl, 'string', this._pickInitialValue(key, def));
+                    inputEl.addEventListener('change', () => {
+                        this.params[key] = inputEl.value;
+                        this._emitParamsChange(key, inputEl.value);
+                    });
+                    break;
+                }
 
                 case 'reference_selection': {
                     // Hidden input used as event/value carrier; visible UI is custom
@@ -1578,6 +1594,14 @@ export class genFeatureUI {
         padding: 8px 10px;
         outline: none;
         transition: border-color .15s ease, box-shadow .15s ease;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      textarea.input {
+        resize: vertical;
+        line-height: 1.4;
+        min-height: 72px;
+        font-family: inherit;
       }
       .btn {
         appearance: none;

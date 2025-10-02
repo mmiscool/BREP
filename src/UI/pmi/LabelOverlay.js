@@ -28,12 +28,16 @@ export class LabelOverlay {
     if (!el) {
       el = document.createElement('div');
       el.className = 'pmi-label';
-      if (text != null) el.textContent = text;
+      if (text != null) {
+        const normalized = String(text).replace(/\r\n/g, '\n');
+        el.textContent = normalized;
+      }
       if (this.onPointerDown) el.addEventListener('pointerdown', (e) => this.onPointerDown(idx, ann, e));
       if (this.onDblClick) el.addEventListener('dblclick', (e) => this.onDblClick(idx, ann, e));
       try { this._root.appendChild(el); this._labelMap.set(idx, el); } catch {}
     } else if (text != null) {
-      el.textContent = text;
+      const normalized = String(text).replace(/\r\n/g, '\n');
+      el.textContent = normalized;
     }
 
     if (ann && typeof ann.anchorSide === 'string' && ann.anchorSide) {

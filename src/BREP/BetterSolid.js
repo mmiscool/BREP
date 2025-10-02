@@ -385,6 +385,33 @@ export class Solid extends THREE.Group {
                     }
                 }
             } catch { /* ignore aux bake errors */ }
+            
+            // Bake the same transform into face metadata (center and axis vectors)
+            try {
+                if (this._faceMetadata && this._faceMetadata.size > 0) {
+                    const tmp = new THREE.Vector3();
+                    for (const [faceName, metadata] of this._faceMetadata.entries()) {
+                        if (!metadata || typeof metadata !== 'object') continue;
+                        
+                        // Transform center point if present
+                        if (Array.isArray(metadata.center) && metadata.center.length === 3) {
+                            tmp.set(metadata.center[0], metadata.center[1], metadata.center[2]);
+                            tmp.applyMatrix4(m);
+                            metadata.center = [tmp.x, tmp.y, tmp.z];
+                        }
+                        
+                        // Transform axis direction if present (use transformDirection for vectors)
+                        if (Array.isArray(metadata.axis) && metadata.axis.length === 3) {
+                            tmp.set(metadata.axis[0], metadata.axis[1], metadata.axis[2]);
+                            tmp.transformDirection(m).normalize();
+                            metadata.axis = [tmp.x, tmp.y, tmp.z];
+                        }
+                        
+                        // Note: radius doesn't need transformation for uniform scaling,
+                        // but we could handle non-uniform scaling here if needed
+                    }
+                }
+            } catch { /* ignore metadata bake errors */ }
         } catch (_) { /* ignore */ }
         return this;
     }
