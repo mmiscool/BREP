@@ -295,16 +295,6 @@ const constraintFunctions = [];
 };
 
 
-(constraintFunctions["⟠"] = function (solverObject, constraint, points, constraintValue) {
-    // Tangent constraint - reuses perpendicular constraint logic for line-circle/arc tangency
-    // This is a simple implementation that masks the perpendicular constraint functionality
-    return constraintFunctions["⟂"](solverObject, constraint, points, constraintValue);
-}).hints = {
-    commandTooltip: "Tangent Constraint",
-    pointsRequired: 4,
-};
-
-
 (constraintFunctions["∠"] = function (solverObject, constraint, points, constraintValue) {
     // Angle constraint
     let p1, p2, p3, p4;

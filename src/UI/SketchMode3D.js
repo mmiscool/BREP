@@ -187,6 +187,13 @@ export class SketchMode3D {
       },
     });
 
+    // Initialize solver settings
+    this._solverSettings = {
+      maxIterations: 500,
+      tolerance: 0.00001,
+      decimalPlaces: 6
+    };
+
     // Load persisted dimension offsets (plane-space {du,dv}) if present
     try {
       const savedOffsets = feature?.persistentData?.sketchDimOffsets || null;
@@ -1061,8 +1068,10 @@ export class SketchMode3D {
       this._secConstraints = await acc.addSection("Constraints");
       this._secCurves = await acc.addSection("Curves");
       this._secPoints = await acc.addSection("Points");
+      this._secSettings = await acc.addSection("Solver Settings");
       this._secExternal = await acc.addSection("External References");
       this.#mountExternalRefsUI();
+      this.#mountSolverSettingsUI();
       this.#refreshLists();
     })();
   }
@@ -1107,6 +1116,183 @@ export class SketchMode3D {
     this._extRefListEl = list;
 
     this.#renderExternalRefsList();
+  }
+
+  // Build UI for Solver Settings section
+  #mountSolverSettingsUI() {
+    const sec = this._secSettings;
+    if (!sec) return;
+    const wrap = sec.uiElement;
+    wrap.innerHTML = "";
+
+    // Initialize default solver settings if not already set
+    if (!this._solverSettings) {
+      this._solverSettings = {
+        maxIterations: 500,
+        tolerance: 0.00001,
+        decimalPlaces: 6
+      };
+    }
+
+    // Create input fields for solver settings
+    const createSettingRow = (label, key, type = "number", step = null, min = null, max = null) => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "6px";
+      row.style.margin = "4px 0";
+      row.style.fontSize = "12px";
+
+      const labelEl = document.createElement("label");
+      labelEl.textContent = label;
+      labelEl.style.color = "#ddd";
+      labelEl.style.flex = "1";
+      labelEl.style.minWidth = "80px";
+      row.appendChild(labelEl);
+
+      const input = document.createElement("input");
+      input.type = type;
+      if (step !== null) input.step = step;
+      if (min !== null) input.min = min;
+      if (max !== null) input.max = max;
+      input.value = this._solverSettings[key];
+      input.style.background = "#2a3441";
+      input.style.border = "1px solid #364053";
+      input.style.borderRadius = "4px";
+      input.style.color = "#ddd";
+      input.style.padding = "4px 8px";
+      input.style.width = "80px";
+      
+      input.onchange = () => {
+        const value = type === "number" ? parseFloat(input.value) || 0 : input.value;
+        this._solverSettings[key] = value;
+        this.#applySolverSettings();
+      };
+
+      row.appendChild(input);
+      return row;
+    };
+
+    wrap.appendChild(createSettingRow("Max Iterations:", "maxIterations", "number", "1", "1", "10000"));
+    wrap.appendChild(createSettingRow("Tolerance:", "tolerance", "number", "0.000001", "0.000001", "0.1"));
+    wrap.appendChild(createSettingRow("Decimal Places:", "decimalPlaces", "number", "1", "1", "10"));
+
+    // Add a reset button
+    const resetRow = document.createElement("div");
+    resetRow.style.margin = "8px 0 4px 0";
+    
+    const resetBtn = document.createElement("button");
+    resetBtn.textContent = "Reset to Defaults";
+    resetBtn.style.background = "transparent";
+    resetBtn.style.color = "#ddd";
+    resetBtn.style.border = "1px solid #364053";
+    resetBtn.style.borderRadius = "6px";
+    resetBtn.style.padding = "4px 8px";
+    resetBtn.style.width = "100%";
+    resetBtn.onclick = () => {
+      this._solverSettings = {
+        maxIterations: 500,
+        tolerance: 0.00001,
+        decimalPlaces: 6
+      };
+      this.#mountSolverSettingsUI(); // Refresh the UI
+      this.#applySolverSettings();
+    };
+    resetRow.appendChild(resetBtn);
+    wrap.appendChild(resetRow);
+
+    // Add continuous solve button
+    const continuousRow = document.createElement("div");
+    continuousRow.style.margin = "8px 0 4px 0";
+    
+    const continuousBtn = document.createElement("button");
+    continuousBtn.textContent = "Hold to Solve Continuously";
+    continuousBtn.style.background = "linear-gradient(135deg, #2c5f41, #3d7a56)";
+    continuousBtn.style.color = "#fff";
+    continuousBtn.style.border = "1px solid #4a8b65";
+    continuousBtn.style.borderRadius = "6px";
+    continuousBtn.style.padding = "6px 12px";
+    continuousBtn.style.width = "100%";
+    continuousBtn.style.cursor = "pointer";
+    continuousBtn.style.transition = "all 0.2s ease";
+    
+    // Variables to track continuous solving
+    let isContinuousSolving = false;
+    
+    continuousBtn.onmousedown = (e) => {
+      e.preventDefault();
+      if (isContinuousSolving) return;
+      
+      isContinuousSolving = true;
+      continuousBtn.textContent = "Solving... (release to stop)";
+      continuousBtn.style.background = "linear-gradient(135deg, #5f2c2c, #7a3d3d)";
+      continuousBtn.style.borderColor = "#8b4a4a";
+      
+      // Start continuous solving
+      const startContinuousSolve = () => {
+        if (!isContinuousSolving) return;
+        
+        try {
+          if (this._solver) {
+            this._solver.solveSketch("full");
+          }
+        } catch (error) {
+          console.warn("Solver error during continuous solve:", error);
+        }
+        
+        if (isContinuousSolving) {
+          requestAnimationFrame(startContinuousSolve);
+        }
+      };
+      
+      startContinuousSolve();
+    };
+    
+    const stopContinuousSolve = () => {
+      if (!isContinuousSolving) return;
+      
+      isContinuousSolving = false;
+      continuousBtn.textContent = "Hold to Solve Continuously";
+      continuousBtn.style.background = "linear-gradient(135deg, #2c5f41, #3d7a56)";
+      continuousBtn.style.borderColor = "#4a8b65";
+    };
+    
+    continuousBtn.onmouseup = stopContinuousSolve;
+    continuousBtn.onmouseleave = stopContinuousSolve;
+    
+    // Also handle touch events for mobile devices
+    continuousBtn.ontouchstart = (e) => {
+      e.preventDefault();
+      continuousBtn.onmousedown(e);
+    };
+    continuousBtn.ontouchend = stopContinuousSolve;
+    continuousBtn.ontouchcancel = stopContinuousSolve;
+    
+    continuousRow.appendChild(continuousBtn);
+    wrap.appendChild(continuousRow);
+
+    // Apply the current settings
+    this.#applySolverSettings();
+  }
+
+  // Apply solver settings to the actual solver
+  #applySolverSettings() {
+    if (!this._solver || !this._solverSettings) return;
+
+    // Update the solver's default methods
+    this._solver.defaultLoops = () => this._solverSettings.maxIterations;
+    this._solver.fullSolve = () => this._solverSettings.maxIterations;
+
+    // Update tolerance in constraint definitions (using dynamic import)
+    import('../features/sketch/sketchSolver2D/constraintDefinitions.js')
+      .then(({ constraints }) => {
+        if (constraints && typeof constraints.tolerance !== 'undefined') {
+          constraints.tolerance = this._solverSettings.tolerance;
+        }
+      })
+      .catch(error => {
+        console.warn('Could not update solver tolerance:', error);
+      });
   }
 
   // Helper: get current Sketch feature object
@@ -1721,12 +1907,12 @@ export class SketchMode3D {
       return;
     }
 
-    // Geometry x Geometry (line + arc/circle) → Tangent
+    // Geometry x Geometry (line + arc/circle) → Tangent (creates perpendicular constraint)
     const lineAndRadial = geos.length === 2 && 
       ((geos[0]?.type === "line" && (geos[1]?.type === "arc" || geos[1]?.type === "circle")) ||
        (geos[1]?.type === "line" && (geos[0]?.type === "arc" || geos[0]?.type === "circle")));
     if (lineAndRadial) {
-      this._ctxBar.appendChild(mk("Tangent ⟠", "⟠"));
+      this._ctxBar.appendChild(mk("Tangent ⟠", "⟂"));
       // Also allow delete when any selection exists
       if (items.length) {
         const del = document.createElement("button");
