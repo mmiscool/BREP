@@ -1,5 +1,7 @@
 import JSZip from 'jszip';
-import { xmlToJson } from '../../utils/jsonXml.js';
+import { localStorage as LS } from '../../localStorageShim.js';
+
+
 
 export function createImportButton(viewer) {
   async function onClick() {
@@ -79,72 +81,42 @@ export function createImportButton(viewer) {
             // Build lower-case path map
             const files = {};
             Object.keys(zip.files || {}).forEach(p => files[p.toLowerCase()] = p);
-            let fhKey = files['metadata/featurehistory.xml'];
+            let fhKey = files['metadata/featurehistory.json'];
             if (!fhKey) {
-              // search any *featurehistory.xml
-              for (const k of Object.keys(files)) { if (k.endsWith('featurehistory.xml')) { fhKey = files[k]; break; } }
+              // search any *featurehistory.json
+              for (const k of Object.keys(files)) { if (k.endsWith('featurehistory.json')) { fhKey = files[k]; break; } }
             }
             if (fhKey) {
-              const xml = await zip.file(fhKey).async('string');
-              const obj = xmlToJson(xml);
-              // Expect shape { featureHistory: { ...original json... } }
-              let root = obj && (obj.featureHistory || obj.FeatureHistory || null);
-              // Normalize arrays possibly collapsed by XML → JSON round-trip
-              const ensureArray = (v) => (Array.isArray(v) ? v : (v == null ? [] : [v]));
-              const normalizeSketch = (sk) => {
-                if (!sk || typeof sk !== 'object') return sk;
-                sk.points = ensureArray(sk.points);
-                sk.geometries = ensureArray(sk.geometries);
-                sk.constraints = ensureArray(sk.constraints);
-                // Normalize geometry.points (indices) possibly collapsed
-                if (Array.isArray(sk.geometries)) {
-                  for (const g of sk.geometries) {
-                    if (!g) continue;
-                    g.points = Array.isArray(g?.points) ? g.points : (g?.points != null ? [g.points] : []);
-                    // Coerce to numbers if strings
-                    if (Array.isArray(g.points)) g.points = g.points.map((x) => Number(x));
-                  }
-                }
-                // Normalize constraint.points similarly
-                if (Array.isArray(sk.constraints)) {
-                  for (const c of sk.constraints) {
-                    if (!c) continue;
-                    c.points = Array.isArray(c?.points) ? c.points : (c?.points != null ? [c.points] : []);
-                    if (Array.isArray(c.points)) c.points = c.points.map((x) => Number(x));
-                  }
-                }
-                return sk;
-              };
-              const normalizeHistory = (h) => {
-                if (!h || typeof h !== 'object') return h;
-                h.features = ensureArray(h.features);
-                for (const f of h.features) {
-                  if (!f || typeof f !== 'object') continue;
-                  if (f.persistentData && typeof f.persistentData === 'object') {
-                    if (f.persistentData.sketch) f.persistentData.sketch = normalizeSketch(f.persistentData.sketch);
-                    if (Array.isArray(f.persistentData.externalRefs)) {
-                      // ok
-                    } else if (f.persistentData.externalRefs != null) {
-                      f.persistentData.externalRefs = ensureArray(f.persistentData.externalRefs);
-                    }
-                  }
-                }
-                return h;
-              };
-              if (root) root = normalizeHistory(root);
-              // Ensure expressions is a string (some XML → JSON tools might wrap differently)
+              const jsonData = await zip.file(fhKey).async('string');
+              let root = null;
+              try { root = JSON.parse(jsonData); } catch {}
+              // Ensure expressions is a string if present
               if (root && root.expressions != null && typeof root.expressions !== 'string') {
-                try {
-                  if (Array.isArray(root.expressions)) root.expressions = root.expressions.join('\n');
-                  else if (typeof root.expressions === 'object' && Array.isArray(root.expressions.item)) root.expressions = root.expressions.item.join('\n');
-                  else root.expressions = String(root.expressions);
-                } catch { root.expressions = String(root.expressions); }
+                try { root.expressions = String(root.expressions); } catch { root.expressions = String(root.expressions); }
               }
               if (root) {
                 await viewer?.partHistory?.reset?.();
                 await viewer?.partHistory?.fromJSON?.(JSON.stringify(root));
                 // Sync Expressions UI with imported code
                 try { if (viewer?.expressionsManager?.textArea) viewer.expressionsManager.textArea.value = viewer.partHistory.expressions || ''; } catch {}
+
+                // Sync PMI views from PartHistory to localStorage for widget compatibility
+                try {
+                  const importName = file.name.replace(/\.[^/.]+$/, '') || '__DEFAULT__';
+                  viewer.partHistory.savePMIViewsToLocalStorage(importName);
+                  console.log('[ImportButton] Restored', viewer.partHistory.pmiViews?.length || 0, 'PMI views for model:', importName);
+                  // Refresh PMI views UI if it exists
+                  try { 
+                    if (viewer?.pmiViewsWidget) {
+                      viewer.pmiViewsWidget.currentModelName = importName;
+                      viewer.pmiViewsWidget.views = viewer.partHistory.pmiViews || [];
+                      viewer.pmiViewsWidget._renderList?.();
+                    }
+                  } catch {}
+                } catch (e) {
+                  console.warn('[ImportButton] Failed to restore PMI views:', e);
+                }
+
                 await viewer?.partHistory?.runHistory?.();
                 try { viewer?.zoomToFit?.(1.1); } catch {}
                 try { _updateCurrentNameFromFile(viewer, file); } catch {}

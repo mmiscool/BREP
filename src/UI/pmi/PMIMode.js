@@ -45,6 +45,8 @@ export class PMIMode {
     this._uiSide = null;
     this._annGroup = null;
     this._originalSections = null;
+    this._pmiModeViewsSection = null;
+    this._pmiViewsDomRestore = null;
     this._pmiAnnotationsSection = null;
     this._pmiViewSettingsSection = null;
     this._pmiToolOptionsSection = null;
@@ -400,15 +402,33 @@ export class PMIMode {
       
       // Remove PMI sections from the accordion
       const sectionsToRemove = [
+        'PMI Views (PMI Mode)',
         'Annotations — ' + (this.viewEntry?.name || ''),
         'View Settings', 
         'Tool Options'
       ];
       
       console.log('Sections to remove:', sectionsToRemove);
+
+      if (this._pmiViewsDomRestore && this.pmiWidget?.uiElement) {
+        try {
+          const widgetEl = this.pmiWidget.uiElement;
+          const { parent, next } = this._pmiViewsDomRestore;
+          if (widgetEl && parent) {
+            if (next && next.parentNode === parent) {
+              parent.insertBefore(widgetEl, next);
+            } else {
+              parent.appendChild(widgetEl);
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to restore PMI Views widget before removal:', err);
+        }
+      }
+      this._pmiViewsDomRestore = null;
       
       // First, try to use the stored section references for direct removal
-      const storedSections = [this._pmiAnnotationsSection, this._pmiViewSettingsSection, this._pmiToolOptionsSection];
+      const storedSections = [this._pmiModeViewsSection, this._pmiAnnotationsSection, this._pmiViewSettingsSection, this._pmiToolOptionsSection];
       storedSections.forEach((section, index) => {
         if (section && section.uiElement) {
           try {
@@ -507,6 +527,7 @@ export class PMIMode {
       }
       
       // Clear stored section references
+      this._pmiModeViewsSection = null;
       this._pmiAnnotationsSection = null;
       this._pmiViewSettingsSection = null;
       this._pmiToolOptionsSection = null;
@@ -527,6 +548,33 @@ export class PMIMode {
       // Use the existing accordion instead of creating a new one
       this._acc = v.accordion;
       
+      const pmiViewsPromise = this._acc.addSection('PMI Views (PMI Mode)').then((sec) => {
+        try {
+          this._pmiModeViewsSection = sec;
+          const titleEl = sec.uiElement.previousElementSibling;
+          if (titleEl) {
+            titleEl.textContent = 'PMI Views';
+          }
+
+          const widget = this.pmiWidget;
+          const widgetEl = widget?.uiElement;
+          if (widgetEl) {
+            if (!this._pmiViewsDomRestore) {
+              this._pmiViewsDomRestore = {
+                parent: widgetEl.parentNode || null,
+                next: widgetEl.nextSibling || null,
+              };
+            }
+            sec.uiElement.appendChild(widgetEl);
+          }
+
+          this.#applyPMIPanelLayout();
+        } catch (e) {
+          console.warn('Failed to setup PMI Views section:', e);
+        }
+      });
+      this._sectionCreationPromises.push(pmiViewsPromise);
+
       // Build Annotations section
       this._annListEl = document.createElement('div');
       this._annListEl.className = 'pmi-ann-list';
@@ -621,6 +669,7 @@ export class PMIMode {
           
           // Store section for later cleanup
           this._pmiAnnotationsSection = sec;
+          this.#applyPMIPanelLayout();
         } catch (e) {
           console.warn('Failed to setup annotations section:', e);
         }
@@ -636,6 +685,7 @@ export class PMIMode {
           sec.uiElement.appendChild(this._viewSettingsEl); 
           this.#renderViewSettings();
           this._pmiViewSettingsSection = sec;
+          this.#applyPMIPanelLayout();
         } catch (e) {
           console.warn('Failed to setup view settings section:', e);
         }
@@ -651,6 +701,7 @@ export class PMIMode {
           sec.uiElement.appendChild(this._toolOptsEl); 
           this.#renderToolOptions();
           this._pmiToolOptionsSection = sec;
+          this.#applyPMIPanelLayout();
         } catch (e) {
           console.warn('Failed to setup tool options section:', e);
         }
@@ -660,6 +711,33 @@ export class PMIMode {
       this.#renderAnnList();
     } catch (e) {
       console.warn('Failed to mount PMI sections:', e);
+    }
+  }
+
+  #applyPMIPanelLayout() {
+    try {
+      const accordion = this.viewer?.accordion?.uiElement;
+      if (!accordion) return;
+      const sections = [
+        this._pmiModeViewsSection,
+        this._pmiAnnotationsSection,
+        this._pmiToolOptionsSection,
+        this._pmiViewSettingsSection,
+      ];
+      const fragment = document.createDocumentFragment();
+      let hasAny = false;
+      for (const section of sections) {
+        if (!section || !section.uiElement) continue;
+        const titleEl = section.uiElement.previousElementSibling;
+        if (!titleEl) continue;
+        fragment.appendChild(titleEl);
+        fragment.appendChild(section.uiElement);
+        hasAny = true;
+      }
+      if (!hasAny) return;
+      accordion.insertBefore(fragment, accordion.firstChild || null);
+    } catch (e) {
+      console.warn('Failed to apply PMI panel layout:', e);
     }
   }
 

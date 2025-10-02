@@ -695,7 +695,7 @@ export class Viewer {
         // Shift the ray origin far behind the camera along the ray direction
         try {
             const span = Math.abs((this.camera?.far ?? 0) - (this.camera?.near ?? 0)) || 1;
-            const back = Math.max(1e6, span * 10);
+            const back = Math.max(1e6, span * 1000);
             this.raycaster.ray.origin.addScaledVector(this.raycaster.ray.direction, -back);
         } catch { }
         // Intersect everything; raycaster will skip non-geometry nodes

@@ -266,7 +266,7 @@ export async function generate3MF(solids, opts = {}) {
   }
   // Root-level relationships (3D model and optional thumbnail)
   zip.folder('_rels').file('.rels', rootRelsXML({ thumbnailPath: thumbPkgRelPath }));
-  // Additional attachments (e.g., Metadata/featureHistory.xml)
+  // Additional attachments (e.g., Metadata/featureHistory.json)
   const extra = opts.additionalFiles && typeof opts.additionalFiles === 'object' ? opts.additionalFiles : null;
   if (extra) {
     for (const p of Object.keys(extra)) {

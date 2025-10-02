@@ -114,8 +114,8 @@ await ph.runHistory();
 Supported formats and how they round‑trip through BREP:
 
 - 3MF (feature‑aware):
-  - Export: Generates a valid 3MF container that includes the triangulated geometry plus an embedded copy of your feature history so the file remains editable later in this app. Non‑manifold solids are detected and skipped (you will be notified), and the export still proceeds so you can share the file or fix later. The history is stored as XML at `Metadata/featureHistory.xml`, and a model metadata entry `featureHistoryPath` points to it. Multiple solids export as separate `<object>` items in a single 3MF. Units are configurable (default `millimeter`).
-  - Import: If a 3MF contains `Metadata/featureHistory.xml` (or any `*featureHistory.xml`), BREP loads that history and rebuilds the model, preserving editable features. If not present, the 3MF is imported as pure geometry (mesh only).
+  - Export: Generates a valid 3MF container that includes the triangulated geometry plus an embedded copy of your feature history so the file remains editable later in this app. Non‑manifold solids are detected and skipped (you will be notified), and the export still proceeds so you can share the file or fix later. The history is stored as JSON at `Metadata/featureHistory.json`, and a model metadata entry `featureHistoryPath` points to it. Multiple solids export as separate `<object>` items in a single 3MF. Units are configurable (default `millimeter`).
+  - Import: If a 3MF contains `Metadata/featureHistory.json` (or any `*featureHistory.json`), BREP loads that history and rebuilds the model, preserving editable features. If not present, the 3MF is imported as pure geometry (mesh only).
   - Compatibility: The embedded history is non‑standard metadata; other 3MF viewers will ignore it, but the 3MF remains fully valid and viewable elsewhere.
 
 ## Image to Face & Image Editor
@@ -146,7 +146,7 @@ Where this lives in the code:
 - 3MF exporter: `src/exporters/threeMF.js` (packages geometry and optional attachments using JSZip).
 - Export dialog: `src/UI/toolbarButtons/exportButton.js`.
 - Import logic: `src/UI/toolbarButtons/importButton.js`.
-- JSON ↔ XML helpers for the embedded history: `src/utils/jsonXml.js`.
+- Feature history is now embedded directly as JSON without XML conversion.
 
 Notes and limitations
 - 3MF export focuses on geometry and editable history. It also tags each triangle with its originating face label using a per-object BaseMaterials resource (face names appear as material names). No physically-accurate materials or textures are exported.

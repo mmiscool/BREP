@@ -80,7 +80,7 @@ export class AccordionWidget {
         user-select: none;
       }
       .accordion-title:hover {
-        background: #0f172a;
+        background: #203955ff;
       }
       .accordion-content {
         padding: 0px;

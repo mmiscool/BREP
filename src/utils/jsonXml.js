@@ -1,4 +1,8 @@
 // jsonXml.js — Minimal JSON ↔ XML conversion utilities for feature history payloads
+//
+// DEPRECATED: Feature history now uses JSON directly without XML conversion.
+// This file is no longer used by the application as of the JSON migration.
+// It may be removed in a future version.
 
 function sanitizeTagName(name) {
   let n = String(name == null ? '' : name);

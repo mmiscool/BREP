@@ -5,6 +5,7 @@ import * as THREE from 'three';
 // Feature classes live in their own files; registry wires them up.
 import { FeatureRegistry } from './FeatureRegistry.js';
 import { SelectionFilter } from './UI/SelectionFilter.js';
+import { localStorage as LS } from './localStorageShim.js';
 import Stats from 'stats.js';
 
 export class PartHistory {
@@ -17,6 +18,7 @@ export class PartHistory {
     this.currentHistoryStepId = null;
     this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
     this._ambientLight = null;
+    this.pmiViews = [];
   }
 
 
@@ -31,6 +33,7 @@ export class PartHistory {
   async reset() {
     this.features = [];
     this.idCounter = 0;
+    this.pmiViews = [];
     // empty the scene without destroying it
     await this.scene.clear();
     // Clear transient state
@@ -256,12 +259,13 @@ export class PartHistory {
 
 
   // methods to store and retrieve feature history to JSON strings
-  // We will only store the features and the idCounter
+  // We will store the features, idCounter, expressions, and optionally PMI views
   async toJSON() {
     return JSON.stringify({
       features: this.features,
       idCounter: this.idCounter,
-      expressions: this.expressions
+      expressions: this.expressions,
+      pmiViews: this.pmiViews || []
     }, null, 2);
   }
 
@@ -270,11 +274,56 @@ export class PartHistory {
     this.features = importData.features;
     this.idCounter = importData.idCounter;
     this.expressions = importData.expressions || "";
+    this.pmiViews = importData.pmiViews || [];
   }
 
   async generateId(prefix) {
     this.idCounter += 1;
     return `${prefix}${this.idCounter}`;
+  }
+
+  // PMI Views management - sync with localStorage for widget compatibility
+  loadPMIViewsFromLocalStorage(modelName) {
+    try {
+      const key = '__BREP_PMI_VIEWS__:' + encodeURIComponent(modelName || '__DEFAULT__');
+      const raw = LS.getItem(key);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          this.pmiViews = arr.filter(Boolean);
+        }
+      }
+    } catch {}
+  }
+
+  savePMIViewsToLocalStorage(modelName) {
+    try {
+      const key = '__BREP_PMI_VIEWS__:' + encodeURIComponent(modelName || '__DEFAULT__');
+      const validViews = Array.isArray(this.pmiViews) ? this.pmiViews.filter(Boolean) : [];
+      LS.setItem(key, JSON.stringify(validViews));
+      
+      // Trigger storage event to notify PMI Views widget
+      try {
+        window.dispatchEvent(new StorageEvent('storage', {
+          key: key,
+          oldValue: null,
+          newValue: JSON.stringify(validViews),
+          storageArea: localStorage
+        }));
+      } catch {
+        // Fallback for browsers that don't support StorageEvent constructor
+        try {
+          const event = new CustomEvent('storage', { 
+            detail: { 
+              key: key, 
+              oldValue: null, 
+              newValue: JSON.stringify(validViews) 
+            } 
+          });
+          window.dispatchEvent(event);
+        } catch {}
+      }
+    } catch {}
   }
 
   async newFeature(featureType) {

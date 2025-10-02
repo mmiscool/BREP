@@ -1,6 +1,5 @@
 import JSZip from 'jszip';
 import { generate3MF } from '../../exporters/threeMF.js';
-import { jsonToXml } from '../../utils/jsonXml.js';
 
 async function _captureThumbnail(viewer, size = 256) {
   try {
@@ -252,12 +251,8 @@ function _openExportDialog(viewer) {
         try {
           const json = await viewer?.partHistory?.toJSON?.();
           if (json && typeof json === 'string') {
-            const obj = JSON.parse(json);
-            if (obj && typeof obj === 'object') {
-              const fhXml = jsonToXml(obj, 'featureHistory');
-              additionalFiles = { 'Metadata/featureHistory.xml': fhXml };
-              modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.xml' };
-            }
+            additionalFiles = { 'Metadata/featureHistory.json': json };
+            modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.json' };
           }
         } catch {}
 

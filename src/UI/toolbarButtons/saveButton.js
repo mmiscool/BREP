@@ -12,6 +12,8 @@ function _uint8ToBase64(uint8) {
   return btoa(binary);
 }
 
+
+
 export function createSaveButton(viewer) {
   async function _captureThumbnail(size = 60) {
     try {
@@ -65,21 +67,25 @@ export function createSaveButton(viewer) {
     } catch { }
     // Fallback: quick autosave to localStorage shim
     try {
-      // Produce a compact 3MF that embeds feature history only
+      // Load PMI views into PartHistory before serializing
+      try {
+        viewer.partHistory.loadPMIViewsFromLocalStorage('autosave');
+        console.log('[SaveButton] Loaded PMI views for autosave, found views:', viewer.partHistory.pmiViews?.length || 0);
+      } catch (e) {
+        console.warn('[SaveButton] Failed to load PMI views:', e);
+      }
+
+      // Produce a compact 3MF that embeds feature history (now includes PMI views) only
       const json = await viewer?.partHistory?.toJSON?.();
       let additionalFiles = undefined;
       let modelMetadata = undefined;
       try {
         if (json && typeof json === 'string') {
-          const obj = JSON.parse(json);
-          if (obj && typeof obj === 'object') {
-            // Store feature history as JSON instead of XML
-            const fhJson = JSON.stringify(obj, null, 2);
-            additionalFiles = { 'Metadata/featureHistory.json': fhJson };
-            modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.json' };
-          }
+          additionalFiles = { 'Metadata/featureHistory.json': json };
+          modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.json' };
         }
       } catch { }
+
       const thumbnail = await _captureThumbnail(60);
       const bytes = await generate3MF([], { unit: 'millimeter', precision: 6, scale: 1, additionalFiles, modelMetadata, thumbnail });
       const b64 = _uint8ToBase64(bytes);

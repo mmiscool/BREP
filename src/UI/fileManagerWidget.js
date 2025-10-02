@@ -4,7 +4,6 @@
 import * as THREE from 'three';
 import JSZip from 'jszip';
 import { generate3MF } from '../exporters/threeMF.js';
-import { jsonToXml, xmlToJson } from '../utils/jsonXml.js';
 import { localStorage as LS } from '../localStorageShim.js';
 
 export class FileManagerWidget {
@@ -160,6 +159,8 @@ export class FileManagerWidget {
     try { return LS.getItem('__BREP_FM_ICONSVIEW__') === '1'; } catch { return false; }
   }
 
+
+
   // ----- UI -----
   _ensureStyles() {
     if (document.getElementById('file-manager-widget-styles')) return;
@@ -283,17 +284,21 @@ export class FileManagerWidget {
       this.nameInput.value = name;
     }
 
-    // Get feature history JSON and embed into a 3MF archive as Metadata/featureHistory.xml
+    // Load PMI views into PartHistory before serializing
+    try {
+      this.viewer.partHistory.loadPMIViewsFromLocalStorage(name);
+      console.log('[FileManagerWidget] Loaded PMI views for model:', name, 'found views:', this.viewer.partHistory.pmiViews?.length || 0);
+    } catch (e) {
+      console.warn('[FileManagerWidget] Failed to load PMI views:', e);
+    }
+
+    // Get feature history JSON (now includes PMI views) and embed into a 3MF archive as Metadata/featureHistory.json
     const jsonString = await this.viewer.partHistory.toJSON();
-    let featureHistoryObj = null;
-    try { featureHistoryObj = JSON.parse(jsonString); } catch {}
-    // Build additional files map only if JSON parsed cleanly
     let additionalFiles = undefined;
     let modelMetadata = undefined;
-    if (featureHistoryObj && typeof featureHistoryObj === 'object') {
-      const fhXml = jsonToXml(featureHistoryObj, 'featureHistory');
-      additionalFiles = { 'Metadata/featureHistory.xml': fhXml };
-      modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.xml' };
+    if (jsonString) {
+      additionalFiles = { 'Metadata/featureHistory.json': jsonString };
+      modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.json' };
     }
     // Capture a 60x60 thumbnail of the current view
     let thumbnail = null;
@@ -334,66 +339,42 @@ export class FileManagerWidget {
         const zip = await JSZip.loadAsync(bytes.buffer);
         const files = {};
         Object.keys(zip.files || {}).forEach(p => files[p.toLowerCase()] = p);
-        let fhKey = files['metadata/featurehistory.xml'];
+        let fhKey = files['metadata/featurehistory.json'];
         if (!fhKey) {
-          for (const k of Object.keys(files)) { if (k.endsWith('featurehistory.xml')) { fhKey = files[k]; break; } }
+          for (const k of Object.keys(files)) { if (k.endsWith('featurehistory.json')) { fhKey = files[k]; break; } }
         }
         if (fhKey) {
-          const xml = await zip.file(fhKey).async('string');
-          const obj = xmlToJson(xml);
-          let root = obj && (obj.featureHistory || obj.FeatureHistory || null);
-          // Normalize any arrays possibly collapsed by XML round-trip
-          const ensureArray = (v) => (Array.isArray(v) ? v : (v == null ? [] : [v]));
-          const normalizeSketch = (sk) => {
-            if (!sk || typeof sk !== 'object') return sk;
-            sk.points = ensureArray(sk.points);
-            sk.geometries = ensureArray(sk.geometries);
-            sk.constraints = ensureArray(sk.constraints);
-            if (Array.isArray(sk.geometries)) {
-              for (const g of sk.geometries) {
-                if (!g) continue;
-                g.points = Array.isArray(g?.points) ? g.points : (g?.points != null ? [g.points] : []);
-                if (Array.isArray(g.points)) g.points = g.points.map((x) => Number(x));
-              }
-            }
-            if (Array.isArray(sk.constraints)) {
-              for (const c of sk.constraints) {
-                if (!c) continue;
-                c.points = Array.isArray(c?.points) ? c.points : (c?.points != null ? [c.points] : []);
-                if (Array.isArray(c.points)) c.points = c.points.map((x) => Number(x));
-              }
-            }
-            return sk;
-          };
-          const normalizeHistory = (h) => {
-            if (!h || typeof h !== 'object') return h;
-            h.features = ensureArray(h.features);
-            for (const f of h.features) {
-              if (!f || typeof f !== 'object') continue;
-              if (f.persistentData && typeof f.persistentData === 'object') {
-                if (f.persistentData.sketch) f.persistentData.sketch = normalizeSketch(f.persistentData.sketch);
-                if (Array.isArray(f.persistentData.externalRefs)) {
-                  // ok
-                } else if (f.persistentData.externalRefs != null) {
-                  f.persistentData.externalRefs = ensureArray(f.persistentData.externalRefs);
-                }
-              }
-            }
-            return h;
-          };
-          if (root) root = normalizeHistory(root);
+          const jsonData = await zip.file(fhKey).async('string');
+          let root = null;
+          try { root = JSON.parse(jsonData); } catch {}
           // Ensure expressions is a string if present
           if (root && root.expressions != null && typeof root.expressions !== 'string') {
-            try {
-              if (Array.isArray(root.expressions)) root.expressions = root.expressions.join('\n');
-              else if (typeof root.expressions === 'object' && Array.isArray(root.expressions.item)) root.expressions = root.expressions.item.join('\n');
-              else root.expressions = String(root.expressions);
-            } catch { root.expressions = String(root.expressions); }
+            try { root.expressions = String(root.expressions); } catch { root.expressions = String(root.expressions); }
           }
           if (root) {
             await this.viewer.partHistory.fromJSON(JSON.stringify(root));
             // Sync Expressions UI with imported code
             try { if (this.viewer?.expressionsManager?.textArea) this.viewer.expressionsManager.textArea.value = this.viewer.partHistory.expressions || ''; } catch {}
+            
+            // Sync PMI views from PartHistory to localStorage for widget compatibility
+            try {
+              this.viewer.partHistory.savePMIViewsToLocalStorage(name);
+              console.log('[FileManagerWidget] Restored', this.viewer.partHistory.pmiViews?.length || 0, 'PMI views for model:', name);
+              // Refresh PMI views UI if it exists - trigger after model name is set
+              setTimeout(() => {
+                try { 
+                  if (this.viewer?.pmiViewsWidget) {
+                    // Force refresh the PMI views widget by triggering model change
+                    this.viewer.pmiViewsWidget.currentModelName = name;
+                    this.viewer.pmiViewsWidget.views = this.viewer.pmiViewsWidget._loadViewsFor(name);
+                    this.viewer.pmiViewsWidget._renderList?.();
+                  }
+                } catch {}
+              }, 100);
+            } catch (e) {
+              console.warn('[FileManagerWidget] Failed to restore PMI views:', e);
+            }
+            
             if (seq !== this._loadSeq) return;
             this.currentName = name;
             this.nameInput.value = name;

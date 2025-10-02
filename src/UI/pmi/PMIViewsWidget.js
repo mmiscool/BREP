@@ -104,6 +104,9 @@ export class PMIViewsWidget {
       .pmi-btn.danger:hover { border-color: #ef4444; background: rgba(239,68,68,.15); color: #fff; }
       .pmi-list { display: flex; flex-direction: column; gap: 2px; }
       .pmi-name { font-weight: 600; color: #e5e7eb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .pmi-name-btn { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; display: block; width: 100%; }
+      .pmi-name-btn:hover { color: #93c5fd; }
+      .pmi-name-btn:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
     `;
     document.head.appendChild(style);
   }
@@ -140,18 +143,67 @@ export class PMIViewsWidget {
       const row = document.createElement('div');
       row.className = 'pmi-row';
 
-      // Editable name
-      const nameInput = document.createElement('input');
-      nameInput.type = 'text';
-      nameInput.value = String(v.name || `View ${idx + 1}`);
-      nameInput.className = 'pmi-input pmi-grow';
-      nameInput.title = 'Double-click row to apply view';
-      nameInput.addEventListener('change', () => {
-        v.name = nameInput.value.trim() || v.name || `View ${idx + 1}`;
-        this._persist();
-        this._renderList();
+      // View name displayed as clickable text
+      const viewName = String(v.name || `View ${idx + 1}`);
+      const nameButton = document.createElement('button');
+      nameButton.type = 'button';
+      nameButton.className = 'pmi-name pmi-name-btn pmi-grow';
+      nameButton.textContent = viewName;
+      nameButton.title = 'Click to apply view';
+      nameButton.addEventListener('click', () => {
+        this._applyView(v);
       });
-      row.appendChild(nameInput);
+      row.appendChild(nameButton);
+
+      // Rename button swaps the name into an inline editor
+      const renameBtn = document.createElement('button');
+      renameBtn.className = 'pmi-btn';
+      renameBtn.title = 'Rename this view';
+      renameBtn.textContent = '✎';
+      renameBtn.addEventListener('click', () => {
+        if (!row.contains(nameButton)) {
+          const existingInput = row.querySelector('input.pmi-input');
+          if (existingInput) {
+            existingInput.focus();
+            existingInput.select?.();
+          }
+          return;
+        }
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.value = viewName;
+        nameInput.className = 'pmi-input pmi-grow';
+
+        let finished = false;
+        const finishRename = (commit) => {
+          if (finished) return;
+          finished = true;
+          if (commit) {
+            const fallback = viewName;
+            const newName = nameInput.value.trim();
+            const finalName = newName || fallback;
+            if (finalName !== v.name) {
+              v.name = finalName;
+            }
+            this._persist();
+          }
+          this._renderList();
+        };
+
+        nameInput.addEventListener('keydown', (evt) => {
+          if (evt.key === 'Enter') {
+            finishRename(true);
+          } else if (evt.key === 'Escape') {
+            finishRename(false);
+          }
+        });
+        nameInput.addEventListener('blur', () => finishRename(true));
+
+        row.replaceChild(nameInput, nameButton);
+        nameInput.focus();
+        nameInput.select();
+      });
+      row.appendChild(renameBtn);
 
 
 
@@ -160,7 +212,20 @@ export class PMIViewsWidget {
       editBtn.className = 'pmi-btn';
       editBtn.title = 'Edit annotations for this view';
       editBtn.textContent = 'Edit';
-      editBtn.addEventListener('click', () => {
+      editBtn.addEventListener('click', async () => {
+        try {
+          const activePMI = this.viewer?._pmiMode;
+          if (activePMI) {
+            try {
+              await activePMI.finish();
+            } catch (err) {
+              console.warn('PMI Views: failed to finish active PMI session before switching', err);
+            }
+          }
+        } catch (err) {
+          console.warn('PMI Views: unexpected PMI session check failure', err);
+        }
+
         try { this._applyView(v); } catch {}
         try { this.viewer.startPMIMode?.(v, idx, this); } catch {}
       });
@@ -180,7 +245,9 @@ export class PMIViewsWidget {
 
       // Double-click anywhere on row to apply
       row.addEventListener('dblclick', (e) => {
-        if (e.target === delBtn || e.target === editBtn) return; // ignore if dblclick on delete or edit
+        const target = e.target;
+        const tagName = target?.tagName;
+        if (target === delBtn || target === editBtn || target === renameBtn || tagName === 'INPUT') return; // ignore if dblclick on control buttons or inline editor
         this._applyView(v);
       });
 
@@ -255,7 +322,11 @@ export class PMIViewsWidget {
       } catch { /* ignore */ }
       cam.updateProjectionMatrix();
       cam.updateMatrixWorld(true);
-      try { this.viewer.controls?.update?.(); } catch { }
+      try {
+        const ctrls = this.viewer.controls;
+        ctrls?.update?.();
+        ctrls?.updateMatrixState?.();
+      } catch { }
       // Apply persisted view settings (e.g., wireframe) if present
       try {
         const vs = view.viewSettings || {};
