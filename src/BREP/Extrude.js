@@ -278,6 +278,74 @@ export class ExtrudeSolid extends Solid {
       }
     }
 
+    // Check for cylindrical face metadata from circular edges
+    try {
+      // Look for edges that might be circular/arc and add metadata
+      if (face && Array.isArray(face.edges)) {
+        for (const edge of face.edges) {
+          if (edge && edge.userData) {
+            const geomType = edge.userData.sketchGeomType;
+            let radius = null;
+            let center = null;
+            
+            // Check if it's a circle
+            if (geomType === 'circle' && 
+                Array.isArray(edge.userData.circleCenter) && 
+                typeof edge.userData.circleRadius === 'number') {
+              radius = edge.userData.circleRadius;
+              center = edge.userData.circleCenter;
+            }
+            // Check if it's an arc (any arc creates cylindrical surface when extruded)
+            else if (geomType === 'arc' && 
+                     Array.isArray(edge.userData.arcCenter) && 
+                     typeof edge.userData.arcRadius === 'number') {
+              radius = edge.userData.arcRadius;
+              center = edge.userData.arcCenter;
+            }
+            
+            // If we found a circular edge, add cylindrical face metadata
+            if (radius !== null && center !== null) {
+              const sidewallName = `${featureTag}${edge?.name || 'EDGE'}_SW`;
+              const height = distance + distanceBack;
+              
+              // Transform center and direction to world coordinates
+              let worldCenter = center;
+              let worldDirection = dirF ? [dirF.x, dirF.y, dirF.z] : [0, 1, 0];
+              
+              // If edge has a transform, apply it to the center
+              if (edge.matrixWorld) {
+                const centerVec = new THREE.Vector3(center[0], center[1], center[2]);
+                centerVec.applyMatrix4(edge.matrixWorld);
+                worldCenter = [centerVec.x, centerVec.y, centerVec.z];
+                
+                // Transform the direction vector too
+                const dirVec = new THREE.Vector3(worldDirection[0], worldDirection[1], worldDirection[2]);
+                dirVec.transformDirection(edge.matrixWorld);
+                worldDirection = [dirVec.x, dirVec.y, dirVec.z];
+              }
+              
+              // Calculate center point along the extrusion axis
+              const centerPoint = [
+                worldCenter[0], 
+                worldCenter[1] + (dirB ? (dirB.y || 0) : 0) + height/2, 
+                worldCenter[2]
+              ];
+              
+              this.setFaceMetadata(sidewallName, {
+                type: 'cylindrical',
+                radius: radius,
+                height: height,
+                axis: worldDirection,
+                center: centerPoint
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Silently continue if metadata detection fails
+    }
+
     // Adaptive weld epsilon so caps and sides share vertices exactly.
     let eps = 1e-5;
     if (this._vertProperties.length >= 6) {

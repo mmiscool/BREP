@@ -254,10 +254,19 @@ export class SelectionFilter {
                 };
 
                 let targetObj = objectToToggleSelectionOn;
-                // If clicked type doesn't match the desired, try to find a proper descendant
+                const findAncestorOfType = (obj, desired) => {
+                    let cur = obj;
+                    while (cur && cur.parent) {
+                        if (cur.type === desired) return cur;
+                        cur = cur.parent;
+                    }
+                    return null;
+                };
+                // If clicked type doesn't match the desired, try to find a proper descendant; if none, try ancestor
                 if (want && type !== want) {
-                    const desc = findDescendantOfType(objectToToggleSelectionOn, want);
-                    if (desc) targetObj = desc; else return false;
+                    let picked = findDescendantOfType(objectToToggleSelectionOn, want);
+                    if (!picked) picked = findAncestorOfType(objectToToggleSelectionOn, want);
+                    if (picked) targetObj = picked; else return false;
                 }
 
                 // As a safeguard, if no single currentType is set but a set of allowed types exists, prefer VERTEX then EDGE
@@ -265,8 +274,9 @@ export class SelectionFilter {
                     const prefer = ['VERTEX', 'EDGE'];
                     for (const t of prefer) {
                         if (allowed.has && allowed.has(t)) {
-                            const desc = findDescendantOfType(objectToToggleSelectionOn, t);
-                            if (desc) { targetObj = desc; break; }
+                            let picked = findDescendantOfType(objectToToggleSelectionOn, t);
+                            if (!picked) picked = findAncestorOfType(objectToToggleSelectionOn, t);
+                            if (picked) { targetObj = picked; break; }
                         }
                     }
                 }

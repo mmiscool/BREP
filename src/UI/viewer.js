@@ -25,8 +25,9 @@ import { generateObjectUI } from './objectDump.js';
 import { PluginsWidget } from './PluginsWidget.js';
 import { localStorage as LS } from '../localStorageShim.js';
 import { loadSavedPlugins } from '../plugins/pluginManager.js';
-import { PMIViewsWidget } from './PMIViewsWidget.js';
-import { PMIMode } from './PMIMode.js';
+import { PMIViewsWidget } from './pmi/PMIViewsWidget.js';
+import { PMIMode } from './pmi/PMIMode.js';
+import { annotationRegistry } from './pmi/AnnotationRegistry.js';
 
 export class Viewer {
     /**
@@ -200,6 +201,9 @@ export class Viewer {
         this.controls.addEventListener('change', this._onControlsChange);
 
         this.SelectionFilter = SelectionFilter;
+
+        // Expose annotation registry for PMI modules and plugins
+        this.annotationRegistry = annotationRegistry;
 
         // View cube overlay
         this.viewCube = new ViewCube({

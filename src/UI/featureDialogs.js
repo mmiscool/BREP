@@ -1064,6 +1064,18 @@ export class genFeatureUI {
     }
 
     _activateReferenceSelection(inputEl, def) {
+        // Clear any lingering scene selection so the new reference starts fresh
+        try {
+            const scene = this.options?.scene
+                || this.options?.viewer?.partHistory?.scene
+                || this.options?.viewer?.scene
+                || null;
+            if (scene) {
+                genFeatureUI.__setGlobalActiveRefInput(null);
+                SelectionFilter.unselectAll(scene);
+            }
+        } catch (_) { }
+
         // Ensure only one control is globally marked as active
         genFeatureUI.__setGlobalActiveRefInput(inputEl);
 

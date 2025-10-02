@@ -3,7 +3,7 @@
 // (camera snapshots) with capture, rename, apply, and delete.
 // Views are persisted per model via the localStorage shim.
 
-import { localStorage as LS } from '../localStorageShim.js';
+import { localStorage as LS } from '../../localStorageShim.js';
 
 export class PMIViewsWidget {
   constructor(viewer) {

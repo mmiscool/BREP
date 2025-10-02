@@ -182,6 +182,15 @@ export class Cylinder extends PrimitiveBase {
       this.addTriangle(`${this.params.name}_S`, ring0[i], ring0[j], ring1[j]);
       this.addTriangle(`${this.params.name}_S`, ring0[i], ring1[j], ring1[i]);
     }
+    
+    // Store cylindrical face metadata with radius information
+    this.setFaceMetadata(`${this.params.name}_S`, {
+      type: 'cylindrical',
+      radius: r,
+      height: h,
+      axis: [0, 1, 0], // Y-axis is the cylinder axis
+      center: [0, h/2, 0] // Center point of the cylinder axis
+    });
   }
 }
 
@@ -215,5 +224,15 @@ export class Cone extends PrimitiveBase {
       this.addTriangle(`${this.params.name}_S`, ringB[i], ringB[j], ringT[j]);
       this.addTriangle(`${this.params.name}_S`, ringB[i], ringT[j], ringT[i]);
     }
+    
+    // Store conical face metadata with radius information
+    this.setFaceMetadata(`${this.params.name}_S`, {
+      type: 'conical',
+      radiusBottom: r2,
+      radiusTop: r1,
+      height: h,
+      axis: [0, 1, 0], // Y-axis is the cone axis
+      center: [0, h/2, 0] // Center point of the cone axis
+    });
   }
 }

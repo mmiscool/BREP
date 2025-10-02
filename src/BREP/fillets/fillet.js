@@ -2,8 +2,9 @@ import { Solid } from "../BetterSolid.js";
 import manifold from "../setupManifold.js";
 import { buildTightPointCloudWrap } from "../PointCloudWrap.js";
 import * as THREE from 'three';
+import { MeshRepairer } from "../MeshRepairer.js";
 
-// Shared scratch vectors to reduce allocations in tight loops
+// Enhanced vector pooling system to reduce allocations in tight loops
 const __vAB = new THREE.Vector3();
 const __vAC = new THREE.Vector3();
 const __vAP = new THREE.Vector3();
@@ -13,16 +14,139 @@ const __vCB = new THREE.Vector3();
 const __tmp1 = new THREE.Vector3();
 const __tmp2 = new THREE.Vector3();
 const __tmp3 = new THREE.Vector3();
+const __tmp4 = new THREE.Vector3();
+const __tmp5 = new THREE.Vector3();
+const __tmp6 = new THREE.Vector3();
+const __projOut = new THREE.Vector3(); // For projection results
+const __normalOut = new THREE.Vector3(); // For normal calculations
+const __centerOut = new THREE.Vector3(); // For center calculations
 
-// Lightweight per-face triangle data cache to accelerate repeated
-// closest-point and normal queries during fillet construction.
-// Keyed by the triangle array instance returned from getFace(...).
-const __FACE_DATA_CACHE = (typeof WeakMap !== 'undefined') ? new WeakMap() : new Map();
-function getCachedFaceDataForTris(tris) {
+// Scale-adaptive tolerance system
+function getScaleAdaptiveTolerance(radius, baseEpsilon = 1e-12) {
+    return Math.max(baseEpsilon, baseEpsilon * Math.abs(radius));
+}
+
+function getDistanceTolerance(radius) {
+    return Math.max(1e-9, 1e-6 * Math.abs(radius));
+}
+
+function getAngleTolerance() {
+    return 1e-6; // radians, roughly 0.00006 degrees
+}
+
+// Spatial hash grid for fast triangle lookup
+class TriangleSpatialIndex {
+    constructor(triangleData, cellSize = null) {
+        this.triangleData = triangleData;
+        this.grid = new Map();
+        
+        if (!triangleData || triangleData.length === 0) return;
+        
+        // Auto-calculate cell size if not provided (use average triangle bounding radius)
+        if (cellSize === null) {
+            const avgRad = triangleData.reduce((sum, d) => sum + (d.rad || 0), 0) / triangleData.length;
+            cellSize = Math.max(avgRad * 2, 1e-6); // Ensure minimum cell size
+        }
+        this.cellSize = cellSize;
+        this.invCellSize = 1.0 / cellSize;
+        
+        // Populate grid
+        for (let i = 0; i < triangleData.length; i++) {
+            const data = triangleData[i];
+            const cells = this.getTriangleCells(data);
+            for (const cellKey of cells) {
+                if (!this.grid.has(cellKey)) {
+                    this.grid.set(cellKey, []);
+                }
+                this.grid.get(cellKey).push(i);
+            }
+        }
+    }
+    
+    getCellKey(x, y, z) {
+        const ix = Math.floor(x * this.invCellSize);
+        const iy = Math.floor(y * this.invCellSize);
+        const iz = Math.floor(z * this.invCellSize);
+        return `${ix},${iy},${iz}`;
+    }
+    
+    getTriangleCells(triangleData) {
+        const { cx, cy, cz, rad } = triangleData;
+        const cells = new Set();
+        
+        // Get all cells that the triangle's bounding sphere intersects
+        const minX = (cx - rad) * this.invCellSize;
+        const maxX = (cx + rad) * this.invCellSize;
+        const minY = (cy - rad) * this.invCellSize;
+        const maxY = (cy + rad) * this.invCellSize;
+        const minZ = (cz - rad) * this.invCellSize;
+        const maxZ = (cz + rad) * this.invCellSize;
+        
+        for (let ix = Math.floor(minX); ix <= Math.floor(maxX); ix++) {
+            for (let iy = Math.floor(minY); iy <= Math.floor(maxY); iy++) {
+                for (let iz = Math.floor(minZ); iz <= Math.floor(maxZ); iz++) {
+                    cells.add(`${ix},${iy},${iz}`);
+                }
+            }
+        }
+        return cells;
+    }
+    
+    getNearbyTriangles(point, maxDistance = Infinity) {
+        const { x, y, z } = point;
+        const cellKey = this.getCellKey(x, y, z);
+        const triangleIndices = this.grid.get(cellKey) || [];
+        
+        // If we need a larger search radius, check neighboring cells
+        if (maxDistance < Infinity && triangleIndices.length === 0) {
+            const searchRadius = Math.ceil(maxDistance * this.invCellSize);
+            const ix0 = Math.floor(x * this.invCellSize);
+            const iy0 = Math.floor(y * this.invCellSize);
+            const iz0 = Math.floor(z * this.invCellSize);
+            
+            const nearbyIndices = new Set();
+            for (let ix = ix0 - searchRadius; ix <= ix0 + searchRadius; ix++) {
+                for (let iy = iy0 - searchRadius; iy <= iy0 + searchRadius; iy++) {
+                    for (let iz = iz0 - searchRadius; iz <= iz0 + searchRadius; iz++) {
+                        const key = `${ix},${iy},${iz}`;
+                        const indices = this.grid.get(key);
+                        if (indices) {
+                            for (const idx of indices) nearbyIndices.add(idx);
+                        }
+                    }
+                }
+            }
+            return Array.from(nearbyIndices);
+        }
+        
+        return triangleIndices;
+    }
+}
+
+// Enhanced per-face triangle data cache with spatial indexing
+// Keyed by face name for better cache consistency across remeshing
+const __FACE_DATA_CACHE = new Map();
+const __SPATIAL_INDEX_CACHE = new Map();
+const MAX_CACHE_SIZE = 100; // Prevent unbounded growth
+
+function getCachedFaceDataForTris(tris, faceKey = null) {
     if (!Array.isArray(tris) || tris.length === 0) return [];
-    const existing = __FACE_DATA_CACHE.get(tris);
+    
+    // Use face key if provided, otherwise fall back to array instance
+    const cacheKey = faceKey || tris;
+    const existing = __FACE_DATA_CACHE.get(cacheKey);
     if (existing) return existing;
-    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+    
+    // Implement LRU cache eviction
+    if (__FACE_DATA_CACHE.size >= MAX_CACHE_SIZE) {
+        const firstKey = __FACE_DATA_CACHE.keys().next().value;
+        __FACE_DATA_CACHE.delete(firstKey);
+        __SPATIAL_INDEX_CACHE.delete(firstKey);
+    }
+    
+    const a = __tmp1, b = __tmp2, c = __tmp3;
+    const ab = __tmp4, ac = __tmp5, n = __tmp6;
+    
     const faceData = tris.map(t => {
         a.set(t.p1[0], t.p1[1], t.p1[2]);
         b.set(t.p2[0], t.p2[1], t.p2[2]);
@@ -30,26 +154,65 @@ function getCachedFaceDataForTris(tris) {
         const cx = (a.x + b.x + c.x) / 3;
         const cy = (a.y + b.y + c.y) / 3;
         const cz = (a.z + b.z + c.z) / 3;
-        const ab = new THREE.Vector3().subVectors(b, a);
-        const ac = new THREE.Vector3().subVectors(c, a);
-        const n = new THREE.Vector3().crossVectors(ab, ac);
+        
+        ab.subVectors(b, a);
+        ac.subVectors(c, a);
+        n.crossVectors(ab, ac);
         const len = n.length();
-        if (len < 1e-14) return null;
+        if (len < getScaleAdaptiveTolerance(1.0, 1e-14)) return null;
         n.multiplyScalar(1 / len);
+        
         // Bounding radius from centroid that encloses the triangle
         const dxA = a.x - cx, dyA = a.y - cy, dzA = a.z - cz;
         const dxB = b.x - cx, dyB = b.y - cy, dzB = b.z - cz;
         const dxC = c.x - cx, dyC = c.y - cy, dzC = c.z - cz;
-        const rA2 = dxA*dxA + dyA*dyA + dzA*dzA;
-        const rB2 = dxB*dxB + dyB*dyB + dzB*dzB;
-        const rC2 = dxC*dxC + dyC*dyC + dzC*dzC;
+        const rA2 = dxA * dxA + dyA * dyA + dzA * dzA;
+        const rB2 = dxB * dxB + dyB * dyB + dzB * dzB;
+        const rC2 = dxC * dxC + dyC * dyC + dzC * dzC;
         const rad = Math.sqrt(Math.max(rA2, rB2, rC2));
-        return { cx, cy, cz, rad, normal: n, triangle: t };
+        return { cx, cy, cz, rad, normal: n.clone(), triangle: t };
     }).filter(Boolean);
-    __FACE_DATA_CACHE.set(tris, faceData);
+    
+    __FACE_DATA_CACHE.set(cacheKey, faceData);
     return faceData;
 }
 
+function getCachedSpatialIndex(faceData, faceKey = null) {
+    const cacheKey = faceKey || faceData;
+    let spatialIndex = __SPATIAL_INDEX_CACHE.get(cacheKey);
+    if (!spatialIndex && faceData && faceData.length > 0) {
+        spatialIndex = new TriangleSpatialIndex(faceData);
+        __SPATIAL_INDEX_CACHE.set(cacheKey, spatialIndex);
+    }
+    return spatialIndex;
+}
+
+// Cache management utilities for memory efficiency
+function clearFilletCaches() {
+    __FACE_DATA_CACHE.clear();
+    __SPATIAL_INDEX_CACHE.clear();
+}
+
+function trimFilletCaches() {
+    // Keep only the most recently used entries if caches are getting large
+    if (__FACE_DATA_CACHE.size > MAX_CACHE_SIZE * 2) {
+        const keysToDelete = [];
+        let count = 0;
+        for (const key of __FACE_DATA_CACHE.keys()) {
+            if (count++ > MAX_CACHE_SIZE) {
+                keysToDelete.push(key);
+            }
+        }
+        keysToDelete.forEach(key => {
+            __FACE_DATA_CACHE.delete(key);
+            __SPATIAL_INDEX_CACHE.delete(key);
+        });
+    }
+}
+
+
+// Export cache management for external use
+export { clearFilletCaches, trimFilletCaches };
 
 export class FilletSolid extends Solid {
     // Public API accepts only UI-driven parameters; all other knobs are internal.
@@ -57,6 +220,13 @@ export class FilletSolid extends Solid {
         super();
         this.edgeToFillet = edgeToFillet;
         this.radius = radius;
+        
+        // Scale-adaptive tolerances for numerical robustness
+        this.eps = getScaleAdaptiveTolerance(radius, 1e-12);
+        this.distTol = getDistanceTolerance(radius);
+        this.angleTol = getAngleTolerance();
+        this.vecLengthTol = getScaleAdaptiveTolerance(radius, 1e-14);
+        
         // Grow/shrink the fillet tool solid by this absolute amount (units of model space).
         // Positive inflates the solid slightly (useful to avoid thin remainders after CSG).
         this.inflate = Number.isFinite(inflate) ? inflate : 0;
@@ -74,12 +244,12 @@ export class FilletSolid extends Solid {
         // Optional outward bulge distances for end caps (absolute units).
         // If 0 or not set, a default of ~5% radius is used for INSET only.
         this.capBulgeStart = Number.isFinite(capBulgeStart) ? +capBulgeStart : 0;
-        this.capBulgeEnd   = Number.isFinite(capBulgeEnd) ? +capBulgeEnd   : 0;
+        this.capBulgeEnd = Number.isFinite(capBulgeEnd) ? +capBulgeEnd : 0;
         // Side-strip grid resolution and seam inset tuning
         this.sideStripSubdiv = 8;
         // Scale used to bias seams/side strips just inside the source faces
         // to avoid CSG residue from coincident geometry; applied as
-        //   inset = max(1e-9, seamInsetScale * radius)
+        //   inset = max(eps, seamInsetScale * radius)
         this.seamInsetScale = 1e-3;
         // Prefer projecting side strips onto the source faces for both closed and open edges by default.
         this.projectStripsOpenEdges = true;
@@ -89,7 +259,30 @@ export class FilletSolid extends Solid {
         // Forcing a hull here creates incorrect geometry for open/outset cases
         // because far end-strip vertices can dominate the hull. Keep false.
         this.forcePointCloudHull = false;
+        
+        // Input validation for robustness
+        this.validate();
+        
         this.generate();
+    }
+
+    validate() {
+        // Early input validation to catch problems before expensive computation
+        if (!this.edgeToFillet) {
+            throw new Error("FilletSolid: edgeToFillet is required");
+        }
+        
+        if (!Number.isFinite(this.radius) || this.radius <= 0) {
+            throw new Error(`FilletSolid: radius must be a positive number, got ${this.radius}`);
+        }
+        
+        // Warn about extreme radius values that may cause numerical issues
+        if (this.radius < 1e-6) {
+            console.warn(`FilletSolid: very small radius (${this.radius}), may cause precision issues`);
+        }
+        if (this.radius > 1e6) {
+            console.warn(`FilletSolid: very large radius (${this.radius}), may cause precision issues`);
+        }
     }
 
     generate() {
@@ -97,7 +290,7 @@ export class FilletSolid extends Solid {
 
         if (this.edgeToFillet && this.edgeToFillet.parent) {
             this.operationTargetSolid = this.edgeToFillet.parent;
-        }else {
+        } else {
             throw new Error("Edge must be part of a solid");
         }
 
@@ -122,16 +315,36 @@ export class FilletSolid extends Solid {
         // Approximate per-face normals (object space) from Solid topology
         const nAavg = averageFaceNormalObjectSpace(solid, faceA.name);
         const nBavg = averageFaceNormalObjectSpace(solid, faceB.name);
-        if (!isFiniteVec3(nAavg) || !isFiniteVec3(nBavg)) throw new Error('FilletSolid: invalid face normals.');
+        if (!isFiniteVec3(nAavg) || !isFiniteVec3(nBavg)) {
+            throw new Error('FilletSolid: invalid face normals - faces may be degenerate or non-manifold');
+        }
+
+        // Check for nearly parallel faces which can cause numerical issues
+        const normalDot = Math.abs(nAavg.dot(nBavg));
+        if (normalDot > 0.95) {
+            console.warn(`FilletSolid: faces are nearly parallel (dot=${normalDot.toFixed(3)}), fillet may be unstable`);
+        }
 
         // Fetch triangle lists for both faces once; used for both per‑section
         // normal sampling and later for seam projection.
-        const trisA = solid.getFace(faceA.name);
-        const trisB = solid.getFace(faceB.name);
+        let trisA, trisB;
+        try {
+            trisA = solid.getFace(faceA.name);
+            trisB = solid.getFace(faceB.name);
+        } catch (e) {
+            throw new Error(`FilletSolid: failed to get face triangles - ${e.message}`);
+        }
+
+        if (!Array.isArray(trisA) || trisA.length === 0) {
+            throw new Error(`FilletSolid: face A (${faceA.name}) has no triangles`);
+        }
+        if (!Array.isArray(trisB) || trisB.length === 0) {
+            throw new Error(`FilletSolid: face B (${faceB.name}) has no triangles`);
+        }
 
         // Fetch cached face data for faster point projections and normal calculations
-        const faceDataA = getCachedFaceDataForTris(trisA);
-        const faceDataB = getCachedFaceDataForTris(trisB);
+        const faceDataA = getCachedFaceDataForTris(trisA, faceA.name);
+        const faceDataB = getCachedFaceDataForTris(trisB, faceB.name);
 
         // Use a consistent outward hint for cap normals based on the average
         // of adjacent face outward normals. This avoids per-end frame flips
@@ -140,7 +353,7 @@ export class FilletSolid extends Solid {
             try {
                 const h = nAavg.clone().add(nBavg);
                 if (h.lengthSq() > 1e-20) return h.normalize();
-            } catch {}
+            } catch { }
             return null;
         })();
 
@@ -155,9 +368,9 @@ export class FilletSolid extends Solid {
             const b = polyLocal[polyLocal.length - 1];
             if (a && b) {
                 const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
-                const d2 = dx*dx + dy*dy + dz*dz;
+                const d2 = dx * dx + dy * dy + dz * dz;
                 // Tolerance scaled by radius to be unit-friendly
-                const eps = Math.max(1e-12, 1e-6 * this.radius * this.radius);
+                const eps = this.distTol * this.distTol;
                 if (d2 <= eps) isClosed = true;
             }
         }
@@ -202,7 +415,7 @@ export class FilletSolid extends Solid {
         const sectorDefs = []; // per-sample arc definition: {C,t,r0,angle}
         // Effective fillet arc radius (do not include inflate here).
         // Inflation is applied later as a uniform offset of the entire solid.
-        const rEff = Math.max(1e-9, this.radius);
+        const rEff = Math.max(this.eps, this.radius);
 
         for (let i = 0; i < samples.length; i++) {
             const p = arrToV(samples[i]);
@@ -220,7 +433,7 @@ export class FilletSolid extends Solid {
             // directions at this point (central difference) to stabilize
             // the frame through corners of a polyline.
             const t = new THREE.Vector3().subVectors(pNext, pPrev);
-            if (t.lengthSq() < 1e-14) continue;
+            if (t.lengthSq() < this.vecLengthTol) continue;
             t.normalize();
             // No tangent reversal toggle (was unused in UI)
 
@@ -236,7 +449,7 @@ export class FilletSolid extends Solid {
             // Face traces in the section plane: vA3 = normalize(nA x t), vB3 = normalize(nB x t)
             let vA3 = nA.clone().cross(t);
             let vB3 = nB.clone().cross(t);
-            if (vA3.lengthSq() < 1e-12 || vB3.lengthSq() < 1e-12) continue;
+            if (vA3.lengthSq() < this.eps || vB3.lengthSq() < this.eps) continue;
             vA3.normalize(); vB3.normalize();
             // No face-swap toggle (was unused in UI)
 
@@ -253,7 +466,7 @@ export class FilletSolid extends Solid {
 
             const half = 0.5 * angAbs;
             const sinHalf = Math.sin(half);
-            if (Math.abs(sinHalf) < 1e-6) continue;
+            if (Math.abs(sinHalf) < this.angleTol) continue;
             const expectDist = rEff / Math.abs(sinHalf);
 
             // For debug: inward projected normals and their bisector in 2D
@@ -267,14 +480,31 @@ export class FilletSolid extends Solid {
 
             // Choose side using true 3D offset-plane intersection for exact tangency
             // Solve with offset planes anchored to the face triangles (n·x = n·q ± r)
-            const C_in  = solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, -1, nB, qB, -1, rEff); // inside
+            const C_in = solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, -1, nB, qB, -1, rEff); // inside
             const C_out = solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, +1, nB, qB, +1, rEff); // outside
 
             // Determine preferred side
             let pick = (this.sideMode === 'OUTSET') ? 'out' : 'in';
 
             let center = (pick === 'in') ? (C_in || C_out) : (C_out || C_in);
-            if (!center) continue;
+            
+            // Robust fallback if offset plane intersection fails (e.g., nearly parallel faces)
+            if (!center) {
+                console.warn(`FilletSolid: offset plane intersection failed at sample ${i}, using bisector fallback`);
+                // Use 2D bisector method as fallback
+                if (bis2.lengthSq() > this.eps) {
+                    const dir3 = __tmp4.set(0, 0, 0).addScaledVector(u, bis2.x).addScaledVector(v, bis2.y);
+                    if (pick === 'out') dir3.negate();
+                    dir3.normalize();
+                    center = p.clone().addScaledVector(dir3, expectDist);
+                } else {
+                    // Last resort: use average normal direction
+                    console.warn(`FilletSolid: bisector also failed at sample ${i}, using average normal fallback`);
+                    const avgNormal = nA.clone().add(nB).normalize();
+                    const sign = (pick === 'in') ? -1 : 1;
+                    center = p.clone().addScaledVector(avgNormal, sign * expectDist);
+                }
+            }
 
             // Exact tangency points from plane offsets: tA = C - sA*r*nA, tB = C - sB*r*nB
             const sA = (pick === 'in') ? -1 : +1;
@@ -371,8 +601,8 @@ export class FilletSolid extends Solid {
                     // p -> center
                     addLine(p, center, 0xff00ff); // magenta
                     // Face trace directions in 2D mapped to 3D (unit length)
-                    const aEnd = p.clone().addScaledVector(u,  Ls * d0_2.x).addScaledVector(v, Ls * d0_2.y);
-                    const bEnd = p.clone().addScaledVector(u,  Ls * d1_2.x).addScaledVector(v, Ls * d1_2.y);
+                    const aEnd = p.clone().addScaledVector(u, Ls * d0_2.x).addScaledVector(v, Ls * d0_2.y);
+                    const bEnd = p.clone().addScaledVector(u, Ls * d1_2.x).addScaledVector(v, Ls * d1_2.y);
                     addLine(p, aEnd, 0x00ffff); // cyan
                     addLine(p, bEnd, 0xffff00); // yellow
                     // Bisector ray in 3D
@@ -390,9 +620,9 @@ export class FilletSolid extends Solid {
         this._vertKeyToIndex = new Map();
         // Snap arc seams to lie exactly on the original faces by projecting
         // the per-section tangency points onto the face triangle meshes.
-        // Use precomputed face data when projecting seams for faster lookups
-        let seamA = railA.map(p => projectPointOntoFaceTriangles(trisA, p, faceDataA));
-        let seamB = railB.map(p => projectPointOntoFaceTriangles(trisB, p, faceDataB));
+        // Use batch processing for better performance
+        let seamA = batchProjectPointsOntoFace(trisA, railA, faceDataA, faceA.name);
+        let seamB = batchProjectPointsOntoFace(trisB, railB, faceDataB, faceB.name);
 
         // Bias seams slightly into the source solid to prevent coincident
         // surfaces from leaving sliver shards after subtraction. For OPEN
@@ -507,17 +737,17 @@ export class FilletSolid extends Solid {
             try {
                 const missA0 = validateCapStripSeam(this, `${baseName}_SIDE_A`, sideRowsA?.[0], `${baseName}_CAP_START`);
                 const missB0 = validateCapStripSeam(this, `${baseName}_SIDE_B`, sideRowsB?.[0], `${baseName}_CAP_START`);
-                const missA1 = validateCapStripSeam(this, `${baseName}_SIDE_A`, sideRowsA?.[sideRowsA.length-1], `${baseName}_CAP_END`);
-                const missB1 = validateCapStripSeam(this, `${baseName}_SIDE_B`, sideRowsB?.[sideRowsB.length-1], `${baseName}_CAP_END`);
-                const any = (missA0?.length||0)+(missB0?.length||0)+(missA1?.length||0)+(missB1?.length||0);
+                const missA1 = validateCapStripSeam(this, `${baseName}_SIDE_A`, sideRowsA?.[sideRowsA.length - 1], `${baseName}_CAP_END`);
+                const missB1 = validateCapStripSeam(this, `${baseName}_SIDE_B`, sideRowsB?.[sideRowsB.length - 1], `${baseName}_CAP_END`);
+                const any = (missA0?.length || 0) + (missB0?.length || 0) + (missA1?.length || 0) + (missB1?.length || 0);
                 if (any > 0) {
                     console.warn('[FilletSolid] seam validator: missing strip edges on cap boundary', {
                         baseName,
                         startA: missA0, startB: missB0,
-                        endA: missA1,   endB: missB1,
+                        endA: missA1, endB: missB1,
                     });
                 }
-            } catch (e) { try { console.warn('[FilletSolid] seam validation failed:', e?.message||e); } catch {} }
+            } catch (e) { try { console.warn('[FilletSolid] seam validation failed:', e?.message || e); } catch { } }
         }
 
         // Before inflating, ensure triangles are coherently oriented and pre-clean
@@ -540,7 +770,7 @@ export class FilletSolid extends Solid {
             enforceTwoManifoldByDropping(this);
             // Final orientation fix after dropping
             this.fixTriangleWindingsByAdjacency();
-        } catch {}
+        } catch { }
 
         // Inflate only the side-strip faces for all modes (OUTSET/INSET).
         // Use a safe inflator that protects arc seam vertices and reduces
@@ -554,7 +784,7 @@ export class FilletSolid extends Solid {
             this.fixTriangleWindingsByAdjacency();
             enforceTwoManifoldByDropping(this);
             this.fixTriangleWindingsByAdjacency();
-        } catch {}
+        } catch { }
 
 
 
@@ -572,18 +802,18 @@ export class FilletSolid extends Solid {
                     uniq.add(k);
                     pts.push({ x, y, z });
                 }
-                const wrapped = buildTightPointCloudWrap(pts, { });
+                const wrapped = buildTightPointCloudWrap(pts, {});
                 copyFromSolid(this, wrapped);
                 this.filletType = this.filletType || 'SUBTRACT';
                 this.name = 'FILLET_TOOL';
-                try { this.fixTriangleWindingsByAdjacency(); } catch {}
-                try { ensureOutwardOrientationAuthoring(this); } catch {}
-                try { this._weldVerticesByEpsilon(1e-9); } catch {}
-                try { removeDegenerateTrianglesAuthoring(this, 1e-14); } catch {}
-                try { enforceTwoManifoldByDropping(this, 2); } catch {}
-                try { this.fixTriangleWindingsByAdjacency(); } catch {}
+                try { this.fixTriangleWindingsByAdjacency(); } catch { }
+                try { ensureOutwardOrientationAuthoring(this); } catch { }
+                try { this._weldVerticesByEpsilon(1e-9); } catch { }
+                try { removeDegenerateTrianglesAuthoring(this, 1e-14); } catch { }
+                try { enforceTwoManifoldByDropping(this, 2); } catch { }
+                try { this.fixTriangleWindingsByAdjacency(); } catch { }
             } catch (eHull) {
-                try { console.warn('[FilletSolid] forced hull failed:', eHull?.message || eHull); } catch {}
+                try { console.warn('[FilletSolid] forced hull failed:', eHull?.message || eHull); } catch { }
             }
             return this;
         }
@@ -595,7 +825,7 @@ export class FilletSolid extends Solid {
         try {
             // Quick probe; throws on failure
             const __m = this.getMesh();
-            try { /* probe */ } finally { try { if (__m && typeof __m.delete === 'function') __m.delete(); } catch {} }
+            try { /* probe */ } finally { try { if (__m && typeof __m.delete === 'function') __m.delete(); } catch { } }
         } catch (e) {
             const isClosed = !!(this.edgeToFillet?.closedLoop || this.edgeToFillet?.userData?.closedLoop);
             const isOutset = this.sideMode === 'OUTSET';
@@ -641,12 +871,12 @@ export class FilletSolid extends Solid {
             // visible in the scene via Solid.visualize()'s fallback path. Do not
             // replace with a convex hull. Light tidy for display only.
             if (this.debug) {
-                try { this.fixTriangleWindingsByAdjacency(); } catch {}
-                try { ensureOutwardOrientationAuthoring(this); } catch {}
-                try { this._weldVerticesByEpsilon(1e-9); } catch {}
-                try { removeDegenerateTrianglesAuthoring(this, 1e-14); } catch {}
+                try { this.fixTriangleWindingsByAdjacency(); } catch { }
+                try { ensureOutwardOrientationAuthoring(this); } catch { }
+                try { this._weldVerticesByEpsilon(1e-9); } catch { }
+                try { removeDegenerateTrianglesAuthoring(this, 1e-14); } catch { }
                 this.name = 'FILLET_TOOL';
-                try { this.userData = this.userData || {}; this.userData.debugBad = true; } catch {}
+                try { this.userData = this.userData || {}; this.userData.debugBad = true; } catch { }
                 // Mark dirty so visualize() rebuilds Three meshes from authoring arrays
                 this._dirty = true; this._faceIndex = null; this._manifold = null;
                 return this;
@@ -676,15 +906,15 @@ export class FilletSolid extends Solid {
                     this.filletType = this.filletType || 'SUBTRACT';
                     this.name = 'FILLET_TOOL';
                     // Mark for rebuild and ensure coherent orientation
-                    try { this.fixTriangleWindingsByAdjacency(); } catch {}
-                    try { ensureOutwardOrientationAuthoring(this); } catch {}
+                    try { this.fixTriangleWindingsByAdjacency(); } catch { }
+                    try { ensureOutwardOrientationAuthoring(this); } catch { }
                     // One more light weld to drop any accidental duplicates
-                    try { this._weldVerticesByEpsilon(1e-9); } catch {}
+                    try { this._weldVerticesByEpsilon(1e-9); } catch { }
                 } else {
                     // Not enough unique points for a hull; keep authored data as-is
                 }
             } catch (eHull) {
-                try { console.warn('[FilletSolid] hull fallback failed:', eHull?.message || eHull); } catch {}
+                try { console.warn('[FilletSolid] hull fallback failed:', eHull?.message || eHull); } catch { }
             }
         }
 
@@ -697,22 +927,25 @@ export class FilletSolid extends Solid {
             if (!nonManifold) {
                 try {
                     const __m2 = this.getMesh();
-                    try { /* probe */ } finally { try { if (__m2 && typeof __m2.delete === 'function') __m2.delete(); } catch {} }
+                    try { /* probe */ } finally { try { if (__m2 && typeof __m2.delete === 'function') __m2.delete(); } catch { } }
                 } catch { nonManifold = true; }
             }
             if (nonManifold) {
                 const msg = `Fillet tool is non-manifold. Boolean may fail.\n` +
-                            `Edge faces: ${faceA?.name || '?'} | ${faceB?.name || '?'}`;
+                    `Edge faces: ${faceA?.name || '?'} | ${faceB?.name || '?'}`;
                 if (typeof window !== 'undefined' && typeof window.alert === 'function') {
                     window.alert(msg);
                 } else if (typeof alert === 'function') {
                     alert(msg);
                 } else {
-                    try { console.warn(msg); } catch {}
+                    try { console.warn(msg); } catch { }
                 }
             }
         } catch { /* never block the pipeline */ }
 
+        // Perform cache maintenance to prevent memory leaks
+        trimFilletCaches();
+        
         // No manual Three.js mesh here; rely on Solid.visualize() for inspection
         return this;
     }
@@ -942,8 +1175,8 @@ function signedVolumeAuthoring(solid) {
         const x1 = vp[i1], y1 = vp[i1 + 1], z1 = vp[i1 + 2];
         const x2 = vp[i2], y2 = vp[i2 + 1], z2 = vp[i2 + 2];
         vol6 += x0 * (y1 * z2 - z1 * y2)
-              - y0 * (x1 * z2 - z1 * x2)
-              + z0 * (x1 * y2 - y1 * x2);
+            - y0 * (x1 * z2 - z1 * x2)
+            + z0 * (x1 * y2 - y1 * x2);
     }
     return vol6 / 6.0;
 }
@@ -966,70 +1199,205 @@ function ensureOutwardOrientationAuthoring(solid) {
 
 // Compute closest point on a triangle mesh (array of {p1,p2,p3}) to a given point.
 // Returns a THREE.Vector3 of the closest point. If tris is empty, returns the input point.
-function projectPointOntoFaceTriangles(tris, point, faceData = null) {
+function projectPointOntoFaceTriangles(tris, point, faceData = null, faceKey = null) {
     if (!Array.isArray(tris) || tris.length === 0) return point.clone();
-    const P = point.clone();
+    
+    // Acquire face data and spatial index (precomputed if possible)
+    const data = faceData && Array.isArray(faceData) ? faceData : getCachedFaceDataForTris(tris, faceKey);
+    if (!data || data.length === 0) return point.clone();
+    
+    const spatialIndex = getCachedSpatialIndex(data, faceKey);
     let best = null;
-    const a = new THREE.Vector3();
-    const b = new THREE.Vector3();
-    const c = new THREE.Vector3();
-    const qVec = new THREE.Vector3();
-
-    // Acquire face data (precomputed if possible)
-    const data = faceData && Array.isArray(faceData) ? faceData : getCachedFaceDataForTris(tris);
-
-    // Two‑phase exact search with safe culling bound.
-    // Phase 1: seed best using K nearest centroids (fast, approximate)
-    // Phase 2: check the remaining triangles only if their centroid distance
-    //          is within a conservative lower bound that can beat current best.
-    const K = 32;
-    if (data && data.length) {
-        const pairs = new Array(data.length);
+    
+    // Use scratch vectors to reduce allocations
+    const a = __tmp1, b = __tmp2, c = __tmp3;
+    const qVec = __projOut;
+    
+    if (spatialIndex) {
+        // Spatial index approach: get nearby triangles first
+        const nearbyIndices = spatialIndex.getNearbyTriangles(point);
+        
+        // If spatial lookup gives us candidates, process them
+        if (nearbyIndices.length > 0) {
+            // Process nearby triangles first (most likely candidates)
+            for (const idx of nearbyIndices) {
+                if (idx >= data.length) continue; // Safety check
+                const d = data[idx];
+                const t = d.triangle;
+                a.set(t.p1[0], t.p1[1], t.p1[2]);
+                b.set(t.p2[0], t.p2[1], t.p2[2]);
+                c.set(t.p3[0], t.p3[1], t.p3[2]);
+                closestPointOnTriangleToOut(point, a, b, c, qVec);
+                const d2 = qVec.distanceToSquared(point);
+                if (!best || d2 < best.d2) {
+                    best = { d2, q: qVec.clone() };
+                }
+            }
+            
+            // If we found a good candidate and we have many triangles, 
+            // do selective culling on remaining triangles
+            if (best && data.length > 64) {
+                const bestDist = Math.sqrt(best.d2);
+                const visitedSet = new Set(nearbyIndices);
+                
+                for (let i = 0; i < data.length; i++) {
+                    if (visitedSet.has(i)) continue; // Skip already processed
+                    
+                    const d = data[i];
+                    const dx = d.cx - point.x, dy = d.cy - point.y, dz = d.cz - point.z;
+                    const centerDist2 = dx * dx + dy * dy + dz * dz;
+                    const rad = d.rad || 0;
+                    
+                    // Cull triangles that cannot possibly beat current best
+                    const threshold = bestDist + rad;
+                    if (centerDist2 > threshold * threshold) continue;
+                    
+                    const t = d.triangle;
+                    a.set(t.p1[0], t.p1[1], t.p1[2]);
+                    b.set(t.p2[0], t.p2[1], t.p2[2]);
+                    c.set(t.p3[0], t.p3[1], t.p3[2]);
+                    closestPointOnTriangleToOut(point, a, b, c, qVec);
+                    const d2 = qVec.distanceToSquared(point);
+                    if (d2 < best.d2) {
+                        best = { d2, q: qVec.clone() };
+                    }
+                }
+            }
+        } else {
+            // No nearby triangles found in spatial index, fall back to distance-based culling
+            // This can happen when the point is outside the face bounds
+            const candidates = [];
+            for (let i = 0; i < data.length; i++) {
+                const d = data[i];
+                const dx = d.cx - point.x, dy = d.cy - point.y, dz = d.cz - point.z;
+                candidates.push({ d2: dx * dx + dy * dy + dz * dz, idx: i });
+            }
+            candidates.sort((a, b) => a.d2 - b.d2);
+            
+            // Process first 16 closest centroids
+            const maxCandidates = Math.min(16, candidates.length);
+            for (let i = 0; i < maxCandidates; i++) {
+                const d = data[candidates[i].idx];
+                const t = d.triangle;
+                a.set(t.p1[0], t.p1[1], t.p1[2]);
+                b.set(t.p2[0], t.p2[1], t.p2[2]);
+                c.set(t.p3[0], t.p3[1], t.p3[2]);
+                closestPointOnTriangleToOut(point, a, b, c, qVec);
+                const d2 = qVec.distanceToSquared(point);
+                if (!best || d2 < best.d2) {
+                    best = { d2, q: qVec.clone() };
+                }
+            }
+        }
+    } else {
+        // Fallback to original algorithm if no spatial index
+        const K = Math.min(16, data.length); // Reduced K for better performance
+        const candidates = [];
         for (let i = 0; i < data.length; i++) {
             const d = data[i];
-            const dx = d.cx - P.x, dy = d.cy - P.y, dz = d.cz - P.z;
-            pairs[i] = { d2: dx*dx + dy*dy + dz*dz, data: d };
+            const dx = d.cx - point.x, dy = d.cy - point.y, dz = d.cz - point.z;
+            candidates.push({ d2: dx * dx + dy * dy + dz * dz, data: d });
         }
-        pairs.sort((x, y) => x.d2 - y.d2);
-        const N = Math.min(K, pairs.length);
-        for (let i = 0; i < N; i++) {
-            const t = pairs[i].data.triangle;
+        candidates.sort((a, b) => a.d2 - b.d2);
+        
+        for (let i = 0; i < K; i++) {
+            const t = candidates[i].data.triangle;
             a.set(t.p1[0], t.p1[1], t.p1[2]);
             b.set(t.p2[0], t.p2[1], t.p2[2]);
             c.set(t.p3[0], t.p3[1], t.p3[2]);
-            closestPointOnTriangleToOut(P, a, b, c, qVec);
-            const d2 = qVec.distanceToSquared(P);
-            if (!best || d2 < best.d2) best = { d2, q: qVec.clone() };
+            closestPointOnTriangleToOut(point, a, b, c, qVec);
+            const d2 = qVec.distanceToSquared(point);
+            if (!best || d2 < best.d2) {
+                best = { d2, q: qVec.clone() };
+            }
         }
-        // Phase 2: safe prune using centroid radius bound
-        const bestDist = best ? Math.sqrt(best.d2) : Infinity;
-        for (let i = N; i < pairs.length; i++) {
-            const d = pairs[i].data;
-            const rad = d.rad || 0;
-            // If centroid distance is greater than (bestDist + rad), triangle cannot beat best
-            const threshold2 = (bestDist + rad) * (bestDist + rad);
-            if (pairs[i].d2 > threshold2) continue;
-            const t = d.triangle;
-            a.set(t.p1[0], t.p1[1], t.p1[2]);
-            b.set(t.p2[0], t.p2[1], t.p2[2]);
-            c.set(t.p3[0], t.p3[1], t.p3[2]);
-            closestPointOnTriangleToOut(P, a, b, c, qVec);
-            const d2 = qVec.distanceToSquared(P);
-            if (!best || d2 < best.d2) { best = { d2, q: qVec.clone() }; }
-        }
-        return best ? best.q.clone() : P.clone();
     }
+    
+    return best ? best.q : point.clone();
+}
 
-    // Fallback: brute force (should rarely happen)
-    for (const t of tris) {
-        a.set(t.p1[0], t.p1[1], t.p1[2]);
-        b.set(t.p2[0], t.p2[1], t.p2[2]);
-        c.set(t.p3[0], t.p3[1], t.p3[2]);
-        closestPointOnTriangleToOut(P, a, b, c, qVec);
-        const d2 = qVec.distanceToSquared(P);
-        if (!best || d2 < best.d2) best = { d2, q: qVec.clone() };
+// Batch projection for better performance - processes multiple points at once
+// to amortize spatial index setup and reduce allocation overhead
+function batchProjectPointsOntoFace(tris, points, faceData = null, faceKey = null) {
+    if (!Array.isArray(points) || points.length === 0) return [];
+    if (!Array.isArray(tris) || tris.length === 0) return points.map(p => p.clone());
+    
+    // Get cached face data and spatial index once for all points
+    const data = faceData && Array.isArray(faceData) ? faceData : getCachedFaceDataForTris(tris, faceKey);
+    if (!data || data.length === 0) return points.map(p => p.clone());
+    
+    const spatialIndex = getCachedSpatialIndex(data, faceKey);
+    const results = new Array(points.length);
+    
+    // Use shared scratch vectors for all projections
+    const a = __tmp1, b = __tmp2, c = __tmp3;
+    const qVec = __projOut;
+    
+    if (spatialIndex) {
+        // Process points in batches to get better spatial locality
+        const batchSize = Math.min(32, points.length);
+        
+        for (let batchStart = 0; batchStart < points.length; batchStart += batchSize) {
+            const batchEnd = Math.min(batchStart + batchSize, points.length);
+            
+            // For each point in this batch
+            for (let i = batchStart; i < batchEnd; i++) {
+                const point = points[i];
+                const nearbyIndices = spatialIndex.getNearbyTriangles(point);
+                let best = null;
+                
+                if (nearbyIndices.length > 0) {
+                    // Check nearby triangles first
+                    for (const idx of nearbyIndices) {
+                        if (idx >= data.length) continue;
+                        const d = data[idx];
+                        const t = d.triangle;
+                        a.set(t.p1[0], t.p1[1], t.p1[2]);
+                        b.set(t.p2[0], t.p2[1], t.p2[2]);
+                        c.set(t.p3[0], t.p3[1], t.p3[2]);
+                        closestPointOnTriangleToOut(point, a, b, c, qVec);
+                        const d2 = qVec.distanceToSquared(point);
+                        if (!best || d2 < best.d2) {
+                            best = { d2, q: qVec.clone() };
+                        }
+                    }
+                } else {
+                    // Fallback: find closest few centroids
+                    let minDist2 = Infinity;
+                    let closestIdx = -1;
+                    for (let j = 0; j < Math.min(8, data.length); j++) {
+                        const d = data[j];
+                        const dx = d.cx - point.x, dy = d.cy - point.y, dz = d.cz - point.z;
+                        const dist2 = dx * dx + dy * dy + dz * dz;
+                        if (dist2 < minDist2) {
+                            minDist2 = dist2;
+                            closestIdx = j;
+                        }
+                    }
+                    
+                    if (closestIdx >= 0) {
+                        const d = data[closestIdx];
+                        const t = d.triangle;
+                        a.set(t.p1[0], t.p1[1], t.p1[2]);
+                        b.set(t.p2[0], t.p2[1], t.p2[2]);
+                        c.set(t.p3[0], t.p3[1], t.p3[2]);
+                        closestPointOnTriangleToOut(point, a, b, c, qVec);
+                        best = { d2: qVec.distanceToSquared(point), q: qVec.clone() };
+                    }
+                }
+                
+                results[i] = best ? best.q : point.clone();
+            }
+        }
+    } else {
+        // Fallback without spatial index - still better than individual calls
+        // because we reuse the face data
+        for (let i = 0; i < points.length; i++) {
+            results[i] = projectPointOntoFaceTriangles(tris, points[i], data, faceKey);
+        }
     }
-    return best ? best.q.clone() : P.clone();
+    
+    return results;
 }
 
 // Return the closest point to P on triangle ABC in 3D (barycentric clamp method)
@@ -1141,7 +1509,7 @@ function normalFromFaceTriangles(tris, point) {
         for (let i = 0; i < data.length; i++) {
             const d = data[i];
             const dx = d.cx - P.x, dy = d.cy - P.y, dz = d.cz - P.z;
-            pairs[i] = { d2: dx*dx + dy*dy + dz*dz, data: d };
+            pairs[i] = { d2: dx * dx + dy * dy + dz * dz, data: d };
         }
         pairs.sort((x, y) => x.d2 - y.d2);
         const N = Math.min(K, pairs.length);
@@ -1249,7 +1617,7 @@ function removeDegenerateTrianglesAuthoring(solid, areaEps = 1e-12) {
     solid._triIDs = newTriIDs;
     // Rebuild vertex key map
     solid._vertKeyToIndex = new Map();
-    for (let i = 0; i < newVP.length; i += 3) solid._vertKeyToIndex.set(`${newVP[i]},${newVP[i+1]},${newVP[i+2]}`, (i / 3) | 0);
+    for (let i = 0; i < newVP.length; i += 3) solid._vertKeyToIndex.set(`${newVP[i]},${newVP[i + 1]},${newVP[i + 2]}`, (i / 3) | 0);
     solid._dirty = true;
     solid._faceIndex = null;
     // Maintain coherent windings
@@ -1391,7 +1759,7 @@ function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, wid
         const rowA = rows[iA];
         const rowB = rows[iB];
         const isStartEdge = (iA === 0);
-        const isEndEdge   = (iB === rows.length - 1);
+        const isEndEdge = (iB === rows.length - 1);
         for (let k = 0; k < W; k++) {
             const a0 = rowA[k];
             const a1 = rowA[k + 1];
@@ -1403,7 +1771,7 @@ function buildSideStripOnFace(solid, faceName, railP, seam, closeLoop, tris, wid
                 const nx = uy * vz - uz * vy;
                 const ny = uz * vx - ux * vz;
                 const nz = ux * vy - uy * vx;
-                return nx*nx + ny*ny + nz*nz;
+                return nx * nx + ny * ny + nz * nz;
             };
             const pushIfArea = (p, q, r) => {
                 if (triArea2(p, q, r) > 1e-32) solid.addTriangle(faceName, vToArr(p), vToArr(q), vToArr(r));
@@ -1456,28 +1824,28 @@ function validateCapStripSeam(solid, sideFaceName, boundaryRow, capFaceName) {
     const fid = solid._triIDs || [];
     const edgeSet = new Set();
     const addEdge = (i, j) => {
-        const a = Math.min(i,j), b = Math.max(i,j);
-        edgeSet.add(a+':'+b);
+        const a = Math.min(i, j), b = Math.max(i, j);
+        edgeSet.add(a + ':' + b);
     };
     for (let t = 0; t < tv.length; t += 3) {
-        const face = fid ? fid[(t/3)|0] : undefined;
+        const face = fid ? fid[(t / 3) | 0] : undefined;
         if (face !== id) continue;
-        const i0 = tv[t]>>>0, i1 = tv[t+1]>>>0, i2 = tv[t+2]>>>0;
-        addEdge(i0,i1); addEdge(i1,i2); addEdge(i2,i0);
+        const i0 = tv[t] >>> 0, i1 = tv[t + 1] >>> 0, i2 = tv[t + 2] >>> 0;
+        addEdge(i0, i1); addEdge(i1, i2); addEdge(i2, i0);
     }
     const keyToIndex = solid._vertKeyToIndex || new Map();
     const idxOf = (p) => keyToIndex.get(`${p.x},${p.y},${p.z}`);
     const missing = [];
     for (let k = 0; k < boundaryRow.length - 1; k++) {
         const a = boundaryRow[k];
-        const b = boundaryRow[k+1];
+        const b = boundaryRow[k + 1];
         const ia = idxOf(a); const ib = idxOf(b);
-        if (ia === undefined || ib === undefined) { missing.push({k, reason:'vertex_not_found'}); continue; }
-        const key = (Math.min(ia,ib))+':'+(Math.max(ia,ib));
-        if (!edgeSet.has(key)) missing.push({k, ia, ib, a:[a.x,a.y,a.z], b:[b.x,b.y,b.z]});
+        if (ia === undefined || ib === undefined) { missing.push({ k, reason: 'vertex_not_found' }); continue; }
+        const key = (Math.min(ia, ib)) + ':' + (Math.max(ia, ib));
+        if (!edgeSet.has(key)) missing.push({ k, ia, ib, a: [a.x, a.y, a.z], b: [b.x, b.y, b.z] });
     }
     if (missing.length) {
-        try { console.warn('[FilletSolid] Missing boundary edges on strip', {sideFaceName, capFaceName, count:missing.length, missing}); } catch {}
+        try { console.warn('[FilletSolid] Missing boundary edges on strip', { sideFaceName, capFaceName, count: missing.length, missing }); } catch { }
     }
     return missing;
 }
@@ -1532,7 +1900,7 @@ function localFaceNormalAtPoint(solid, faceName, p, faceData = null) {
         if (n.lengthSq() < 1e-14) return null;
 
         n.normalize();
-        centroid.copy(pa).add(pb).add(pc).multiplyScalar(1/3);
+        centroid.copy(pa).add(pb).add(pc).multiplyScalar(1 / 3);
 
         return { centroid: centroid.clone(), normal: n.clone(), triangle: t };
     }).filter(Boolean);
@@ -1575,11 +1943,11 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
     if (n < 2) return;
 
     // Derive sub-face names for clearer tagging
-    const faceArc      = `${faceName}_ARC`;
+    const faceArc = `${faceName}_ARC`;
     // Name end caps deterministically so downstream logic (e.g., nudge coplanar caps)
     // can target them explicitly and faces propagate through CSG with readable labels.
     const faceCapStart = `${faceName}_CAP_START`;
-    const faceCapEnd   = `${faceName}_CAP_END`;
+    const faceCapEnd = `${faceName}_CAP_END`;
     // Side strips are built separately on the original faces via projection.
 
     // Create arc rings (n x (arcSegments+1)) WITHOUT snapping to seams yet.
@@ -1624,15 +1992,18 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         return ring;
     };
     const bestAlign = (rA, rB) => {
-        // Try all cyclic shifts at a coarse sampling; also consider reversal.
-        // Return {flip:boolean, shift:int}
+        // Optimized alignment: try coarse sampling first, then refine
         const M = rA.length;
-        const step = Math.max(1, Math.round((M - 1) / 8));
+        if (M <= 2) return { flip: false, shift: 0, err: 0 };
+        
+        const step = Math.max(1, Math.round((M - 1) / 6)); // Reduced from /8 for speed
         let best = { flip: false, shift: 0, err: Infinity };
+        
+        // Coarse search with reduced shift sampling
+        const coarseStep = Math.max(1, Math.round((M - 1) / 4));
         for (const flip of [false, true]) {
-            // Accessor for cand ring index (with optional flip)
             const getB = (k) => flip ? rB[(M - 1) - k] : rB[k];
-            for (let s = 0; s < (M - 1); s++) {
+            for (let s = 0; s < (M - 1); s += coarseStep) {
                 let e = 0;
                 for (let j = 0; j < M; j += step) {
                     const k = (j % (M - 1));
@@ -1642,22 +2013,37 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
                 if (e < best.err) best = { flip, shift: s, err: e };
             }
         }
+        
+        // Refine around the best coarse result
+        const refineDelta = Math.max(1, coarseStep);
+        const minShift = Math.max(0, best.shift - refineDelta);
+        const maxShift = Math.min(M - 1, best.shift + refineDelta);
+        
+        for (let s = minShift; s < maxShift; s++) {
+            if (s === best.shift) continue; // Already tested
+            const getB = (k) => best.flip ? rB[(M - 1) - k] : rB[k];
+            let e = 0;
+            for (let j = 0; j < M; j += step) {
+                const k = (j % (M - 1));
+                const kb = (k + s) % (M - 1);
+                e += sqrDist(rA[k], getB(kb));
+            }
+            if (e < best.err) best = { flip: best.flip, shift: s, err: e };
+        }
+        
         return best;
     };
 
-    // Align parameterization ring-to-ring.
-    // For OPEN edges: keep a consistent A→B orientation across all rings and
-    // avoid any reversal/rotation that can cause loft twisting and non‑manifold
-    // connections at the end caps. For CLOSED loops, allow flexible alignment.
-    if (closeLoop) {
-        for (let i = 0; i < n - 1; i++) {
-            const rA = arcRings[i];
-            const rB = arcRings[i + 1];
-            if (!rA || !rB) continue;
-            const pick = bestAlign(rA, rB);
-            if (pick.flip) reverseRingInPlace(rB);
-            if (pick.shift) rotateRingInPlace(rB, pick.shift);
-        }
+    // Align parameterization ring‑to‑ring for both closed and open edges.
+    // Allow both reversal and cyclic rotation; seams are re‑snapped below
+    // so index 0 and M‑1 always land on seamA/seamB respectively.
+    for (let i = 0; i < n - 1; i++) {
+        const rA = arcRings[i];
+        const rB = arcRings[i + 1];
+        if (!rA || !rB) continue;
+        const pick = bestAlign(rA, rB);
+        if (pick.flip) reverseRingInPlace(rB);
+        if (pick.shift) rotateRingInPlace(rB, pick.shift);
     }
 
     // After alignment, snap ring endpoints to exact face-tangency points if provided.
@@ -1675,8 +2061,8 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         const rowsB0 = sideStripData?.rowsB || null;
         const startRowA0 = rowsA0?.[0] || null;
         const startRowB0 = rowsB0?.[0] || null;
-        const endRowA0   = rowsA0?.[rowsA0.length - 1] || null;
-        const endRowB0   = rowsB0?.[rowsB0.length - 1] || null;
+        const endRowA0 = rowsA0?.[rowsA0.length - 1] || null;
+        const endRowB0 = rowsB0?.[rowsB0.length - 1] || null;
 
         const applySectionOffset = (dir, dist, ring, rowA, rowB) => {
             if (!(dir && Number.isFinite(dist) && Math.abs(dist) > 0)) return;
@@ -1689,7 +2075,7 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
 
         const defaultBulge = (String(solid?.sideMode || '').toUpperCase() === 'INSET') ? (0.05 * radius) : 0;
         const hasStart0 = (solid?.capBulgeStart !== undefined && solid?.capBulgeStart !== null);
-        const hasEnd0   = (solid?.capBulgeEnd   !== undefined && solid?.capBulgeEnd   !== null);
+        const hasEnd0 = (solid?.capBulgeEnd !== undefined && solid?.capBulgeEnd !== null);
         const bulgeStart0 = hasStart0 && Number.isFinite(+solid.capBulgeStart)
             ? (+solid.capBulgeStart)
             : defaultBulge;
@@ -1698,7 +2084,7 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
             : defaultBulge;
 
         const capNStart0 = computeCapPlaneNormal(arcRings[0], startRowA0, startRowB0, false, solid.capNormalHint);
-        const capNEnd0   = computeCapPlaneNormal(arcRings[n-1], endRowA0,   endRowB0,   true,  solid.capNormalHint);
+        const capNEnd0 = computeCapPlaneNormal(arcRings[n - 1], endRowA0, endRowB0, true, solid.capNormalHint);
 
         if (capNStart0 && Math.abs(bulgeStart0) > 0) {
             let d = bulgeStart0; if (solid.capNormalHint && capNStart0.dot(solid.capNormalHint) < 0) d = -d;
@@ -1706,7 +2092,7 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         }
         if (capNEnd0 && Math.abs(bulgeEnd0) > 0) {
             let d = bulgeEnd0; if (solid.capNormalHint && capNEnd0.dot(solid.capNormalHint) < 0) d = -d;
-            applySectionOffset(capNEnd0, d, arcRings[n-1], endRowA0, endRowB0);
+            applySectionOffset(capNEnd0, d, arcRings[n - 1], endRowA0, endRowB0);
         }
     }
 
@@ -1718,17 +2104,17 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         const nx = uy * vz - uz * vy;
         const ny = uz * vx - ux * vz;
         const nz = ux * vy - uy * vx;
-        return nx*nx + ny*ny + nz*nz;
+        return nx * nx + ny * ny + nz * nz;
     };
     const pushIfArea = (face, a, b, c) => {
-        if (triArea2(a,b,c) > 1e-32) solid.addTriangle(face, vToArr(a), vToArr(b), vToArr(c));
+        if (triArea2(a, b, c) > 1e-32) solid.addTriangle(face, vToArr(a), vToArr(b), vToArr(c));
     };
     for (let i = 0; i < n - 1; i++) {
         const r0 = arcRings[i];
         const r1 = arcRings[i + 1];
         for (let j = 0; j < arcSegments; j++) {
-            const p00 = r0[j],   p01 = r0[j + 1];
-            const p10 = r1[j],   p11 = r1[j + 1];
+            const p00 = r0[j], p01 = r0[j + 1];
+            const p10 = r1[j], p11 = r1[j + 1];
             const checker = ((i + j) & 1) === 0;
             if (checker) {
                 pushIfArea(faceArc, p00, p10, p11);
@@ -1753,8 +2139,8 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
             const idx = j;
             const idxN = j + 1;
             const match = (k) => flip ? (arcSegments - k) : k;
-            const p00 = r0[idx],   p01 = r0[idxN];
-            const p10 = r1[match(idx)],   p11 = r1[match(idxN)];
+            const p00 = r0[idx], p01 = r0[idxN];
+            const p10 = r1[match(idx)], p11 = r1[match(idxN)];
             const checker = (((n - 1) + j) & 1) === 0; // use i = n-1 for seam parity
             if (checker) {
                 solid.addTriangle(faceArc, vToArr(p00), vToArr(p10), vToArr(p11));
@@ -1824,7 +2210,7 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
         // Determine bulge distances per-end for triangulation hints and face naming
         const defaultBulge = (String(solid?.sideMode || '').toUpperCase() === 'INSET') ? (0.05 * radius) : 0;
         const hasStart = (solid?.capBulgeStart !== undefined && solid?.capBulgeStart !== null);
-        const hasEnd   = (solid?.capBulgeEnd   !== undefined && solid?.capBulgeEnd   !== null);
+        const hasEnd = (solid?.capBulgeEnd !== undefined && solid?.capBulgeEnd !== null);
         const bulgeStart = hasStart && Number.isFinite(+solid.capBulgeStart)
             ? (+solid.capBulgeStart)
             : defaultBulge;
@@ -1834,7 +2220,8 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
 
         // Recompute normals after potential offset (direction only)
         let capNormalStart = computeCapPlaneNormal(arcRings[0], startRowA, startRowB, /*mirror*/ false, solid.capNormalHint);
-        let capNormalEnd   = computeCapPlaneNormal(arcRings[n-1], endRowA,   endRowB,   /*mirror*/ true,  solid.capNormalHint);
+        let capNormalEnd = computeCapPlaneNormal(arcRings[n - 1], endRowA, endRowB,   /*mirror*/ true, solid.capNormalHint);
+
 
         const builtStart = buildEndCapEarcut(
             solid,
@@ -1874,29 +2261,44 @@ function buildWedgeDirect(solid, faceName, railP, sectorDefs, radius, arcSegment
             }
         }
     }
+
+    // Finalize: fix T‑junctions and patch any holes on the authored wedge
+    // Use a conservative tolerance scaled by the fillet radius to keep seams intact
+
+    // repairFilletAuthoringInPlace(solid, {
+    //     weldEps: Math.max(1e-6, 5e-6 * radius),
+    //     lineEps: Math.max(5e-6, 1e-5 * radius),
+    //     gridCell: Math.max(1e-3, 1e-2 * radius),
+    //     fixNormals: true,
+    //     patchHoles: true,
+    //     doTJunctions: true,
+    //     doWeld: true,
+    //     doRemoveOverlaps: true,
+    // });
+
 }
 
 // Extend side strips (on face A and face B) beyond the first and last
 // samples of the original edge by an absolute length `extendLen`, and close
 // each extension with a triangular cap. Points on A/B are projected to their
 // respective face triangle meshes to stay on-surface.
-function estimateOvershootLength(targetSolid, rEff){
+function estimateOvershootLength(targetSolid, rEff) {
     let mesh = null;
     try {
         mesh = targetSolid?.getMesh();
-        if (!mesh) return Math.max(10*rEff, 1e-3);
+        if (!mesh) return Math.max(10 * rEff, 1e-3);
         const vp = mesh.vertProperties;
-        let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
-        for(let i=0;i<vp.length;i+=3){
-            const x=vp[i],y=vp[i+1],z=vp[i+2];
-            if(x<minX)minX=x; if(y<minY)minY=y; if(z<minZ)minZ=z;
-            if(x>maxX)maxX=x; if(y>maxY)maxY=y; if(z>maxZ)maxZ=z;
+        let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        for (let i = 0; i < vp.length; i += 3) {
+            const x = vp[i], y = vp[i + 1], z = vp[i + 2];
+            if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
+            if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
         }
-        const dx=maxX-minX, dy=maxY-minY, dz=maxZ-minZ;
-        const diag = Math.hypot(dx,dy,dz);
-        return Math.max(2*rEff, 0.3*diag);
-    } catch { return Math.max(10*rEff, 1e-3); }
-    finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+        const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+        const diag = Math.hypot(dx, dy, dz);
+        return Math.max(2 * rEff, 0.3 * diag);
+    } catch { return Math.max(10 * rEff, 1e-3); }
+    finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
 }
 // Build a closed triangular prism by skinning 3 rails: P (edge), A (tangent to faceA), B (tangent to faceB)
 // (removed unused buildCornerPrism)
@@ -1928,7 +2330,7 @@ function solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, sA, nB, qB, sB, r) {
     const denom = nA.dot(nbxt);
     if (!Number.isFinite(denom) || Math.abs(denom) < 1e-14) {
         // Fallback to Gaussian elimination for near-degenerate configuration
-        const A = [ [nA.x, nA.y, nA.z], [nB.x, nB.y, nB.z], [t.x, t.y, t.z] ];
+        const A = [[nA.x, nA.y, nA.z], [nB.x, nB.y, nB.z], [t.x, t.y, t.z]];
         const b = [dA, dB, dT];
         const x = solve3(A, b);
         return x ? new THREE.Vector3(x[0], x[1], x[2]) : null;
@@ -1990,7 +2392,7 @@ function det3(M) {
     const a = M[0][0], b = M[0][1], c = M[0][2];
     const d = M[1][0], e = M[1][1], f = M[1][2];
     const g = M[2][0], h = M[2][1], i = M[2][2];
-    return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
 }
 
 // Replace `dst` authoring data with the contents of `src` Solid
@@ -2019,7 +2421,7 @@ function copyFromSolid(dst, src) {
 
     dst._dirty = true; // force manifold rebuild on next access
     dst._faceIndex = null;
-    try { /* done */ } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+    try { /* done */ } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
 }
 
 // Offset every vertex of a closed solid along its outward vertex normal
@@ -2078,27 +2480,27 @@ function enforceTwoManifoldByDropping(solid, maxPasses = 3) {
         const triArea = new Float64Array(triCount);
         const triName = new Array(triCount);
         const areaOf = (i0, i1, i2) => {
-            const ax = vp[i0*3+0], ay = vp[i0*3+1], az = vp[i0*3+2];
-            const bx = vp[i1*3+0], by = vp[i1*3+1], bz = vp[i1*3+2];
-            const cx = vp[i2*3+0], cy = vp[i2*3+1], cz = vp[i2*3+2];
-            const ux = bx-ax, uy = by-ay, uz = bz-az;
-            const vx = cx-ax, vy = cy-ay, vz = cz-az;
-            const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+            const ax = vp[i0 * 3 + 0], ay = vp[i0 * 3 + 1], az = vp[i0 * 3 + 2];
+            const bx = vp[i1 * 3 + 0], by = vp[i1 * 3 + 1], bz = vp[i1 * 3 + 2];
+            const cx = vp[i2 * 3 + 0], cy = vp[i2 * 3 + 1], cz = vp[i2 * 3 + 2];
+            const ux = bx - ax, uy = by - ay, uz = bz - az;
+            const vx = cx - ax, vy = cy - ay, vz = cz - az;
+            const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
             return 0.5 * Math.hypot(nx, ny, nz);
         };
         for (let t = 0; t < triCount; t++) {
-            const i0 = tv[t*3+0]>>>0, i1 = tv[t*3+1]>>>0, i2 = tv[t*3+2]>>>0;
+            const i0 = tv[t * 3 + 0] >>> 0, i1 = tv[t * 3 + 1] >>> 0, i2 = tv[t * 3 + 2] >>> 0;
             const a = areaOf(i0, i1, i2); triArea[t] = a;
             const id = fid ? fid[t] : undefined;
             triName[t] = (id !== undefined) ? (solid._idToFaceName.get(id) || '') : '';
-            const add = (a,b) => {
-                const i = Math.min(a,b), j = Math.max(a,b);
-                const key = i+":"+j;
+            const add = (a, b) => {
+                const i = Math.min(a, b), j = Math.max(a, b);
+                const key = i + ":" + j;
                 let arr = edgeMap.get(key);
                 if (!arr) { arr = []; edgeMap.set(key, arr); }
                 arr.push(t);
             };
-            add(i0,i1); add(i1,i2); add(i2,i0);
+            add(i0, i1); add(i1, i2); add(i2, i0);
         }
 
         const drop = new Uint8Array(triCount);
@@ -2114,7 +2516,7 @@ function enforceTwoManifoldByDropping(solid, maxPasses = 3) {
         for (const [key, tris] of edgeMap.entries()) {
             if (!tris || tris.length <= 2) continue;
             // Sort by (priority asc -> drop first), then by area asc
-            const arr = tris.slice().sort((ta,tb)=>{
+            const arr = tris.slice().sort((ta, tb) => {
                 const pa = priority(triName[ta]);
                 const pb = priority(triName[tb]);
                 if (pa !== pb) return pa - pb;
@@ -2130,7 +2532,7 @@ function enforceTwoManifoldByDropping(solid, maxPasses = 3) {
         const newFID = [];
         for (let t = 0; t < triCount; t++) {
             if (drop[t]) continue;
-            newTV.push(tv[t*3+0]>>>0, tv[t*3+1]>>>0, tv[t*3+2]>>>0);
+            newTV.push(tv[t * 3 + 0] >>> 0, tv[t * 3 + 1] >>> 0, tv[t * 3 + 2] >>> 0);
             if (fid) newFID.push(fid[t]);
         }
         solid._triVerts = newTV;
@@ -2140,4 +2542,180 @@ function enforceTwoManifoldByDropping(solid, maxPasses = 3) {
         // Loop again in case removals reduced some >2 edges indirectly
     }
     return 0;
+}
+
+// ===================== Mesh Repair Convenience ===================== //
+
+/**
+ * Fix T‑junctions and patch holes on a THREE.BufferGeometry.
+ * - Splits triangles where a vertex lies on an edge (T‑junction fix).
+ * - Detects boundary loops and triangulates them to fill holes.
+ * Returns a NEW geometry; the input is not mutated.
+ * Populates `userData` with diagnostic counts: `__tjunctionSplits`, `__holesFilled`, `__boundaryEdges`.
+ */
+export function fixTJunctionsAndPatchHoles(geometry, {
+    weldEps = 5e-4,   // optional pre‑weld distance to unify near‑duplicate verts
+    lineEps = 5e-4,   // tolerance for T‑junction point‑on‑segment
+    gridCell = 0.01,  // hash‑grid cell size for candidate search
+    fixNormals = true, // recompute consistent windings and normals at the end
+    patchHoles = true, // optionally triangulate boundary loops
+    doTJunctions = true,
+    doWeld = true,
+    doRemoveOverlaps = true,
+} = {}) {
+    if (!geometry || !(geometry.isBufferGeometry)) return geometry;
+    const repairer = new MeshRepairer();
+    let g = geometry;
+    // Pre‑weld helps make T‑junction detection robust on nearly coincident vertices
+    if (doWeld) { try { g = repairer.weldVertices(g, weldEps); } catch { } }
+    if (doTJunctions) { try { g = repairer.fixTJunctions(g, lineEps, gridCell); } catch { } }
+    if (doRemoveOverlaps) { try { g = repairer.removeOverlappingTriangles(g); } catch { } }
+    if (patchHoles) {
+        try { g = repairer.fillHoles(g); } catch { }
+    }
+    if (fixNormals) {
+        try { g = repairer.fixTriangleNormals(g); } catch { }
+        try { g.computeVertexNormals(); } catch { }
+    }
+    return g;
+}
+
+// Build a THREE.BufferGeometry view of the current Solid authoring arrays
+function authoringToBufferGeometry(solid) {
+    const geom = new THREE.BufferGeometry();
+    const pos = new Float32Array(solid._vertProperties);
+    geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const idx = new Uint32Array(solid._triVerts);
+    geom.setIndex(new THREE.BufferAttribute(idx, 1));
+    return geom;
+}
+
+// Ensure a face name has a numeric ID in the Solid maps
+function ensureFaceID(solid, name) {
+    if (!solid._faceNameToID) solid._faceNameToID = new Map();
+    if (!solid._idToFaceName) solid._idToFaceName = new Map();
+    if (solid._faceNameToID.has(name)) return solid._faceNameToID.get(name);
+    const { Manifold } = manifold;
+    const id = Manifold.reserveIDs(1);
+    solid._faceNameToID.set(name, id);
+    solid._idToFaceName.set(id, name);
+    return id;
+}
+
+// Map repaired triangles back to original face names by nearest-centroid + normal alignment
+function mapRepairedTrisToFaceNames(solid, repairedGeom) {
+    const pos = repairedGeom.getAttribute('position');
+    const idx = repairedGeom.getIndex();
+    const triCountNew = (idx.count / 3) | 0;
+
+    // Build original centroids + normals + names
+    const vp = solid._vertProperties;
+    const tv = solid._triVerts;
+    const fid = solid._triIDs;
+    const orig = [];
+    // Build per-face vertex membership sets to constrain mapping
+    const faceVerts = new Map(); // name -> Set(vertexIndex)
+    const tmpA = new THREE.Vector3();
+    const tmpB = new THREE.Vector3();
+    const tmpC = new THREE.Vector3();
+    for (let t = 0; t < tv.length; t += 3) {
+        const i0 = tv[t] * 3, i1 = tv[t + 1] * 3, i2 = tv[t + 2] * 3;
+        tmpA.set(vp[i0], vp[i0 + 1], vp[i0 + 2]);
+        tmpB.set(vp[i1], vp[i1 + 1], vp[i1 + 2]);
+        tmpC.set(vp[i2], vp[i2 + 1], vp[i2 + 2]);
+        const cen = new THREE.Vector3().add(tmpA).add(tmpB).add(tmpC).multiplyScalar(1 / 3);
+        const n = new THREE.Vector3().subVectors(tmpB, tmpA).cross(new THREE.Vector3().subVectors(tmpC, tmpA));
+        if (n.lengthSq() > 0) n.normalize();
+        const id = fid ? fid[t / 3] : 0;
+        const name = solid._idToFaceName ? (solid._idToFaceName.get(id) || '') : '';
+        orig.push({ cen, n, name });
+        if (name) {
+            let set = faceVerts.get(name);
+            if (!set) { set = new Set(); faceVerts.set(name, set); }
+            set.add(tv[t] >>> 0); set.add(tv[t + 1] >>> 0); set.add(tv[t + 2] >>> 0);
+        }
+    }
+
+    const namesOut = new Array(triCountNew);
+    const pA = new THREE.Vector3();
+    const pB = new THREE.Vector3();
+    const pC = new THREE.Vector3();
+    for (let t = 0; t < triCountNew; t++) {
+        const a = idx.getX(3 * t), b = idx.getX(3 * t + 1), c = idx.getX(3 * t + 2);
+        pA.set(pos.getX(a), pos.getY(a), pos.getZ(a));
+        pB.set(pos.getX(b), pos.getY(b), pos.getZ(b));
+        pC.set(pos.getX(c), pos.getY(c), pos.getZ(c));
+        const cen = new THREE.Vector3().add(pA).add(pB).add(pC).multiplyScalar(1 / 3);
+        const n = new THREE.Vector3().subVectors(pB, pA).cross(new THREE.Vector3().subVectors(pC, pA));
+        if (n.lengthSq() > 0) n.normalize();
+        // Prefer faces whose vertex sets contain all three vertices
+        let best = { d2: Infinity, name: '' };
+        for (const [fname, set] of faceVerts.entries()) {
+            if (set.has(a) && set.has(b) && set.has(c)) {
+                // Measure closeness against all original tris of this face
+                for (let k = 0; k < orig.length; k++) {
+                    const o = orig[k];
+                    if (o.name !== fname) continue;
+                    const ndot = Math.max(-1, Math.min(1, n.dot(o.n)));
+                    const anglePenalty = 1 + 0.5 * (1 - ndot);
+                    const d2 = cen.distanceToSquared(o.cen) * anglePenalty;
+                    if (d2 < best.d2) best = { d2, name: fname };
+                }
+            }
+        }
+        if (!best.name) {
+            // Fallback to nearest centroid + normal if no face contains all vertices
+            for (let k = 0; k < orig.length; k++) {
+                const o = orig[k];
+                const ndot = Math.max(-1, Math.min(1, n.dot(o.n)));
+                const anglePenalty = 1 + 0.5 * (1 - ndot);
+                const d2 = cen.distanceToSquared(o.cen) * anglePenalty;
+                if (d2 < best.d2) best = { d2, name: o.name };
+            }
+        }
+        namesOut[t] = best.name || '';
+    }
+    return namesOut;
+}
+
+// Repair Solid authoring by calling the geometry repairer and mapping results back to face names
+function repairFilletAuthoringInPlace(solid, opts = {}) {
+    const geom = authoringToBufferGeometry(solid);
+    const repaired = fixTJunctionsAndPatchHoles(geom, opts);
+    const idx = repaired.getIndex();
+    const posAttr = repaired.getAttribute('position');
+    const triCount = (idx.count / 3) | 0;
+    const faceNames = mapRepairedTrisToFaceNames(solid, repaired);
+
+    // Replace vertices with repaired positions
+    const newPos = new Array(posAttr.count * 3);
+    for (let i = 0; i < posAttr.count; i++) {
+        newPos[3 * i + 0] = posAttr.getX(i);
+        newPos[3 * i + 1] = posAttr.getY(i);
+        newPos[3 * i + 2] = posAttr.getZ(i);
+    }
+
+    // Build new tri arrays with preserved face IDs (mapped)
+    const newTV = new Array(idx.count);
+    for (let i = 0; i < idx.count; i++) newTV[i] = idx.getX(i) >>> 0;
+    const newFID = new Array(triCount);
+    for (let t = 0; t < triCount; t++) {
+        const name = faceNames[t] || '';
+        const id = ensureFaceID(solid, name);
+        newFID[t] = id;
+    }
+
+    solid._vertProperties = newPos;
+    solid._triVerts = newTV;
+    solid._triIDs = newFID;
+    // Rebuild vertex key map
+    solid._vertKeyToIndex = new Map();
+    for (let i = 0; i < newPos.length; i += 3) {
+        const x = newPos[i + 0], y = newPos[i + 1], z = newPos[i + 2];
+        solid._vertKeyToIndex.set(`${x},${y},${z}`, i / 3);
+    }
+    solid._dirty = true;
+    solid._faceIndex = null;
+    try { solid.fixTriangleWindingsByAdjacency(); } catch { }
+    try { enforceTwoManifoldByDropping(solid, 2); } catch { }
 }

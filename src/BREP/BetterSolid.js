@@ -153,7 +153,7 @@ export class Vertex extends THREE.Object3D {
     constructor(position = [0, 0, 0], opts = {}) {
         super();
         this.type = 'VERTEX';
-        this.name = `VERTEX(${position[0]},${position[1]},${position[2]})`;
+        this.name = opts.name || `VERTEX(${position[0]},${position[1]},${position[2]})`;
         this.position.set(position[0] || 0, position[1] || 0, position[2] || 0);
 
         // Base point visual (screen-space sized)
@@ -322,6 +322,9 @@ export class Solid extends THREE.Group {
         // Face name <-> Manifold ID
         this._faceNameToID = new Map();
         this._idToFaceName = new Map();
+        
+        // Face metadata storage (e.g., radius for cylindrical faces)
+        this._faceMetadata = new Map(); // faceName -> metadata object
 
         // Laziness & caching
         this._dirty = true;               // arrays changed and manifold needs rebuild
@@ -480,6 +483,27 @@ export class Solid extends THREE.Group {
         const A = Array.isArray(a) ? a : [a?.x || 0, a?.y || 0, a?.z || 0];
         const B = Array.isArray(b) ? b : [b?.x || 0, b?.y || 0, b?.z || 0];
         return this.addAuxEdge(name, [A, B], options);
+    }
+
+    /** 
+     * Set metadata for a face (e.g., radius for cylindrical faces).
+     * @param {string} faceName Name of the face
+     * @param {Object} metadata Metadata object to store
+     * @returns {Solid} this
+     */
+    setFaceMetadata(faceName, metadata) {
+        if (!metadata || typeof metadata !== 'object') return this;
+        this._faceMetadata.set(faceName, { ...metadata });
+        return this;
+    }
+
+    /** 
+     * Get metadata for a face.
+     * @param {string} faceName Name of the face
+     * @returns {Object|null} Metadata object or null if not found
+     */
+    getFaceMetadata(faceName) {
+        return this._faceMetadata.get(faceName) || null;
     }
 
     /**
@@ -2148,26 +2172,55 @@ export class Solid extends THREE.Group {
             }
         } catch { /* ignore aux edge errors */ }
 
+        // Helper function to generate deterministic vertex names based on meeting edges
+        const generateVertexName = (position, meetingEdges) => {
+            if (!meetingEdges || meetingEdges.length === 0) {
+                return `VERTEX(${position[0]},${position[1]},${position[2]})`;
+            }
+            // Sort edge names for consistency, then join them
+            const sortedEdgeNames = [...meetingEdges].sort();
+            return `VERTEX[${sortedEdgeNames.join('+')}]`;
+        };
+
         // Generate unique vertex objects at the start and end points of all edges
         try {
             const endpoints = new Map();
+            const vertexToEdges = new Map(); // Track which edges meet at each vertex
+            
+            // First pass: collect all endpoint positions and track which edges meet at each vertex
             for (const ch of this.children) {
                 if (!ch || ch.type !== 'EDGE') continue;
                 const poly = ch.userData && Array.isArray(ch.userData.polylineLocal) ? ch.userData.polylineLocal : null;
                 if (!poly || poly.length === 0) continue;
+                
+                const edgeName = ch.name || 'UNNAMED_EDGE';
                 const first = poly[0];
                 const last = poly[poly.length - 1];
+                
                 const addEP = (p) => {
                     if (!p || p.length !== 3) return;
                     const k = `${p[0]},${p[1]},${p[2]}`;
                     if (!endpoints.has(k)) endpoints.set(k, p);
+                    
+                    // Track which edges meet at this vertex position
+                    if (!vertexToEdges.has(k)) {
+                        vertexToEdges.set(k, new Set());
+                    }
+                    vertexToEdges.get(k).add(edgeName);
                 };
+                
                 addEP(first);
                 addEP(last);
             }
+            
+            // Second pass: create vertices with deterministic names based on meeting edges
             if (endpoints.size) {
-                for (const p of endpoints.values()) {
-                    try { this.add(new Vertex(p)); } catch {}
+                for (const [positionKey, position] of endpoints.entries()) {
+                    try {
+                        const meetingEdges = vertexToEdges.get(positionKey);
+                        const vertexName = generateVertexName(position, meetingEdges ? Array.from(meetingEdges) : []);
+                        this.add(new Vertex(position, { name: vertexName }));
+                    } catch {}
                 }
             }
         } catch { /* best-effort vertices */ }
@@ -2348,6 +2401,17 @@ export class Solid extends THREE.Group {
         return merged;
     }
 
+    _combineFaceMetadata(other) {
+        // Combine face metadata from both solids
+        const merged = new Map(this._faceMetadata);
+        if (other && other._faceMetadata) {
+            for (const [faceName, metadata] of other._faceMetadata.entries()) {
+                merged.set(faceName, { ...metadata });
+            }
+        }
+        return merged;
+    }
+
     static _expandTriIDsFromMesh(mesh) {
         // Pull per-triangle IDs directly from faceID, which manifold propagates.
         if (mesh.faceID && mesh.faceID.length) {
@@ -2410,6 +2474,7 @@ export class Solid extends THREE.Group {
         const mergedMap = this._combineIdMaps(other);
         const out = Solid._fromManifold(outManifold, mergedMap);
         try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
         return out;
     }
 
@@ -2419,6 +2484,7 @@ export class Solid extends THREE.Group {
         const mergedMap = this._combineIdMaps(other);
         const out = Solid._fromManifold(outManifold, mergedMap);
         try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
         return out;
     }
 
@@ -2429,6 +2495,7 @@ export class Solid extends THREE.Group {
         const mergedMap = this._combineIdMaps(other);
         const out = Solid._fromManifold(outManifold, mergedMap);
         try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
         return out;
     }
 
@@ -2443,6 +2510,7 @@ export class Solid extends THREE.Group {
         const mergedMap = this._combineIdMaps(other);
         const out = Solid._fromManifold(outManifold, mergedMap);
         try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
         return out;
     }
 

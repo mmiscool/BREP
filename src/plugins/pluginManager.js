@@ -117,6 +117,15 @@ function buildApp(viewer) {
 
       } catch { }
     },
+    registerAnnotation(AnnotationHandler) {
+      try {
+        // Optional: prefix plugin marker in titles if present
+        if (AnnotationHandler && typeof AnnotationHandler === 'object') {
+          if (AnnotationHandler.title) AnnotationHandler.title = `🔌 ${AnnotationHandler.title}`;
+        }
+        viewer?.annotationRegistry?.register?.(AnnotationHandler);
+      } catch {}
+    },
     addToolbarButton(label, title, onClick) {
       if (!viewer) return;
       try { viewer.addToolbarButton(label, title, onClick); } catch { }
