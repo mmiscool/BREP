@@ -290,7 +290,44 @@ function buildNode(state, value, path, cfg) {
       const childPath = path.concat(k);
       const childType = typeOf(childVal);
 
-      if (childType === 'object' || childType === 'array') {
+      // Handle lazy properties (functions that start with _lazy)
+      if (k.startsWith('_lazy') && typeof childVal === 'function') {
+        const lazyDetails = document.createElement('details');
+        lazyDetails.setAttribute('data-path', pathToString(childPath));
+        lazyDetails.setAttribute('data-key', k);
+        
+        const lazySummary = document.createElement('summary');
+        lazySummary.style.cursor = 'pointer';
+        lazySummary.style.color = '#9aa4b2';
+        lazySummary.style.fontStyle = 'italic';
+        
+        // Use display name or create from key
+        const displayName = k.replace('_lazy', '').replace(/([A-Z])/g, ' $1').toLowerCase();
+        lazySummary.textContent = `${displayName} (click to load)`;
+        
+        lazyDetails.appendChild(lazySummary);
+        
+        // Add toggle listener for lazy loading
+        lazySummary.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (!lazyDetails.hasAttribute('data-loaded')) {
+            try {
+              const result = childVal();
+              lazyDetails.setAttribute('data-loaded', 'true');
+              
+              // Remove the summary and add actual content
+              lazyDetails.innerHTML = '';
+              const actualNode = buildNode(state, result, childPath, cfg);
+              lazyDetails.appendChild(actualNode);
+              lazyDetails.open = true;
+            } catch (err) {
+              lazySummary.textContent = `${displayName} (failed to load: ${err.message})`;
+            }
+          }
+        });
+        
+        details.appendChild(lazyDetails);
+      } else if (childType === 'object' || childType === 'array') {
         details.appendChild(buildNode(state, childVal, childPath, cfg));
       } else {
         details.appendChild(renderKV(state, k, childVal, childPath, cfg));

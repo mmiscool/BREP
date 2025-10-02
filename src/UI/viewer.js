@@ -929,6 +929,14 @@ export class Viewer {
         const out = { type: target?.type || String(target?.constructor?.name||'Object'), name: target?.name || null };
         let downloadFactory = null; // optional closure that returns full JSON text for download
 
+        // Add owning feature information if available
+        try {
+            if (target.owningFeatureID) {
+                out.owningFeatureID = target.owningFeatureID;
+                out._owningFeatureFormatted = `Created by: ${target.owningFeatureID}`;
+            }
+        } catch {}
+
         if (target.type === 'FACE') {
             // Triangles via Solid API to ensure correct grouping
             let solid = target.parent; while (solid && solid.type !== 'SOLID') solid = solid.parent;
@@ -948,9 +956,14 @@ export class Viewer {
                         if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX_FACE)) triMax = window.BREP_DIAG_TRI_MAX_FACE|0;
                         if (triMax < 0) triMax = triFull.length;
                         const count = Math.min(triFull.length, triMax);
-                        out.triangles = triFull.slice(0, count);
+                        // Make triangles lazy-loaded for performance
+                        out._trianglesSummary = `${triFull.length} triangles (click to expand)`;
+                        out._lazyTriangles = () => triFull.slice(0, count);
                         if (count < triFull.length) { out.trianglesTruncated = true; out.trianglesTotal = triFull.length; out.trianglesLimit = triMax; }
-                    } catch { out.triangles = triFull; }
+                    } catch { 
+                        out._trianglesSummary = `${triFull.length} triangles (click to expand)`;
+                        out._lazyTriangles = () => triFull; 
+                    }
                     // Full JSON factory for download
                     downloadFactory = () => {
                         const full = JSON.parse(JSON.stringify(out));
@@ -1001,24 +1014,42 @@ export class Viewer {
                 out.edges = edges.map(e => ({ name: e.name || null, faces: (Array.isArray(e.faces)? e.faces.map(f=>f?.name||f?.userData?.faceName||null):[]), closedLoop: !!e.closedLoop, length: (typeof e.length==='function'? this._round(e.length()): undefined), points: this._edgePointsWorld(e) }));
             } catch { out.edges = []; }
 
-            // Unique world vertices of the face (dedup from triangles)
+            // Lazy-load unique vertices to improve performance
             try {
-                const uniq = new Map();
-                for (const tri of out.triangles || []) { for (const P of [tri.p1,tri.p2,tri.p3]) { const k=`${P[0]},${P[1]},${P[2]}`; if (!uniq.has(k)) uniq.set(k, P); } }
-                out.uniqueVertices = Array.from(uniq.values());
+                out._lazyUniqueVertices = () => {
+                    const triangles = (out._lazyTriangles && typeof out._lazyTriangles === 'function') ? out._lazyTriangles() : [];
+                    const uniq = new Map();
+                    for (const tri of triangles) { 
+                        for (const P of [tri.p1,tri.p2,tri.p3]) { 
+                            const k=`${P[0]},${P[1]},${P[2]}`; 
+                            if (!uniq.has(k)) uniq.set(k, P); 
+                        } 
+                    }
+                    return Array.from(uniq.values());
+                };
             } catch {}
 
             // Basic metrics and orientation hints
             try { const n = target.getAverageNormal?.(); if (n) out.averageNormal = [this._round(n.x), this._round(n.y), this._round(n.z)]; } catch {}
-            try { const a = target.surfaceArea?.(); if (Number.isFinite(a)) out.surfaceArea = this._round(a); } catch {}
-            try {
-                // Bounding box in world coords from triangle points
-                const pts=[]; for (const tri of out.triangles||[]) { pts.push(tri.p1, tri.p2, tri.p3); }
-                if (pts.length) {
-                    let min=[+Infinity,+Infinity,+Infinity], max=[-Infinity,-Infinity,-Infinity];
-                    for (const p of pts) { if (p[0]<min[0]) min[0]=p[0]; if (p[1]<min[1]) min[1]=p[1]; if (p[2]<min[2]) min[2]=p[2]; if (p[0]>max[0]) max[0]=p[0]; if (p[1]>max[1]) max[1]=p[1]; if (p[2]>max[2]) max[2]=p[2]; }
-                    out.bbox = { min, max };
+            try { 
+                const a = target.surfaceArea?.(); 
+                if (Number.isFinite(a)) {
+                    out.surfaceArea = this._round(a);
+                    // Make face area more prominent for easy reference
+                    out._faceAreaFormatted = `${this._round(a)} units²`;
                 }
+            } catch {}
+            try {
+                // Bounding box in world coords from triangle points (lazy-loaded)
+                out._lazyBbox = () => {
+                    const pts=[]; for (const tri of out.triangles||[]) { pts.push(tri.p1, tri.p2, tri.p3); }
+                    if (pts.length) {
+                        let min=[+Infinity,+Infinity,+Infinity], max=[-Infinity,-Infinity,-Infinity];
+                        for (const p of pts) { if (p[0]<min[0]) min[0]=p[0]; if (p[1]<min[1]) min[1]=p[1]; if (p[2]<min[2]) min[2]=p[2]; if (p[0]>max[0]) max[0]=p[0]; if (p[1]>max[1]) max[1]=p[1]; if (p[2]>max[2]) max[2]=p[2]; }
+                        return { min, max };
+                    }
+                    return null;
+                };
             } catch {}
 
             // Neighbor face names
@@ -1033,8 +1064,15 @@ export class Viewer {
             } catch {}
         } else if (target.type === 'EDGE') {
             out.closedLoop = !!target.closedLoop;
-            out.points = this._edgePointsWorld(target);
-            try { out.length = this._round(target.length()); } catch {}
+            // Lazy-load points to improve performance
+            out._lazyPoints = () => this._edgePointsWorld(target);
+            try { 
+                const len = target.length(); 
+                if (Number.isFinite(len)) {
+                    out.length = this._round(len);
+                    out._edgeLengthFormatted = `${this._round(len)} units`;
+                }
+            } catch {}
             try { out.faces = (Array.isArray(target.faces)? target.faces.map(f=>f?.name||f?.userData?.faceName||null):[]); } catch {}
         } else if (target.type === 'SOLID') {
             try {
@@ -1095,7 +1133,9 @@ export class Viewer {
                             area: this._round(0.5*nlen)
                         };
                     }
-                    out.triangles = tris;
+                    // Make triangles lazy-loaded for performance
+                    out._trianglesSummary = `${triCount} triangles (click to expand)`;
+                    out._lazyTriangles = () => tris;
                     if (count < triCount) { out.trianglesTruncated = true; out.trianglesTotal = triCount; out.trianglesLimit = triMax; }
                     // Build full JSON on demand
                     downloadFactory = () => {
