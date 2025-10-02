@@ -279,15 +279,56 @@ export class SketchMode3D {
         return;
       }
       if (k === 'Delete' || k === 'Backspace') {
-        // Remove selected constraints
-        const cons = Array.from(this._selection).filter(i => i.type === 'constraint');
-        if (cons.length && this._solver) {
-          try { for (const it of cons) this._solver.removeConstraintById?.(parseInt(it.id)); } catch { }
-          try { this._solver.solveSketch('full'); } catch { }
-          this._selection.clear();
-          this.#rebuildSketchGraphics();
-          this.#refreshContextBar();
-          try { ev.preventDefault(); ev.stopPropagation(); } catch { }
+        // Remove selected items (constraints, geometries/curves, and points)
+        const selection = Array.from(this._selection);
+        const constraints = selection.filter(i => i.type === 'constraint');
+        const geometries = selection.filter(i => i.type === 'geometry');
+        const points = selection.filter(i => i.type === 'point');
+        
+        let deletedAny = false;
+        
+        if (this._solver) {
+          // Remove constraints first
+          if (constraints.length > 0) {
+            try {
+              for (const item of constraints) {
+                this._solver.removeConstraintById?.(parseInt(item.id));
+              }
+              deletedAny = true;
+            } catch { }
+          }
+          
+          // Remove geometries/curves
+          if (geometries.length > 0) {
+            try {
+              for (const item of geometries) {
+                this._solver.removeGeometryById?.(parseInt(item.id));
+              }
+              deletedAny = true;
+            } catch { }
+          }
+          
+          // Remove points (but not point 0 which is the origin)
+          if (points.length > 0) {
+            try {
+              for (const item of points) {
+                const pointId = parseInt(item.id);
+                if (pointId !== 0) {  // Protect the origin point
+                  this._solver.removePointById?.(pointId);
+                  deletedAny = true;
+                }
+              }
+            } catch { }
+          }
+          
+          // If anything was deleted, update the sketch
+          if (deletedAny) {
+            try { this._solver.solveSketch('full'); } catch { }
+            this._selection.clear();
+            this.#rebuildSketchGraphics();
+            this.#refreshContextBar();
+            try { ev.preventDefault(); ev.stopPropagation(); } catch { }
+          }
         }
       }
     };
