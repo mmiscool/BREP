@@ -298,8 +298,12 @@ function buildNode(state, value, path, cfg) {
         
         const lazySummary = document.createElement('summary');
         lazySummary.style.cursor = 'pointer';
-        lazySummary.style.color = '#9aa4b2';
+        lazySummary.style.color = '#6ea8fe';
         lazySummary.style.fontStyle = 'italic';
+        lazySummary.style.padding = '2px 4px';
+        lazySummary.style.borderRadius = '4px';
+        lazySummary.style.backgroundColor = 'rgba(110, 168, 254, 0.1)';
+        lazySummary.style.border = '1px solid rgba(110, 168, 254, 0.2)';
         
         // Use display name or create from key
         const displayName = k.replace('_lazy', '').replace(/([A-Z])/g, ' $1').toLowerCase();
@@ -307,11 +311,26 @@ function buildNode(state, value, path, cfg) {
         
         lazyDetails.appendChild(lazySummary);
         
+        // Add hover effects
+        lazySummary.addEventListener('mouseenter', () => {
+          if (!lazyDetails.hasAttribute('data-loaded')) {
+            lazySummary.style.backgroundColor = 'rgba(110, 168, 254, 0.2)';
+            lazySummary.style.borderColor = 'rgba(110, 168, 254, 0.4)';
+          }
+        });
+        lazySummary.addEventListener('mouseleave', () => {
+          if (!lazyDetails.hasAttribute('data-loaded')) {
+            lazySummary.style.backgroundColor = 'rgba(110, 168, 254, 0.1)';
+            lazySummary.style.borderColor = 'rgba(110, 168, 254, 0.2)';
+          }
+        });
+
         // Add toggle listener for lazy loading
         lazySummary.addEventListener('click', (e) => {
           e.preventDefault();
           if (!lazyDetails.hasAttribute('data-loaded')) {
             try {
+              lazySummary.textContent = `${displayName} (loading...)`;
               const result = childVal();
               lazyDetails.setAttribute('data-loaded', 'true');
               
@@ -322,6 +341,7 @@ function buildNode(state, value, path, cfg) {
               lazyDetails.open = true;
             } catch (err) {
               lazySummary.textContent = `${displayName} (failed to load: ${err.message})`;
+              lazySummary.style.color = '#ef4444';
             }
           }
         });

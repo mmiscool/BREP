@@ -291,5 +291,14 @@ See `LICENSE.md`. This project uses a dual-licensing strategy managed by Autodro
 
 
 
-Todo: 
-Area of face in inspector. 
+## Recent Inspector Improvements
+
+- **Face Area Display**: Face surface area is now prominently displayed with proper formatting (`X units²`)
+- **Edge Length Measurement**: Edge inspector now shows length with formatting (`X units`)
+- **Owning Feature Display**: Objects show which feature created them (`Created by: FeatureID`)
+- **Lazy Loading Performance**: Triangles and points sections are only computed when expanded, dramatically improving inspector performance for complex geometries
+- **Expandable Sections**: Large data sections (triangles, vertices, points) can be expanded on-demand to avoid UI freezing
+
+## Todo: 
+
+Additional inspector enhancements could include volume calculations and more measurement tools.
