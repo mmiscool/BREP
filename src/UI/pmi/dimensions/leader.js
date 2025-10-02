@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { addArrowCone } from '../annUtils.js';
 
 export const LeaderAnnotation = {
   type: 'leader',
@@ -12,6 +13,7 @@ export const LeaderAnnotation = {
       textPosition: null,
       text: typeof defaults.leaderText === 'string' ? defaults.leaderText : 'TEXT HERE',
       anchorSide: 'right',
+      endStyle: 'arrow',
       __open: true,
     };
   },
@@ -20,9 +22,16 @@ export const LeaderAnnotation = {
       anchor: { type: 'reference_selection', label: 'Target Point', selectionFilter: ['VERTEX'], default_value: ann.anchorRefName || '' },
       planeRef: { type: 'reference_selection', label: 'Plane/Face', selectionFilter: ['FACE', 'PLANE'], default_value: ann.planeRefName || '' },
       text: { type: 'textarea', label: 'Text', default_value: ann.text || pmimode?._opts?.leaderText || 'TEXT HERE', rows: 3 },
-      anchorSide: { type: 'options', label: 'Anchor Side', options: ['left', 'right'], default_value: ann.anchorSide || 'right' }
+      anchorSide: { type: 'options', label: 'Anchor Side', options: ['left', 'right'], default_value: ann.anchorSide || 'right' },
+      endStyle: { type: 'options', label: 'Leader End', options: ['arrow', 'dot'], default_value: ann.endStyle || 'arrow' }
     };
-    const params = { anchor: schema.anchor.default_value, planeRef: schema.planeRef.default_value, text: schema.text.default_value, anchorSide: schema.anchorSide.default_value };
+    const params = {
+      anchor: schema.anchor.default_value,
+      planeRef: schema.planeRef.default_value,
+      text: schema.text.default_value,
+      anchorSide: schema.anchorSide.default_value,
+      endStyle: schema.endStyle.default_value,
+    };
     return { schema, params };
   },
 
@@ -32,6 +41,7 @@ export const LeaderAnnotation = {
     ann.planeRefName = String(params.planeRef || '');
     ann.text = String(params.text || '');
     ann.anchorSide = String(params.anchorSide || 'right');
+    ann.endStyle = String(params.endStyle || 'arrow');
     if (ann.anchorRefName && ann.anchorRefName !== oldAnchor) {
       delete ann.textPosition; delete ann._useDraggedPosition;
     }
@@ -58,18 +68,18 @@ export const LeaderAnnotation = {
       this._createLeaderLineToDraggedText(pmimode, group, anchorPoint, textPos, idx, ctx);
     } else {
       ann._useDraggedPosition = false;
-      ctx.updateLabel(idx, txt, anchorPoint, ann);
-      this._createLeaderLineToText(pmimode, group, anchorPoint, idx, ann, ctx);
+      const labelPos = this._createLeaderLineToText(pmimode, group, anchorPoint, idx, ann, ctx) || anchorPoint;
+      ctx.updateLabel(idx, txt, labelPos, ann);
     }
   },
 
   _createLeaderLineToText(pmimode, group, anchorPoint, labelIdx, ann, ctx) {
+    let labelPos = anchorPoint.clone();
     try {
       // Remove previous for this label
       const existing = group.children.filter(ch => ch.userData && ch.userData.isLeaderLine && ch.userData.labelIdx === labelIdx);
       existing.forEach(ch => group.remove(ch));
 
-      const pixelOffset = ctx?.screenSizeWorld ? ctx.screenSizeWorld(20) : 0.1;
       const textOffset = ctx?.screenSizeWorld ? ctx.screenSizeWorld(40) : 0.2;
       const side = ann.anchorSide || 'right';
 
@@ -80,27 +90,28 @@ export const LeaderAnnotation = {
         camera.getWorldDirection(dir);
         const up = new THREE.Vector3(0, 1, 0);
         horizontal.crossVectors(up, dir).normalize();
+        if (!horizontal.lengthSq()) horizontal.set(1, 0, 0);
         if (side === 'left') horizontal.multiplyScalar(-1);
       } else {
         horizontal.set(side === 'left' ? -1 : 1, 0, 0);
       }
 
-      const textStart = anchorPoint.clone().add(horizontal.clone().multiplyScalar(textOffset));
-      const bendPoint = anchorPoint.clone().add(horizontal.clone().multiplyScalar(textOffset + pixelOffset));
+      labelPos = anchorPoint.clone().add(horizontal.clone().multiplyScalar(textOffset));
 
       const addLine = (a, b) => {
         const g = new THREE.BufferGeometry().setFromPoints([a, b]);
         const m = new THREE.LineBasicMaterial({ color: 0x93c5fd, depthTest: false, depthWrite: false, transparent: true });
         const l = new THREE.Line(g, m); l.userData = { isLeaderLine: true, labelIdx }; group.add(l);
       };
-      addLine(textStart, bendPoint);
-      addLine(bendPoint, anchorPoint);
+      addLine(anchorPoint, labelPos);
 
       // Arrowhead
-      const arrow = this._makeArrowhead(anchorPoint, bendPoint, 0x93c5fd);
-      arrow.userData = { isLeaderLine: true, labelIdx };
-      group.add(arrow);
-    } catch (e) { console.warn('Leader: error drawing to text', e); }
+      this._addEndMarker(group, anchorPoint, labelPos, ann, ctx, labelIdx);
+    } catch (e) {
+      console.warn('Leader: error drawing to text', e);
+      labelPos = anchorPoint.clone();
+    }
+    return labelPos;
   },
 
   _createLeaderLineToDraggedText(pmimode, group, anchorPoint, textPosition, labelIdx, ctx) {
@@ -108,52 +119,43 @@ export const LeaderAnnotation = {
       const existing = group.children.filter(ch => ch.userData && ch.userData.isLeaderLine && ch.userData.labelIdx === labelIdx);
       existing.forEach(ch => group.remove(ch));
 
-      const pixelOffset = ctx?.screenSizeWorld ? ctx.screenSizeWorld(20) : 0.1;
-      const camera = pmimode?.viewer?.camera;
-      const horizontal = new THREE.Vector3();
-      if (camera) {
-        const dir = new THREE.Vector3();
-        camera.getWorldDirection(dir);
-        const up = new THREE.Vector3(0, 1, 0);
-        horizontal.crossVectors(up, dir).normalize();
-        const toAnchor = new THREE.Vector3().subVectors(anchorPoint, textPosition);
-        const rightDot = horizontal.dot(toAnchor);
-        horizontal.multiplyScalar(rightDot > 0 ? pixelOffset : -pixelOffset);
-      } else {
-        const toAnchor = new THREE.Vector3().subVectors(anchorPoint, textPosition);
-        horizontal.set(toAnchor.x > 0 ? pixelOffset : -pixelOffset, 0, 0);
-      }
-
-      const bendPoint = new THREE.Vector3().addVectors(textPosition, horizontal);
       const addLine = (a, b) => {
         const g = new THREE.BufferGeometry().setFromPoints([a, b]);
         const m = new THREE.LineBasicMaterial({ color: 0x93c5fd, depthTest: false, depthWrite: false, transparent: true });
         const l = new THREE.Line(g, m); l.userData = { isLeaderLine: true, labelIdx }; group.add(l);
       };
-      addLine(textPosition, bendPoint);
-      addLine(bendPoint, anchorPoint);
+      addLine(textPosition, anchorPoint);
 
-      const arrow = this._makeArrowhead(anchorPoint, bendPoint, 0x93c5fd);
-      arrow.userData = { isLeaderLine: true, labelIdx };
-      group.add(arrow);
+      this._addEndMarker(group, anchorPoint, textPosition, ann, ctx, labelIdx);
     } catch (e) { console.warn('Leader: error drawing to dragged text', e); }
   },
 
-  _makeArrowhead(toPos, fromPos, color = 0x93c5fd) {
+  _addEndMarker(group, anchorPoint, fromPoint, ann, ctx, labelIdx) {
     try {
-      const dir = new THREE.Vector3().subVectors(toPos, fromPos).normalize();
-      const len = 0.25; // nominal
-      const width = 0.12;
-      const up = new THREE.Vector3(0, 1, 0);
-      const right = new THREE.Vector3().crossVectors(up, dir).normalize();
-      const back = dir.clone().multiplyScalar(-len);
-      const p0 = toPos.clone();
-      const p1 = toPos.clone().add(back).add(right.clone().multiplyScalar(width * 0.5));
-      const p2 = toPos.clone().add(back).add(right.clone().multiplyScalar(-width * 0.5));
-      const geom = new THREE.BufferGeometry().setFromPoints([p0, p1, p2, p0]);
-      const mat = new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
-      return new THREE.Line(geom, mat);
-    } catch { return new THREE.Group(); }
+      const style = (ann?.endStyle || 'arrow').toLowerCase();
+      if (style === 'dot') {
+        const radius = ctx?.screenSizeWorld ? ctx.screenSizeWorld(6) : 0.03;
+        const geom = new THREE.SphereGeometry(radius, 16, 12);
+        const mat = new THREE.MeshBasicMaterial({ color: 0x93c5fd, depthTest: false, depthWrite: false, transparent: true });
+        const dot = new THREE.Mesh(geom, mat);
+        dot.position.copy(anchorPoint);
+        dot.renderOrder = 9996;
+        dot.userData = { isLeaderLine: true, labelIdx };
+        group.add(dot);
+      } else {
+        const dir = new THREE.Vector3().subVectors(anchorPoint, fromPoint);
+        if (!dir.lengthSq()) dir.set(1, 0, 0); else dir.normalize();
+        const arrowLength = ctx?.screenSizeWorld ? ctx.screenSizeWorld(12) : 0.08;
+        const arrowWidth = ctx?.screenSizeWorld ? ctx.screenSizeWorld(4) : 0.03;
+        const arrow = addArrowCone(group, anchorPoint, dir, arrowLength, arrowWidth, 0x93c5fd);
+        if (arrow) {
+          arrow.renderOrder = 9996;
+          arrow.userData = { isLeaderLine: true, labelIdx };
+        }
+      }
+    } catch (e) {
+      console.warn('Leader: error creating end marker', e);
+    }
   },
 
   // Compute label world for overlay refresh (anchor-relative if not dragged)
@@ -166,12 +168,13 @@ export const LeaderAnnotation = {
       const anchorPoint = (ctx.resolveRefNameToWorld ? ctx.resolveRefNameToWorld(ann.anchorRefName, fallback) : null) || fallback || new THREE.Vector3();
       // Offset in world approx. 60px to side
       const side = ann.anchorSide || 'right';
-      const offset = (ctx.screenSizeWorld ? (ctx.screenSizeWorld(60)) : 0.3);
+      const offset = (ctx.screenSizeWorld ? ctx.screenSizeWorld(40) : 0.2);
       const cam = pmimode?.viewer?.camera;
       const horizontal = new THREE.Vector3();
       if (cam) {
         const dir = new THREE.Vector3(); cam.getWorldDirection(dir);
         const up = new THREE.Vector3(0,1,0); horizontal.crossVectors(up, dir).normalize();
+        if (!horizontal.lengthSq()) horizontal.set(1, 0, 0);
         if (side === 'left') horizontal.multiplyScalar(-1);
       } else { horizontal.set(side === 'left' ? -1 : 1, 0, 0); }
       return anchorPoint.clone().add(horizontal.multiplyScalar(offset));

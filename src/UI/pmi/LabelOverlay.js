@@ -35,6 +35,12 @@ export class LabelOverlay {
     } else if (text != null) {
       el.textContent = text;
     }
+
+    if (ann && typeof ann.anchorSide === 'string' && ann.anchorSide) {
+      el.dataset.anchorSide = ann.anchorSide;
+    } else {
+      delete el.dataset.anchorSide;
+    }
     if (worldPos) this._position(el, worldPos);
   }
 
@@ -64,4 +70,3 @@ export class LabelOverlay {
     this._root = null;
   }
 }
-

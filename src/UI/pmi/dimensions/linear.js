@@ -2,13 +2,13 @@ import * as THREE from 'three';
 import { makeOverlayLine, addArrowCone, objectRepresentativePoint } from '../annUtils.js';
 
 export const LinearDimension = {
-  type: 'dim',
+  type: 'linear',
   title: 'Linear',
   create(pmimode) {
     const defaults = pmimode?._opts || {};
     const decimals = Number.isFinite(defaults.dimDecimals) ? (defaults.dimDecimals | 0) : 3;
     return {
-      type: 'dim',
+      type: 'linear',
       decimals,
       aRefName: '',
       bRefName: '',

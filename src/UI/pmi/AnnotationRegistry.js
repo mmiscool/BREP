@@ -20,4 +20,3 @@ export class AnnotationRegistry {
 }
 
 export const annotationRegistry = new AnnotationRegistry();
-
