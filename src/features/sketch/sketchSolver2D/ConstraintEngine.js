@@ -491,6 +491,25 @@ export default class ConstraintSolver {
                 }
                 return this.createAndPushNewConstraint(newConstraint);
             }
+            if (type === "⟠") {
+                // Tangent constraint - same logic as perpendicular for now
+                let line1AngleA = calculateAngle(selected[0], selected[1]);
+                let line1AngleB = calculateAngle(selected[1], selected[0]);
+                let line2Angle = calculateAngle(selected[2], selected[3]);
+
+                line1AngleA = (line1AngleA + 180) % 360 - 180;
+                line1AngleB = (line1AngleB + 180) % 360 - 180;
+                line2Angle = (line2Angle + 180) % 360 - 180;
+
+                let diffA = line1AngleA - line2Angle;
+                let diffB = line1AngleB - line2Angle;
+
+                // Choose orientation closer to 90°
+                if (Math.abs(90 - diffA) > Math.abs(90 - diffB)) {
+                    [newConstraint.points[0], newConstraint.points[1]] = [newConstraint.points[1], newConstraint.points[0]];
+                }
+                return this.createAndPushNewConstraint(newConstraint);
+            }
             if (type === "∥") return this.createAndPushNewConstraint(newConstraint);
             if (type === "∠") {
                 // Do NOT set a value on creation. The solver initializes the

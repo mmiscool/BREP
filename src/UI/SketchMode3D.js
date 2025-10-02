@@ -1721,6 +1721,27 @@ export class SketchMode3D {
       return;
     }
 
+    // Geometry x Geometry (line + arc/circle) → Tangent
+    const lineAndRadial = geos.length === 2 && 
+      ((geos[0]?.type === "line" && (geos[1]?.type === "arc" || geos[1]?.type === "circle")) ||
+       (geos[1]?.type === "line" && (geos[0]?.type === "arc" || geos[0]?.type === "circle")));
+    if (lineAndRadial) {
+      this._ctxBar.appendChild(mk("Tangent ⟠", "⟠"));
+      // Also allow delete when any selection exists
+      if (items.length) {
+        const del = document.createElement("button");
+        del.textContent = "Delete";
+        del.style.color = "#ff8b8b";
+        del.style.background = "transparent";
+        del.style.border = "1px solid #5b2b2b";
+        del.style.borderRadius = "6px";
+        del.style.padding = "4px 8px";
+        del.onclick = () => this.#deleteSelection();
+        this._ctxBar.appendChild(del);
+      }
+      return;
+    }
+
     if (pointCount === 1) this._ctxBar.appendChild(mk("Ground ⏚", "⏚"));
     if (pointCount === 2) {
       this._ctxBar.appendChild(mk("H ━", "━"));
