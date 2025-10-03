@@ -7,8 +7,6 @@
 // - Persists annotations back into the PMI view entry on Finish
 
 import * as THREE from 'three';
-import { AccordionWidget } from '../AccordionWidget.js';
-import { SelectionFilterWidget } from '../selectionFilterWidget.js';
 import { genFeatureUI } from '../featureDialogs.js';
 import { annotationRegistry } from './AnnotationRegistry.js';
 import { AnnotationHistory } from './AnnotationHistory.js';
@@ -29,8 +27,6 @@ export class PMIMode {
     this.pmiWidget = pmiWidget;
 
     this._uiTopRight = null;
-    this._uiTopBar = null;
-    this._uiSide = null;
     this._annGroup = null;
     this._originalSections = null;
     this._pmiModeViewsSection = null;
@@ -39,17 +35,8 @@ export class PMIMode {
     this._pmiViewSettingsSection = null;
     this._pmiToolOptionsSection = null;
     this._sectionCreationPromises = [];
-    this._tool = 'select'; // default tool
     this._opts = { noteText: '', leaderText: 'TEXT HERE', dimDecimals: 3 };
-    this._pending = null; // for multi-click tools
     this._onCanvasDown = this._handlePointerDown.bind(this);
-    this._pdConsumed = false; // track if PMI handled the current gesture
-    this._onCanvasUp = (e) => {
-      if (this._pdConsumed) {
-        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
-        this._pdConsumed = false;
-      }
-    };
     this._onControlsChange = this._refreshOverlays.bind(this);
     this._gfuByIndex = new Map(); // idx -> genFeatureUI instance for dim widgets
     this._labelOverlay = null; // manages overlay labels
@@ -130,7 +117,6 @@ export class PMIMode {
     // Listen on canvas for tool inputs
     // Use capture to preempt Viewer handlers and ArcballControls
     try { v.renderer.domElement.addEventListener('pointerdown', this._onCanvasDown, { passive: false, capture: true }); } catch { }
-    try { window.addEventListener('pointerup', this._onCanvasUp, { passive: false, capture: true }); } catch { }
     // Listen for camera/controls changes to update label positions
     try {
       if (v.controls && typeof this._onControlsChange === 'function') {
@@ -144,13 +130,7 @@ export class PMIMode {
 
     // Apply camera controls policy based on current tool
     try { this._controlsEnabledPrev = !!v.controls?.enabled; } catch { this._controlsEnabledPrev = true; }
-    this.#applyControlsPolicy();
-
-    // Add keyboard listener for escape key
-    this._onKeyDown = (e) => {
-      // Text position selection no longer needed
-    };
-    window.addEventListener('keydown', this._onKeyDown);
+    try { if (v.controls) v.controls.enabled = true; } catch { }
   }
 
   async finish() {
@@ -175,7 +155,6 @@ export class PMIMode {
     this.#restoreViewTransforms();
 
     try { v.renderer.domElement.removeEventListener('pointerdown', this._onCanvasDown, { capture: true }); } catch { }
-    try { window.removeEventListener('pointerup', this._onCanvasUp, { capture: true }); } catch { }
     // Remove controls change listeners
     try {
       if (v.controls && typeof this._onControlsChange === 'function') {
@@ -183,11 +162,8 @@ export class PMIMode {
         try { v.controls.removeEventListener('end', this._onControlsChange); } catch { }
       }
     } catch { }
-    try { window.removeEventListener('keydown', this._onKeyDown); } catch { }
     // Remove overlay UI
     try { this._uiTopRight?.remove(); } catch { }
-    try { this._uiTopBar?.remove(); } catch { }
-    try { this._uiSide?.remove(); } catch { }
 
     console.log('About to remove PMI sections');
     // IMPORTANT: Remove PMI-specific accordion sections FIRST, then restore original sections
@@ -309,39 +285,6 @@ export class PMIMode {
     host.appendChild(wrap);
     this._uiTopRight = wrap;
   }
-
-
-  #applyControlsPolicy() {
-    try {
-      if (this.viewer?.controls) this.viewer.controls.enabled = (this._tool === 'select');
-    } catch { }
-  }
-
-  #getSidebarWidth() {
-    // Get the current sidebar width, matching the CADmaterialWidget logic
-    let width = 300; // default
-    try {
-      // First try to get saved width from localStorage
-      const raw = localStorage.getItem('__CAD_MATERIAL_SETTINGS__');
-      if (raw) {
-        const settings = JSON.parse(raw);
-        const savedW = parseInt(settings['__SIDEBAR_WIDTH__']);
-        if (Number.isFinite(savedW) && savedW > 0) {
-          width = savedW;
-        }
-      } else {
-        // Fallback: get actual sidebar element width
-        const sb = document.getElementById('sidebar');
-        if (sb) {
-          const cs = sb.style.width || getComputedStyle(sb).width;
-          const w = parseInt(cs);
-          if (Number.isFinite(w) && w > 0) width = w;
-        }
-      }
-    } catch { /* keep default */ }
-    return width;
-  }
-
   #hideOriginalSidebarSections() {
     try {
       const v = this.viewer;
@@ -644,12 +587,41 @@ export class PMIMode {
             return btn;
           };
 
-          inlineMenu.appendChild(makeItem('Linear Dimension', 'linear'));
-          inlineMenu.appendChild(makeItem('Radial Dimension', 'radial'));
-          inlineMenu.appendChild(makeItem('Angle Dimension', 'angle'));
-          inlineMenu.appendChild(makeItem('Leader', 'leader'));
-          inlineMenu.appendChild(makeItem('Note', 'note'));
-          inlineMenu.appendChild(makeItem('View Transform', 'viewTransform'));
+          const resolveType = (handler) => {
+            if (!handler) return '';
+            const candidates = [handler.type, handler.featureShortName, handler.featureName, handler.name];
+            for (const candidate of candidates) {
+              if (candidate === null || candidate === undefined) continue;
+              const str = String(candidate).trim();
+              if (str) return str;
+            }
+            return '';
+          };
+
+          const formatLabel = (handler, type) => {
+            if (handler?.featureName) return handler.featureName;
+            if (handler?.title) return handler.title;
+            const base = String(type || '').replace(/[-_]/g, ' ').trim();
+            if (!base) return 'Annotation';
+            return base.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+          };
+
+          const registryHandlersRaw = typeof annotationRegistry.list === 'function'
+            ? annotationRegistry.list()
+            : [];
+          const registryHandlers = Array.isArray(registryHandlersRaw) ? registryHandlersRaw : [];
+          const seenTypes = new Set();
+          for (const handler of registryHandlers) {
+            const type = resolveType(handler);
+            if (!type) continue;
+            const key = type.toLowerCase();
+            if (seenTypes.has(key)) continue;
+            seenTypes.add(key);
+            const label = formatLabel(handler, type);
+            inlineMenu.appendChild(makeItem(label, type));
+          }
+
+          const hasMenuItems = inlineMenu.childElementCount > 0;
 
           scrollableContent.appendChild(inlineMenu);
 
@@ -678,9 +650,24 @@ export class PMIMode {
 
           const toggleMenu = (open) => { inlineMenu.style.display = open ? 'block' : 'none'; };
           addBtn.addEventListener('click', (ev) => {
+            if (!hasMenuItems) return;
             ev.stopPropagation();
             toggleMenu(inlineMenu.style.display === 'none');
           });
+
+          if (!hasMenuItems) {
+            addBtn.disabled = true;
+            addBtn.title = 'No annotation types available';
+            addBtn.style.opacity = '0.5';
+            addBtn.style.cursor = 'default';
+            const empty = document.createElement('div');
+            empty.textContent = 'No annotation types registered';
+            empty.style.color = '#9ca3af';
+            empty.style.fontSize = '14px';
+            empty.style.textAlign = 'center';
+            empty.style.padding = '8px 0';
+            inlineMenu.appendChild(empty);
+          }
 
           footer.appendChild(addBtn);
 
@@ -760,12 +747,6 @@ export class PMIMode {
     } catch (e) {
       console.warn('Failed to apply PMI panel layout:', e);
     }
-  }
-
-  // Legacy method kept for compatibility - now redirects to new implementation
-  #mountLeftPanel() {
-    // This method is no longer used - PMI sections are added directly to the existing accordion
-    return this.#mountPMISections();
   }
 
   #addNewAnnotation(type) {
@@ -1464,7 +1445,7 @@ export class PMIMode {
     // Avoid interfering if clicking overlays
     try {
       const path = e.composedPath?.() || [];
-      if (path.some((el) => el === this._uiTopRight || el === this._uiSide || (el?.classList?.contains?.('pmi-side')))) return;
+      if (path.some((el) => el === this._uiTopRight || (el?.classList?.contains?.('pmi-side')))) return;
     } catch { }
 
     // If a feature reference_selection is active, let selection widget handle it
@@ -1539,7 +1520,7 @@ export class PMIMode {
       }
     } catch { }
 
-    try { if (this.viewer?.controls) this.viewer.controls.enabled = (this._tool === "select"); } catch { }
+    try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch { }
   }
 
 
