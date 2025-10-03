@@ -4,7 +4,16 @@
 // - Produces: about.html (one <div> per license, with repo/homepage + author)
 
 import { execSync } from "child_process";
-import { writeFileSync, readFileSync } from "fs";
+import {
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  readdirSync,
+  copyFileSync,
+  rmSync,
+  existsSync,
+} from "fs";
+import path from "path";
 
 const run = (cmd) => execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
 
@@ -35,6 +44,10 @@ try {
 // data shape: { "<LICENSE>": [ { name, versions, paths, license, author?, homepage?, description? }, ... ], ... }
 const licenseKeys = Object.keys(data).sort((a, b) => a.localeCompare(b));
 
+const rootDir = process.cwd();
+const docsSourceDir = path.join(rootDir, "docs");
+const docsOutputDir = path.join(rootDir, "public", "docs");
+
 const css = `
 :root{
   --bg:#0b0f14; --panel:#0f141b; --text:#d7dde6; --muted:#9aa7b2;
@@ -49,6 +62,12 @@ h1{margin:0 0 18px;font-size:22px;color:var(--accent);font-weight:700}
 .readme{padding:0}
 .readme .header{padding:16px 18px;border-bottom:1px solid var(--border)}
 .readme .content{padding:18px}
+.doc-card{padding:18px}
+.doc-nav{margin:0 0 18px;display:flex;gap:12px;flex-wrap:wrap;color:var(--muted)}
+.doc-nav a{color:var(--accent);font-weight:600}
+.doc-list{list-style:none;margin:18px 0;padding:0}
+.doc-list li{margin:6px 0}
+.doc-list a{color:var(--accent)}
 .prose h1{font-size:24px;margin:0 0 12px}
 .prose h2{font-size:18px;margin:18px 0 8px}
 .prose h3{font-size:16px;margin:14px 0 6px}
@@ -120,6 +139,13 @@ function renderMarkdown(md) {
   const inline = (s) => {
     // escape first; we keep markdown specials (*_`[]()#) unescaped
     let out = escape(s);
+    // images ![alt](src "title")
+    out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g, (_m, alt = "", src = "", title = "") => {
+      const altAttr = alt.trim();
+      const srcAttr = src.trim();
+      const titleAttr = title ? ` title="${title.trim()}"` : "";
+      return `<img src="${srcAttr}" alt="${altAttr}"${titleAttr} loading="lazy" />`;
+    });
     // links [text](url)
     out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, t, u) => `<a href="${u}">${t}</a>`);
     // code `x`
@@ -170,7 +196,114 @@ function renderMarkdown(md) {
   return html;
 }
 
-const readmeHTML = renderMarkdown(readmeText);
+const toPosix = (p) => p.split(path.sep).join("/");
+
+const convertMarkdownLinks = (html) =>
+  html.replace(/href="([^"#]+?)\.md(#[^"]*)?"/g, (match, base, hash = "") => {
+    const fullPath = `${base}.md`;
+    if (/^[a-z]+:/i.test(fullPath)) return match;
+    const next = `${base}.html${hash}`;
+    return `href="${next}"`;
+  });
+
+const extractTitle = (mdText, fallback) => {
+  const heading = mdText.match(/^#\s+(.+)$/m);
+  return heading ? heading[1].trim() : fallback;
+};
+
+const docTemplate = (title, content, { relativeRoot = ".", showTitle = false } = {}) => {
+  const normalizedRoot = !relativeRoot || relativeRoot === "" ? "." : relativeRoot;
+  const navRoot = normalizedRoot.replace(/\\+/g, "/");
+  const indexHref = navRoot === "." ? "index.html" : `${navRoot}/index.html`;
+  const header = showTitle ? `<h1>${escapeHTML(title)}</h1>` : "";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>${escapeHTML(title)} - BREP Docs</title>
+<style>${css}</style>
+</head>
+<body>
+<main>
+  <nav class="doc-nav"><a href="${indexHref}">Docs Index</a><span>&middot;</span><a href="/about.html">About</a></nav>
+  <section class="card doc-card">
+    ${header}
+    <div class="prose">
+${content}
+    </div>
+  </section>
+</main>
+</body>
+</html>`;
+};
+
+function generateDocsSite() {
+  if (!existsSync(docsSourceDir)) {
+    console.warn("docs directory not found; skipping docs HTML generation");
+    return;
+  }
+
+  mkdirSync(path.join(rootDir, "public"), { recursive: true });
+  rmSync(docsOutputDir, { recursive: true, force: true });
+  mkdirSync(docsOutputDir, { recursive: true });
+
+  const pages = [];
+
+  const walk = (srcDir, destDir) => {
+    const entries = readdirSync(srcDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = path.join(srcDir, entry.name);
+      if (entry.isDirectory()) {
+        const nextDest = path.join(destDir, entry.name);
+        mkdirSync(nextDest, { recursive: true });
+        walk(srcPath, nextDest);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+
+      const ext = path.extname(entry.name).toLowerCase();
+      if (ext === ".md") {
+        const baseName = path.basename(entry.name, ext);
+        const destPath = path.join(destDir, `${baseName}.html`);
+        const md = readFileSync(srcPath, "utf-8");
+        const pageTitle = extractTitle(md, baseName);
+        let body = renderMarkdown(md);
+        body = convertMarkdownLinks(body);
+        const relRoot = path.relative(path.dirname(destPath), docsOutputDir) || ".";
+        const htmlPage = docTemplate(pageTitle, body, { relativeRoot: relRoot, showTitle: false });
+        writeFileSync(destPath, htmlPage, "utf-8");
+        const relativeHref = toPosix(path.relative(docsOutputDir, destPath));
+        pages.push({ title: pageTitle, href: relativeHref });
+        continue;
+      }
+
+      const destAsset = path.join(destDir, entry.name);
+      copyFileSync(srcPath, destAsset);
+    }
+  };
+
+  walk(docsSourceDir, docsOutputDir);
+
+  const sortedPages = pages.sort((a, b) => a.href.localeCompare(b.href));
+  const listItems = sortedPages
+    .map((page) => `<li><a href="./${escapeHTML(page.href)}">${escapeHTML(page.title)}</a></li>`)
+    .join("\n");
+
+  const indexContent = sortedPages.length
+    ? `<p>Select a document below.</p>\n<ul class="doc-list">${listItems}</ul>`
+    : `<p>No documentation pages were found.</p>`;
+
+  const indexHtml = docTemplate("BREP Documentation", indexContent, { relativeRoot: ".", showTitle: true });
+  writeFileSync(path.join(docsOutputDir, "index.html"), indexHtml, "utf-8");
+
+  console.log(`✔ Generated ${sortedPages.length} documentation page${sortedPages.length === 1 ? "" : "s"} in public/docs`);
+}
+
+const readmeHTML = convertMarkdownLinks(renderMarkdown(readmeText));
+
+generateDocsSite();
 
 
 
