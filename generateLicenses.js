@@ -72,12 +72,17 @@ h1{margin:0 0 18px;font-size:22px;color:var(--accent);font-weight:700}
 .prose h2{font-size:18px;margin:18px 0 8px}
 .prose h3{font-size:16px;margin:14px 0 6px}
 .prose p{margin:0 0 10px}
-.prose ul{margin:0 0 10px 18px}
+.prose ul,.prose ol{margin:0 0 10px 18px}
 .prose li{margin:4px 0}
 .prose code{background:#0d1520;border:1px solid var(--border);padding:1px 5px;border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono','Courier New',monospace;font-size:12px}
 .prose pre{background:#0d1520;border:1px solid var(--border);padding:12px;border-radius:12px;overflow:auto}
 .prose a{color:var(--accent)}
 .prose img{max-width:100%;height:auto;}
+.prose table{border-collapse:collapse;width:100%;margin:16px 0;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.prose th,.prose td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)}
+.prose th{background:var(--chip);color:var(--text);font-weight:600;font-size:13px}
+.prose tr:last-child td{border-bottom:none}
+.prose tbody tr:hover{background:rgba(92,200,255,0.05)}
 .license{
   background:var(--panel);border:1px solid var(--border);border-radius:14px;
   padding:16px 16px 8px;margin:0 0 18px;
@@ -114,6 +119,48 @@ const escape = (s = "") => String(s)
   .replaceAll('"', "&quot;")
   .replaceAll("'", "&#39;");
 
+// Helper function to parse markdown tables
+function parseTable(tableLines) {
+  if (tableLines.length < 2) return null;
+  
+  // Parse header row
+  const headerLine = tableLines[0].trim();
+  if (!headerLine.includes('|')) return null;
+  
+  // Parse separator row (must be second line)
+  const separatorLine = tableLines[1].trim();
+  if (!separatorLine.match(/^\|?[\s\-\|:]+\|?$/)) return null;
+  
+  // Extract headers
+  const headers = headerLine.split('|')
+    .map(h => h.trim())
+    .filter(h => h !== '');
+  
+  // Extract alignment from separator
+  const alignments = separatorLine.split('|')
+    .map(s => s.trim())
+    .filter(s => s !== '')
+    .map(s => {
+      if (s.startsWith(':') && s.endsWith(':')) return 'center';
+      if (s.endsWith(':')) return 'right';
+      return 'left';
+    });
+  
+  // Parse data rows
+  const dataRows = tableLines.slice(2).map(line => {
+    const trimmed = line.trim();
+    if (!trimmed.includes('|')) return null;
+    return trimmed.split('|')
+      .map(cell => cell.trim())
+      .filter((cell, idx, arr) => {
+        // Remove empty first/last cells if they're from leading/trailing |
+        return !(cell === '' && (idx === 0 || idx === arr.length - 1));
+      });
+  }).filter(row => row !== null);
+  
+  return { headers, alignments, dataRows };
+}
+
 function renderMarkdown(md) {
   // Extract fenced code blocks first and replace with placeholders
   const codeBlocks = [];
@@ -127,6 +174,9 @@ function renderMarkdown(md) {
   const lines = tmp.split(/\r?\n/);
   let html = "";
   let inList = false;
+  let listType = null; // 'ul' for unordered, 'ol' for ordered
+  let inTable = false;
+  let tableLines = [];
   let para = [];
 
   const flushPara = () => {
@@ -135,6 +185,62 @@ function renderMarkdown(md) {
       if (line) html += `<p>${inline(line)}</p>`;
       para = [];
     }
+  };
+
+  const flushTable = () => {
+    if (tableLines.length >= 2) {
+      const table = parseTable(tableLines);
+      if (table) {
+        html += renderTableHTML(table);
+      } else {
+        // If table parsing failed, treat as regular paragraphs
+        for (const line of tableLines) {
+          para.push(line.trim());
+        }
+        flushPara();
+      }
+    } else {
+      // Not enough lines for a table, treat as paragraphs
+      for (const line of tableLines) {
+        para.push(line.trim());
+      }
+      flushPara();
+    }
+    tableLines = [];
+    inTable = false;
+  };
+
+  const renderTableHTML = (table) => {
+    let tableHTML = '<table>';
+    
+    // Header
+    if (table.headers.length > 0) {
+      tableHTML += '<thead><tr>';
+      for (let i = 0; i < table.headers.length; i++) {
+        const align = table.alignments[i] || 'left';
+        const style = align !== 'left' ? ` style="text-align: ${align}"` : '';
+        tableHTML += `<th${style}>${inline(table.headers[i])}</th>`;
+      }
+      tableHTML += '</tr></thead>';
+    }
+    
+    // Body
+    if (table.dataRows.length > 0) {
+      tableHTML += '<tbody>';
+      for (const row of table.dataRows) {
+        tableHTML += '<tr>';
+        for (let i = 0; i < row.length; i++) {
+          const align = table.alignments[i] || 'left';
+          const style = align !== 'left' ? ` style="text-align: ${align}"` : '';
+          tableHTML += `<td${style}>${inline(row[i] || '')}</td>`;
+        }
+        tableHTML += '</tr>';
+      }
+      tableHTML += '</tbody>';
+    }
+    
+    tableHTML += '</table>';
+    return tableHTML;
   };
 
   const inline = (s) => {
@@ -162,34 +268,79 @@ function renderMarkdown(md) {
     const raw = lines[i];
     const line = raw.trimEnd();
     if (!line.trim()) {
-      if (inList) { html += `</ul>`; inList = false; }
+      if (inTable) {
+        flushTable();
+      }
+      if (inList) { html += `</${listType}>`; inList = false; listType = null; }
       flushPara();
       continue;
+    }
+
+    // Check for potential table line (contains |)
+    const isTableLine = line.includes('|');
+    
+    if (isTableLine && !inTable) {
+      // Start of potential table
+      if (inList) { html += `</${listType}>`; inList = false; listType = null; }
+      flushPara();
+      inTable = true;
+      tableLines = [line];
+      continue;
+    } else if (isTableLine && inTable) {
+      // Continue table
+      tableLines.push(line);
+      continue;
+    } else if (inTable && !isTableLine) {
+      // End of table
+      flushTable();
     }
 
     // headings #..######
     const h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h) {
-      if (inList) { html += `</ul>`; inList = false; }
+      if (inList) { html += `</${listType}>`; inList = false; listType = null; }
+      if (inTable) { flushTable(); }
       flushPara();
       const level = h[1].length;
       html += `<h${level}>${inline(h[2].trim())}</h${level}>`;
       continue;
     }
 
-    // bullet list items
-    const li = line.match(/^[-*]\s+(.*)$/);
-    if (li) {
+    // numbered list items
+    const numberedLi = line.match(/^(\d+)\.\s+(.*)$/);
+    if (numberedLi) {
+      if (inTable) { flushTable(); }
       flushPara();
-      if (!inList) { html += `<ul>`; inList = true; }
-      html += `<li>${inline(li[1].trim())}</li>`;
+      if (!inList || listType !== 'ol') {
+        if (inList) { html += `</${listType}>`; }
+        html += `<ol>`;
+        inList = true;
+        listType = 'ol';
+      }
+      html += `<li>${inline(numberedLi[2].trim())}</li>`;
+      continue;
+    }
+
+    // bullet list items
+    const bulletLi = line.match(/^[-*]\s+(.*)$/);
+    if (bulletLi) {
+      if (inTable) { flushTable(); }
+      flushPara();
+      if (!inList || listType !== 'ul') {
+        if (inList) { html += `</${listType}>`; }
+        html += `<ul>`;
+        inList = true;
+        listType = 'ul';
+      }
+      html += `<li>${inline(bulletLi[1].trim())}</li>`;
       continue;
     }
 
     // normal paragraph line (accumulate)
     para.push(line.trim());
   }
-  if (inList) html += `</ul>`;
+  if (inTable) flushTable();
+  if (inList) html += `</${listType}>`;
   flushPara();
 
   // restore fenced code blocks
@@ -237,7 +388,7 @@ const docTemplate = (title, content, { relativeRoot = ".", showTitle = false } =
 </head>
 <body>
 <main>
-  <nav class="doc-nav"><a href="${indexHref}">Help Home</a><span>&middot;</span><a href="/help/index.html">About</a></nav>
+  <nav class="doc-nav"><a href="${indexHref}">Help Home</a><span>&middot;</span><a href="/help/table-of-contents.html">Table of Contents</a><span>&middot;</span><a href="https://github.com/mmiscool/BREP" target="_blank" rel="noopener noreferrer">GitHub</a></nav>
   <section class="card doc-card">
     ${header}
     <div class="prose">
@@ -248,6 +399,68 @@ ${content}
 </body>
 </html>`;
 };
+
+function generateTableOfContents(pages, outputDir) {
+  // Create a tree structure from the pages
+  const tree = {};
+  
+  // Add root-level files first
+  const rootFiles = pages.filter(p => !p.href.includes('/'));
+  
+  // Add files in subdirectories
+  pages.forEach(page => {
+    const parts = page.href.split('/');
+    if (parts.length === 1) {
+      // Root level file
+      if (!tree._root) tree._root = [];
+      tree._root.push(page);
+    } else {
+      // File in subdirectory
+      const dir = parts[0];
+      if (!tree[dir]) tree[dir] = [];
+      tree[dir].push({
+        ...page,
+        href: page.href,
+        name: parts[parts.length - 1].replace('.html', '')
+      });
+    }
+  });
+  
+  // Sort everything
+  if (tree._root) {
+    tree._root.sort((a, b) => a.title.localeCompare(b.title));
+  }
+  Object.keys(tree).forEach(key => {
+    if (key !== '_root') {
+      tree[key].sort((a, b) => a.title.localeCompare(b.title));
+    }
+  });
+  
+  // Generate HTML
+  let tocContent = '<h1>Table of Contents</h1>\n<p>Complete documentation structure with all available pages.</p>\n\n';
+  
+  // Root level files
+  if (tree._root && tree._root.length > 0) {
+    tocContent += '<h2>Main Documentation</h2>\n<ul class="doc-list">\n';
+    tree._root.forEach(page => {
+      tocContent += `<li><a href="./${escapeHTML(page.href)}">${escapeHTML(page.title)}</a></li>\n`;
+    });
+    tocContent += '</ul>\n\n';
+  }
+  
+  // Subdirectories
+  const sortedDirs = Object.keys(tree).filter(k => k !== '_root').sort();
+  sortedDirs.forEach(dir => {
+    tocContent += `<h2>${escapeHTML(dir.charAt(0).toUpperCase() + dir.slice(1))}</h2>\n<ul class="doc-list">\n`;
+    tree[dir].forEach(page => {
+      tocContent += `<li><a href="./${escapeHTML(page.href)}">${escapeHTML(page.title)}</a></li>\n`;
+    });
+    tocContent += '</ul>\n\n';
+  });
+  
+  const tocHtml = docTemplate("Table of Contents", tocContent, { relativeRoot: ".", showTitle: false });
+  writeFileSync(path.join(outputDir, "table-of-contents.html"), tocHtml, "utf-8");
+}
 
 function generateDocsSite() {
   if (!existsSync(docsSourceDir)) {
@@ -389,7 +602,10 @@ function generateDocsSite() {
     writeFileSync(path.join(docsOutputDir, "index.html"), indexHtml, "utf-8");
   }
 
-  console.log(`✔ Generated ${sortedPages.length + 1} documentation page${sortedPages.length === 0 ? "" : "s"} in public/help`);
+  // Generate table of contents
+  generateTableOfContents(sortedPages, docsOutputDir);
+
+  console.log(`✔ Generated ${sortedPages.length + 2} documentation page${sortedPages.length === -1 ? "" : "s"} in public/help`);
 }
 
 const readmeHTML = convertMarkdownLinks(renderMarkdown(readmeText));
