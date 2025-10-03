@@ -125,7 +125,7 @@ export class NoteAnnotation extends BaseAnnotation {
       };
       const onUp = (ev) => {
         try { window.removeEventListener('pointermove', onMove, true); window.removeEventListener('pointerup', onUp, true); } catch {}
-        try { if (pmimode.viewer?.controls) pmimode.viewer.controls.enabled = (pmimode._tool === 'select'); } catch {}
+        try { if (pmimode.viewer?.controls) pmimode.viewer.controls.enabled = true; } catch {}
         try { ev.preventDefault(); ev.stopImmediatePropagation?.(); ev.stopPropagation(); } catch {}
       };
       window.addEventListener('pointermove', onMove, true);

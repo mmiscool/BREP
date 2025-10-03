@@ -1266,10 +1266,10 @@ export class PMIMode {
         // Apply the transforms
         if (typeof handler.applyTransformsToSolids === 'function') {
           console.log('Applying transforms via public method');
-          handler.applyTransformsToSolids(ann);
+          handler.applyTransformsToSolids(ann, this);
         } else if (typeof handler._applyTransformsToSolids === 'function') {
           console.log('Applying transforms via private method');
-          handler._applyTransformsToSolids(ann);
+          handler._applyTransformsToSolids(ann, this);
         }
       }
 
@@ -1296,7 +1296,7 @@ export class PMIMode {
 
         // Restore original transforms
         if (typeof handler.restoreOriginalTransforms === 'function') {
-          handler.restoreOriginalTransforms(ann);
+          handler.restoreOriginalTransforms(ann, this);
         }
       }
 
