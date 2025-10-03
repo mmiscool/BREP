@@ -255,6 +255,10 @@ function renderMarkdown(md) {
     });
     // links [text](url)
     out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, t, u) => `<a href="${u}">${t}</a>`);
+    // auto-link naked URLs (https:// and http://)
+    out = out.replace(/(^|[^">=\])])((https?:\/\/[^\s<>"'`\])\}]+))/g, (match, prefix, url) => {
+      return `${prefix}<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+    });
     // code `x`
     out = out.replace(/`([^`]+)`/g, (_m, t) => `<code>${t}</code>`);
     // bold **x**
