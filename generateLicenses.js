@@ -77,6 +77,7 @@ h1{margin:0 0 18px;font-size:22px;color:var(--accent);font-weight:700}
 .prose code{background:#0d1520;border:1px solid var(--border);padding:1px 5px;border-radius:6px;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:12px}
 .prose pre{background:#0d1520;border:1px solid var(--border);padding:12px;border-radius:12px;overflow:auto}
 .prose a{color:var(--accent)}
+.prose img{max-width:100%;height:auto;}
 .license{
   background:var(--panel);border:1px solid var(--border);border-radius:14px;
   padding:16px 16px 8px;margin:0 0 18px;
