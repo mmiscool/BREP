@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { FeatureRegistry } from './FeatureRegistry.js';
 import { SelectionFilter } from './UI/SelectionFilter.js';
 import { localStorage as LS } from './localStorageShim.js';
-import Stats from 'stats.js';
+
 
 export class PartHistory {
   constructor() {
@@ -65,7 +65,6 @@ export class PartHistory {
         continue;
       }
 
-      stats.begin();
 
 
       if (whatStepToStopAt && feature.inputParams.featureID === whatStepToStopAt) {
@@ -94,7 +93,6 @@ export class PartHistory {
         const msg = `Feature type \"${feature.type}\" is not installed`;
         try { feature.lastRun = { ok: false, startedAt: t1, endedAt: t1, durationMs: 0, error: { name: 'MissingFeature', message: msg, stack: null } }; } catch { }
         // Skip visualization/add/remove steps for this feature
-        stats.end();
         continue;
       }
       const instance = new FeatureClass(this);
@@ -193,7 +191,6 @@ export class PartHistory {
         }
       }
       // monitored code goes here
-      stats.end();
     }
 
     const endTime = Date.now();
@@ -520,32 +517,4 @@ export function extractDefaultValues(schema) {
   }
   return result;
 }
-// Create a performance stats instance in the browser; provide a no-op shim in Node.
-let stats;
-if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-  try {
-    stats = new Stats();
-    stats.showPanel(0);
-    stats.showPanel(1); // 0: fps, 1: ms, 2: mb, 3+: custom
-    stats.showPanel(2);
-    stats.showPanel(3);
-    try { document.body.appendChild(stats.dom); } catch { /* ignore */ }
-  } catch {
-    // Fallback to no-op if Stats fails in a non-DOM environment
-    stats = { begin() { }, end() { }, showPanel() { } };
-  }
-} else {
-  // Node or non-DOM environments: no-op implementation
-  stats = { begin() { }, end() { }, showPanel() { } };
-}
 
-
-
-
-
-
-
-
-
-
-// Removed unused debug helper logGeometryPoints
