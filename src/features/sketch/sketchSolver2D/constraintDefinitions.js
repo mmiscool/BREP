@@ -3,6 +3,12 @@ import { calculateAngle, rotatePoint, coinToss, distance, shuffle, shuffleArray,
 let tolerance = 0.00001;
 const constraintFunctions = [];
 
+const normalizeAngle = (angle) => ((angle % 360) + 360) % 360;
+const shortestAngleDelta = (target, current) => {
+    const delta = normalizeAngle(target - current);
+    return (delta > 180) ? delta - 360 : delta;
+};
+
 
 (constraintFunctions["━"] = function (solverObject, constraint, points, constraintValue) {
     // Horizontal constraint
@@ -297,104 +303,91 @@ const constraintFunctions = [];
 
 (constraintFunctions["∠"] = function (solverObject, constraint, points, constraintValue) {
     // Angle constraint
-    let p1, p2, p3, p4;
+    const [p1, p2, p3, p4] = points;
 
-    [p1, p2, p3, p4] = points;
+    const line1Angle = calculateAngle(p1, p2);
+    const line2Angle = calculateAngle(p3, p4);
+    const differenceBetweenAngles = line1Angle - line2Angle;
 
-    let line1Angle = calculateAngle(p1, p2);
-    let line2Angle = calculateAngle(p3, p4);
-    let differenceBetweenAngles = line1Angle - line2Angle;
-
-
-    if(constraint.value == null){
-        //set the value of the constraint to the current angle
-        constraint.value = differenceBetweenAngles;
-        // round the constraint value to 4 decimal places
-        constraint.value = roundToDecimals(constraint.value, 4);
-        if (constraint.value < 0) constraint.value += 360;
+    if (constraint.value == null) {
+        // Seed with the current measured angle (normalize into [0, 360))
+        constraint.value = roundToDecimals(normalizeAngle(differenceBetweenAngles), 4);
         return;
     } else if (constraint.value < 0) {
         constraint.value = Math.abs(constraint.value);
         constraint.points = [constraint.points[2], constraint.points[3], constraint.points[1], constraint.points[0]];
-        return
+        return;
     } else if (constraint.value > 360) {
-        constraint.value = constraint.value % 360;
-        return
-    } 
+        constraint.value = normalizeAngle(constraint.value);
+        return;
+    }
 
+    const currentAngle = normalizeAngle(differenceBetweenAngles);
+    let desiredAngle = Number.isFinite(constraintValue) ? constraintValue : parseFloat(constraint.value);
+    if (!Number.isFinite(desiredAngle)) desiredAngle = currentAngle;
+    const targetAngle = normalizeAngle(desiredAngle);
 
-    let targetAngle = constraintValue + 0;
+    const deltaRaw = shortestAngleDelta(targetAngle, currentAngle);
 
-    if (constraintValue < 0) targetAngle += 360;
-
-
-
-
-
-    // Normalize difference to 
-    differenceBetweenAngles = (differenceBetweenAngles + 360) % 360;
-
-    if (Math.abs(targetAngle - differenceBetweenAngles) < tolerance) {
+    if (Math.abs(deltaRaw) < tolerance) {
         constraint.error = null;
         return;
-    } else {
-        if (Math.abs(targetAngle - differenceBetweenAngles) < 30 * tolerance) {
-            constraint.error = `Angle constraint not satisfied
-            ${targetAngle} != ${differenceBetweenAngles}
-            ${Math.abs(targetAngle - differenceBetweenAngles)} < 
+    }
+
+    if (Math.abs(deltaRaw) < 30 * tolerance) {
+        constraint.error = `Angle constraint not satisfied
+            ${targetAngle} != ${currentAngle}
+            ${Math.abs(deltaRaw)} < 
             ${tolerance * 30}
             `;
+    } else {
+        constraint.error = null;
+    }
+
+    let line1Moving = !(p1.fixed && p2.fixed);
+    let line2Moving = !(p3.fixed && p4.fixed);
+
+    // Lines that already have horizontal/vertical constraints should stay put here.
+    if (participateInConstraint(solverObject, "━", [p1, p2])) line1Moving = false;
+    if (participateInConstraint(solverObject, "━", [p3, p4])) line2Moving = false;
+    if (participateInConstraint(solverObject, "│", [p1, p2])) line1Moving = false;
+    if (participateInConstraint(solverObject, "│", [p3, p4])) line2Moving = false;
+
+    if (!line1Moving && !line2Moving) return;
+
+    const maxStep = 1.5;
+    let delta = deltaRaw;
+    if (Math.abs(delta) > maxStep) delta = Math.sign(delta) * maxStep;
+
+    let rotationLine1 = 0;
+    let rotationLine2 = 0;
+
+    if (line1Moving && line2Moving) {
+        rotationLine1 = delta / 2;
+        rotationLine2 = -delta / 2;
+    } else if (line1Moving) {
+        rotationLine1 = delta;
+    } else if (line2Moving) {
+        rotationLine2 = -delta;
+    }
+
+    if (line1Moving && rotationLine1) {
+        if (p1.fixed) {
+            rotatePoint(p1, p2, rotationLine1);
+        } else if (p2.fixed) {
+            rotatePoint(p2, p1, rotationLine1);
         } else {
-            constraint.error = null;
+            coinToss() ? rotatePoint(p1, p2, rotationLine1) : rotatePoint(p2, p1, rotationLine1);
         }
+    }
 
-        // limit the target angle to be at the maximum +/- 1 of the difrenceBetweenAngles
-        if (Math.abs(targetAngle - differenceBetweenAngles) > 1.5) {
-            targetAngle = differenceBetweenAngles + (targetAngle > differenceBetweenAngles ? 1.5 : -1.5);
-            //if (differenceBetweenAngles < 180) targetAngle = differenceBetweenAngles + (targetAngle > differenceBetweenAngles ? 1.5 : -1.5);
-            //if (differenceBetweenAngles > 180) targetAngle = differenceBetweenAngles - (targetAngle > differenceBetweenAngles ? 1.5 : -1.5);
-        }
-        //if (targetAngle < 0) targetAngle += 360;
-
-        let line1Moving = !(p1.fixed && p2.fixed);
-        let line2Moving = !(p3.fixed && p4.fixed);
-
-        // check if line 1 or line 2 have a vertical or horizontal constraint applied to them
-        // if so, then the line is not moving
-        if (participateInConstraint(solverObject, "━", [p1, p2])) line1Moving = false;
-        if (participateInConstraint(solverObject, "━", [p3, p4])) line2Moving = false;
-        if (participateInConstraint(solverObject, "│", [p1, p2])) line1Moving = false;
-        if (participateInConstraint(solverObject, "│", [p3, p4])) line2Moving = false;
-
-
-        let angleDifference = targetAngle - differenceBetweenAngles;
-        if (line1Moving && line2Moving) angleDifference /= 2;
-
-        angleDifference = (angleDifference + 360) % 360; // Normalize
-
-        angleDifference = (angleDifference + 360) % 360;
-
-        if (line1Moving) {
-            if (p1.fixed) {
-                rotatePoint(p1, p2, angleDifference);
-            } else if (p2.fixed) {
-                rotatePoint(p2, p1, angleDifference);
-            } else if (!p1.fixed && !p2.fixed) {
-                coinToss() ? rotatePoint(p1, p2, angleDifference) : rotatePoint(p2, p1, angleDifference);
-            }
-        }
-
-        // flip the angle for adjusting the second line
-        angleDifference = -angleDifference;
-
-        if (line2Moving) {
-            if (p3.fixed) {
-                rotatePoint(p3, p4, angleDifference);
-            } else if (p4.fixed) {
-                rotatePoint(p4, p3, angleDifference);
-            } else if (!p3.fixed && !p4.fixed) {
-                coinToss() ? rotatePoint(p3, p4, angleDifference) : rotatePoint(p4, p3, angleDifference);
-            }
+    if (line2Moving && rotationLine2) {
+        if (p3.fixed) {
+            rotatePoint(p3, p4, rotationLine2);
+        } else if (p4.fixed) {
+            rotatePoint(p4, p3, rotationLine2);
+        } else {
+            coinToss() ? rotatePoint(p3, p4, rotationLine2) : rotatePoint(p4, p3, rotationLine2);
         }
     }
 

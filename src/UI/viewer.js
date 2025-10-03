@@ -294,6 +294,7 @@ export class Viewer {
         await this.accordion.expandSection("Scene Manager");
 
         await this.accordion.expandSection("History");
+        await this.accordion.expandSection("PMI Views");
 
 
 

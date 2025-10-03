@@ -1,38 +1,74 @@
+// NoteAnnotation.js
+// Note annotation following feature pattern with full implementation from old PMI code
+
 import * as THREE from 'three';
+import { BaseAnnotation } from '../BaseAnnotation.js';
 
-export const NoteAnnotation = {
-  type: 'note',
-  title: 'Note',
+const inputParamsSchema = {
+  annotationID: {
+    type: "string",
+    default_value: null,
+    hint: "unique identifier for the note",
+  },
+  text: {
+    type: "string",
+    default_value: "",
+    hint: "Note text content"
+  },
+  position: {
+    type: "object",
+    default_value: null,
+    hint: "3D position of the note marker"
+  }
+};
 
-  create(pmimode) {
+export class NoteAnnotation extends BaseAnnotation {
+  static type = 'note';
+  static title = 'Note';
+  static featureShortName = "note";
+  static featureName = "Note";
+  static inputParamsSchema = inputParamsSchema;
+
+  constructor() {
+    super();
+    this.inputParams = {};
+    this.persistentData = {};
+  }
+
+  async run(renderingContext) {
+    const { pmimode, group, idx, ctx } = renderingContext;
+    return this.constructor.render3D(pmimode, group, this.inputParams, idx, ctx);
+  }
+
+  // Static methods for PMI system compatibility (preserving old PMI interface)
+  static create(pmimode) {
     const defaults = pmimode?._opts || {};
     return {
       type: 'note',
       text: typeof defaults.noteText === 'string' ? defaults.noteText : '',
       __open: true,
     };
-  },
+  }
 
-  // Schema-only definition used by the engine
-  getSchema(pmimode, ann) {
+  static getSchema(pmimode, ann) {
     const schema = {
       text: { type: 'string', label: 'Text', default_value: ann.text || '' },
     };
     const params = { text: schema.text.default_value };
     return { schema, params };
-  },
+  }
 
-  applyParams(pmimode, ann, params) {
+  static applyParams(pmimode, ann, params) {
     ann.text = String(params.text || '');
     return { statusText: (ann.text || '').slice(0, 24) };
-  },
+  }
 
-  statusText(pmimode, ann) {
+  static statusText(pmimode, ann) {
     return (ann.text || '').slice(0, 24);
-  },
+  }
 
   // Draw marker + overlay label
-  render3D(pmimode, group, ann, idx, ctx) {
+  static render3D(pmimode, group, ann, idx, ctx) {
     const p = new THREE.Vector3(ann.position?.x || 0, ann.position?.y || 0, ann.position?.z || 0);
     const g = new THREE.SphereGeometry(0.08, 16, 12);
     const m = new THREE.MeshBasicMaterial({ color: 0x93c5fd, depthTest: false, depthWrite: false, transparent: true });
@@ -55,10 +91,10 @@ export const NoteAnnotation = {
       labelPos = p.clone().addScaledVector(camRight, offset).addScaledVector(n, offset * 0.25);
     }
     ctx.updateLabel(idx, txt, labelPos, ann);
-  },
+  }
 
   // Provide world position for overlay refresh without full rebuild
-  getLabelWorld(pmimode, ann, ctx) {
+  static getLabelWorld(pmimode, ann, ctx) {
     try {
       if (ann.labelWorld) return new THREE.Vector3(ann.labelWorld.x, ann.labelWorld.y, ann.labelWorld.z);
       const p = new THREE.Vector3(ann.position?.x || 0, ann.position?.y || 0, ann.position?.z || 0);
@@ -69,10 +105,10 @@ export const NoteAnnotation = {
       const off = ctx.screenSizeWorld ? ctx.screenSizeWorld(16) : 0.05;
       return p.clone().addScaledVector(right, off).addScaledVector(n, off * 0.25);
     } catch { return null; }
-  },
+  }
 
   // Drag note label on view plane
-  onLabelPointerDown(pmimode, idx, ann, e, ctx) {
+  static onLabelPointerDown(pmimode, idx, ann, e, ctx) {
     try {
       const v = pmimode.viewer; const cam = v?.camera; if (!cam) return;
       const normal = ctx.alignNormal ? ctx.alignNormal(ann.alignment || 'view', ann) : new THREE.Vector3(0,0,1);
@@ -95,5 +131,5 @@ export const NoteAnnotation = {
       window.addEventListener('pointermove', onMove, true);
       window.addEventListener('pointerup', onUp, true);
     } catch {}
-  },
-};
+  }
+}

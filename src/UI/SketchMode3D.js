@@ -291,9 +291,9 @@ export class SketchMode3D {
         const constraints = selection.filter(i => i.type === 'constraint');
         const geometries = selection.filter(i => i.type === 'geometry');
         const points = selection.filter(i => i.type === 'point');
-        
+
         let deletedAny = false;
-        
+
         if (this._solver) {
           // Remove constraints first
           if (constraints.length > 0) {
@@ -304,7 +304,7 @@ export class SketchMode3D {
               deletedAny = true;
             } catch { }
           }
-          
+
           // Remove geometries/curves
           if (geometries.length > 0) {
             try {
@@ -314,7 +314,7 @@ export class SketchMode3D {
               deletedAny = true;
             } catch { }
           }
-          
+
           // Remove points (but not point 0 which is the origin)
           if (points.length > 0) {
             try {
@@ -327,7 +327,7 @@ export class SketchMode3D {
               }
             } catch { }
           }
-          
+
           // If anything was deleted, update the sketch
           if (deletedAny) {
             try { this._solver.solveSketch('full'); } catch { }
@@ -1162,7 +1162,7 @@ export class SketchMode3D {
       input.style.color = "#ddd";
       input.style.padding = "4px 8px";
       input.style.width = "80px";
-      
+
       input.onchange = () => {
         const value = type === "number" ? parseFloat(input.value) || 0 : input.value;
         this._solverSettings[key] = value;
@@ -1180,7 +1180,7 @@ export class SketchMode3D {
     // Add a reset button
     const resetRow = document.createElement("div");
     resetRow.style.margin = "8px 0 4px 0";
-    
+
     const resetBtn = document.createElement("button");
     resetBtn.textContent = "Reset to Defaults";
     resetBtn.style.background = "transparent";
@@ -1204,7 +1204,7 @@ export class SketchMode3D {
     // Add continuous solve button
     const continuousRow = document.createElement("div");
     continuousRow.style.margin = "8px 0 4px 0";
-    
+
     const continuousBtn = document.createElement("button");
     continuousBtn.textContent = "Hold to Solve Continuously";
     continuousBtn.style.background = "linear-gradient(135deg, #2c5f41, #3d7a56)";
@@ -1215,23 +1215,23 @@ export class SketchMode3D {
     continuousBtn.style.width = "100%";
     continuousBtn.style.cursor = "pointer";
     continuousBtn.style.transition = "all 0.2s ease";
-    
+
     // Variables to track continuous solving
     let isContinuousSolving = false;
-    
+
     continuousBtn.onmousedown = (e) => {
       e.preventDefault();
       if (isContinuousSolving) return;
-      
+
       isContinuousSolving = true;
       continuousBtn.textContent = "Solving... (release to stop)";
       continuousBtn.style.background = "linear-gradient(135deg, #5f2c2c, #7a3d3d)";
       continuousBtn.style.borderColor = "#8b4a4a";
-      
+
       // Start continuous solving
       const startContinuousSolve = () => {
         if (!isContinuousSolving) return;
-        
+
         try {
           if (this._solver) {
             this._solver.solveSketch("full");
@@ -1239,27 +1239,27 @@ export class SketchMode3D {
         } catch (error) {
           console.warn("Solver error during continuous solve:", error);
         }
-        
+
         if (isContinuousSolving) {
           requestAnimationFrame(startContinuousSolve);
         }
       };
-      
+
       startContinuousSolve();
     };
-    
+
     const stopContinuousSolve = () => {
       if (!isContinuousSolving) return;
-      
+
       isContinuousSolving = false;
       continuousBtn.textContent = "Hold to Solve Continuously";
       continuousBtn.style.background = "linear-gradient(135deg, #2c5f41, #3d7a56)";
       continuousBtn.style.borderColor = "#4a8b65";
     };
-    
+
     continuousBtn.onmouseup = stopContinuousSolve;
     continuousBtn.onmouseleave = stopContinuousSolve;
-    
+
     // Also handle touch events for mobile devices
     continuousBtn.ontouchstart = (e) => {
       e.preventDefault();
@@ -1267,7 +1267,7 @@ export class SketchMode3D {
     };
     continuousBtn.ontouchend = stopContinuousSolve;
     continuousBtn.ontouchcancel = stopContinuousSolve;
-    
+
     continuousRow.appendChild(continuousBtn);
     wrap.appendChild(continuousRow);
 
@@ -1811,6 +1811,44 @@ export class SketchMode3D {
       return b;
     };
 
+    // Constraint-specific actions
+    const constraintItems = items.filter((i) => i.type === "constraint");
+    let selectedAngleConstraint = null;
+    if (
+      constraintItems.length === 1 &&
+      Array.isArray(s?.constraints)
+    ) {
+      const cid = Number(constraintItems[0].id);
+      selectedAngleConstraint = s.constraints.find((c) => Number(c.id) === cid) || null;
+    }
+    if (selectedAngleConstraint && selectedAngleConstraint.type === "∠") {
+      const btn = document.createElement("button");
+      btn.textContent = "Reverse Angle";
+      btn.title = "Swap the angle measurement to the opposite side";
+      btn.style.color = "#ddd";
+      btn.style.background = "transparent";
+      btn.style.border = "1px solid #364053";
+      btn.style.borderRadius = "6px";
+      btn.style.padding = "4px 8px";
+      btn.onclick = () => {
+        this.#reverseAngleConstraint(Number(selectedAngleConstraint.id));
+      };
+      this._ctxBar.appendChild(btn);
+
+      const alt = document.createElement("button");
+      alt.textContent = "Alternative Angle";
+      alt.title = "Flip the first line direction and measure the other arc";
+      alt.style.color = "#ddd";
+      alt.style.background = "transparent";
+      alt.style.border = "1px solid #364053";
+      alt.style.borderRadius = "6px";
+      alt.style.padding = "4px 8px";
+      alt.onclick = () => {
+        this.#alternativeAngleConstraint(Number(selectedAngleConstraint.id));
+      };
+      this._ctxBar.appendChild(alt);
+    }
+
     // Construction toggle for selected geometry
     if (geos.length > 0) {
       const allCons = geos.every((g) => !!g.construction);
@@ -1908,9 +1946,9 @@ export class SketchMode3D {
     }
 
     // Geometry x Geometry (line + arc/circle) → Tangent (creates perpendicular constraint)
-    const lineAndRadial = geos.length === 2 && 
+    const lineAndRadial = geos.length === 2 &&
       ((geos[0]?.type === "line" && (geos[1]?.type === "arc" || geos[1]?.type === "circle")) ||
-       (geos[1]?.type === "line" && (geos[0]?.type === "arc" || geos[0]?.type === "circle")));
+        (geos[1]?.type === "line" && (geos[0]?.type === "arc" || geos[0]?.type === "circle")));
     if (lineAndRadial) {
       this._ctxBar.appendChild(mk("Tangent ⟠", "⟂"));
       // Also allow delete when any selection exists
@@ -1985,6 +2023,57 @@ export class SketchMode3D {
       this.#rebuildSketchGraphics();
       this.#refreshContextBar();
     } catch { }
+  }
+
+  #reverseAngleConstraint(cid) {
+    const solver = this._solver;
+    const sketch = solver?.sketchObject;
+    if (!solver || !sketch || !Array.isArray(sketch.constraints)) return;
+    const targetId = Number(cid);
+    const constraint = sketch.constraints.find((c) => Number(c.id) === targetId);
+    if (!constraint || constraint.type !== "∠") return;
+    if (!Array.isArray(constraint.points) || constraint.points.length < 4) return;
+
+    const pts = constraint.points.slice();
+    const swapped = [pts[3], pts[2], pts[0], pts[1], ...pts.slice(4)];
+    constraint.points = swapped;
+
+    // Mirror any stored angle label offset so the annotation follows the flip
+    const off = this._dimOffsets.get(constraint.id);
+    if (off && (typeof off.du === "number" || typeof off.dv === "number")) {
+      this._dimOffsets.set(constraint.id, {
+        ...off,
+        du: typeof off.du === "number" ? -off.du : off.du,
+        dv: typeof off.dv === "number" ? -off.dv : off.dv,
+      });
+    }
+
+    constraint.value = null;
+    if ("valueExpr" in constraint) delete constraint.valueExpr;
+
+    try { solver.solveSketch("full"); } catch { }
+    this.#rebuildSketchGraphics();
+    this.#refreshContextBar();
+  }
+
+  #alternativeAngleConstraint(cid) {
+    const solver = this._solver;
+    const sketch = solver?.sketchObject;
+    if (!solver || !sketch || !Array.isArray(sketch.constraints)) return;
+    const targetId = Number(cid);
+    const constraint = sketch.constraints.find((c) => Number(c.id) === targetId);
+    if (!constraint || constraint.type !== "∠") return;
+    if (!Array.isArray(constraint.points) || constraint.points.length < 2) return;
+
+    const pts = constraint.points.slice();
+    const swapped = [ pts[0], pts[1],pts[3], pts[2],];
+    constraint.points = swapped;
+    constraint.value = null;
+    if ("valueExpr" in constraint) delete constraint.valueExpr;
+
+    try { solver.solveSketch("full"); } catch { }
+    this.#rebuildSketchGraphics();
+    this.#refreshContextBar();
   }
 
   // Create a radial dimension visualization as a solver constraint
@@ -2364,7 +2453,7 @@ export class SketchMode3D {
         const ln = new THREE.Line(bg, mat);
         if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        
+
         ln.userData = { kind: "geometry", id: geo.id, type: "line" };
         grp.add(ln);
       } else if (geo.type === "circle") {
@@ -2393,7 +2482,7 @@ export class SketchMode3D {
         const ln = new THREE.Line(bg, mat);
         if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        
+
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
       } else if (geo.type === "arc") {
@@ -2431,7 +2520,7 @@ export class SketchMode3D {
         const ln = new THREE.Line(bg, mat);
         if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        
+
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
       } else if (geo.type === "bezier") {
@@ -2462,7 +2551,7 @@ export class SketchMode3D {
         const ln = new THREE.Line(bg, mat);
         if (geo.construction) { try { ln.computeLineDistances(); } catch { } }
         ln.renderOrder = 10000;
-        
+
         ln.userData = { kind: "geometry", id: geo.id, type: geo.type };
         grp.add(ln);
 
@@ -2486,7 +2575,7 @@ export class SketchMode3D {
       });
       const m = new THREE.Mesh(this._handleGeom, mat);
       m.renderOrder = 10001;
-      
+
       m.position.copy(to3(p.x, p.y));
       m.userData = { kind: "point", id: p.id };
       // Enlarge selected points 2x for better visibility

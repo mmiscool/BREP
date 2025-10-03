@@ -11,22 +11,10 @@ import { AccordionWidget } from '../AccordionWidget.js';
 import { SelectionFilterWidget } from '../selectionFilterWidget.js';
 import { genFeatureUI } from '../featureDialogs.js';
 import { annotationRegistry } from './AnnotationRegistry.js';
+import { AnnotationHistory } from './AnnotationHistory.js';
 import { LabelOverlay } from './LabelOverlay.js';
-import { NoteAnnotation } from './dimensions/note.js';
-import { LeaderAnnotation } from './dimensions/leader.js';
-import { LinearDimension } from './dimensions/linear.js';
-import { RadialDimension } from './dimensions/radial.js';
-import { AngleDimension } from './dimensions/angle.js';
 
 // Register built-in annotation types
-try {
-  annotationRegistry.register(NoteAnnotation);
-  annotationRegistry.register(LeaderAnnotation);
-  annotationRegistry.register(LinearDimension);
-  annotationRegistry.register(RadialDimension);
-  annotationRegistry.register(AngleDimension);
-} catch { }
-
 export class PMIMode {
   /**
    * @param {Viewer} viewer
@@ -66,13 +54,17 @@ export class PMIMode {
     this._gfuByIndex = new Map(); // idx -> genFeatureUI instance for dim widgets
     this._labelOverlay = null; // manages overlay labels
 
-    // Clone annotations to allow cancel; normalize legacy fields
+    // Annotation history stores inputParams/persistentData similar to PartHistory
+    this._annotationHistory = new AnnotationHistory(this);
     const src = Array.isArray(this.viewEntry.annotations) ? this.viewEntry.annotations : [];
-    this._annotations = JSON.parse(JSON.stringify(src));
-    // Migrate any legacy leader/dim fields to anchor-based refs (non-destructive in-memory)
-    try { this._annotations = this._annotations.map(a => this.#normalizeAnnotation(a)); } catch { }
-    // Ensure all annotations are closed by default when entering PMI view editor
-    this._annotations.forEach(a => { a.__open = false; });
+    this._annotationHistory.load(JSON.parse(JSON.stringify(src)));
+    try {
+      const uiAnnotations = this._annotationHistory.getAnnotationsForUI();
+      uiAnnotations.forEach(ann => {
+        try { this.#normalizeAnnotation(ann); } catch { }
+        ann.__open = false;
+      });
+    } catch { }
   }
 
   open() {
@@ -106,6 +98,9 @@ export class PMIMode {
     this._annotationsDirty = true; // Flag to track when rebuild is needed
     this._lastCameraState = null; // Track camera changes for overlay updates
     this.#rebuildAnnotationObjects();
+
+    // Apply view-specific transforms from ViewTransform annotations AFTER annotations are processed
+    this.#applyViewTransforms();
     // Initialize label overlay manager
     try {
       this._labelOverlay = new LabelOverlay(this.viewer,
@@ -166,6 +161,8 @@ export class PMIMode {
   }
 
   async cancel() {
+    // Restore original transforms before canceling
+    this.#restoreViewTransforms();
     try { this.viewer.onPMICancelled?.(); } catch { }
     await this.dispose();
   }
@@ -173,6 +170,9 @@ export class PMIMode {
   async dispose() {
     console.log('PMI dispose started');
     const v = this.viewer;
+
+    // Restore original transforms when exiting PMI mode
+    this.#restoreViewTransforms();
 
     try { v.renderer.domElement.removeEventListener('pointerdown', this._onCanvasDown, { capture: true }); } catch { }
     try { window.removeEventListener('pointerup', this._onCanvasUp, { capture: true }); } catch { }
@@ -188,16 +188,16 @@ export class PMIMode {
     try { this._uiTopRight?.remove(); } catch { }
     try { this._uiTopBar?.remove(); } catch { }
     try { this._uiSide?.remove(); } catch { }
-    
+
     console.log('About to remove PMI sections');
     // IMPORTANT: Remove PMI-specific accordion sections FIRST, then restore original sections
     // This prevents visual glitches where both sets of sections are visible simultaneously
     await this.#removePMISections();
-    
+
     console.log('About to restore original sections');
     // Now restore original sidebar sections after PMI sections are completely removed
     this.#restoreOriginalSidebarSections();
-    
+
     // Remove annotation group
     try { if (this._annGroup && this._annGroup.parent) this._annGroup.parent.remove(this._annGroup); } catch { }
     this._annGroup = null;
@@ -206,7 +206,7 @@ export class PMIMode {
     try { this._labelOverlay?.dispose?.(); } catch { }
     this._labelOverlay = null;
     try { this._gfuByIndex && this._gfuByIndex.forEach(ui => ui?.destroy?.()); this._gfuByIndex && this._gfuByIndex.clear(); } catch { }
-    
+
     // Note: Main toolbar is no longer hidden so no restoration needed
     // Restore camera controls enabled state
     try { if (this.viewer?.controls) this.viewer.controls.enabled = !!this._controlsEnabledPrev; } catch { }
@@ -216,8 +216,24 @@ export class PMIMode {
   #_persistView(refreshList = false) {
     try {
       if (!this.viewEntry) return;
-      // Write annotations
-      this.viewEntry.annotations = JSON.parse(JSON.stringify(this._annotations || []));
+      // Serialize annotations using annotation history (inputParams + persistentData)
+      const history = this._annotationHistory;
+      const baseSerialized = history ? history.toSerializable() : [];
+      const uiAnnotations = history ? history.getAnnotationsForUI() : [];
+      const serializedAnnotations = baseSerialized.map((entry, idx) => {
+        const ann = uiAnnotations[idx];
+        const handler = annotationRegistry.getSafe?.(ann?.type || entry.type) || annotationRegistry.getSafe?.(entry.type) || null;
+        if (handler && typeof handler.serialize === 'function') {
+          try {
+            const custom = handler.serialize(ann, entry);
+            if (custom) return custom;
+          } catch {
+            // fall back to base entry if serialize throws
+          }
+        }
+        return entry;
+      });
+      this.viewEntry.annotations = JSON.parse(JSON.stringify(serializedAnnotations));
       // Ensure the widget's views array references the same entry
       if (this.pmiWidget && Number.isFinite(this.viewIndex) && Array.isArray(this.pmiWidget.views)) {
         this.pmiWidget.views[this.viewIndex] = this.viewEntry;
@@ -330,15 +346,15 @@ export class PMIMode {
     try {
       const v = this.viewer;
       if (!v || !v.accordion) return;
-      
+
       // Store original accordion sections for restoration later
       this._originalSections = [];
       const accordion = v.accordion.uiElement;
-      
+
       // Find all accordion sections and hide them
       const titles = accordion.querySelectorAll('.accordion-title');
       const contents = accordion.querySelectorAll('.accordion-content');
-      
+
       titles.forEach(title => {
         this._originalSections.push({
           element: title,
@@ -347,7 +363,7 @@ export class PMIMode {
         });
         title.style.display = 'none';
       });
-      
+
       contents.forEach(content => {
         this._originalSections.push({
           element: content,
@@ -367,9 +383,9 @@ export class PMIMode {
         console.log('No original sections to restore');
         return;
       }
-      
+
       console.log('Restoring original sections:', this._originalSections.length);
-      
+
       // Restore all original sections
       this._originalSections.forEach(({ element, display, visibility }, index) => {
         if (element && element.parentNode) {
@@ -380,7 +396,7 @@ export class PMIMode {
           console.warn(`Section ${index} element no longer exists in DOM`);
         }
       });
-      
+
       this._originalSections = null;
       console.log('Original sections restoration complete');
     } catch (e) {
@@ -392,7 +408,7 @@ export class PMIMode {
     try {
       const v = this.viewer;
       if (!v || !v.accordion) return;
-      
+
       // Wait for any pending section creation to complete first
       if (this._sectionCreationPromises && this._sectionCreationPromises.length > 0) {
         try {
@@ -401,17 +417,17 @@ export class PMIMode {
           console.warn('Some section creation promises failed:', e);
         }
       }
-      
+
       console.log('Removing PMI sections...');
-      
+
       // Remove PMI sections from the accordion
       const sectionsToRemove = [
         'PMI Views (PMI Mode)',
         'Annotations — ' + (this.viewEntry?.name || ''),
-        'View Settings', 
+        'View Settings',
         'Tool Options'
       ];
-      
+
       console.log('Sections to remove:', sectionsToRemove);
 
       if (this._pmiViewsDomRestore && this.pmiWidget?.uiElement) {
@@ -430,7 +446,7 @@ export class PMIMode {
         }
       }
       this._pmiViewsDomRestore = null;
-      
+
       // First, try to use the stored section references for direct removal
       const storedSections = [this._pmiModeViewsSection, this._pmiAnnotationsSection, this._pmiViewSettingsSection, this._pmiToolOptionsSection];
       storedSections.forEach((section, index) => {
@@ -449,17 +465,17 @@ export class PMIMode {
           }
         }
       });
-      
+
       // Aggressively search and remove any PMI-related elements
       try {
         const accordion = v.accordion.uiElement;
-        
+
         // Look for elements with PMI-related text content
         const allTitles = Array.from(accordion.querySelectorAll('.accordion-title'));
         const allContents = Array.from(accordion.querySelectorAll('.accordion-content'));
-        
+
         console.log(`Found ${allTitles.length} titles and ${allContents.length} contents in accordion`);
-        
+
         // Remove elements that match PMI section patterns
         allTitles.forEach(titleEl => {
           const text = titleEl.textContent || '';
@@ -474,19 +490,19 @@ export class PMIMode {
             titleEl.remove();
           }
         });
-        
+
         // Remove any remaining content elements that might have been missed
         allContents.forEach(contentEl => {
           if (!contentEl.parentNode) return; // Already removed
           const id = contentEl.id || '';
           const name = contentEl.getAttribute('name') || '';
           if (name.includes('Annotations') || name === 'accordion-content-View Settings' || name === 'accordion-content-Tool Options' ||
-              id.includes('Annotations') || id === 'accordion-content-View Settings' || id === 'accordion-content-Tool Options') {
+            id.includes('Annotations') || id === 'accordion-content-View Settings' || id === 'accordion-content-Tool Options') {
             console.log('Removing content:', name || id);
             contentEl.remove();
           }
         });
-        
+
         // Additional cleanup: remove any elements that contain PMI-specific classes or content
         const pmiElements = accordion.querySelectorAll('.pmi-ann-list, .pmi-scrollable-content, .pmi-inline-menu, .pmi-ann-footer, .pmi-vfield');
         pmiElements.forEach(el => {
@@ -507,17 +523,17 @@ export class PMIMode {
             el.remove();
           }
         });
-        
+
         // Final nuclear option: remove any sections that weren't there originally
         // This is a bit aggressive but ensures complete cleanup
         const remainingTitles = Array.from(accordion.querySelectorAll('.accordion-title'));
         const originalSectionCount = this._originalSections ? Math.floor(this._originalSections.length / 2) : 0;
         console.log(`After cleanup: ${remainingTitles.length} titles remain, originally had ${originalSectionCount} sections`);
-        
+
       } catch (e) {
         console.warn('Failed to manually clean up PMI section elements:', e);
       }
-      
+
       // Try to remove sections using the accordion API as a fallback
       for (const title of sectionsToRemove) {
         try {
@@ -529,16 +545,16 @@ export class PMIMode {
           console.warn(`Failed to remove section "${title}" via API:`, e);
         }
       }
-      
+
       // Clear stored section references
       this._pmiModeViewsSection = null;
       this._pmiAnnotationsSection = null;
       this._pmiViewSettingsSection = null;
       this._pmiToolOptionsSection = null;
       this._sectionCreationPromises = [];
-      
+
       console.log('PMI sections removal complete');
-      
+
     } catch (e) {
       console.warn('Failed to remove PMI sections:', e);
     }
@@ -551,7 +567,7 @@ export class PMIMode {
 
       // Use the existing accordion instead of creating a new one
       this._acc = v.accordion;
-      
+
       const pmiViewsPromise = this._acc.addSection('PMI Views (PMI Mode)').then((sec) => {
         try {
           this._pmiModeViewsSection = sec;
@@ -582,7 +598,7 @@ export class PMIMode {
       // Build Annotations section
       this._annListEl = document.createElement('div');
       this._annListEl.className = 'pmi-ann-list';
-      
+
       const annotationsPromise = this._acc.addSection(`Annotations — ${this.viewEntry?.name || ''}`).then((sec) => {
         try {
           console.log('Created annotations section:', sec);
@@ -633,6 +649,7 @@ export class PMIMode {
           inlineMenu.appendChild(makeItem('Angle Dimension', 'angle'));
           inlineMenu.appendChild(makeItem('Leader', 'leader'));
           inlineMenu.appendChild(makeItem('Note', 'note'));
+          inlineMenu.appendChild(makeItem('View Transform', 'viewTransform'));
 
           scrollableContent.appendChild(inlineMenu);
 
@@ -670,7 +687,7 @@ export class PMIMode {
           // Add everything to the section
           sec.uiElement.appendChild(scrollableContent);
           sec.uiElement.appendChild(footer);
-          
+
           // Store section for later cleanup
           this._pmiAnnotationsSection = sec;
           this.#applyPMIPanelLayout();
@@ -684,9 +701,9 @@ export class PMIMode {
       this._viewSettingsEl = document.createElement('div');
       this._viewSettingsEl.style.padding = '6px';
       const viewSettingsPromise = this._acc.addSection('View Settings').then((sec) => {
-        try { 
+        try {
           console.log('Created view settings section:', sec);
-          sec.uiElement.appendChild(this._viewSettingsEl); 
+          sec.uiElement.appendChild(this._viewSettingsEl);
           this.#renderViewSettings();
           this._pmiViewSettingsSection = sec;
           this.#applyPMIPanelLayout();
@@ -700,9 +717,9 @@ export class PMIMode {
       this._toolOptsEl = document.createElement('div');
       this._toolOptsEl.style.padding = '6px';
       const toolOptionsPromise = this._acc.addSection('Tool Options').then((sec) => {
-        try { 
+        try {
           console.log('Created tool options section:', sec);
-          sec.uiElement.appendChild(this._toolOptsEl); 
+          sec.uiElement.appendChild(this._toolOptsEl);
           this.#renderToolOptions();
           this._pmiToolOptionsSection = sec;
           this.#applyPMIPanelLayout();
@@ -711,7 +728,7 @@ export class PMIMode {
         }
       });
       this._sectionCreationPromises.push(toolOptionsPromise);
-      
+
       this.#renderAnnList();
     } catch (e) {
       console.warn('Failed to mount PMI sections:', e);
@@ -753,29 +770,16 @@ export class PMIMode {
 
   #addNewAnnotation(type) {
     const key = String(type || 'dim');
-    const handler = (typeof annotationRegistry?.get === 'function') ? annotationRegistry.get(key) : null;
+    const handler = annotationRegistry.getSafe?.(key) || annotationRegistry.getSafe?.(type) || null;
     if (!handler) {
       console.warn('PMI: unknown annotation type', key);
       return;
     }
 
-    let annotation = null;
     try {
-      if (typeof handler.create === 'function') {
-        annotation = handler.create(this) || null;
-      }
-    } catch (err) {
-      console.warn('PMI: failed to create annotation via handler', key, err);
-    }
-
-    if (!annotation || typeof annotation !== 'object') {
-      annotation = { type: handler.type || key, __open: true };
-    }
-    if (!annotation.type) annotation.type = handler.type || key;
-    if (!Object.prototype.hasOwnProperty.call(annotation, '__open')) annotation.__open = true;
-
-    try {
-      this._annotations.push(annotation);
+      const ann = this._annotationHistory.createAnnotation(handler.type || key);
+      try { this.#normalizeAnnotation(ann); } catch { }
+      this._annotationsDirty = true;
       this.#renderAnnList();
       this.#rebuildAnnotationObjects();
     } catch { }
@@ -786,7 +790,7 @@ export class PMIMode {
     if (!list) return;
     try { this._gfuByIndex && this._gfuByIndex.forEach(ui => ui?.destroy?.()); this._gfuByIndex && this._gfuByIndex.clear(); } catch { }
     list.textContent = '';
-    const anns = Array.isArray(this._annotations) ? this._annotations : [];
+    const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
     try { if (!list.classList.contains('pmi-acc')) list.classList.add('pmi-acc'); } catch { }
 
     const helpers = {
@@ -795,7 +799,7 @@ export class PMIMode {
     };
 
     anns.forEach((a, i) => {
-      const handler = (typeof annotationRegistry?.get === 'function') ? annotationRegistry.get(a.type) : null;
+      const handler = annotationRegistry.getSafe?.(a.type) || null;
       const item = document.createElement('div'); item.className = 'pmi-acc-item acc-item open';
       const header = document.createElement('div'); header.className = 'pmi-acc-header';
       const headBtn = document.createElement('button'); headBtn.type = 'button'; headBtn.className = 'pmi-acc-headbtn';
@@ -805,7 +809,14 @@ export class PMIMode {
       const status = document.createElement('div'); status.className = 'pmi-acc-status';
       headBtn.appendChild(title); headBtn.appendChild(status); header.appendChild(headBtn);
       const actions = document.createElement('div'); actions.className = 'pmi-acc-actions';
-      const del = document.createElement('button'); del.className = 'pmi-acc-del'; del.textContent = 'Delete'; del.addEventListener('click', () => { try { this._annotations.splice(i, 1); this.#renderAnnList(); this.#rebuildAnnotationObjects(); } catch { } });
+      const del = document.createElement('button'); del.className = 'pmi-acc-del'; del.textContent = 'Delete'; del.addEventListener('click', () => {
+        try {
+          this._annotationHistory.removeAt(i);
+          this._annotationsDirty = true;
+          this.#renderAnnList();
+          this.#rebuildAnnotationObjects();
+        } catch { }
+      });
       actions.appendChild(del); header.appendChild(actions); item.appendChild(header);
 
       let schema = {}; let params = {};
@@ -834,7 +845,9 @@ export class PMIMode {
             const st = (res && 'statusText' in res) ? res.statusText : (handler && typeof handler.statusText === 'function' ? handler.statusText(this, a, helpers) : '');
             status.textContent = st || '';
             this.#markAnnotationsDirty();
-          } catch { }
+          } catch (e) {
+            console.warn('PMI onChange error:', e);
+          }
         }
       });
       content.appendChild(ui.uiElement);
@@ -1100,7 +1113,7 @@ export class PMIMode {
       const camera = this.viewer?.camera;
       const ctrls = this.viewer?.controls;
       const storedCamera = this.viewEntry?.camera;
-      
+
       if (!camera || !storedCamera) {
         // Visual feedback - show error if no stored camera
         const btn = btnEl || document.querySelector('.pmi-btn');
@@ -1183,29 +1196,6 @@ export class PMIMode {
     } catch { }
   }
 
-  // --- Annotation 3D visuals ---
-  #clearAnnGroup() {
-    try {
-      if (!this._annGroup) return;
-      for (let i = this._annGroup.children.length - 1; i >= 0; i--) {
-        const c = this._annGroup.children[i];
-        this._annGroup.remove(c);
-        if (c.geometry) c.geometry.dispose?.();
-        if (c.material) c.material.dispose?.();
-      }
-    } catch { }
-  }
-
-  _refreshOverlays() {
-    // Rebuild overlays on camera changes (simpler and type-agnostic)
-    if (this._refreshPending) return;
-    this._refreshPending = true;
-    requestAnimationFrame(() => {
-      this._refreshPending = false;
-      try { this.#rebuildAnnotationObjects(); } catch { }
-    });
-  }
-
   #checkCameraChange() {
     // Check if camera has changed and refresh overlays if needed
     try {
@@ -1246,10 +1236,132 @@ export class PMIMode {
     }
   }
 
+  // Apply view-specific transforms from ViewTransform annotations
+  #applyViewTransforms() {
+    try {
+      const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
+      if (!Array.isArray(anns) || anns.length === 0) return;
+
+      console.log('Applying view transforms, found', anns.length, 'annotations');
+
+      const handler = annotationRegistry.getSafe?.('viewTransform') || null;
+      if (!handler) {
+        console.warn('No handler found for viewTransform');
+        return;
+      }
+
+      for (const ann of anns) {
+        if (ann.type !== 'viewTransform') continue;
+
+        console.log('Processing ViewTransform annotation:', ann);
+
+        // Use the handler's own resolution logic
+        if (typeof handler._resolveSolidReferences === 'function') {
+          handler._resolveSolidReferences(ann, this);
+        }
+
+        // Store original transforms if not already stored
+        if (Array.isArray(ann.solids) && ann.solids.length > 0 && !ann.originalTransforms) {
+          ann.originalTransforms = new Map();
+          for (const solid of ann.solids) {
+            if (solid && solid.type === 'SOLID') {
+              console.log('Storing original transform for:', solid.name || solid.uuid);
+              ann.originalTransforms.set(solid.uuid, {
+                position: [solid.position.x, solid.position.y, solid.position.z],
+                rotation: [solid.rotation.x, solid.rotation.y, solid.rotation.z],
+                scale: [solid.scale.x, solid.scale.y, solid.scale.z]
+              });
+            }
+          }
+        } else if (ann.originalTransforms && !(ann.originalTransforms instanceof Map)) {
+          // Convert plain object back to Map after deserialization
+          const mapFromObj = new Map();
+          for (const [key, value] of Object.entries(ann.originalTransforms)) {
+            mapFromObj.set(key, value);
+          }
+          ann.originalTransforms = mapFromObj;
+        }
+
+        // Apply the transforms
+        if (typeof handler.applyTransformsToSolids === 'function') {
+          console.log('Applying transforms via public method');
+          handler.applyTransformsToSolids(ann);
+        } else if (typeof handler._applyTransformsToSolids === 'function') {
+          console.log('Applying transforms via private method');
+          handler._applyTransformsToSolids(ann);
+        }
+      }
+
+      // Trigger a render to show the transformed objects
+      if (this.viewer?.render) {
+        this.viewer.render();
+      }
+    } catch (error) {
+      console.warn('Failed to apply view transforms:', error);
+    }
+  }
+
+  // Restore original transforms for all ViewTransform annotations
+  #restoreViewTransforms() {
+    try {
+      const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
+      if (!Array.isArray(anns) || anns.length === 0) return;
+
+      const handler = annotationRegistry.getSafe?.('viewTransform') || null;
+      if (!handler) return;
+
+      for (const ann of anns) {
+        if (ann.type !== 'viewTransform') continue;
+
+        // Restore original transforms
+        if (typeof handler.restoreOriginalTransforms === 'function') {
+          handler.restoreOriginalTransforms(ann);
+        }
+      }
+
+      // Trigger a render to show the restored objects
+      if (this.viewer?.render) {
+        this.viewer.render();
+      }
+    } catch (error) {
+      console.warn('Failed to restore view transforms:', error);
+    }
+  }
+
+  // --- Annotation 3D visuals ---
+  #clearAnnGroup() {
+    try {
+      if (!this._annGroup) return;
+      for (let i = this._annGroup.children.length - 1; i >= 0; i--) {
+        const c = this._annGroup.children[i];
+        this._annGroup.remove(c);
+        if (c.geometry) c.geometry.dispose?.();
+        if (c.material) c.material.dispose?.();
+      }
+    } catch { }
+  }
+
+  _refreshOverlays() {
+    // Rebuild overlays on camera changes (simpler and type-agnostic)
+    if (this._refreshPending) return;
+    this._refreshPending = true;
+    requestAnimationFrame(() => {
+      this._refreshPending = false;
+      try { this.#rebuildAnnotationObjects(); } catch { }
+    });
+  }
+
+
 
 
   #markAnnotationsDirty() {
     this._annotationsDirty = true;
+    // Immediately rebuild annotations instead of waiting for timer
+    try {
+      this.#rebuildAnnotationObjects();
+    } catch (error) {
+      console.warn('Failed to rebuild annotations:', error);
+    }
   }
 
   // Public: allow external handlers to refresh the side list and 3D objects
@@ -1264,7 +1376,7 @@ export class PMIMode {
     if (!group) return;
     // Ensure overlay exists; do not clear between frames so labels remain visible even if a render is skipped
     // overlay root managed by LabelOverlay
-    const anns = Array.isArray(this._annotations) ? this._annotations : [];
+    const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
     const makeSphere = (color = 0x93c5fd, size = 0.08) => {
       const g = new THREE.SphereGeometry(size, 16, 12);
       const m = new THREE.MeshBasicMaterial({ color });
@@ -1290,7 +1402,7 @@ export class PMIMode {
     };
     anns.forEach((a, i) => {
       try {
-        const handler = annotationRegistry.get(a.type);
+        const handler = annotationRegistry.getSafe?.(a.type) || null;
         if (handler && typeof handler.render3D === 'function') {
           handler.render3D(this, group, a, i, ctx);
           return;
@@ -1314,42 +1426,7 @@ export class PMIMode {
 
 
 
-  #handleLabelClick(idx, ann, e) {
-    try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
-    this.#collapseAnnotationsToIndex(idx);
-  }
 
-  #handleLabelDragEnd(idx, ann, e) {
-    // Expand the dialog associated with the label that was dragged
-    this.#collapseAnnotationsToIndex(idx);
-  }
-
-  #collapseAnnotationsToIndex(targetIdx) {
-    const anns = Array.isArray(this._annotations) ? this._annotations : [];
-    if (!anns.length) return;
-    if (!Number.isInteger(targetIdx) || targetIdx < 0 || targetIdx >= anns.length) return;
-    let changed = false;
-    anns.forEach((ann, i) => {
-      const shouldOpen = i === targetIdx;
-      if (!!ann.__open !== shouldOpen) {
-        ann.__open = shouldOpen;
-        changed = true;
-      }
-    });
-    if (!changed) return;
-    this.#renderAnnList();
-    requestAnimationFrame(() => {
-      try {
-        const section = this._pmiAnnotationsSection?.uiElement;
-        if (!section) return;
-        const items = section.querySelectorAll('.pmi-acc-item');
-        const target = items && items[targetIdx];
-        if (target && typeof target.scrollIntoView === 'function') {
-          target.scrollIntoView({ block: 'nearest' });
-        }
-      } catch { }
-    });
-  }
 
   #focusAnnotationDialog(idx, ann, e) {
     e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation();
@@ -1377,13 +1454,71 @@ export class PMIMode {
     }
   }
 
+
+
+
+
+  _handlePointerDown(e) {
+    // Only left-clicks
+    if (e.button !== 0) return;
+    // Avoid interfering if clicking overlays
+    try {
+      const path = e.composedPath?.() || [];
+      if (path.some((el) => el === this._uiTopRight || el === this._uiSide || (el?.classList?.contains?.('pmi-side')))) return;
+    } catch { }
+
+    // If a feature reference_selection is active, let selection widget handle it
+    try { const activeRef = document.querySelector('[active-reference-selection="true"],[active-reference-selection=true]'); if (activeRef) return; } catch { }
+
+    return;
+  }
+
+  #handleLabelClick(idx, ann, e) {
+    try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
+    this.#collapseAnnotationsToIndex(idx);
+  }
+
+  #handleLabelDragEnd(idx, ann, e) {
+    // Expand the dialog associated with the label that was dragged
+    this.#collapseAnnotationsToIndex(idx);
+  }
+
+  #collapseAnnotationsToIndex(targetIdx) {
+    const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
+    if (!anns.length) return;
+    if (!Number.isInteger(targetIdx) || targetIdx < 0 || targetIdx >= anns.length) return;
+    let changed = false;
+    anns.forEach((ann, i) => {
+      const shouldOpen = i === targetIdx;
+      if (!!ann.__open !== shouldOpen) {
+        ann.__open = shouldOpen;
+        changed = true;
+      }
+    });
+    if (!changed) return;
+    this.#renderAnnList();
+    requestAnimationFrame(() => {
+      try {
+        const section = this._pmiAnnotationsSection?.uiElement;
+        if (!section) return;
+        const items = section.querySelectorAll('.pmi-acc-item');
+        const target = items && items[targetIdx];
+        if (target && typeof target.scrollIntoView === 'function') {
+          target.scrollIntoView({ block: 'nearest' });
+        }
+      } catch { }
+    });
+  }
+
+
+
   #startLabelDrag(idx, ann, e) {
     e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation();
     try { if (this.viewer?.controls) this.viewer.controls.enabled = false; } catch { }
     const v = this.viewer; const cam = v?.camera; if (!cam) return;
 
     try {
-      const handler = annotationRegistry.get(ann?.type);
+      const handler = annotationRegistry.getSafe?.(ann?.type) || null;
       if (handler && typeof handler.onLabelPointerDown === "function") {
         const ctx = {
           THREE,
@@ -1405,61 +1540,6 @@ export class PMIMode {
     } catch { }
 
     try { if (this.viewer?.controls) this.viewer.controls.enabled = (this._tool === "select"); } catch { }
-  }
-
-  #_screenSizeWorld(pixels) {
-    try {
-      const rect = this.viewer?.renderer?.domElement?.getBoundingClientRect?.() || { width: 800, height: 600 };
-      const wpp = this.#worldPerPixel(this.viewer.camera, rect.width, rect.height);
-      return Math.max(0.0001, wpp * (pixels || 1));
-    } catch { return 0.01; }
-  }
-
-  #_alignNormal(alignment, ann) {
-    // If a face/plane reference is provided, use its world normal
-    try {
-      const name = ann?.planeRefName || '';
-      if (name) {
-        const scene = this.viewer?.partHistory?.scene;
-        const obj = scene?.getObjectByName(name);
-        if (obj) {
-          // Face average normal → world
-          if (obj.type === 'FACE' && typeof obj.getAverageNormal === 'function') {
-            const local = obj.getAverageNormal().clone();
-            const nm = new THREE.Matrix3(); nm.getNormalMatrix(obj.matrixWorld);
-            return local.applyMatrix3(nm).normalize();
-          }
-          // PLANE or any Object3D: attempt to use its Z axis as normal
-          const w = new THREE.Vector3(0, 0, 1);
-          try { obj.updateMatrixWorld(true); w.applyMatrix3(new THREE.Matrix3().getNormalMatrix(obj.matrixWorld)); } catch { }
-          if (w.lengthSq()) return w.normalize();
-        }
-      }
-    } catch { }
-    // Fallback: explicit axis or camera view direction
-    const mode = String(alignment || 'view').toLowerCase();
-    if (mode === 'xy') return new THREE.Vector3(0, 0, 1);
-    if (mode === 'yz') return new THREE.Vector3(1, 0, 0);
-    if (mode === 'zx') return new THREE.Vector3(0, 1, 0);
-    const n = new THREE.Vector3();
-    try { this.viewer?.camera?.getWorldDirection?.(n); } catch { }
-    return n.lengthSq() ? n : new THREE.Vector3(0, 0, 1);
-  }
-
-
-  _handlePointerDown(e) {
-    // Only left-clicks
-    if (e.button !== 0) return;
-    // Avoid interfering if clicking overlays
-    try {
-      const path = e.composedPath?.() || [];
-      if (path.some((el) => el === this._uiTopRight || el === this._uiSide || (el?.classList?.contains?.('pmi-side')))) return;
-    } catch { }
-
-    // If a feature reference_selection is active, let selection widget handle it
-    try { const activeRef = document.querySelector('[active-reference-selection="true"],[active-reference-selection=true]'); if (activeRef) return; } catch { }
-
-    return;
   }
 
 
@@ -1720,26 +1800,6 @@ export class PMIMode {
     } catch { return null; }
   }
 
-  #closestPointsForObjects(objA, objB) {
-    if (objA.type === 'VERTEX' && objB.type === 'VERTEX') {
-      return { p0: objA.getWorldPosition(new THREE.Vector3()), p1: objB.getWorldPosition(new THREE.Vector3()) };
-    }
-    if (objA.type === 'EDGE' && objB.type === 'VERTEX') {
-      const v = objB.getWorldPosition(new THREE.Vector3());
-      const p = this.#closestPointOnEdgeToPoint(objA, v);
-      return { p0: p, p1: v };
-    }
-    if (objA.type === 'VERTEX' && objB.type === 'EDGE') {
-      const v = objA.getWorldPosition(new THREE.Vector3());
-      const p = this.#closestPointOnEdgeToPoint(objB, v);
-      return { p0: v, p1: p };
-    }
-    if (objA.type === 'EDGE' && objB.type === 'EDGE') {
-      return this.#closestPointsBetweenEdges(objA, objB);
-    }
-    // Fallback: representative points
-    return { p0: this.#objectRepresentativePoint(objA) || new THREE.Vector3(), p1: this.#objectRepresentativePoint(objB) || new THREE.Vector3() };
-  }
 
   #closestPointOnEdgeToPoint(edge, point) {
     try {
@@ -1786,6 +1846,85 @@ export class PMIMode {
     return a.clone().addScaledVector(ab, t);
   }
 
+
+
+  #worldPerPixel(camera, width, height) {
+    try {
+      if (camera && camera.isOrthographicCamera) {
+        const zoom = (typeof camera.zoom === 'number' && camera.zoom > 0) ? camera.zoom : 1;
+        const wppX = (camera.right - camera.left) / (width * zoom);
+        const wppY = (camera.top - camera.bottom) / (height * zoom);
+        return Math.max(Math.abs(wppX), Math.abs(wppY));
+      }
+      const dist = camera.position.length();
+      const fovRad = (camera.fov * Math.PI) / 180;
+      const h = 2 * Math.tan(fovRad / 2) * dist;
+      return h / height;
+    } catch { return 1; }
+  }
+
+  #_screenSizeWorld(pixels) {
+    try {
+      const rect = this.viewer?.renderer?.domElement?.getBoundingClientRect?.() || { width: 800, height: 600 };
+      const wpp = this.#worldPerPixel(this.viewer.camera, rect.width, rect.height);
+      return Math.max(0.0001, wpp * (pixels || 1));
+    } catch { return 0.01; }
+  }
+
+  #_alignNormal(alignment, ann) {
+    // If a face/plane reference is provided, use its world normal
+    try {
+      const name = ann?.planeRefName || '';
+      if (name) {
+        const scene = this.viewer?.partHistory?.scene;
+        const obj = scene?.getObjectByName(name);
+        if (obj) {
+          // Face average normal → world
+          if (obj.type === 'FACE' && typeof obj.getAverageNormal === 'function') {
+            const local = obj.getAverageNormal().clone();
+            const nm = new THREE.Matrix3(); nm.getNormalMatrix(obj.matrixWorld);
+            return local.applyMatrix3(nm).normalize();
+          }
+          // PLANE or any Object3D: attempt to use its Z axis as normal
+          const w = new THREE.Vector3(0, 0, 1);
+          try { obj.updateMatrixWorld(true); w.applyMatrix3(new THREE.Matrix3().getNormalMatrix(obj.matrixWorld)); } catch { }
+          if (w.lengthSq()) return w.normalize();
+        }
+      }
+    } catch { }
+    // Fallback: explicit axis or camera view direction
+    const mode = String(alignment || 'view').toLowerCase();
+    if (mode === 'xy') return new THREE.Vector3(0, 0, 1);
+    if (mode === 'yz') return new THREE.Vector3(1, 0, 0);
+    if (mode === 'zx') return new THREE.Vector3(0, 1, 0);
+    const n = new THREE.Vector3();
+    try { this.viewer?.camera?.getWorldDirection?.(n); } catch { }
+    return n.lengthSq() ? n : new THREE.Vector3(0, 0, 1);
+  }
+
+
+
+  #closestPointsForObjects(objA, objB) {
+    if (objA.type === 'VERTEX' && objB.type === 'VERTEX') {
+      return { p0: objA.getWorldPosition(new THREE.Vector3()), p1: objB.getWorldPosition(new THREE.Vector3()) };
+    }
+    if (objA.type === 'EDGE' && objB.type === 'VERTEX') {
+      const v = objB.getWorldPosition(new THREE.Vector3());
+      const p = this.#closestPointOnEdgeToPoint(objA, v);
+      return { p0: p, p1: v };
+    }
+    if (objA.type === 'VERTEX' && objB.type === 'EDGE') {
+      const v = objA.getWorldPosition(new THREE.Vector3());
+      const p = this.#closestPointOnEdgeToPoint(objB, v);
+      return { p0: v, p1: p };
+    }
+    if (objA.type === 'EDGE' && objB.type === 'EDGE') {
+      return this.#closestPointsBetweenEdges(objA, objB);
+    }
+    // Fallback: representative points
+    return { p0: this.#objectRepresentativePoint(objA) || new THREE.Vector3(), p1: this.#objectRepresentativePoint(objB) || new THREE.Vector3() };
+  }
+
   #closestPointsOnSegments(p1, q1, p2, q2) {
     // Returns closest points on segments p1q1 and p2q2 using standard algorithm
     const d1 = q1.clone().sub(p1);
@@ -1813,20 +1952,5 @@ export class PMIMode {
     const cp1 = p1.clone().addScaledVector(d1, s);
     const cp2 = p2.clone().addScaledVector(d2, t);
     return { p: cp1, q: cp2 };
-  }
-
-  #worldPerPixel(camera, width, height) {
-    try {
-      if (camera && camera.isOrthographicCamera) {
-        const zoom = (typeof camera.zoom === 'number' && camera.zoom > 0) ? camera.zoom : 1;
-        const wppX = (camera.right - camera.left) / (width * zoom);
-        const wppY = (camera.top - camera.bottom) / (height * zoom);
-        return Math.max(Math.abs(wppX), Math.abs(wppY));
-      }
-      const dist = camera.position.length();
-      const fovRad = (camera.fov * Math.PI) / 180;
-      const h = 2 * Math.tan(fovRad / 2) * dist;
-      return h / height;
-    } catch { return 1; }
   }
 }

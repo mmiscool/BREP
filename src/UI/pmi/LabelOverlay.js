@@ -65,6 +65,7 @@ export class LabelOverlay {
   }
 
   #trackPointerDown(e, idx, ann) {
+    console.log('LabelOverlay #trackPointerDown called', { e, idx, ann });
     if (typeof e !== 'object') return;
     if (e.button != null && e.button !== 0) return; // left-click only
     const entry = {

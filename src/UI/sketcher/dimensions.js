@@ -570,17 +570,23 @@ export function dimAngle3D(inst, p0, p1, p2, p3, cid, I, color = 0x69a8ff, value
   // Base orientation from first line; arc direction sign from the raw difference
   let a0 = Math.atan2(d1.y, d1.x), a1 = Math.atan2(d2.y, d2.x);
   let signedDelta = a1 - a0; while (signedDelta <= -Math.PI) signedDelta += 2 * Math.PI; while (signedDelta > Math.PI) signedDelta -= 2 * Math.PI;
-  const sgn = signedDelta >= 0 ? 1 : -1;
-
-  // Use the constraint's numeric value when provided; otherwise draw the minor angle
-  let mag = Math.abs(signedDelta);
+  const defaultDeltaDeg = THREE.MathUtils.euclideanModulo(THREE.MathUtils.radToDeg(a1 - a0), 360);
+  let targetDeg;
   if (typeof valueDeg === 'number' && Number.isFinite(valueDeg)) {
-    mag = (Math.abs(valueDeg) % 360) * (Math.PI / 180);
-    if (mag < 1e-6) mag = 1e-6; // ensure visible
+    const absVal = Math.abs(valueDeg);
+    targetDeg = absVal % 360;
+    if (targetDeg < 1e-6 && absVal > 0) targetDeg = 360; // allow full-circle measurements
+  } else {
+    targetDeg = defaultDeltaDeg;
   }
-  let d = sgn * mag;
+  if (targetDeg < 1e-6) targetDeg = 1e-6; // keep arc visible
+
+  let dirSign = Math.sign(signedDelta) || 1;
+  if (targetDeg > 180 && targetDeg < 360 - 1e-6) dirSign = -dirSign;
+  let d = THREE.MathUtils.degToRad(targetDeg) * dirSign;
+
   // Clamp to [0, 2π]
-  const twoPi = Math.PI * 2; if (Math.abs(d) > twoPi) d = sgn * (twoPi - 1e-6);
+  const twoPi = Math.PI * 2; if (Math.abs(d) > twoPi) d = Math.sign(d) * (twoPi - 1e-6);
 
   // Screen-scaled radius and arrow size so it stays visible at any zoom
   const rect = inst.viewer.renderer.domElement.getBoundingClientRect();
@@ -595,14 +601,16 @@ export function dimAngle3D(inst, p0, p1, p2, p3, cid, I, color = 0x69a8ff, value
   // Choose the arc side so the arc (+ arrows) are on the same side as the label.
   // Compare label direction with the arc bisector; if it's closer to the opposite
   // bisector, flip the start by PI which mirrors the arc side while preserving span.
-  const labelAng = Math.atan2(dv, du); // direction from center to label offset
-  const angNorm = (a) => { const t = 2 * Math.PI; a %= t; return a < 0 ? a + t : a; };
-  const angDiff = (a, b) => { let x = angNorm(a - b); if (x > Math.PI) x = 2 * Math.PI - x; return Math.abs(x); };
   let aStart = a0; // base start
-  const bisector = aStart + d * 0.5;
-  const bisectorOpp = bisector + Math.PI;
-  if (angDiff(labelAng, bisectorOpp) + 1e-6 < angDiff(labelAng, bisector)) {
-    aStart += Math.PI; // flip arc side
+  if (du !== 0 || dv !== 0) {
+    const labelAng = Math.atan2(dv, du); // direction from center to label offset
+    const angNorm = (a) => { const t = 2 * Math.PI; a %= t; return a < 0 ? a + t : a; };
+    const angDiff = (a, b) => { let x = angNorm(a - b); if (x > Math.PI) x = 2 * Math.PI - x; return Math.abs(x); };
+    const bisector = aStart + d * 0.5;
+    const bisectorOpp = bisector + Math.PI;
+    if (angDiff(labelAng, bisectorOpp) + 1e-6 < angDiff(labelAng, bisector)) {
+      aStart += Math.PI; // flip arc side
+    }
   }
 
   // Author the arc polyline
