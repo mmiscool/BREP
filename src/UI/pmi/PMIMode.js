@@ -40,6 +40,8 @@ export class PMIMode {
     this._onControlsChange = this._refreshOverlays.bind(this);
     this._gfuByIndex = new Map(); // idx -> genFeatureUI instance for dim widgets
     this._labelOverlay = null; // manages overlay labels
+    this._baseMatrixSessionKey = `pmi-base-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    this._hasBaseMatrices = false;
 
     // Annotation history stores inputParams/persistentData similar to PartHistory
     this._annotationHistory = new AnnotationHistory(this);
@@ -85,6 +87,10 @@ export class PMIMode {
     this._annotationsDirty = true; // Flag to track when rebuild is needed
     this._lastCameraState = null; // Track camera changes for overlay updates
     this.#rebuildAnnotationObjects();
+
+    // Remember modeling-space transforms so we can restore/apply PMI offsets deterministically
+    this.#ensureBaseSolidMatrices();
+    this.#resetSolidsToBaseMatrices();
 
     // Apply view-specific transforms from ViewTransform annotations AFTER annotations are processed
     this.#applyViewTransforms();
@@ -136,6 +142,9 @@ export class PMIMode {
   async finish() {
     // Persist annotations back into the view entry and refresh PMI widget
     try { this.#_persistView(true); } catch { }
+    // Immediately return scene solids to modeling state before we notify the viewer
+    try { this.#restoreViewTransforms(); } catch { }
+    try { this.#resetSolidsToBaseMatrices(); } catch { }
     try { this.viewer.onPMIFinished?.(this.viewEntry); } catch { }
     await this.dispose();
   }
@@ -143,6 +152,7 @@ export class PMIMode {
   async cancel() {
     // Restore original transforms before canceling
     this.#restoreViewTransforms();
+    this.#resetSolidsToBaseMatrices();
     try { this.viewer.onPMICancelled?.(); } catch { }
     await this.dispose();
   }
@@ -153,6 +163,7 @@ export class PMIMode {
 
     // Restore original transforms when exiting PMI mode
     this.#restoreViewTransforms();
+    this.#resetSolidsToBaseMatrices();
 
     try { v.renderer.domElement.removeEventListener('pointerdown', this._onCanvasDown, { capture: true }); } catch { }
     // Remove controls change listeners
@@ -182,6 +193,9 @@ export class PMIMode {
     try { this._labelOverlay?.dispose?.(); } catch { }
     this._labelOverlay = null;
     try { this._gfuByIndex && this._gfuByIndex.forEach(ui => ui?.destroy?.()); this._gfuByIndex && this._gfuByIndex.clear(); } catch { }
+
+    // Clear PMI base matrices once we're back in modeling mode
+    this.#clearBaseSolidMatrices();
 
     // Note: Main toolbar is no longer hidden so no restoration needed
     // Restore camera controls enabled state
@@ -1220,6 +1234,10 @@ export class PMIMode {
   // Apply view-specific transforms from ViewTransform annotations
   #applyViewTransforms() {
     try {
+      this.#ensureBaseSolidMatrices();
+      // Always return solids to their modeling positions before applying PMI offsets
+      this.#resetSolidsToBaseMatrices();
+
       const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
       if (!Array.isArray(anns) || anns.length === 0) return;
 
@@ -1306,6 +1324,80 @@ export class PMIMode {
       }
     } catch (error) {
       console.warn('Failed to restore view transforms:', error);
+    }
+  }
+
+  #ensureBaseSolidMatrices() {
+    if (this._hasBaseMatrices) return;
+    try {
+      const scene = this.viewer?.scene;
+      if (!scene || typeof scene.traverse !== 'function') return;
+      const sessionKey = this._baseMatrixSessionKey;
+      scene.traverse((obj) => {
+        if (!obj || !obj.isObject3D || obj.type !== 'SOLID') return;
+        const data = obj.userData || (obj.userData = {});
+        try { obj.updateMatrixWorld(true); } catch { }
+        const matrix = data.__pmiBaseMatrix;
+        if (matrix && typeof matrix.copy === 'function' && matrix.isMatrix4) {
+          matrix.copy(obj.matrix);
+        } else {
+          data.__pmiBaseMatrix = obj.matrix.clone();
+        }
+        data.__pmiBaseMatrixSession = sessionKey;
+      });
+      this._hasBaseMatrices = true;
+    } catch (error) {
+      console.warn('Failed to record base matrices for PMI mode:', error);
+    }
+  }
+
+  #resetSolidsToBaseMatrices() {
+    if (!this._hasBaseMatrices) return;
+    try {
+      const scene = this.viewer?.scene;
+      if (!scene || typeof scene.traverse !== 'function') return;
+      const sessionKey = this._baseMatrixSessionKey;
+      scene.traverse((obj) => {
+        if (!obj || !obj.isObject3D || obj.type !== 'SOLID') return;
+        const data = obj.userData;
+        const base = data?.__pmiBaseMatrix;
+        if (!base || !base.isMatrix4 || data.__pmiBaseMatrixSession !== sessionKey) return;
+        try {
+          obj.matrix.copy(base);
+          obj.matrix.decompose(obj.position, obj.quaternion, obj.scale);
+          if (obj.matrixAutoUpdate) {
+            obj.updateMatrix();
+          }
+          obj.updateMatrixWorld(true);
+        } catch { /* ignore per-object restore errors */ }
+      });
+      try { this.viewer?.render?.(); } catch { }
+    } catch (error) {
+      console.warn('Failed to reset solids to PMI base matrices:', error);
+    }
+  }
+
+  #clearBaseSolidMatrices() {
+    if (!this._hasBaseMatrices) {
+      this._baseMatrixSessionKey = `pmi-base-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      return;
+    }
+    try {
+      const scene = this.viewer?.scene;
+      if (!scene || typeof scene.traverse !== 'function') return;
+      const sessionKey = this._baseMatrixSessionKey;
+      scene.traverse((obj) => {
+        if (!obj || !obj.isObject3D || obj.type !== 'SOLID') return;
+        const data = obj.userData;
+        if (!data || data.__pmiBaseMatrixSession !== sessionKey) return;
+        delete data.__pmiBaseMatrix;
+        delete data.__pmiBaseMatrixSession;
+      });
+    } catch (error) {
+      console.warn('Failed to clear PMI base matrices:', error);
+    } finally {
+      this._hasBaseMatrices = false;
+      this._baseMatrixSessionKey = `pmi-base-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     }
   }
 
