@@ -54,7 +54,7 @@ const css = `
   --border:#1b2430; --accent:#5cc8ff; --chip:#121823;
 }
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono','Courier New',monospace}
 main{max-width:1100px;margin:0 auto;padding:28px}
 h1{margin:0 0 18px;font-size:22px;color:var(--accent);font-weight:700}
 .summary{color:var(--muted);margin-bottom:22px}
@@ -74,7 +74,7 @@ h1{margin:0 0 18px;font-size:22px;color:var(--accent);font-weight:700}
 .prose p{margin:0 0 10px}
 .prose ul{margin:0 0 10px 18px}
 .prose li{margin:4px 0}
-.prose code{background:#0d1520;border:1px solid var(--border);padding:1px 5px;border-radius:6px;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;font-size:12px}
+.prose code{background:#0d1520;border:1px solid var(--border);padding:1px 5px;border-radius:6px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono','Courier New',monospace;font-size:12px}
 .prose pre{background:#0d1520;border:1px solid var(--border);padding:12px;border-radius:12px;overflow:auto}
 .prose a{color:var(--accent)}
 .prose img{max-width:100%;height:auto;}

@@ -4,12 +4,18 @@ Status: Implemented
 
 Image to Face traces a source image into planar geometry that can be placed on any sketch plane or selected face. It is ideal for logos, decorative cutouts, and relief features.
 
+![Image to Face 2D Trace](./image-to-face-2D.png)
+![Image to Face 3D Result](./image-to-face-3D.png)
+
 ## Parameters
 - **threshold** (0-255) controls how dark a pixel must be to form geometry.
 - **invert** flips dark and light interpretation for the trace.
 - **pixelScale** and **center** adjust the size and placement of the resulting sketch.
 - **simplify options** reduce jagged edges on the traced outline.
+- **placementPlane** lets you place the traced sketch onto a selected face or datum plane; otherwise the world origin is used.
 - **Edit Image** opens the integrated editor.
+
+The feature emits a `SKETCH` group that contains a triangulated face and edge polylines. Downstream features (Extrude, Revolve, Sweep) can consume the face directly.
 
 ## Inline Image Editor
 - Starts with your current image or a default 300x300 white canvas.

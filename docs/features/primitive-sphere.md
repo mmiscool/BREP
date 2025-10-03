@@ -2,4 +2,13 @@
 
 Status: Implemented
 
-The Primitive Sphere feature adds spherical solids sized by radius or diameter. Spheres are useful for blending, ball ends, fillet stock, or boolean subtraction to sculpt cavities.
+Primitive Sphere builds a sphere centered at the origin using `BREP.Sphere`.
+
+## Inputs
+- `radius` – sphere radius.
+- `resolution` – base longitudinal segment count (latitude segments are derived).
+- `transform` – optional translation/rotation/scale baked into the solid.
+- `boolean` – optional boolean operation run after creating the sphere.
+
+## Behaviour
+- The feature emits a single analytic face representing the sphere. Use the transform to move it before combining with other bodies.
