@@ -149,9 +149,9 @@ export class PMIViewsWidget {
       nameButton.type = 'button';
       nameButton.className = 'pmi-name pmi-name-btn pmi-grow';
       nameButton.textContent = viewName;
-      nameButton.title = 'Click to apply view';
+      nameButton.title = 'Click to edit annotations for this view';
       nameButton.addEventListener('click', () => {
-        this._applyView(v);
+        this._enterEditMode(v, idx);
       });
       row.appendChild(nameButton);
 
@@ -204,33 +204,6 @@ export class PMIViewsWidget {
         nameInput.select();
       });
       row.appendChild(renameBtn);
-
-
-
-      // Edit button (enter PMI edit mode)
-      const editBtn = document.createElement('button');
-      editBtn.className = 'pmi-btn';
-      editBtn.title = 'Edit annotations for this view';
-      editBtn.textContent = 'Edit';
-      editBtn.addEventListener('click', async () => {
-        try {
-          const activePMI = this.viewer?._pmiMode;
-          if (activePMI) {
-            try {
-              await activePMI.finish();
-            } catch (err) {
-              console.warn('PMI Views: failed to finish active PMI session before switching', err);
-            }
-          }
-        } catch (err) {
-          console.warn('PMI Views: unexpected PMI session check failure', err);
-        }
-
-        try { this._applyView(v); } catch {}
-        try { this.viewer.startPMIMode?.(v, idx, this); } catch {}
-      });
-      row.appendChild(editBtn);
-
       // Delete
       const delBtn = document.createElement('button');
       delBtn.className = 'pmi-btn danger';
@@ -247,7 +220,7 @@ export class PMIViewsWidget {
       row.addEventListener('dblclick', (e) => {
         const target = e.target;
         const tagName = target?.tagName;
-        if (target === delBtn || target === editBtn || target === renameBtn || tagName === 'INPUT') return; // ignore if dblclick on control buttons or inline editor
+        if (target === delBtn || target === renameBtn || tagName === 'INPUT') return; // ignore if dblclick on control buttons or inline editor
         this._applyView(v);
       });
 
@@ -336,6 +309,24 @@ export class PMIViewsWidget {
       } catch { }
       try { this.viewer.render(); } catch { }
     } catch { /* ignore */ }
+  }
+
+  async _enterEditMode(view, index) {
+    try {
+      const activePMI = this.viewer?._pmiMode;
+      if (activePMI) {
+        try {
+          await activePMI.finish();
+        } catch (err) {
+          console.warn('PMI Views: failed to finish active PMI session before switching', err);
+        }
+      }
+    } catch (err) {
+      console.warn('PMI Views: unexpected PMI session check failure', err);
+    }
+
+    try { this._applyView(view); } catch {}
+    try { this.viewer.startPMIMode?.(view, index, this); } catch {}
   }
 
   // --- Helpers: view settings ---

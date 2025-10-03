@@ -110,7 +110,9 @@ export class PMIMode {
     try {
       this._labelOverlay = new LabelOverlay(this.viewer,
         (idx, ann, ev) => this.#startLabelDrag(idx, ann, ev),
-        (idx, ann, ev) => this.#focusAnnotationDialog(idx, ann, ev));
+        (idx, ann, ev) => this.#focusAnnotationDialog(idx, ann, ev),
+        (idx, ann, ev) => this.#handleLabelClick(idx, ann, ev),
+        (idx, ann, ev) => this.#handleLabelDragEnd(idx, ann, ev));
     } catch { }
 
     // Initial refresh of overlay positions
@@ -1311,6 +1313,43 @@ export class PMIMode {
   }
 
 
+
+  #handleLabelClick(idx, ann, e) {
+    try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
+    this.#collapseAnnotationsToIndex(idx);
+  }
+
+  #handleLabelDragEnd(idx, ann, e) {
+    // Expand the dialog associated with the label that was dragged
+    this.#collapseAnnotationsToIndex(idx);
+  }
+
+  #collapseAnnotationsToIndex(targetIdx) {
+    const anns = Array.isArray(this._annotations) ? this._annotations : [];
+    if (!anns.length) return;
+    if (!Number.isInteger(targetIdx) || targetIdx < 0 || targetIdx >= anns.length) return;
+    let changed = false;
+    anns.forEach((ann, i) => {
+      const shouldOpen = i === targetIdx;
+      if (!!ann.__open !== shouldOpen) {
+        ann.__open = shouldOpen;
+        changed = true;
+      }
+    });
+    if (!changed) return;
+    this.#renderAnnList();
+    requestAnimationFrame(() => {
+      try {
+        const section = this._pmiAnnotationsSection?.uiElement;
+        if (!section) return;
+        const items = section.querySelectorAll('.pmi-acc-item');
+        const target = items && items[targetIdx];
+        if (target && typeof target.scrollIntoView === 'function') {
+          target.scrollIntoView({ block: 'nearest' });
+        }
+      } catch { }
+    });
+  }
 
   #focusAnnotationDialog(idx, ann, e) {
     e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation();
