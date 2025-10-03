@@ -87,7 +87,7 @@ export async function importGithubPlugin(repoUrl) {
   const url = URL.createObjectURL(blob);
   try { console.log('[PluginLoader] Importing module from blob:', url); } catch { }
   try {
-    const mod = await import(/* webpackIgnore: true */ url);
+    const mod = await import(/* webpackIgnore: true */ /* @vite-ignore */ url);
     return mod;
   } finally {
     // Clean up the blob URL; module stays cached

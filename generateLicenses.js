@@ -46,7 +46,7 @@ const licenseKeys = Object.keys(data).sort((a, b) => a.localeCompare(b));
 
 const rootDir = process.cwd();
 const docsSourceDir = path.join(rootDir, "docs");
-const docsOutputDir = path.join(rootDir, "public", "docs");
+const docsOutputDir = path.join(rootDir, "public", "help");
 
 const css = `
 :root{
@@ -207,6 +207,16 @@ const convertMarkdownLinks = (html) =>
     return `href="${next}"`;
   });
 
+const convertReadmeLinks = (html) =>
+  html.replace(/href="([^"#]+?)\.md(#[^"]*)?"/g, (match, base, hash = "") => {
+    const fullPath = `${base}.md`;
+    if (/^[a-z]+:/i.test(fullPath)) return match;
+    // Remove 'docs/' prefix for README since we're now in the help root
+    const cleanBase = base.startsWith('docs/') ? base.substring(5) : base;
+    const next = `${cleanBase}.html${hash}`;
+    return `href="${next}"`;
+  }).replace(/src="docs\//g, 'src="');
+
 const extractTitle = (mdText, fallback) => {
   const heading = mdText.match(/^#\s+(.+)$/m);
   return heading ? heading[1].trim() : fallback;
@@ -222,12 +232,12 @@ const docTemplate = (title, content, { relativeRoot = ".", showTitle = false } =
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>${escapeHTML(title)} - BREP Docs</title>
+<title>${escapeHTML(title)} - BREP</title>
 <style>${css}</style>
 </head>
 <body>
 <main>
-  <nav class="doc-nav"><a href="${indexHref}">Docs Index</a><span>&middot;</span><a href="/about.html">About</a></nav>
+  <nav class="doc-nav"><a href="${indexHref}">Help Home</a><span>&middot;</span><a href="/help/index.html">About</a></nav>
   <section class="card doc-card">
     ${header}
     <div class="prose">
@@ -287,19 +297,99 @@ function generateDocsSite() {
 
   walk(docsSourceDir, docsOutputDir);
 
+  // Also process LICENSE.md and CONTRIBUTING.md from root directory
+  const rootMdFiles = ['LICENSE.md', 'CONTRIBUTING.md'];
+  for (const fileName of rootMdFiles) {
+    const srcPath = path.join(rootDir, fileName);
+    if (existsSync(srcPath)) {
+      const baseName = path.basename(fileName, '.md');
+      const destPath = path.join(docsOutputDir, `${baseName}.html`);
+      const md = readFileSync(srcPath, "utf-8");
+      const pageTitle = extractTitle(md, baseName);
+      let body = renderMarkdown(md);
+      body = convertMarkdownLinks(body);
+      const relRoot = path.relative(path.dirname(destPath), docsOutputDir) || ".";
+      const htmlPage = docTemplate(pageTitle, body, { relativeRoot: relRoot, showTitle: false });
+      writeFileSync(destPath, htmlPage, "utf-8");
+      const relativeHref = toPosix(path.relative(docsOutputDir, destPath));
+      pages.push({ title: pageTitle, href: relativeHref });
+    }
+  }
+
+  // Sort pages for consistent ordering
   const sortedPages = pages.sort((a, b) => a.href.localeCompare(b.href));
-  const listItems = sortedPages
-    .map((page) => `<li><a href="./${escapeHTML(page.href)}">${escapeHTML(page.title)}</a></li>`)
-    .join("\n");
 
-  const indexContent = sortedPages.length
-    ? `<p>Select a document below.</p>\n<ul class="doc-list">${listItems}</ul>`
-    : `<p>No documentation pages were found.</p>`;
+  // Create README as index.html
+  const readmePath = path.join(rootDir, "README.md");
+  if (existsSync(readmePath)) {
+    const readmeMd = readFileSync(readmePath, "utf-8");
+    const readmeTitle = extractTitle(readmeMd, "BREP");
+    let readmeBody = renderMarkdown(readmeMd);
+    readmeBody = convertReadmeLinks(readmeBody);
+    
+    // Add navigation to other docs at the end of README
+    if (sortedPages.length > 0) {
+      const listItems = sortedPages
+        .map((page) => `<li><a href="./${escapeHTML(page.href)}">${escapeHTML(page.title)}</a></li>`)
+        .join("\n");
+      readmeBody += `\n\n<h2>Documentation</h2>\n<ul class="doc-list">${listItems}</ul>`;
+    }
 
-  const indexHtml = docTemplate("BREP Documentation", indexContent, { relativeRoot: ".", showTitle: true });
-  writeFileSync(path.join(docsOutputDir, "index.html"), indexHtml, "utf-8");
+    // Add license information sections
+    readmeBody += `\n\n</div>
+  </section>
 
-  console.log(`✔ Generated ${sortedPages.length} documentation page${sortedPages.length === 1 ? "" : "s"} in public/docs`);
+  <section class="card">
+    <h1>This project's license</h1>
+    <div style="white-space: pre-wrap;">${escapeHTML(licenseText)}</div>
+  </section>
+
+  <h1>Licenses Report of libraries used in this package</h1>
+  <div class="summary">${countPackages} packages • ${licenseKeys.length} license types</div>
+`;
+
+    // Add all the license sections
+    for (const lic of licenseKeys) {
+      const list = Array.isArray(data[lic]) ? data[lic] : [];
+      list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+      readmeBody += `<section class="license">
+    <h2>${escapeHTML(lic)} <span class="chip">${list.length} package${list.length === 1 ? "" : "s"}</span></h2>
+  `;
+
+      for (const p of list) {
+        const name = escapeHTML(p.name ?? "");
+        const author =
+          p.author && typeof p.author === "object"
+            ? escapeHTML(p.author.name ?? "")
+            : escapeHTML(p.author ?? "");
+        const homepage = p.homepage ? String(p.homepage) : "";
+        const desc = escapeHTML(p.description ?? "");
+        const versionsCount = Array.isArray(p.versions) ? new Set(p.versions).size : 0;
+
+        readmeBody += `<div class="pkg">
+      <div>
+        <div class="name">${name}${versionsCount ? ` <span class="chip">${versionsCount} version${versionsCount===1?"":"s"}</span>` : ""}</div>
+        ${desc ? `<div class="desc">${desc}</div>` : ""}
+        ${author ? `<div class="desc">Author: ${escapeHTML(author)}</div>` : ""}
+      </div>
+      <div class="meta">
+        ${homepage ? `<a class="chip" href="${escapeHTML(homepage)}" target="_blank" rel="noopener noreferrer">Repo / Homepage</a>` : ""}
+      </div>
+    </div>`;
+      }
+
+      readmeBody += `</section>`;
+    }
+
+    readmeBody += `<div class="footer">Generated from <code>pnpm licenses list --prod --long --json</code></div>
+    <div class="prose">`;
+    
+    const indexHtml = docTemplate(readmeTitle, readmeBody, { relativeRoot: ".", showTitle: false });
+    writeFileSync(path.join(docsOutputDir, "index.html"), indexHtml, "utf-8");
+  }
+
+  console.log(`✔ Generated ${sortedPages.length + 1} documentation page${sortedPages.length === 0 ? "" : "s"} in public/help`);
 }
 
 const readmeHTML = convertMarkdownLinks(renderMarkdown(readmeText));
