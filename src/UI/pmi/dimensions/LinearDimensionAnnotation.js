@@ -12,6 +12,13 @@ const inputParamsSchema = {
   decimals: {
     type: 'number',
     default_value: 3,
+    defaultResolver: ({ pmimode }) => {
+      const dec = Number.isFinite(pmimode?._opts?.dimDecimals)
+        ? (pmimode._opts.dimDecimals | 0)
+        : undefined;
+      if (!Number.isFinite(dec)) return undefined;
+      return Math.max(0, Math.min(8, dec));
+    },
     label: 'Decimals',
     hint: 'Number of decimal places to display',
     min: 0,
@@ -77,117 +84,16 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
   static featureName = 'Linear Dimension';
   static inputParamsSchema = inputParamsSchema;
 
-  constructor() {
-    super();
-    this.inputParams = {};
-    this.persistentData = {};
-  }
-
   async run(renderingContext) {
-    this.renderingContext = renderingContext;
-    LinearDimensionAnnotation.render3D(
-      renderingContext.pmimode,
-      renderingContext.group,
-      this.inputParams,
-      renderingContext.idx,
-      renderingContext.ctx,
-    );
-    return [];
-  }
-
-  static create(pmimode) {
-    const defaults = pmimode?._opts || {};
-    const decimals = Number.isFinite(defaults.dimDecimals) ? (defaults.dimDecimals | 0) : 3;
-    return {
-      type: this.type,
-      decimals,
-      aRefName: '',
-      bRefName: '',
-      planeRefName: '',
-      alignment: 'view',
-      offset: 0,
-      showExt: true,
-      isReference: false,
-      persistentData: {},
-      __open: true,
-    };
-  }
-
-  static getSchema(pmimode, ann) {
+    const { pmimode, group, idx, ctx } = renderingContext;
+    const ann = this.inputParams;
     const pts = computeDimPoints(pmimode, ann);
     const measured = (pts && pts.p0 && pts.p1) ? pts.p0.distanceTo(pts.p1) : null;
-    const dec = Number.isFinite(ann.decimals) ? ann.decimals : (pmimode?._opts?.dimDecimals | 0);
-    const schema = {
-      decimals: { ...inputParamsSchema.decimals, default_value: dec },
-      anchorA: { ...inputParamsSchema.aRefName, default_value: ann.aRefName || '' },
-      anchorB: { ...inputParamsSchema.bRefName, default_value: ann.bRefName || '' },
-      planeRef: { ...inputParamsSchema.planeRefName, default_value: ann.planeRefName || '' },
-      alignment: { ...inputParamsSchema.alignment, default_value: ann.alignment || 'view' },
-      offset: { ...inputParamsSchema.offset, default_value: Number.isFinite(ann.offset) ? ann.offset : 0 },
-      showExt: { ...inputParamsSchema.showExt, default_value: ann.showExt !== false },
-      isReference: { ...inputParamsSchema.isReference, default_value: ann.isReference === true },
-      value: {
-        type: 'string',
-        label: 'Value',
-        readOnly: true,
-        default_value: (() => {
-          if (typeof measured !== 'number') return '—';
-          let t = `${measured.toFixed(dec)} (wu)`;
-          if (ann.isReference) t = `(${t})`;
-          return t;
-        })(),
-      },
-    };
-    const params = {
-      decimals: schema.decimals.default_value,
-      anchorA: schema.anchorA.default_value,
-      anchorB: schema.anchorB.default_value,
-      planeRef: schema.planeRef.default_value,
-      alignment: schema.alignment.default_value,
-      offset: schema.offset.default_value,
-      showExt: schema.showExt.default_value,
-      isReference: schema.isReference.default_value,
-      value: schema.value.default_value,
-    };
-    return { schema, params };
-  }
+    const labelInfo = formatLinearLabel(measured, ann);
+    ann.value = labelInfo.display;
 
-  static applyParams(pmimode, ann, params) {
-    ann.decimals = Math.max(0, Math.min(8, Number(params.decimals) | 0));
-    ann.alignment = String(params.alignment || 'view');
-    ann.aRefName = String(params.anchorA || '');
-    ann.bRefName = String(params.anchorB || '');
-    ann.planeRefName = String(params.planeRef || '');
-    ann.offset = Number(params.offset);
-    ann.showExt = Boolean(params.showExt);
-    ann.isReference = Boolean(params.isReference);
+    if (!pts || !pts.p0 || !pts.p1) return [];
 
-    const pts = computeDimPoints(pmimode, ann);
-    const measured = (pts && pts.p0 && pts.p1) ? pts.p0.distanceTo(pts.p1) : null;
-    let display = (typeof measured === 'number') ? `${measured.toFixed(ann.decimals)} (wu)` : '—';
-    if (ann.isReference && display !== '—') display = `(${display})`;
-    const statusText = (typeof measured === 'number')
-      ? (ann.isReference ? `(${measured.toFixed(ann.decimals)} (wu))` : `${measured.toFixed(ann.decimals)} (wu)`)
-      : '';
-
-    return { paramsPatch: { value: display }, statusText };
-  }
-
-  static statusText(pmimode, ann) {
-    const pts = computeDimPoints(pmimode, ann);
-    const measured = (pts && pts.p0 && pts.p1) ? pts.p0.distanceTo(pts.p1) : null;
-    if (typeof measured !== 'number') return '';
-    const dec = Number.isFinite(ann.decimals) ? ann.decimals : (pmimode?._opts?.dimDecimals | 0);
-    let txt = `${measured.toFixed(dec)} (wu)`;
-    if (ann.isReference) txt = `(${txt})`;
-    return txt;
-  }
-
-  static render3D(pmimode, group, ann, idx, ctx) {
-    const points = computeDimPoints(pmimode, ann);
-    if (!points || !points.p0 || !points.p1) return;
-
-    const { p0, p1 } = points;
     if (!ann.persistentData || typeof ann.persistentData !== 'object') {
       ann.persistentData = {};
     }
@@ -196,19 +102,19 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
     try {
       const color = 0x10b981;
       const normal = ctx.alignNormal ? ctx.alignNormal(ann?.alignment || 'view', ann) : new THREE.Vector3(0, 0, 1);
-      const dir = new THREE.Vector3().subVectors(p1, p0);
-      if (dir.lengthSq() < 1e-8) return;
+      const dir = new THREE.Vector3().subVectors(pts.p1, pts.p0);
+      if (dir.lengthSq() < 1e-8) return [];
       dir.normalize();
       const t = new THREE.Vector3().crossVectors(normal, dir).normalize();
 
       let off = Number(ann?.offset);
       if (!Number.isFinite(off)) off = ctx.screenSizeWorld ? ctx.screenSizeWorld(20) : 0.05;
-      const p0o = p0.clone().addScaledVector(t, off);
-      const p1o = p1.clone().addScaledVector(t, off);
+      const p0o = pts.p0.clone().addScaledVector(t, off);
+      const p1o = pts.p1.clone().addScaledVector(t, off);
 
       if (ann?.showExt !== false && off !== 0) {
-        group.add(makeOverlayLine(p0, p0o, color));
-        group.add(makeOverlayLine(p1, p1o, color));
+        group.add(makeOverlayLine(pts.p0, p0o, color));
+        group.add(makeOverlayLine(pts.p1, p1o, color));
       }
       group.add(makeOverlayLine(p0o, p1o, color));
 
@@ -234,9 +140,10 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
       }
 
       const dec = Number.isFinite(ann.decimals) ? ann.decimals : (pmimode?._opts?.dimDecimals | 0);
-      const value = p0.distanceTo(p1);
-      const textRaw = `${value.toFixed(dec)}`;
-      const labelText = ctx.formatReferenceLabel ? ctx.formatReferenceLabel(ann, textRaw) : textRaw;
+      const value = pts.p0.distanceTo(pts.p1);
+      const displayInfo = formatLinearLabel(value, ann, dec);
+      ann.value = displayInfo.display;
+      const labelText = ctx.formatReferenceLabel ? ctx.formatReferenceLabel(ann, displayInfo.raw) : displayInfo.display;
 
       const labelPos = (() => {
         if (persistent.labelWorld) return arrayToVector(persistent.labelWorld);
@@ -248,17 +155,7 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
 
       if (labelPos) ctx.updateLabel(idx, labelText, labelPos, ann);
     } catch { /* ignore */ }
-  }
-
-  static getLabelWorld(pmimode, ann, ctx) {
-    try {
-      const persistent = ann?.persistentData;
-      if (persistent?.labelWorld) return arrayToVector(persistent.labelWorld);
-      if (ann.labelWorld) return arrayToVector(ann.labelWorld);
-      const pts = computeDimPoints(pmimode, ann);
-      if (pts && pts.p0 && pts.p1) return new THREE.Vector3().addVectors(pts.p0, pts.p1).multiplyScalar(0.5);
-    } catch { /* ignore */ }
-    return null;
+    return [];
   }
 
   static onLabelPointerDown(pmimode, idx, ann, e, ctx) {
@@ -304,18 +201,17 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
     } catch { /* ignore */ }
   }
 
-  static serialize(ann, entry) {
-    const out = entry ? { ...entry } : { type: this.type }; // eslint-disable-line prefer-object-spread
-    out.type = this.type;
-    out.inputParams = clonePlainInput(ann);
-    out.persistentData = clonePersistent(ann?.persistentData) || clonePersistent(entry?.persistentData) || {};
-    if (ann && Object.prototype.hasOwnProperty.call(ann, '__open')) {
-      out.__open = Boolean(ann.__open);
-    } else if (entry && Object.prototype.hasOwnProperty.call(entry, '__open')) {
-      out.__open = Boolean(entry.__open);
-    }
-    return out;
+}
+
+function formatLinearLabel(measured, ann, overrideDecimals) {
+  if (typeof measured !== 'number' || !Number.isFinite(measured)) {
+    return { raw: '—', display: '—' };
   }
+  const decRaw = overrideDecimals !== undefined ? overrideDecimals : Number(ann?.decimals);
+  const decimals = Number.isFinite(decRaw) ? Math.max(0, Math.min(8, decRaw | 0)) : 3;
+  const raw = `${measured.toFixed(decimals)}`;
+  const display = ann?.isReference ? `(${raw})` : raw;
+  return { raw, display };
 }
 
 function computeDimPoints(pmimode, ann) {
@@ -487,32 +383,4 @@ function vectorFromAnnotationPoint(point) {
   if (Array.isArray(point)) return new THREE.Vector3(point[0] || 0, point[1] || 0, point[2] || 0);
   if (typeof point === 'object') return new THREE.Vector3(point.x || 0, point.y || 0, point.z || 0);
   return null;
-}
-
-function clonePlainInput(src) {
-  const out = {};
-  if (!src || typeof src !== 'object') return out;
-  for (const key of Object.keys(src)) {
-    if (key === 'persistentData' || key === '__entryRef') continue;
-    if (key === '__open') continue;
-    out[key] = cloneValue(src[key]);
-  }
-  return out;
-}
-
-function clonePersistent(src) {
-  if (!src || typeof src !== 'object') return null;
-  return cloneValue(src);
-}
-
-function cloneValue(value) {
-  if (value == null) return value;
-  if (value instanceof THREE.Vector3) return value.clone();
-  if (Array.isArray(value)) return value.map((v) => cloneValue(v));
-  if (typeof value === 'object') {
-    const out = {};
-    for (const key of Object.keys(value)) out[key] = cloneValue(value[key]);
-    return out;
-  }
-  return value;
 }

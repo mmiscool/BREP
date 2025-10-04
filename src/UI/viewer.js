@@ -623,6 +623,14 @@ export class Viewer {
     _loop() {
         this._raf = requestAnimationFrame(this._loop);
         this.controls.update();
+        try {
+            const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
+            const tc = ax && ax.controls;
+            if (tc) {
+                if (typeof tc.update === 'function') tc.update();
+                else tc.updateMatrixWorld(true);
+            }
+        } catch { }
         this.render();
     }
 

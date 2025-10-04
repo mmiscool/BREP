@@ -86,15 +86,17 @@ export class AnnotationHistory {
 
   createAnnotation(type, initialData = null) {
     const handler = this.#resolveHandler(type);
-    let defaults = {};
+    const schemaDefaults = this.#defaultsFromSchema(handler, this.pmimode);
+    let defaults = { ...schemaDefaults };
     try {
       if (initialData && typeof initialData === 'object') {
-        defaults = deepClone(initialData);
+        defaults = { ...defaults, ...deepClone(initialData) };
       } else if (handler && typeof handler.create === 'function') {
-        defaults = handler.create(this.pmimode) || {};
+        const created = handler.create(this.pmimode) || {};
+        defaults = { ...defaults, ...created };
       }
     } catch {
-      defaults = {};
+      defaults = { ...schemaDefaults };
     }
 
     const normalizedType = normalizeTypeString(defaults.type || type || (handler && handler.type));
@@ -122,6 +124,20 @@ export class AnnotationHistory {
       delete entry.__legacy;
     }
     return entry;
+  }
+
+  moveUp(index) {
+    if (index <= 0 || index >= this.annotations.length) return false;
+    const [entry] = this.annotations.splice(index, 1);
+    this.annotations.splice(index - 1, 0, entry);
+    return true;
+  }
+
+  moveDown(index) {
+    if (index < 0 || index >= this.annotations.length - 1) return false;
+    const [entry] = this.annotations.splice(index, 1);
+    this.annotations.splice(index + 1, 0, entry);
+    return true;
   }
 
   clear() {
@@ -190,6 +206,13 @@ export class AnnotationHistory {
       __open: Boolean(raw.__open),
     };
 
+    try {
+      const handler = this.#resolveHandler(type);
+      if (handler && typeof handler.applyParams === 'function') {
+        handler.applyParams(this.pmimode, entry.inputParams, entry.inputParams);
+      }
+    } catch { /* ignore sanitize errors */ }
+
     return entry;
   }
 
@@ -243,6 +266,47 @@ export class AnnotationHistory {
 
     entry.__legacy = target;
     return target;
+  }
+
+  #defaultsFromSchema(handler, pmimode) {
+    const out = {};
+    if (!handler) return out;
+
+    const schema = handler.inputParamsSchema;
+    if (!schema || typeof schema !== 'object') {
+      out.persistentData = {};
+      return out;
+    }
+
+    for (const key of Object.keys(schema)) {
+      if (RESERVED_INPUT_KEYS.has(key)) continue;
+      const def = schema[key];
+      if (!def || typeof def !== 'object') continue;
+
+      let value;
+      if (typeof def.defaultResolver === 'function') {
+        try {
+          const resolved = def.defaultResolver({ pmimode, handler });
+          if (resolved !== undefined) value = resolved;
+        } catch (_) {
+          value = undefined;
+        }
+      }
+
+      if (value === undefined && Object.prototype.hasOwnProperty.call(def, 'default_value')) {
+        value = def.default_value;
+      }
+
+      if (value !== undefined) {
+        out[key] = deepClone(value);
+      }
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(out, 'persistentData')) {
+      out.persistentData = {};
+    }
+
+    return out;
   }
 
   #serializeEntry(entry) {

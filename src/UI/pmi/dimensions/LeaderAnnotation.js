@@ -28,6 +28,10 @@ const inputParamsSchema = {
   text: {
     type: 'textarea',
     default_value: 'TEXT HERE',
+    defaultResolver: ({ pmimode }) => {
+      const txt = pmimode?._opts?.leaderText;
+      return (typeof txt === 'string' && txt.length) ? txt : undefined;
+    },
     label: 'Text',
     hint: 'Leader text content',
     rows: 3,
@@ -55,35 +59,20 @@ export class LeaderAnnotation extends BaseAnnotation {
   static featureName = 'Leader';
   static inputParamsSchema = inputParamsSchema;
 
-  constructor() {
-    super();
-    this.inputParams = {};
-    this.persistentData = {};
-  }
-
   async run(renderingContext) {
-    LeaderAnnotation.render3D(
-      renderingContext.pmimode,
-      renderingContext.group,
-      this.inputParams,
-      renderingContext.idx,
-      renderingContext.ctx,
-    );
-    return [];
-  }
+    const { pmimode, group, idx, ctx } = renderingContext;
+    const ann = this.inputParams;
+    ensurePersistent(ann);
+    const anchorPoint = resolveAnchorWorld(pmimode, ann) || new THREE.Vector3();
+    const text = String(ann.text || '');
+    if (!text) return [];
 
-  static create(pmimode) {
-    const defaults = pmimode?._opts || {};
-    return {
-      type: this.type,
-      anchorRefName: '',
-      planeRefName: '',
-      text: typeof defaults.leaderText === 'string' ? defaults.leaderText : 'TEXT HERE',
-      anchorSide: 'right',
-      endStyle: 'arrow',
-      persistentData: {},
-      __open: true,
-    };
+    const textPos = ann.textPosition ? vectorFromAny(ann.textPosition) : null;
+    const labelPos = textPos || computeAutoLabelPosition(pmimode, ann, anchorPoint, ctx);
+    if (labelPos) ctx.updateLabel(idx, text, labelPos, ann);
+
+    drawLeaderGraphics(group, ann, anchorPoint, labelPos, idx, ctx);
+    return [];
   }
 
   static getSchema(pmimode, ann) {
@@ -105,44 +94,17 @@ export class LeaderAnnotation extends BaseAnnotation {
   }
 
   static applyParams(pmimode, ann, params) {
-    const previousAnchor = String(ann.anchorRefName || '');
-    ann.anchorRefName = String(params.anchor || '');
-    ann.planeRefName = String(params.planeRef || '');
-    ann.text = String(params.text || 'TEXT HERE');
-    ann.anchorSide = String(params.anchorSide || 'right');
-    ann.endStyle = String(params.endStyle || 'arrow');
-    if (ann.anchorRefName && ann.anchorRefName !== previousAnchor) {
+    const previousAnchor = ann?.anchorRefName || '';
+    super.applyParams(pmimode, ann, params);
+    const newAnchor = ann?.anchorRefName || '';
+    if (newAnchor && newAnchor !== previousAnchor) {
       delete ann.textPosition;
-      delete ann.persistentData?.labelWorld;
+      if (ann.persistentData && typeof ann.persistentData === 'object') {
+        delete ann.persistentData.labelWorld;
+      }
     }
-    return { paramsPatch: {}, statusText: (ann.text || '').slice(0, 24) };
-  }
-
-  static statusText(pmimode, ann) {
-    return (ann.text || '').slice(0, 24);
-  }
-
-  static render3D(pmimode, group, ann, idx, ctx) {
-    ensurePersistent(ann);
-    const anchorPoint = resolveAnchorWorld(pmimode, ann) || new THREE.Vector3();
-    const text = String(ann.text || '');
-    if (!text) return;
-
-    const textPos = ann.textPosition ? vectorFromAny(ann.textPosition) : null;
-    const labelPos = textPos || computeAutoLabelPosition(pmimode, ann, anchorPoint, ctx);
-    if (labelPos) ctx.updateLabel(idx, text, labelPos, ann);
-
-    drawLeaderGraphics(group, ann, anchorPoint, labelPos, idx, ctx);
-  }
-
-  static getLabelWorld(pmimode, ann, ctx) {
-    try {
-      if (ann.textPosition) return vectorFromAny(ann.textPosition);
-      const anchor = resolveAnchorWorld(pmimode, ann) || new THREE.Vector3();
-      return computeAutoLabelPosition(pmimode, ann, anchor, ctx);
-    } catch {
-      return null;
-    }
+    if (!ann.text || !String(ann.text).trim()) ann.text = 'TEXT HERE';
+    return { paramsPatch: {} };
   }
 
   static onLabelPointerDown(pmimode, idx, ann, e, ctx) {
@@ -177,19 +139,6 @@ export class LeaderAnnotation extends BaseAnnotation {
     } catch { /* ignore */ }
   }
 
-  static serialize(ann, entry) {
-    const out = entry ? { ...entry } : { type: this.type }; // eslint-disable-line prefer-object-spread
-    out.type = this.type;
-    out.inputParams = clonePlainInput(ann);
-    out.persistentData = clonePersistent(ann?.persistentData) || clonePersistent(entry?.persistentData) || {};
-    if (ann && Object.prototype.hasOwnProperty.call(ann, '__open')) {
-      out.__open = Boolean(ann.__open);
-    } else if (entry && Object.prototype.hasOwnProperty.call(entry, '__open')) {
-      out.__open = Boolean(entry.__open);
-    }
-    if (ann.textPosition) out.inputParams.textPosition = cloneValue(ann.textPosition);
-    return out;
-  }
 }
 
 function ensurePersistent(ann) {
@@ -343,31 +292,4 @@ function vectorFromAny(value) {
   if (Array.isArray(value)) return new THREE.Vector3(value[0] || 0, value[1] || 0, value[2] || 0);
   if (typeof value === 'object') return new THREE.Vector3(value.x || 0, value.y || 0, value.z || 0);
   return null;
-}
-
-function clonePlainInput(src) {
-  const out = {};
-  if (!src || typeof src !== 'object') return out;
-  for (const key of Object.keys(src)) {
-    if (key === 'persistentData' || key === '__entryRef' || key === '__open') continue;
-    out[key] = cloneValue(src[key]);
-  }
-  return out;
-}
-
-function clonePersistent(src) {
-  if (!src || typeof src !== 'object') return null;
-  return cloneValue(src);
-}
-
-function cloneValue(value) {
-  if (value == null) return value;
-  if (value instanceof THREE.Vector3) return value.clone();
-  if (Array.isArray(value)) return value.map((v) => cloneValue(v));
-  if (typeof value === 'object') {
-    const out = {};
-    for (const key of Object.keys(value)) out[key] = cloneValue(value[key]);
-    return out;
-  }
-  return value;
 }

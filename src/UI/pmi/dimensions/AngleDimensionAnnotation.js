@@ -12,6 +12,13 @@ const inputParamsSchema = {
   decimals: {
     type: 'number',
     default_value: 1,
+    defaultResolver: ({ pmimode }) => {
+      const dec = Number.isFinite(pmimode?._opts?.angleDecimals)
+        ? (pmimode._opts.angleDecimals | 0)
+        : undefined;
+      if (!Number.isFinite(dec)) return undefined;
+      return Math.max(0, Math.min(3, dec));
+    },
     label: 'Decimals',
     hint: 'Number of decimal places to display',
     min: 0,
@@ -77,113 +84,17 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
   static featureName = 'Angle Dimension';
   static inputParamsSchema = inputParamsSchema;
 
-  constructor() {
-    super();
-    this.inputParams = {};
-    this.persistentData = {};
-  }
-
   async run(renderingContext) {
-    AngleDimensionAnnotation.render3D(
-      renderingContext.pmimode,
-      renderingContext.group,
-      this.inputParams,
-      renderingContext.idx,
-      renderingContext.ctx,
-    );
-    return [];
-  }
-
-  static create(pmimode) {
-    const defaults = pmimode?._opts || {};
-    const decimals = Number.isFinite(defaults.angleDecimals) ? (defaults.angleDecimals | 0) : 1;
-    return {
-      type: this.type,
-      decimals,
-      elementARefName: '',
-      elementBRefName: '',
-      planeRefName: '',
-      alignment: 'view',
-      offset: 0,
-      isReference: false,
-      useReflexAngle: false,
-      persistentData: {},
-      __open: true,
-    };
-  }
-
-  static getSchema(pmimode, ann) {
+    const { pmimode, group, idx, ctx } = renderingContext;
+    const ann = this.inputParams;
     const measured = measureAngleValue(pmimode, ann);
-    const dec = Number.isFinite(ann.decimals) ? ann.decimals : 1;
-    const schema = {
-      decimals: { ...inputParamsSchema.decimals, default_value: dec },
-      elementA: { ...inputParamsSchema.elementARefName, default_value: ann.elementARefName || '' },
-      elementB: { ...inputParamsSchema.elementBRefName, default_value: ann.elementBRefName || '' },
-      planeRef: { ...inputParamsSchema.planeRefName, default_value: ann.planeRefName || '' },
-      alignment: { ...inputParamsSchema.alignment, default_value: ann.alignment || 'view' },
-      offset: { ...inputParamsSchema.offset, default_value: Number.isFinite(ann.offset) ? ann.offset : 0 },
-      isReference: { ...inputParamsSchema.isReference, default_value: ann.isReference === true },
-      useReflexAngle: { ...inputParamsSchema.useReflexAngle, default_value: ann.useReflexAngle === true },
-      value: {
-        type: 'string',
-        label: 'Angle',
-        readOnly: true,
-        default_value: (() => {
-          if (typeof measured !== 'number') return '—';
-          let t = `${measured.toFixed(dec)}°`;
-          if (ann.isReference) t = `(${t})`;
-          return t;
-        })(),
-      },
-    };
-    const params = {
-      decimals: schema.decimals.default_value,
-      elementA: schema.elementA.default_value,
-      elementB: schema.elementB.default_value,
-      planeRef: schema.planeRef.default_value,
-      alignment: schema.alignment.default_value,
-      offset: schema.offset.default_value,
-      isReference: schema.isReference.default_value,
-      useReflexAngle: schema.useReflexAngle.default_value,
-      value: schema.value.default_value,
-    };
-    return { schema, params };
-  }
+    const labelInfo = formatAngleLabel(measured, ann);
+    ann.value = labelInfo.display;
 
-  static applyParams(pmimode, ann, params) {
-    ann.decimals = Math.max(0, Math.min(3, Number(params.decimals) | 0));
-    ann.alignment = String(params.alignment || 'view');
-    ann.elementARefName = String(params.elementA || '');
-    ann.elementBRefName = String(params.elementB || '');
-    ann.planeRefName = String(params.planeRef || '');
-    ann.offset = Number(params.offset);
-    ann.isReference = Boolean(params.isReference);
-    ann.useReflexAngle = Boolean(params.useReflexAngle);
-
-    const measured = measureAngleValue(pmimode, ann);
-    let valueText = (typeof measured === 'number') ? `${measured.toFixed(ann.decimals)}°` : '—';
-    if (ann.isReference && valueText !== '—') valueText = `(${valueText})`;
-    const statusText = (typeof measured === 'number')
-      ? (ann.isReference ? `(${measured.toFixed(ann.decimals)}°)` : `${measured.toFixed(ann.decimals)}°`)
-      : '';
-
-    return { paramsPatch: { value: valueText }, statusText };
-  }
-
-  static statusText(pmimode, ann) {
-    const measured = measureAngleValue(pmimode, ann);
-    if (typeof measured !== 'number') return '';
-    const dec = Number.isFinite(ann.decimals) ? ann.decimals : 1;
-    let txt = `${measured.toFixed(dec)}°`;
-    if (ann.isReference) txt = `(${txt})`;
-    return txt;
-  }
-
-  static render3D(pmimode, group, ann, idx, ctx) {
     ensurePersistent(ann);
     try {
       const elements = computeAngleElementsWithGeometry(pmimode, ann, ctx);
-      if (!elements || !elements.__2d) return;
+      if (!elements || !elements.__2d) return [];
 
       const color = 0xf59e0b;
       const { N, P, A_p, B_p, A_d, B_d, V2, basis } = elements.__2d;
@@ -247,25 +158,16 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
       group.add(makeOverlayLine(V3, A0, color));
       group.add(makeOverlayLine(V3, B0, color));
 
-      const measured = measureAngleValue(pmimode, ann);
       if (typeof measured === 'number') {
-        const dec = Number.isFinite(ann.decimals) ? ann.decimals : 1;
-        const raw = `${measured.toFixed(dec)}°`;
-        const txt = ctx.formatReferenceLabel ? ctx.formatReferenceLabel(ann, raw) : raw;
+        const info = formatAngleLabel(measured, ann);
+        const raw = info.raw;
+        ann.value = info.display;
+        const txt = ctx.formatReferenceLabel ? ctx.formatReferenceLabel(ann, raw) : info.display;
         const labelPos = resolveLabelPosition(pmimode, ann, elements, R, ctx);
         if (labelPos) ctx.updateLabel(idx, txt, labelPos, ann);
       }
     } catch { /* ignore rendering errors */ }
-  }
-
-  static getLabelWorld(pmimode, ann, ctx) {
-    try {
-      if (ann.persistentData?.labelWorld) return vectorFromAny(ann.persistentData.labelWorld);
-      if (ann.labelWorld) return vectorFromAny(ann.labelWorld);
-      const elements = computeAngleElementsWithGeometry(pmimode, ann, ctx);
-      if (!elements) return null;
-      return resolveLabelPosition(pmimode, ann, elements, null, ctx);
-    } catch { return null; }
+    return [];
   }
 
   static onLabelPointerDown(pmimode, idx, ann, e, ctx) {
@@ -303,24 +205,23 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
     } catch { /* ignore */ }
   }
 
-  static serialize(ann, entry) {
-    const out = entry ? { ...entry } : { type: this.type }; // eslint-disable-line prefer-object-spread
-    out.type = this.type;
-    out.inputParams = clonePlainInput(ann);
-    out.persistentData = clonePersistent(ann?.persistentData) || clonePersistent(entry?.persistentData) || {};
-    if (ann && Object.prototype.hasOwnProperty.call(ann, '__open')) {
-      out.__open = Boolean(ann.__open);
-    } else if (entry && Object.prototype.hasOwnProperty.call(entry, '__open')) {
-      out.__open = Boolean(entry.__open);
-    }
-    return out;
-  }
 }
 
 function ensurePersistent(ann) {
   if (!ann.persistentData || typeof ann.persistentData !== 'object') {
     ann.persistentData = {};
   }
+}
+
+function formatAngleLabel(measured, ann) {
+  if (typeof measured !== 'number' || !Number.isFinite(measured)) {
+    return { raw: '—', display: '—' };
+  }
+  const decRaw = Number(ann?.decimals);
+  const decimals = Number.isFinite(decRaw) ? Math.max(0, Math.min(3, decRaw | 0)) : 1;
+  const raw = `${measured.toFixed(decimals)}°`;
+  const display = ann?.isReference ? `(${raw})` : raw;
+  return { raw, display };
 }
 
 function measureAngleValue(pmimode, ann) {
@@ -554,31 +455,4 @@ function vectorFromAny(value) {
     return new THREE.Vector3(value.x || 0, value.y || 0, value.z || 0);
   }
   return null;
-}
-
-function clonePlainInput(src) {
-  const out = {};
-  if (!src || typeof src !== 'object') return out;
-  for (const key of Object.keys(src)) {
-    if (key === 'persistentData' || key === '__entryRef' || key === '__open') continue;
-    out[key] = cloneValue(src[key]);
-  }
-  return out;
-}
-
-function clonePersistent(src) {
-  if (!src || typeof src !== 'object') return null;
-  return cloneValue(src);
-}
-
-function cloneValue(value) {
-  if (value == null) return value;
-  if (value instanceof THREE.Vector3) return value.clone();
-  if (Array.isArray(value)) return value.map((v) => cloneValue(v));
-  if (typeof value === 'object') {
-    const out = {};
-    for (const key of Object.keys(value)) out[key] = cloneValue(value[key]);
-    return out;
-  }
-  return value;
 }

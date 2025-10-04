@@ -93,27 +93,3 @@ export class PrimitiveConeFeature {
   }
 }
 
-/**
- * Normalize user inputs to keep geometry well-formed.
- * - Force non-negative radii (negative radii mirror winding and cause a “self-crossing” hourglass).
- * - If height is negative, flip it and swap caps to keep +Y as the top.
- * - Clamp resolution.
- */
-export function sanitizeParams({ radiusTop, radiusBottom, height, resolution }) {
-  const EPS = 0; // allow exact tips (0) — Three.js handles 0 radii fine
-  let rt = Math.max(EPS, Math.abs(radiusTop));
-  let rb = Math.max(EPS, Math.abs(radiusBottom));
-  let h = height;
-  let swapped = false;
-
-  // If height is negative, flip it so top stays at +Y, bottom at -Y.
-  if (h < 0) {
-    h = Math.abs(h);
-    // swap radii so visual “top” stays at +Y
-    [rt, rb] = [rb, rt];
-    swapped = true;
-  }
-
-  const segs = Math.max(3, Math.floor(isFinite(resolution) ? resolution : 32));
-  return { rt, rb, h, segs, swapped };
-}

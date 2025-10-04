@@ -1,7 +1,7 @@
 // PMIMode.js
 // Lightweight PMI editing mode modeled after SketchMode3D UI patterns.
 // - Hides Viewer sidebar and main toolbar
-// - Adds top-right Finish/Cancel controls
+// - Adds a top-right Finish control
 // - Adds a simple top toolbar for annotation tools
 // - Adds a right-side overlay panel listing annotations for the current PMI view
 // - Persists annotations back into the PMI view entry on Finish
@@ -158,14 +158,6 @@ export class PMIMode {
     await this.dispose();
   }
 
-  async cancel() {
-    // Restore original transforms before canceling
-    this.#restoreViewTransforms();
-    this.#resetSolidsToBaseMatrices();
-    try { this.viewer.onPMICancelled?.(); } catch { }
-    await this.dispose();
-  }
-
   async dispose() {
     console.log('PMI dispose started');
     const v = this.viewer;
@@ -299,12 +291,7 @@ export class PMIMode {
     btnFinish.className = 'pmi-btn primary';
     btnFinish.textContent = 'Finish';
     btnFinish.addEventListener('click', () => this.finish());
-    const btnCancel = document.createElement('button');
-    btnCancel.className = 'pmi-btn';
-    btnCancel.textContent = 'Cancel';
-    btnCancel.addEventListener('click', () => this.cancel());
     wrap.appendChild(btnFinish);
-    wrap.appendChild(btnCancel);
     host.appendChild(wrap);
     this._uiTopRight = wrap;
   }
@@ -783,9 +770,8 @@ export class PMIMode {
     try {
       const ann = this._annotationHistory.createAnnotation(handler.type || key);
       try { this.#normalizeAnnotation(ann); } catch { }
-      this._annotationsDirty = true;
       this.#renderAnnList();
-      this.#rebuildAnnotationObjects();
+      this.#markAnnotationsDirty();
     } catch { }
   }
 
@@ -804,16 +790,62 @@ export class PMIMode {
 
     anns.forEach((a, i) => {
       const handler = annotationRegistry.getSafe?.(a.type) || null;
-      const item = document.createElement('div'); item.className = 'pmi-acc-item acc-item open';
-      const header = document.createElement('div'); header.className = 'pmi-acc-header';
-      const headBtn = document.createElement('button'); headBtn.type = 'button'; headBtn.className = 'pmi-acc-headbtn';
-      const title = document.createElement('div'); title.className = 'pmi-acc-title';
-      const name = handler?.title || (String(a.type || 'Annotation').replace(/^./, c => c.toUpperCase()));
-      title.textContent = name + ' ' + (i + 1);
-      const status = document.createElement('div'); status.className = 'pmi-acc-status';
-      headBtn.appendChild(title); headBtn.appendChild(status); header.appendChild(headBtn);
-      const actions = document.createElement('div'); actions.className = 'pmi-acc-actions';
-      const del = document.createElement('button'); del.className = 'pmi-acc-del'; del.textContent = 'Delete'; del.addEventListener('click', () => {
+      const item = document.createElement('div');
+      item.className = 'pmi-acc-item acc-item';
+
+      const headerRow = document.createElement('div');
+      headerRow.className = 'pmi-acc-header pmi-acc-header-row acc-header-row';
+
+      const headBtn = document.createElement('button');
+      headBtn.type = 'button';
+      headBtn.className = 'pmi-acc-headbtn acc-header';
+
+      const rawShort = handler?.featureShortName || handler?.title || String(a.type || 'Annotation');
+      const shortName = typeof rawShort === 'string' ? rawShort.toUpperCase() : String(rawShort);
+      const annId = String(a?.annotationID || a?.inputParams?.annotationID || `ANN${i + 1}`);
+      const title = document.createElement('span');
+      title.className = 'pmi-acc-title acc-title';
+      title.textContent = `${shortName} — #${annId}`;
+      headBtn.appendChild(title);
+
+      const actions = document.createElement('div');
+      actions.className = 'acc-actions';
+
+      const makeIconBtn = (label, text, handlerFn) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'icon-btn';
+        btn.setAttribute('aria-label', label);
+        btn.title = label;
+        btn.textContent = text;
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          handlerFn();
+        });
+        return btn;
+      };
+
+      const moveUp = makeIconBtn('Move annotation up', '▲', () => {
+        if (this._annotationHistory.moveUp(i)) {
+          this.#renderAnnList();
+          this.#markAnnotationsDirty();
+          if (typeof this.applyViewTransformsSequential === 'function') {
+            this.applyViewTransformsSequential();
+          }
+        }
+      });
+
+      const moveDown = makeIconBtn('Move annotation down', '▼', () => {
+        if (this._annotationHistory.moveDown(i)) {
+          this.#renderAnnList();
+          this.#markAnnotationsDirty();
+          if (typeof this.applyViewTransformsSequential === 'function') {
+            this.applyViewTransformsSequential();
+          }
+        }
+      });
+
+      const delBtn = makeIconBtn('Delete annotation', '✕', () => {
         try {
           if (a?.type === 'viewTransform' && handler) {
             try {
@@ -824,15 +856,22 @@ export class PMIMode {
             } catch { /* ignore restore errors */ }
           }
           this._annotationHistory.removeAt(i);
-          this._annotationsDirty = true;
           this.#renderAnnList();
-          this.#rebuildAnnotationObjects();
+          this.#markAnnotationsDirty();
           if (typeof this.applyViewTransformsSequential === 'function') {
             this.applyViewTransformsSequential();
           }
         } catch { }
       });
-      actions.appendChild(del); header.appendChild(actions); item.appendChild(header);
+      delBtn.classList.add('danger');
+
+      actions.appendChild(moveUp);
+      actions.appendChild(moveDown);
+      actions.appendChild(delBtn);
+
+      headerRow.appendChild(headBtn);
+      headerRow.appendChild(actions);
+      item.appendChild(headerRow);
 
       let schema = {}; let params = {};
       try {
@@ -843,9 +882,10 @@ export class PMIMode {
         }
       } catch { }
 
-      const content = document.createElement('div'); content.className = 'pmi-acc-content';
+      const content = document.createElement('div'); content.className = 'pmi-acc-content acc-content';
       const ui = new genFeatureUI(schema, params, {
         viewer: this.viewer,
+        excludeKeys: ['annotationID'],
         onChange: () => {
           try {
             const p = ui.getParams();
@@ -857,8 +897,6 @@ export class PMIMode {
             }
             const patch = res && res.paramsPatch ? res.paramsPatch : null;
             if (patch && typeof patch === 'object') { Object.assign(ui.params, patch); ui.refreshFromParams(); }
-            const st = (res && 'statusText' in res) ? res.statusText : (handler && typeof handler.statusText === 'function' ? handler.statusText(this, a, helpers) : '');
-            status.textContent = st || '';
             this.#markAnnotationsDirty();
           } catch (e) {
             console.warn('PMI onChange error:', e);
@@ -869,10 +907,17 @@ export class PMIMode {
       try { this._gfuByIndex.set(i, ui); } catch { }
       item.appendChild(content);
 
-      try { status.textContent = handler && typeof handler.statusText === 'function' ? (handler.statusText(this, a, helpers) || '') : ''; } catch { }
-      const setCollapsed = (c) => { item.classList.toggle('collapsed', !!c); item.classList.toggle('open', !c); };
+      const setCollapsed = (collapsed) => {
+        item.classList.toggle('collapsed', !!collapsed);
+        item.classList.toggle('open', !collapsed);
+        content.hidden = !!collapsed;
+        headBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      };
       setCollapsed(!a.__open);
-      headBtn.addEventListener('click', () => { a.__open = !a.__open; setCollapsed(!a.__open); });
+      headBtn.addEventListener('click', () => {
+        a.__open = !a.__open;
+        setCollapsed(!a.__open);
+      });
       list.appendChild(item);
     });
 
@@ -1472,6 +1517,8 @@ export class PMIMode {
     // Immediately rebuild annotations instead of waiting for timer
     try {
       this.#rebuildAnnotationObjects();
+      this._annotationsDirty = false;
+      this.#_persistView();
     } catch (error) {
       console.warn('Failed to rebuild annotations:', error);
     }
@@ -1480,7 +1527,11 @@ export class PMIMode {
   // Public: allow external handlers to refresh the side list and 3D objects
   refreshAnnotationsUI() {
     try { this.#renderAnnList(); } catch { }
-    try { this.#rebuildAnnotationObjects(); } catch { }
+    try {
+      this.#rebuildAnnotationObjects();
+      this._annotationsDirty = false;
+      this.#_persistView();
+    } catch { }
   }
 
   #rebuildAnnotationObjects() {
@@ -1490,38 +1541,38 @@ export class PMIMode {
     // Ensure overlay exists; do not clear between frames so labels remain visible even if a render is skipped
     // overlay root managed by LabelOverlay
     const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
-    const makeSphere = (color = 0x93c5fd, size = 0.08) => {
-      const g = new THREE.SphereGeometry(size, 16, 12);
-      const m = new THREE.MeshBasicMaterial({ color });
-      m.depthTest = false; m.depthWrite = false; m.transparent = true;
-      return new THREE.Mesh(g, m);
-    };
-    const makeLine = (a, b, color = 0x93c5fd) => {
-      const geom = new THREE.BufferGeometry().setFromPoints([a, b]);
-      const mat = new THREE.LineBasicMaterial({ color });
-      mat.depthTest = false; mat.depthWrite = false; mat.transparent = true;
-      return new THREE.Line(geom, mat);
-    };
     const ctx = {
-      THREE,
+      pmimode: this,
       screenSizeWorld: (px) => { try { return this.#_screenSizeWorld(px); } catch { return 0; } },
       alignNormal: (alignment, ann) => { try { return this.#_alignNormal(alignment, ann); } catch { return new THREE.Vector3(0, 0, 1); } },
       updateLabel: (idx, text, worldPos, ann) => { try { this._labelOverlay?.updateLabel?.(idx, text, worldPos, ann); } catch { } },
       formatReferenceLabel: (ann, text) => { try { return this.#formatReferenceLabel(ann, text); } catch { return text; } },
-      resolveRefNameToWorld: (name, fallback) => { try { return this.#resolveRefNameToWorld(name, fallback); } catch { return fallback || null; } },
-      resolveAnchorToWorld: (anchor) => { try { return this.#resolveAnchorToWorld(anchor); } catch { return null; } },
       // keep only generic helpers
       // specific drawing/measuring handled by annotation handlers now
     };
     anns.forEach((a, i) => {
       try {
-        const handler = annotationRegistry.getSafe?.(a.type) || null;
-        if (handler && typeof handler.render3D === 'function') {
-          handler.render3D(this, group, a, i, ctx);
-          return;
+        const Handler = annotationRegistry.getSafe?.(a.type) || null;
+        if (!Handler) return;
+        const instance = new Handler();
+        instance.inputParams = a;
+        let persistent = a?.persistentData;
+        if (!persistent || typeof persistent !== 'object') {
+          persistent = {};
+          try { a.persistentData = persistent; } catch { }
+        }
+        instance.persistentData = persistent;
+        const renderingContext = {
+          pmimode: this,
+          group,
+          idx: i,
+          ctx,
+        };
+        const runResult = instance.run(renderingContext);
+        if (runResult && typeof runResult.then === 'function') {
+          runResult.catch(() => {});
         }
       } catch { }
-      // After refactor: drawing performed by handler.render3D above for known types
     });
     try { this.viewer.render(); } catch { }
     // No post-check necessary
@@ -1634,12 +1685,10 @@ export class PMIMode {
       const handler = annotationRegistry.getSafe?.(ann?.type) || null;
       if (handler && typeof handler.onLabelPointerDown === "function") {
         const ctx = {
-          THREE,
+          pmimode: this,
           screenSizeWorld: (px) => { try { return this.#_screenSizeWorld(px); } catch { return 0; } },
           alignNormal: (alignment, a) => { try { return this.#_alignNormal(alignment, a); } catch { return new THREE.Vector3(0, 0, 1); } },
           updateLabel: (i, text, worldPos, a) => { try { this._labelOverlay?.updateLabel?.(i, text, worldPos, a); } catch { } },
-          resolveRefNameToWorld: (name, fallback) => { try { return this.#resolveRefNameToWorld(name, fallback); } catch { return fallback || null; } },
-          resolveAnchorToWorld: (anchor) => { try { return this.#resolveAnchorToWorld(anchor); } catch { return null; } },
           raycastFromEvent: (ev) => {
             const rect = v.renderer.domElement.getBoundingClientRect();
             const ndc = new THREE.Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -(((ev.clientY - rect.top) / rect.height) * 2 - 1));
@@ -1785,182 +1834,6 @@ export class PMIMode {
   }
 
   // Convert anchor ref to current world position
-  #resolveAnchorToWorld(anchor) {
-    if (!anchor || typeof anchor !== 'object') return null;
-    try {
-      if (anchor.type === 'edge') {
-        let edge = this.viewer?.partHistory?.scene?.getObjectById(anchor.edgeId);
-        if (!edge || edge.type !== 'EDGE') {
-          // Fallback by name chain
-          const scene = this.viewer?.partHistory?.scene;
-          if (scene && anchor.solidName) {
-            const solid = scene.getObjectByName(anchor.solidName);
-            if (solid) {
-              let found = null; solid.traverse((o) => { if (!found && o.type === 'EDGE' && o.name === anchor.edgeName) found = o; });
-              if (found) edge = found;
-            }
-          }
-          if ((!edge || edge.type !== 'EDGE') && anchor.edgeName) {
-            let found = null; this.viewer?.partHistory?.scene?.traverse((o) => { if (!found && o.type === 'EDGE' && o.name === anchor.edgeName) found = o; });
-            if (found) edge = found;
-          }
-        }
-        if (edge && edge.type === 'EDGE') {
-          const pts = edge.points(true);
-          if (!Array.isArray(pts) || pts.length < 2) return null;
-          // sample by length fraction
-          const t = Math.min(1, Math.max(0, Number(anchor.t || 0)));
-          const res = this.#pointAtPolylineFraction(pts, t);
-          return new THREE.Vector3(res.x, res.y, res.z);
-        }
-      } else if (anchor.type === 'vertex') {
-        let vert = this.viewer?.partHistory?.scene?.getObjectById(anchor.vertexId);
-        if (!vert || vert.type !== 'VERTEX') {
-          const scene = this.viewer?.partHistory?.scene;
-          if (scene && anchor.name) {
-            let found = null; scene.traverse((o) => { if (!found && o.type === 'VERTEX' && o.name === anchor.name) found = o; });
-            if (found) vert = found;
-          }
-        }
-        if (vert && vert.type === 'VERTEX') {
-          return vert.getWorldPosition(new THREE.Vector3());
-        }
-      }
-    } catch { }
-    return null;
-  }
-
-  #pointAtPolylineFraction(pts, t) {
-    // pts: array of {x,y,z} in order; t in [0,1]
-    const a = new THREE.Vector3(), b = new THREE.Vector3();
-    let total = 0; const segLens = [];
-    for (let i = 0; i < pts.length - 1; i++) { a.set(pts[i].x, pts[i].y, pts[i].z); b.set(pts[i + 1].x, pts[i + 1].y, pts[i + 1].z); const L = a.distanceTo(b); segLens.push(L); total += L; }
-    if (total <= 1e-12) return pts[0];
-    let target = t * total; let accum = 0;
-    for (let i = 0; i < segLens.length; i++) {
-      const L = segLens[i];
-      if (accum + L >= target) {
-        const localT = (target - accum) / (L || 1);
-        a.set(pts[i].x, pts[i].y, pts[i].z); b.set(pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
-        return { x: a.x + (b.x - a.x) * localT, y: a.y + (b.y - a.y) * localT, z: a.z + (b.z - a.z) * localT };
-      }
-      accum += L;
-    }
-    const last = pts[pts.length - 1];
-    return { x: last.x, y: last.y, z: last.z };
-  }
-
-  #objectRepresentativePoint(obj) {
-    try {
-      if (!obj) return null;
-      // Faces: return a point guaranteed to lie on the face plane (centroid of vertices in world space)
-      const kind = obj.userData?.type || obj.userData?.brepType || obj.type;
-      if (kind === 'FACE') {
-        const g = obj.geometry;
-        if (g && g.attributes && g.attributes.position) {
-          const pos = g.attributes.position.array;
-          if (pos && pos.length >= 3) {
-            let sx = 0, sy = 0, sz = 0, c = 0;
-            const v = new THREE.Vector3();
-            obj.updateMatrixWorld(true);
-            for (let i = 0; i < pos.length; i += 3) {
-              v.set(pos[i], pos[i + 1], pos[i + 2]).applyMatrix4(obj.matrixWorld);
-              sx += v.x; sy += v.y; sz += v.z; c++;
-            }
-            if (c > 0) return new THREE.Vector3(sx / c, sy / c, sz / c);
-          }
-        }
-        // Fallback: bounding box center in world space
-        if (g) {
-          g.computeBoundingBox?.();
-          const bb = g.boundingBox;
-          if (bb) {
-            const center = bb.getCenter(new THREE.Vector3());
-            return center.applyMatrix4(obj.matrixWorld);
-          }
-        }
-        // Last resort
-        return obj.getWorldPosition(new THREE.Vector3());
-      }
-
-      if (obj.type === 'VERTEX') {
-        return obj.getWorldPosition(new THREE.Vector3());
-      }
-      if (obj.type === 'EDGE') {
-        try {
-          const pts = obj.points(true);
-          if (pts && pts.length) return new THREE.Vector3(pts[0].x, pts[0].y, pts[0].z);
-        } catch { }
-      }
-      // Any other object: world position
-      return obj.getWorldPosition(new THREE.Vector3());
-    } catch { return null; }
-  }
-
-  #resolveRefNameToWorld(name, fallback) {
-    try {
-      if (!name || !this.viewer || !this.viewer.partHistory) return null;
-      const scene = this.viewer.partHistory.scene;
-      const obj = scene.getObjectByName(String(name));
-      if (!obj) return null;
-      if (obj.type === 'VERTEX') return obj.getWorldPosition(new THREE.Vector3());
-      if (obj.type === 'EDGE') {
-        if (fallback && fallback.isVector3) return this.#closestPointOnEdgeToPoint(obj, fallback);
-        const pts = obj.points(true); if (pts && pts.length) return new THREE.Vector3(pts[0].x, pts[0].y, pts[0].z);
-      }
-      // Fallback: any object, return world position
-      return obj.getWorldPosition(new THREE.Vector3());
-    } catch { return null; }
-  }
-
-
-  #closestPointOnEdgeToPoint(edge, point) {
-    try {
-      const pts = edge.points(true);
-      if (!pts || pts.length < 2) return edge.getWorldPosition(new THREE.Vector3());
-      const p = point.clone();
-      let best = { d2: Infinity, q: null };
-      const a = new THREE.Vector3(), b = new THREE.Vector3();
-      for (let i = 0; i < pts.length - 1; i++) {
-        a.set(pts[i].x, pts[i].y, pts[i].z);
-        b.set(pts[i + 1].x, pts[i + 1].y, pts[i + 1].z);
-        const q = this.#closestPointOnSegment(a, b, p);
-        const d2 = q.distanceToSquared(p);
-        if (d2 < best.d2) best = { d2, q };
-      }
-      return best.q || edge.getWorldPosition(new THREE.Vector3());
-    } catch { return edge.getWorldPosition(new THREE.Vector3()); }
-  }
-
-  #closestPointsBetweenEdges(e1, e2) {
-    try {
-      const pts1 = e1.points(true); const pts2 = e2.points(true);
-      if (!pts1 || pts1.length < 2 || !pts2 || pts2.length < 2) return { p0: this.#objectRepresentativePoint(e1), p1: this.#objectRepresentativePoint(e2) };
-      const a0 = new THREE.Vector3(), a1 = new THREE.Vector3(), b0 = new THREE.Vector3(), b1 = new THREE.Vector3();
-      let best = { d2: Infinity, p: null, q: null };
-      for (let i = 0; i < pts1.length - 1; i++) {
-        a0.set(pts1[i].x, pts1[i].y, pts1[i].z);
-        a1.set(pts1[i + 1].x, pts1[i + 1].y, pts1[i + 1].z);
-        for (let j = 0; j < pts2.length - 1; j++) {
-          b0.set(pts2[j].x, pts2[j].y, pts2[j].z);
-          b1.set(pts2[j + 1].x, pts2[j + 1].y, pts2[j + 1].z);
-          const { p, q } = this.#closestPointsOnSegments(a0, a1, b0, b1);
-          const d2 = p.distanceToSquared(q);
-          if (d2 < best.d2) best = { d2, p, q };
-        }
-      }
-      return { p0: best.p || this.#objectRepresentativePoint(e1), p1: best.q || this.#objectRepresentativePoint(e2) };
-    } catch { return { p0: this.#objectRepresentativePoint(e1), p1: this.#objectRepresentativePoint(e2) }; }
-  }
-
-  #closestPointOnSegment(a, b, p) {
-    const ab = b.clone().sub(a);
-    const t = Math.max(0, Math.min(1, ab.dot(p.clone().sub(a)) / (ab.lengthSq() || 1)));
-    return a.clone().addScaledVector(ab, t);
-  }
-
-
-
   #worldPerPixel(camera, width, height) {
     try {
       if (camera && camera.isOrthographicCamera) {
@@ -2013,57 +1886,5 @@ export class PMIMode {
     const n = new THREE.Vector3();
     try { this.viewer?.camera?.getWorldDirection?.(n); } catch { }
     return n.lengthSq() ? n : new THREE.Vector3(0, 0, 1);
-  }
-
-
-
-  #closestPointsForObjects(objA, objB) {
-    if (objA.type === 'VERTEX' && objB.type === 'VERTEX') {
-      return { p0: objA.getWorldPosition(new THREE.Vector3()), p1: objB.getWorldPosition(new THREE.Vector3()) };
-    }
-    if (objA.type === 'EDGE' && objB.type === 'VERTEX') {
-      const v = objB.getWorldPosition(new THREE.Vector3());
-      const p = this.#closestPointOnEdgeToPoint(objA, v);
-      return { p0: p, p1: v };
-    }
-    if (objA.type === 'VERTEX' && objB.type === 'EDGE') {
-      const v = objA.getWorldPosition(new THREE.Vector3());
-      const p = this.#closestPointOnEdgeToPoint(objB, v);
-      return { p0: v, p1: p };
-    }
-    if (objA.type === 'EDGE' && objB.type === 'EDGE') {
-      return this.#closestPointsBetweenEdges(objA, objB);
-    }
-    // Fallback: representative points
-    return { p0: this.#objectRepresentativePoint(objA) || new THREE.Vector3(), p1: this.#objectRepresentativePoint(objB) || new THREE.Vector3() };
-  }
-
-  #closestPointsOnSegments(p1, q1, p2, q2) {
-    // Returns closest points on segments p1q1 and p2q2 using standard algorithm
-    const d1 = q1.clone().sub(p1);
-    const d2 = q2.clone().sub(p2);
-    const r = p1.clone().sub(p2);
-    const a = d1.dot(d1);
-    const e = d2.dot(d2);
-    const f = d2.dot(r);
-    let s, t;
-    const EPS = 1e-12;
-    if (a <= EPS && e <= EPS) { s = 0; t = 0; }
-    else if (a <= EPS) { s = 0; t = Math.max(0, Math.min(1, f / e)); }
-    else {
-      const c = d1.dot(r);
-      if (e <= EPS) { t = 0; s = Math.max(0, Math.min(1, -c / a)); }
-      else {
-        const b = d1.dot(d2);
-        const denom = a * e - b * b;
-        s = denom !== 0 ? Math.max(0, Math.min(1, (b * f - c * e) / denom)) : 0;
-        t = (b * s + f) / e;
-        if (t < 0) { t = 0; s = Math.max(0, Math.min(1, -c / a)); }
-        else if (t > 1) { t = 1; s = Math.max(0, Math.min(1, (b - c) / a)); }
-      }
-    }
-    const cp1 = p1.clone().addScaledVector(d1, s);
-    const cp2 = p2.clone().addScaledVector(d2, t);
-    return { p: cp1, q: cp2 };
   }
 }

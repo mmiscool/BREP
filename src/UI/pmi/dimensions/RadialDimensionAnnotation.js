@@ -12,6 +12,13 @@ const inputParamsSchema = {
   decimals: {
     type: 'number',
     default_value: 3,
+    defaultResolver: ({ pmimode }) => {
+      const dec = Number.isFinite(pmimode?._opts?.dimDecimals)
+        ? (pmimode._opts.dimDecimals | 0)
+        : undefined;
+      if (!Number.isFinite(dec)) return undefined;
+      return Math.max(0, Math.min(8, dec));
+    },
     label: 'Decimals',
     hint: 'Number of decimal places to display',
     min: 0,
@@ -70,112 +77,17 @@ export class RadialDimensionAnnotation extends BaseAnnotation {
   static featureName = 'Radial Dimension';
   static inputParamsSchema = inputParamsSchema;
 
-  constructor() {
-    super();
-    this.inputParams = {};
-    this.persistentData = {};
-  }
-
   async run(renderingContext) {
-    RadialDimensionAnnotation.render3D(
-      renderingContext.pmimode,
-      renderingContext.group,
-      this.inputParams,
-      renderingContext.idx,
-      renderingContext.ctx,
-    );
-    return [];
-  }
-
-  static create(pmimode) {
-    const defaults = pmimode?._opts || {};
-    const decimals = Number.isFinite(defaults.dimDecimals) ? (defaults.dimDecimals | 0) : 3;
-    return {
-      type: this.type,
-      decimals,
-      cylindricalFaceRef: '',
-      planeRef: '',
-      displayStyle: 'radius',
-      alignment: 'view',
-      offset: 0,
-      isReference: false,
-      persistentData: {},
-      __open: true,
-    };
-  }
-
-  static getSchema(pmimode, ann) {
+    const { pmimode, group, idx, ctx } = renderingContext;
+    const ann = this.inputParams;
     const measured = measureRadialValue(pmimode, ann);
-    const dec = Number.isFinite(ann.decimals) ? ann.decimals : 3;
-    const dv = (typeof measured === 'number') ? (ann.displayStyle === 'diameter' ? measured * 2 : measured) : null;
-    const schema = {
-      decimals: { ...inputParamsSchema.decimals, default_value: dec },
-      cylindricalFaceRef: { ...inputParamsSchema.cylindricalFaceRef, default_value: ann.cylindricalFaceRef || '' },
-      planeRef: { ...inputParamsSchema.planeRef, default_value: ann.planeRef || '' },
-      displayStyle: { ...inputParamsSchema.displayStyle, default_value: ann.displayStyle || 'radius' },
-      alignment: { ...inputParamsSchema.alignment, default_value: ann.alignment || 'view' },
-      offset: { ...inputParamsSchema.offset, default_value: Number.isFinite(ann.offset) ? ann.offset : 0 },
-      isReference: { ...inputParamsSchema.isReference, default_value: ann.isReference === true },
-      value: {
-        type: 'string',
-        label: 'Value',
-        readOnly: true,
-        default_value: (() => {
-          if (typeof dv !== 'number') return '—';
-          let t = `${ann.displayStyle === 'diameter' ? '⌀' : 'R'}${dv.toFixed(dec)} (wu)`;
-          if (ann.isReference) t = `(${t})`;
-          return t;
-        })(),
-      },
-    };
-    const params = {
-      decimals: schema.decimals.default_value,
-      cylindricalFaceRef: schema.cylindricalFaceRef.default_value,
-      planeRef: schema.planeRef.default_value,
-      displayStyle: schema.displayStyle.default_value,
-      alignment: schema.alignment.default_value,
-      offset: schema.offset.default_value,
-      isReference: schema.isReference.default_value,
-      value: schema.value.default_value,
-    };
-    return { schema, params };
-  }
+    const labelInfo = formatRadialLabel(measured, ann);
+    ann.value = labelInfo.display;
 
-  static applyParams(pmimode, ann, params) {
-    ann.decimals = Math.max(0, Math.min(8, Number(params.decimals) | 0));
-    ann.cylindricalFaceRef = String(params.cylindricalFaceRef || '');
-    ann.planeRef = String(params.planeRef || '');
-    ann.displayStyle = String(params.displayStyle || 'radius');
-    ann.alignment = String(params.alignment || 'view');
-    ann.offset = Number(params.offset);
-    ann.isReference = Boolean(params.isReference);
-
-    const measured = measureRadialValue(pmimode, ann);
-    const displayValue = (typeof measured === 'number') ? (ann.displayStyle === 'diameter' ? measured * 2 : measured) : null;
-    const prefix = ann.displayStyle === 'diameter' ? '⌀' : 'R';
-    let textVal = (typeof displayValue === 'number') ? `${prefix}${displayValue.toFixed(ann.decimals)} (wu)` : '—';
-    if (ann.isReference && textVal !== '—') textVal = `(${textVal})`;
-    const statusText = (typeof displayValue === 'number')
-      ? (ann.isReference ? `(${prefix}${displayValue.toFixed(ann.decimals)})` : `${prefix}${displayValue.toFixed(ann.decimals)}`)
-      : '';
-    return { paramsPatch: { value: textVal }, statusText };
-  }
-
-  static statusText(pmimode, ann) {
-    const measured = measureRadialValue(pmimode, ann);
-    if (typeof measured !== 'number') return '';
-    const dec = Number.isFinite(ann.decimals) ? ann.decimals : 3;
-    const val = ann.displayStyle === 'diameter' ? measured * 2 : measured;
-    let txt = `${ann.displayStyle === 'diameter' ? '⌀' : 'R'}${val.toFixed(dec)}`;
-    if (ann.isReference) txt = `(${txt})`;
-    return txt;
-  }
-
-  static render3D(pmimode, group, ann, idx, ctx) {
     ensurePersistent(ann);
     try {
       const data = computeRadialPoints(pmimode, ann, ctx);
-      if (!data || !data.center || !data.radiusPoint) return;
+      if (!data || !data.center || !data.radiusPoint) return [];
       const { center, radiusPoint, planeNormal, planePoint, radius } = data;
       const color = 0xff6b35;
 
@@ -230,31 +142,17 @@ export class RadialDimensionAnnotation extends BaseAnnotation {
         group.add(centerMarker);
       }
 
-      const dec = Number.isFinite(ann.decimals) ? ann.decimals : 3;
-      const measured = measureRadialValue(pmimode, ann);
-      const displayValue = (typeof measured === 'number') ? (ann.displayStyle === 'diameter' ? measured * 2 : measured) : null;
-      if (typeof displayValue === 'number') {
-        const prefix = ann.displayStyle === 'diameter' ? '⌀' : 'R';
-        const raw = `${prefix}${displayValue.toFixed(dec)}`;
-        const txt = ctx.formatReferenceLabel ? ctx.formatReferenceLabel(ann, raw) : raw;
+      if (typeof measured === 'number') {
+        const info = formatRadialLabel(measured, ann);
+        ann.value = info.display;
+        const txt = ctx.formatReferenceLabel ? ctx.formatReferenceLabel(ann, info.raw) : info.display;
         const labelPos = resolveLabelPosition(pmimode, ann, center, radiusPoint, planeNormal, planePoint, ctx);
         if (labelPos) ctx.updateLabel(idx, txt, labelPos, ann);
       }
     } catch (e) {
       console.warn('RadialDimensionAnnotation render error:', e);
     }
-  }
-
-  static getLabelWorld(pmimode, ann, ctx) {
-    try {
-      if (ann.persistentData?.labelWorld) return vectorFromAny(ann.persistentData.labelWorld);
-      if (ann.labelWorld) return vectorFromAny(ann.labelWorld);
-      const data = computeRadialPoints(pmimode, ann, ctx);
-      if (!data) return null;
-      return resolveLabelPosition(pmimode, ann, data.center, data.radiusPoint, data.planeNormal, data.planePoint, ctx);
-    } catch {
-      return null;
-    }
+    return [];
   }
 
   static onLabelPointerDown(pmimode, idx, ann, e, ctx) {
@@ -297,18 +195,20 @@ export class RadialDimensionAnnotation extends BaseAnnotation {
     } catch { /* ignore */ }
   }
 
-  static serialize(ann, entry) {
-    const out = entry ? { ...entry } : { type: this.type }; // eslint-disable-line prefer-object-spread
-    out.type = this.type;
-    out.inputParams = clonePlainInput(ann);
-    out.persistentData = clonePersistent(ann?.persistentData) || clonePersistent(entry?.persistentData) || {};
-    if (ann && Object.prototype.hasOwnProperty.call(ann, '__open')) {
-      out.__open = Boolean(ann.__open);
-    } else if (entry && Object.prototype.hasOwnProperty.call(entry, '__open')) {
-      out.__open = Boolean(entry.__open);
-    }
-    return out;
+}
+
+function formatRadialLabel(measured, ann) {
+  if (typeof measured !== 'number' || !Number.isFinite(measured)) {
+    return { raw: '—', display: '—' };
   }
+  const baseValue = ann?.displayStyle === 'diameter' ? measured * 2 : measured;
+  const decRaw = Number(ann?.decimals);
+  const decimals = Number.isFinite(decRaw) ? Math.max(0, Math.min(8, decRaw | 0)) : 3;
+  const prefix = ann?.displayStyle === 'diameter' ? '⌀' : 'R';
+  const raw = `${prefix}${baseValue.toFixed(decimals)}`;
+  const displayBase = `${raw} (wu)`;
+  const display = ann?.isReference ? `(${displayBase})` : displayBase;
+  return { raw, display };
 }
 
 function ensurePersistent(ann) {
@@ -545,31 +445,4 @@ function vectorFromAny(value) {
     return new THREE.Vector3(value.x || 0, value.y || 0, value.z || 0);
   }
   return null;
-}
-
-function clonePlainInput(src) {
-  const out = {};
-  if (!src || typeof src !== 'object') return out;
-  for (const key of Object.keys(src)) {
-    if (key === 'persistentData' || key === '__entryRef' || key === '__open') continue;
-    out[key] = cloneValue(src[key]);
-  }
-  return out;
-}
-
-function clonePersistent(src) {
-  if (!src || typeof src !== 'object') return null;
-  return cloneValue(src);
-}
-
-function cloneValue(value) {
-  if (value == null) return value;
-  if (value instanceof THREE.Vector3) return value.clone();
-  if (Array.isArray(value)) return value.map((v) => cloneValue(v));
-  if (typeof value === 'object') {
-    const out = {};
-    for (const key of Object.keys(value)) out[key] = cloneValue(value[key]);
-    return out;
-  }
-  return value;
 }

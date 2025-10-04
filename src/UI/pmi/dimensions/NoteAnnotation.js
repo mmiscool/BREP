@@ -13,6 +13,10 @@ const inputParamsSchema = {
   text: {
     type: "string",
     default_value: "",
+    defaultResolver: ({ pmimode }) => {
+      const txt = pmimode?._opts?.noteText;
+      return (typeof txt === 'string') ? txt : undefined;
+    },
     hint: "Note text content"
   },
   position: {
@@ -29,46 +33,9 @@ export class NoteAnnotation extends BaseAnnotation {
   static featureName = "Note";
   static inputParamsSchema = inputParamsSchema;
 
-  constructor() {
-    super();
-    this.inputParams = {};
-    this.persistentData = {};
-  }
-
   async run(renderingContext) {
     const { pmimode, group, idx, ctx } = renderingContext;
-    return this.constructor.render3D(pmimode, group, this.inputParams, idx, ctx);
-  }
-
-  // Static methods for PMI system compatibility (preserving old PMI interface)
-  static create(pmimode) {
-    const defaults = pmimode?._opts || {};
-    return {
-      type: 'note',
-      text: typeof defaults.noteText === 'string' ? defaults.noteText : '',
-      __open: true,
-    };
-  }
-
-  static getSchema(pmimode, ann) {
-    const schema = {
-      text: { type: 'string', label: 'Text', default_value: ann.text || '' },
-    };
-    const params = { text: schema.text.default_value };
-    return { schema, params };
-  }
-
-  static applyParams(pmimode, ann, params) {
-    ann.text = String(params.text || '');
-    return { statusText: (ann.text || '').slice(0, 24) };
-  }
-
-  static statusText(pmimode, ann) {
-    return (ann.text || '').slice(0, 24);
-  }
-
-  // Draw marker + overlay label
-  static render3D(pmimode, group, ann, idx, ctx) {
+    const ann = this.inputParams;
     const p = new THREE.Vector3(ann.position?.x || 0, ann.position?.y || 0, ann.position?.z || 0);
     const g = new THREE.SphereGeometry(0.08, 16, 12);
     const m = new THREE.MeshBasicMaterial({ color: 0x93c5fd, depthTest: false, depthWrite: false, transparent: true });
@@ -77,7 +44,7 @@ export class NoteAnnotation extends BaseAnnotation {
     group.add(dot);
 
     const txt = String(ann.text || '');
-    if (!txt) return;
+    if (!txt) return [];
 
     let labelPos = null;
     if (ann.labelWorld) {
@@ -91,20 +58,21 @@ export class NoteAnnotation extends BaseAnnotation {
       labelPos = p.clone().addScaledVector(camRight, offset).addScaledVector(n, offset * 0.25);
     }
     ctx.updateLabel(idx, txt, labelPos, ann);
+    return [];
   }
 
-  // Provide world position for overlay refresh without full rebuild
-  static getLabelWorld(pmimode, ann, ctx) {
-    try {
-      if (ann.labelWorld) return new THREE.Vector3(ann.labelWorld.x, ann.labelWorld.y, ann.labelWorld.z);
-      const p = new THREE.Vector3(ann.position?.x || 0, ann.position?.y || 0, ann.position?.z || 0);
-      const n = ctx.alignNormal ? ctx.alignNormal('view', ann) : new THREE.Vector3(0, 0, 1);
-      const right = new THREE.Vector3();
-      const up = new THREE.Vector3(0, 1, 0);
-      try { pmimode.viewer?.camera?.getWorldDirection?.(right); right.crossVectors(n, up).normalize(); } catch { right.set(1, 0, 0); }
-      const off = ctx.screenSizeWorld ? ctx.screenSizeWorld(16) : 0.05;
-      return p.clone().addScaledVector(right, off).addScaledVector(n, off * 0.25);
-    } catch { return null; }
+  static getSchema(pmimode, ann) {
+    const schema = {
+      text: { type: 'string', label: 'Text', default_value: ann.text || '' },
+    };
+    const params = { text: schema.text.default_value };
+    return { schema, params };
+  }
+
+  static applyParams(pmimode, ann, params) {
+    super.applyParams(pmimode, ann, params);
+    ann.text = sanitizeText(ann.text);
+    return { paramsPatch: {} };
   }
 
   // Drag note label on view plane
@@ -132,4 +100,10 @@ export class NoteAnnotation extends BaseAnnotation {
       window.addEventListener('pointerup', onUp, true);
     } catch {}
   }
+}
+
+function sanitizeText(value) {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  return String(value);
 }

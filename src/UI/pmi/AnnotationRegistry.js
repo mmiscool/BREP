@@ -5,7 +5,7 @@ import { RadialDimensionAnnotation } from './dimensions/RadialDimensionAnnotatio
 import { AngleDimensionAnnotation } from './dimensions/AngleDimensionAnnotation.js';
 import { LeaderAnnotation } from './dimensions/LeaderAnnotation.js';
 import { NoteAnnotation } from './dimensions/NoteAnnotation.js';
-import { ViewTransformAnnotation } from './dimensions/ViewTransformAnnotation.js';
+import { ExplodeBodyAnnotation } from './dimensions/ExplodeBodyAnnotation.js';
 
 const normalizeKey = (name) => {
   if (!name && name !== 0) return '';
@@ -69,4 +69,4 @@ annotationRegistry.register(RadialDimensionAnnotation);
 annotationRegistry.register(AngleDimensionAnnotation);
 annotationRegistry.register(LeaderAnnotation);
 annotationRegistry.register(NoteAnnotation);
-annotationRegistry.register(ViewTransformAnnotation);
+annotationRegistry.register(ExplodeBodyAnnotation);
