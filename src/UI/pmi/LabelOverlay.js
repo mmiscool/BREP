@@ -56,10 +56,10 @@ export class LabelOverlay {
       el.textContent = normalized;
     }
 
-    if (ann && typeof ann.anchorSide === 'string' && ann.anchorSide) {
-      el.dataset.anchorSide = ann.anchorSide;
+    if (ann && typeof ann.anchorPosition === 'string' && ann.anchorPosition) {
+      el.dataset.anchorPosition = ann.anchorPosition;
     } else {
-      delete el.dataset.anchorSide;
+      delete el.dataset.anchorPosition;
     }
     if (worldPos) this._position(el, worldPos);
   }

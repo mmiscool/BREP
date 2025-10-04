@@ -265,8 +265,12 @@ export class PMIMode {
       /* Overlay labels */
       .pmi-label-root { position: absolute; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; z-index: 6; }
       .pmi-label { position: absolute; transform: translate(-50%, -50%); background: rgba(17,24,39,.92); color: #ffffff; border: 1px solid #111827; border-radius: 6px; padding: 2px 8px; font-weight: 700; pointer-events: auto; cursor: grab; user-select: none; font-size: 14px; line-height: 1.2; box-shadow: 0 2px 6px rgba(0,0,0,.35); white-space: pre-wrap; word-break: break-word; text-align: left; }
-      .pmi-label[data-anchor-side="left"] { transform: translate(-100%, -50%); }
-      .pmi-label[data-anchor-side="right"] { transform: translate(0, -50%); }
+      .pmi-label[data-anchor-position="Left Top"] { transform: translate(-100%, 0); text-align: right; }
+      .pmi-label[data-anchor-position="Left Middle"] { transform: translate(-100%, -50%); text-align: right; }
+      .pmi-label[data-anchor-position="Left Bottom"] { transform: translate(-100%, -100%); text-align: right; }
+      .pmi-label[data-anchor-position="Right Top"] { transform: translate(0, 0); text-align: left; }
+      .pmi-label[data-anchor-position="Right Middle"] { transform: translate(0, -50%); text-align: left; }
+      .pmi-label[data-anchor-position="Right Bottom"] { transform: translate(0, -100%); text-align: left; }
       .pmi-label:active { cursor: grabbing; }
       .pmi-label-edit { font-size: 14px; font-weight: 700; text-align: left; outline: 2px solid #3b82f6; background: rgba(17,24,39,.95); color: #ffffff; border: 1px solid #374151; border-radius: 6px; padding: 2px 8px; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
 
