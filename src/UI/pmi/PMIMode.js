@@ -1554,6 +1554,7 @@ export class PMIMode {
       // keep only generic helpers
       // specific drawing/measuring handled by annotation handlers now
     };
+    this.__explodeTraceState = new Map();
     anns.forEach((a, i) => {
       try {
         const Handler = annotationRegistry.getSafe?.(a.type) || null;

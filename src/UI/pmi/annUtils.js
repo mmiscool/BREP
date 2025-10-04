@@ -7,7 +7,7 @@ export function makeOverlayLine(a, b, color = 0x93c5fd) {
   return new THREE.Line(geom, mat);
 }
 
-export function makeOverlayDashedLine(a, b, color = 0x93c5fd, dashSize = 0.04, gapSize = 0.02) {
+export function makeOverlayDashedLine(a, b, color = 0x93c5fd, dashSize = 1, gapSize = 1) {
   const geom = new THREE.BufferGeometry().setFromPoints([a.clone(), b.clone()]);
   const mat = new THREE.LineDashedMaterial({ color, dashSize, gapSize });
   mat.depthTest = false; mat.depthWrite = false; mat.transparent = true;

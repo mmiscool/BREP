@@ -59,21 +59,34 @@ export class ExplodeBodyAnnotation extends BaseAnnotation {
     if (!solids.length) return [];
 
     const snapshots = ExplodeBodyAnnotation._ensureOriginalSnapshots(ann, solids, false, pmimode?.viewer);
-    if (ann.showTraceLine === false) return [];
+    const shouldDrawTrace = ann.showTraceLine !== false;
+
+    let traceState = pmimode?.__explodeTraceState;
+    if (!(traceState instanceof Map)) {
+      traceState = new Map();
+      if (pmimode) pmimode.__explodeTraceState = traceState;
+    }
+
+    const deltaPos = vectorFromArray(ann.transform.position, new THREE.Vector3(0, 0, 0));
+    const deltaQuat = quaternionFromEuler(ann.transform.rotationEuler);
+    const deltaScale = vectorFromArray(ann.transform.scale, new THREE.Vector3(1, 1, 1));
 
     solids.forEach((solid) => {
       try {
         const snap = snapshots.get(solid.uuid);
         const centerLocal = vectorFromArray(snap?.centerLocal)
           || getSolidLocalCenter(solid);
-        let start = applySnapshotToLocalPoint(centerLocal, snap)
-          || vectorFromArray(snap?.worldPosition);
-        let end = solid ? solid.localToWorld(centerLocal.clone()) : null;
-        if (!isFiniteVec3(start)) start = vectorFromArray(snap?.worldPosition);
-        if (!isFiniteVec3(end)) end = solid.getWorldPosition(new THREE.Vector3());
-        if (!isFiniteVec3(start) || !isFiniteVec3(end)) return;
-        if (start.distanceToSquared(end) < 1e-8) return;
-        group.add(makeOverlayDashedLine(start, end, 0xf5a524));
+        const baseEntry = traceState?.get(solid.uuid)?.clone()
+          || transformEntryFromSnapshot(snap);
+        const start = applyTransformEntryToPoint(baseEntry, centerLocal)
+          || vectorFromArray(snap?.centerWorld) || vectorFromArray(snap?.worldPosition);
+        const endEntry = composeTransformEntry(baseEntry, deltaPos, deltaQuat, deltaScale);
+        const end = applyTransformEntryToPoint(endEntry, centerLocal)
+          || getSolidWorldCenter(solid);
+        if (isFiniteVec3(start) && isFiniteVec3(end) && start.distanceToSquared(end) >= 1e-8 && shouldDrawTrace) {
+          group.add(makeOverlayDashedLine(start, end, 0xf5a524));
+        }
+        traceState?.set(solid.uuid, endEntry);
       } catch {
         /* ignore trace failures */
       }
@@ -434,6 +447,19 @@ function getSolidLocalCenter(solid) {
   return new THREE.Vector3();
 }
 
+function getSolidWorldCenter(solid) {
+  try {
+    if (!solid) return new THREE.Vector3();
+    solid.updateMatrixWorld?.(true);
+    const box = new THREE.Box3().setFromObject(solid);
+    if (!box.isEmpty()) {
+      return box.getCenter(new THREE.Vector3());
+    }
+  } catch { }
+  try { return solid.getWorldPosition(new THREE.Vector3()); }
+  catch { return new THREE.Vector3(); }
+}
+
 function applySnapshotToLocalPoint(localPoint, snap) {
   if (!localPoint || !localPoint.isVector3 || !snap) return null;
   const position = vectorFromArray(snap.position);
@@ -446,4 +472,40 @@ function applySnapshotToLocalPoint(localPoint, snap) {
 function isFiniteVec3(vec) {
   if (!vec || !vec.isVector3) return false;
   return Number.isFinite(vec.x) && Number.isFinite(vec.y) && Number.isFinite(vec.z);
+}
+
+function transformEntryFromSnapshot(snap) {
+  if (!snap || typeof snap !== 'object') {
+    return makeTransformEntry(new THREE.Vector3(), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1));
+  }
+  const position = vectorFromArray(snap.position, new THREE.Vector3());
+  const quaternion = quaternionFromArray(snap.quaternion, new THREE.Quaternion());
+  const scale = vectorFromArray(snap.scale, new THREE.Vector3(1, 1, 1));
+  return makeTransformEntry(position, quaternion, scale);
+}
+
+function composeTransformEntry(base, deltaPos, deltaQuat, deltaScale) {
+  const origin = base || makeTransformEntry(new THREE.Vector3(), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1));
+  const pos = origin.position.clone().add(deltaPos || new THREE.Vector3());
+  const quat = origin.quaternion.clone().multiply(deltaQuat || new THREE.Quaternion());
+  const scale = origin.scale.clone().multiply(deltaScale || new THREE.Vector3(1, 1, 1));
+  return makeTransformEntry(pos, quat, scale);
+}
+
+function applyTransformEntryToPoint(entry, localPoint) {
+  if (!entry || !localPoint || !localPoint.isVector3) return null;
+  const matrix = new THREE.Matrix4().compose(entry.position.clone(), entry.quaternion.clone(), entry.scale.clone());
+  return localPoint.clone().applyMatrix4(matrix);
+}
+
+function makeTransformEntry(position, quaternion, scale) {
+  const entry = {
+    position: position.clone(),
+    quaternion: quaternion.clone(),
+    scale: scale.clone(),
+    clone() {
+      return makeTransformEntry(this.position, this.quaternion, this.scale);
+    },
+  };
+  return entry;
 }
