@@ -1320,7 +1320,7 @@ export class PMIMode {
 
       const viewAnns = [];
       for (const ann of anns) {
-        if (ann.type === 'viewTransform') viewAnns.push(ann);
+        if (ann.type === 'viewTransform' || ann.type === 'explodeBody') viewAnns.push(ann);
       }
 
       const cumulativeState = new Map();
@@ -1399,7 +1399,7 @@ export class PMIMode {
       if (!handler) return;
 
       for (const ann of anns) {
-        if (ann.type !== 'viewTransform') continue;
+        if (ann.type !== 'viewTransform' && ann.type !== 'explodeBody') continue;
 
         // Restore original transforms
         if (typeof handler.restoreOriginalTransforms === 'function') {
