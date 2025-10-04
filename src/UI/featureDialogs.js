@@ -96,6 +96,7 @@ export class genFeatureUI {
         this.params = params;
         this.options = options;
         this._inputs = new Map();
+        this._multiTransformControllers = new Map();
         this._excludedKeys = new Set(['featureID']); // exclude from defaults & rendering
 
         this.uiElement = document.createElement('div');
@@ -178,6 +179,11 @@ export class genFeatureUI {
                 if (chips) this._renderChips(chips, key, targets);
                 continue;
             }
+            if (def && def.type === 'multi_transform') {
+                const controller = this._multiTransformControllers?.get(key);
+                try { controller?.refresh(); } catch { }
+                continue;
+            }
 
             this._setInputValue(el, def.type, v);
 
@@ -224,7 +230,8 @@ export class genFeatureUI {
         // Ensure params has defaults for missing keys (without clobbering provided values)
         for (const key in this.schema) {
             if (!Object.prototype.hasOwnProperty.call(this.schema, key)) continue;
-            const def = this.schema[key];
+            const defRaw = this.schema[key];
+            const def = (defRaw && typeof defRaw === 'object') ? defRaw : {};
             if (this._excludedKeys.has(key)) continue;
             if (!(key in this.params)) {
                 const raw = ('default_value' in def) ? def.default_value : this._defaultForType(def.type);
@@ -235,7 +242,8 @@ export class genFeatureUI {
         // Build field rows
         for (const key in this.schema) {
             if (!Object.prototype.hasOwnProperty.call(this.schema, key)) continue;
-            const def = this.schema[key];
+            const defRaw = this.schema[key];
+            const def = (defRaw && typeof defRaw === 'object') ? defRaw : {};
             if (this._excludedKeys.has(key)) continue;
 
             const row = document.createElement('div');
@@ -259,6 +267,7 @@ export class genFeatureUI {
             controlWrap.className = 'control-wrap';
 
             let inputEl;
+            let inputRegistered = true;
 
             switch (def.type) {
                 case 'number':
@@ -651,6 +660,169 @@ export class genFeatureUI {
                     break;
                 }
 
+                case 'multi_transform': {
+                    if (!Array.isArray(this.params[key])) {
+                        this.params[key] = [];
+                    }
+
+                    const ensureStepShape = (step) => {
+                        const safe = (step && typeof step === 'object') ? step : {};
+                        const ensureArray = (arr, fallback) => {
+                            const out = Array.isArray(arr) ? arr.slice(0, 3) : [];
+                            while (out.length < 3) out.push(fallback);
+                            return out;
+                        };
+                        return {
+                            id: safe.id || `mt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                            position: ensureArray(safe.position, 0),
+                            rotationEuler: ensureArray(safe.rotationEuler, 0),
+                            scale: ensureArray(safe.scale, 1),
+                        };
+                    };
+
+                    const wrap = document.createElement('div');
+                    wrap.className = 'multi-transform-wrap';
+
+                    const list = document.createElement('div');
+                    list.className = 'mt-list';
+                    wrap.appendChild(list);
+
+                    const addBtn = document.createElement('button');
+                    addBtn.type = 'button';
+                    addBtn.className = 'btn btn-slim';
+                    addBtn.textContent = 'Add transform';
+                    wrap.appendChild(addBtn);
+
+                    const moveStep = (from, to) => {
+                        if (from === to) return;
+                        const arr = this.params[key];
+                        if (!Array.isArray(arr) || to < 0 || to >= arr.length) return;
+                        const [item] = arr.splice(from, 1);
+                        arr.splice(to, 0, item);
+                    };
+
+                    const makeNumberInput = (step, arrName, idx, title, refresh) => {
+                        const input = document.createElement('input');
+                        input.type = 'number';
+                        input.className = 'input mt-number';
+                        input.step = 'any';
+                        input.value = String(step[arrName][idx] || 0);
+                        input.title = title;
+                        input.addEventListener('change', () => {
+                            const val = Number(input.value);
+                            step[arrName][idx] = Number.isFinite(val) ? val : 0;
+                            this._emitParamsChange(key, this.params[key]);
+                        });
+                        input.addEventListener('blur', refresh);
+                        return input;
+                    };
+
+                    const refresh = () => {
+                        list.textContent = '';
+                        if (!Array.isArray(this.params[key])) this.params[key] = [];
+                        this.params[key] = this.params[key].map((step) => ensureStepShape(step));
+
+                        this.params[key].forEach((step, index) => {
+                            const item = document.createElement('div');
+                            item.className = 'mt-item';
+
+                            const header = document.createElement('div');
+                            header.className = 'mt-item-header';
+                            const titleEl = document.createElement('div');
+                            titleEl.className = 'mt-item-title';
+                            titleEl.textContent = `Transform ${index + 1}`;
+                            header.appendChild(titleEl);
+
+                            const actions = document.createElement('div');
+                            actions.className = 'mt-item-actions';
+
+                            const upBtn = document.createElement('button');
+                            upBtn.type = 'button';
+                            upBtn.className = 'btn-icon';
+                            upBtn.textContent = '▲';
+                            upBtn.title = 'Move up';
+                            upBtn.disabled = index === 0;
+                            upBtn.addEventListener('click', () => {
+                                moveStep(index, index - 1);
+                                refresh();
+                                this._emitParamsChange(key, this.params[key]);
+                            });
+                            actions.appendChild(upBtn);
+
+                            const downBtn = document.createElement('button');
+                            downBtn.type = 'button';
+                            downBtn.className = 'btn-icon';
+                            downBtn.textContent = '▼';
+                            downBtn.title = 'Move down';
+                            downBtn.disabled = index === this.params[key].length - 1;
+                            downBtn.addEventListener('click', () => {
+                                moveStep(index, index + 1);
+                                refresh();
+                                this._emitParamsChange(key, this.params[key]);
+                            });
+                            actions.appendChild(downBtn);
+
+                            const delBtn = document.createElement('button');
+                            delBtn.type = 'button';
+                            delBtn.className = 'btn-icon';
+                            delBtn.textContent = '✕';
+                            delBtn.title = 'Remove transform';
+                            delBtn.addEventListener('click', () => {
+                                this.params[key].splice(index, 1);
+                                refresh();
+                                this._emitParamsChange(key, this.params[key]);
+                            });
+                            actions.appendChild(delBtn);
+
+                            header.appendChild(actions);
+                            item.appendChild(header);
+
+                            const makeRow = (label, arrName, axes) => {
+                                const rowEl = document.createElement('div');
+                                rowEl.className = 'mt-row';
+                                const lab = document.createElement('div');
+                                lab.className = 'mt-row-label';
+                                lab.textContent = label;
+                                rowEl.appendChild(lab);
+                                const inputs = document.createElement('div');
+                                inputs.className = 'mt-row-inputs';
+                                axes.forEach((axis, i) => {
+                                    const input = makeNumberInput(step, arrName, i, `${label} ${axis}`, refresh);
+                                    input.dataset.axis = axis;
+                                    inputs.appendChild(input);
+                                });
+                                rowEl.appendChild(inputs);
+                                item.appendChild(rowEl);
+                            };
+
+                            makeRow('Position', 'position', ['X', 'Y', 'Z']);
+                            makeRow('Rotation', 'rotationEuler', ['X', 'Y', 'Z']);
+
+                            list.appendChild(item);
+                        });
+
+                        addBtn.disabled = this.params[key].length >= 64;
+                    };
+
+                    addBtn.addEventListener('click', () => {
+                        this.params[key].push(ensureStepShape());
+                        refresh();
+                        this._emitParamsChange(key, this.params[key]);
+                    });
+
+                    refresh();
+                    this._multiTransformControllers.set(key, { refresh });
+
+                    const hidden = document.createElement('input');
+                    hidden.type = 'hidden';
+                    hidden.id = id;
+                    wrap.appendChild(hidden);
+
+                    controlWrap.appendChild(wrap);
+                    inputEl = hidden;
+                    break;
+                }
+
                 case 'boolean_operation': {
                     // Ensure default object exists
                     if (!this.params[key] || typeof this.params[key] !== 'object') {
@@ -1040,10 +1212,21 @@ export class genFeatureUI {
                 }
             }
 
-            if (!inputEl.parentNode) controlWrap.appendChild(inputEl);
+            if (!inputEl || !(inputEl instanceof HTMLElement)) {
+                inputRegistered = false;
+                const placeholder = document.createElement('div');
+                placeholder.className = 'control-placeholder';
+                placeholder.textContent = 'Control unavailable';
+                controlWrap.appendChild(placeholder);
+            } else if (!inputEl.parentNode) {
+                controlWrap.appendChild(inputEl);
+            }
+
             row.appendChild(controlWrap);
             this._fieldsWrap.appendChild(row);
-            this._inputs.set(key, inputEl);
+            if (inputRegistered && inputEl instanceof HTMLElement) {
+                this._inputs.set(key, inputEl);
+            }
         }
     }
 
@@ -1676,6 +1859,18 @@ export class genFeatureUI {
       .transform-inputs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; }
       .transform-input { padding: 6px 8px; }
       .transform-wrap.ref-active .btn { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+
+      .multi-transform-wrap { display: flex; flex-direction: column; gap: 10px; }
+      .mt-list { display: flex; flex-direction: column; gap: 10px; }
+      .mt-item { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; border: 1px solid var(--border); background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); }
+      .mt-item-header { display: flex; justify-content: space-between; align-items: center; font-weight: 500; }
+      .mt-item-actions { display: inline-flex; gap: 4px; }
+      .mt-item-actions .btn-icon { font-size: 12px; line-height: 1; padding: 4px 6px; }
+      .mt-row { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: center; }
+      .mt-row-label { font-size: 12px; color: var(--muted); }
+      .mt-row-inputs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 6px; }
+      .mt-number { padding: 6px 8px; }
+      .control-placeholder { padding: 8px; font-size: 12px; color: var(--muted); border: 1px dashed var(--border); border-radius: 10px; background: rgba(15,23,42,0.35); }
     `;
         return style;
     }

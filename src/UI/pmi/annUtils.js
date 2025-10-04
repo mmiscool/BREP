@@ -7,6 +7,16 @@ export function makeOverlayLine(a, b, color = 0x93c5fd) {
   return new THREE.Line(geom, mat);
 }
 
+export function makeOverlayDashedLine(a, b, color = 0x93c5fd, dashSize = 0.04, gapSize = 0.02) {
+  const geom = new THREE.BufferGeometry().setFromPoints([a.clone(), b.clone()]);
+  const mat = new THREE.LineDashedMaterial({ color, dashSize, gapSize });
+  mat.depthTest = false; mat.depthWrite = false; mat.transparent = true;
+  const line = new THREE.Line(geom, mat);
+  try { line.computeLineDistances(); }
+  catch { /* ignore */ }
+  return line;
+}
+
 export function makeOverlaySphere(size, color = 0xffffff) {
   const g = new THREE.SphereGeometry(size, 12, 8);
   const m = new THREE.MeshBasicMaterial({ color });

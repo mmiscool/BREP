@@ -139,6 +139,15 @@ export class PMIMode {
     try { if (v.controls) v.controls.enabled = true; } catch { }
   }
 
+  applyViewTransformsSequential() {
+    try {
+      this.#applyViewTransforms();
+      this._refreshOverlays();
+    } catch (error) {
+      console.warn('Failed to apply view transforms sequentially:', error);
+    }
+  }
+
   async finish() {
     // Persist annotations back into the view entry and refresh PMI widget
     try { this.#_persistView(true); } catch { }
@@ -806,10 +815,21 @@ export class PMIMode {
       const actions = document.createElement('div'); actions.className = 'pmi-acc-actions';
       const del = document.createElement('button'); del.className = 'pmi-acc-del'; del.textContent = 'Delete'; del.addEventListener('click', () => {
         try {
+          if (a?.type === 'viewTransform' && handler) {
+            try {
+              if (typeof handler._resolveSolidReferences === 'function') handler._resolveSolidReferences(a, this, false);
+            } catch { /* ignore */ }
+            try {
+              if (typeof handler.restoreOriginalTransforms === 'function') handler.restoreOriginalTransforms(a, this);
+            } catch { /* ignore restore errors */ }
+          }
           this._annotationHistory.removeAt(i);
           this._annotationsDirty = true;
           this.#renderAnnList();
           this.#rebuildAnnotationObjects();
+          if (typeof this.applyViewTransformsSequential === 'function') {
+            this.applyViewTransformsSequential();
+          }
         } catch { }
       });
       actions.appendChild(del); header.appendChild(actions); item.appendChild(header);
@@ -1249,44 +1269,64 @@ export class PMIMode {
         return;
       }
 
+      const viewAnns = [];
       for (const ann of anns) {
-        if (ann.type !== 'viewTransform') continue;
+        if (ann.type === 'viewTransform') viewAnns.push(ann);
+      }
 
+      const cumulativeState = new Map();
+
+      for (const ann of viewAnns) {
         console.log('Processing ViewTransform annotation:', ann);
 
-        // Use the handler's own resolution logic
         if (typeof handler._resolveSolidReferences === 'function') {
-          handler._resolveSolidReferences(ann, this);
+          handler._resolveSolidReferences(ann, this, false);
         }
 
-        // Store original transforms if not already stored
-        if (Array.isArray(ann.solids) && ann.solids.length > 0 && !ann.originalTransforms) {
-          ann.originalTransforms = new Map();
-          for (const solid of ann.solids) {
-            if (solid && solid.type === 'SOLID') {
-              console.log('Storing original transform for:', solid.name || solid.uuid);
-              ann.originalTransforms.set(solid.uuid, {
-                position: [solid.position.x, solid.position.y, solid.position.z],
-                rotation: [solid.rotation.x, solid.rotation.y, solid.rotation.z],
-                scale: [solid.scale.x, solid.scale.y, solid.scale.z]
-              });
+        if (typeof handler._ensureOriginalSnapshots === 'function') {
+          const solids = Array.isArray(ann.solids) ? ann.solids : [];
+          handler._ensureOriginalSnapshots(ann, solids, false);
+        }
+      }
+
+      const cloneSnapshot = (snapshot) => {
+        if (!snapshot || typeof snapshot !== 'object') return null;
+        return {
+          position: Array.isArray(snapshot.position) ? snapshot.position.slice() : [0, 0, 0],
+          quaternion: Array.isArray(snapshot.quaternion) ? snapshot.quaternion.slice() : [0, 0, 0, 1],
+          scale: Array.isArray(snapshot.scale) ? snapshot.scale.slice() : [1, 1, 1],
+          worldPosition: Array.isArray(snapshot.worldPosition) ? snapshot.worldPosition.slice() : null,
+        };
+      };
+
+      for (const ann of viewAnns) {
+        const solids = Array.isArray(ann.solids) ? ann.solids : [];
+        if (!solids.length) {
+          if (typeof handler.applyTransformsToSolids === 'function') {
+            handler.applyTransformsToSolids(ann, this, { startSnapshots: new Map(), cumulativeState });
+          }
+          continue;
+        }
+
+        let startSnapshots = null;
+        if (typeof handler.getOriginalSnapshotMap === 'function') {
+          const origMap = handler.getOriginalSnapshotMap(ann);
+          startSnapshots = new Map();
+          for (const solid of solids) {
+            if (!solid || !solid.uuid) continue;
+            if (cumulativeState.has(solid.uuid)) {
+              const snap = cloneSnapshot(cumulativeState.get(solid.uuid));
+              if (snap) startSnapshots.set(solid.uuid, snap);
+            } else if (origMap && origMap.has(solid.uuid)) {
+              const snap = cloneSnapshot(origMap.get(solid.uuid));
+              if (snap) startSnapshots.set(solid.uuid, snap);
             }
           }
-        } else if (ann.originalTransforms && !(ann.originalTransforms instanceof Map)) {
-          // Convert plain object back to Map after deserialization
-          const mapFromObj = new Map();
-          for (const [key, value] of Object.entries(ann.originalTransforms)) {
-            mapFromObj.set(key, value);
-          }
-          ann.originalTransforms = mapFromObj;
         }
 
-        // Apply the transforms
         if (typeof handler.applyTransformsToSolids === 'function') {
-          console.log('Applying transforms via public method');
-          handler.applyTransformsToSolids(ann, this);
+          handler.applyTransformsToSolids(ann, this, { startSnapshots, cumulativeState });
         } else if (typeof handler._applyTransformsToSolids === 'function') {
-          console.log('Applying transforms via private method');
           handler._applyTransformsToSolids(ann, this);
         }
       }

@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { BaseAnnotation } from '../BaseAnnotation.js';
-import { makeOverlayLine } from '../annUtils.js';
+import { makeOverlayDashedLine } from '../annUtils.js';
 
 const DEFAULT_TRS = Object.freeze({ position: [0, 0, 0], rotationEuler: [0, 0, 0], scale: [1, 1, 1] });
 
@@ -21,11 +21,11 @@ const inputParamsSchema = {
     label: 'Solids',
     hint: 'Select solids to reposition in this PMI view',
   },
-  transform: {
-    type: 'transform',
-    default_value: DEFAULT_TRS,
-    label: 'Transform',
-    hint: 'Use gizmo or fields to move and rotate the selected solids',
+  transforms: {
+    type: 'multi_transform',
+    default_value: [],
+    label: 'Transforms',
+    hint: 'Sequential transforms applied in order to the selected solids',
   },
   showTraceLine: {
     type: 'boolean',
@@ -57,7 +57,7 @@ export class ViewTransformAnnotation extends BaseAnnotation {
     return {
       type: this.type,
       solidNames: [],
-      transform: { position: [0, 0, 0], rotationEuler: [0, 0, 0], scale: [1, 1, 1] },
+      transforms: [cloneStep(DEFAULT_TRS)],
       showTraceLine: true,
       __open: true,
       persistentData: { __transformWorld: true },
@@ -66,20 +66,19 @@ export class ViewTransformAnnotation extends BaseAnnotation {
 
   static getSchema(pmimode, ann) {
     const solids = normalizeNameArray(ann?.solidNames ?? ann?.solids);
-    const baseCenter = getOriginalCenter(ann);
-    const transform = normalizeTransform(ann?.transform, baseCenter, ann?.persistentData?.__transformWorld === true);
-    ann.transform = transform;
+    const steps = normalizeStepList(ann?.transforms ?? ann?.steps ?? (ann?.transform ? [ann.transform] : []));
+    ann.transforms = steps.map(cloneStep);
     const showTraceLine = ann?.showTraceLine !== false;
 
     const schema = {
       solidNames: { ...inputParamsSchema.solidNames, default_value: solids },
-      transform: { ...inputParamsSchema.transform, default_value: transform },
+      transforms: { ...inputParamsSchema.transforms, default_value: steps.map(cloneStep) },
       showTraceLine: { ...inputParamsSchema.showTraceLine, default_value: showTraceLine },
     };
 
     const params = {
       solidNames: solids.slice(),
-      transform,
+      transforms: steps.map(cloneStep),
       showTraceLine,
     };
 
@@ -93,28 +92,36 @@ export class ViewTransformAnnotation extends BaseAnnotation {
     ann.solidNames = names.slice();
 
     const solidKey = makeSolidKey(names);
-    if (ann.__solidKey !== solidKey) {
+    const solidsChanged = ann.__solidKey !== solidKey;
+    if (solidsChanged) {
       setNonEnumerable(ann, '__solidKey', solidKey);
       setNonEnumerable(ann, '__transformInitialized', false);
     }
 
-    this._resolveSolidReferences(ann, pmimode);
+    this._resolveSolidReferences(ann, pmimode, solidsChanged);
 
-    const baseCenter = getOriginalCenter(ann);
-    const transform = normalizeTransform(params?.transform ?? ann.transform, baseCenter, true);
-    ann.transform = transform;
+    const rawSteps = Array.isArray(params?.transforms) ? params.transforms : ann.transforms;
+    let steps = normalizeStepList(rawSteps);
+    if (!steps.length) steps = [cloneStep(DEFAULT_TRS)];
+    ann.transforms = steps.map(cloneStep);
+    ann.transform = cloneStep(ann.transforms[ann.transforms.length - 1]);
     setNonEnumerable(ann, '__transformInitialized', true);
 
     ann.showTraceLine = params?.showTraceLine !== false;
 
-    this.applyTransformsToSolids(ann, pmimode);
+    if (pmimode && typeof pmimode.applyViewTransformsSequential === 'function') {
+      try { pmimode.applyViewTransformsSequential(); }
+      catch { this.applyTransformsToSolids(ann, pmimode); }
+    } else {
+      this.applyTransformsToSolids(ann, pmimode);
+    }
 
     const statusText = this.statusText(pmimode, ann);
     return {
       statusText,
       paramsPatch: {
         solidNames: ann.solidNames.slice(),
-        transform: { ...ann.transform, position: ann.transform.position.slice(), rotationEuler: ann.transform.rotationEuler.slice(), scale: ann.transform.scale.slice() },
+        transforms: ann.transforms.map(cloneStep),
         showTraceLine: ann.showTraceLine,
       },
     };
@@ -122,16 +129,23 @@ export class ViewTransformAnnotation extends BaseAnnotation {
 
   static statusText(pmimode, ann) {
     const count = Array.isArray(ann?.solidNames) ? ann.solidNames.length : 0;
-    const baseCenter = getOriginalCenter(ann);
-    const trs = normalizeTransform(ann?.transform, baseCenter, true);
-    const delta = new THREE.Vector3(trs.position[0], trs.position[1], trs.position[2]);
-    if (baseCenter) {
-      delta.sub(new THREE.Vector3().fromArray(baseCenter));
+    const steps = Array.isArray(ann?.transforms) ? ann.transforms : [];
+    const traceSets = Array.isArray(ann?.__stepTraces) ? ann.__stepTraces : [];
+    let totalDist = 0;
+    for (const trace of traceSets) {
+      if (!(trace instanceof Map)) continue;
+      const first = trace.values().next();
+      if (!first || first.done) continue;
+      const seg = first.value;
+      if (!seg || !Array.isArray(seg.start) || !Array.isArray(seg.end)) continue;
+      const a = new THREE.Vector3().fromArray(seg.start);
+      const b = new THREE.Vector3().fromArray(seg.end);
+      totalDist += a.distanceTo(b);
     }
-    const dist = delta.length();
     const pieces = [];
     pieces.push(count === 1 ? '1 solid' : `${count} solids`);
-    if (dist > 1e-4) pieces.push(`Δ ${dist.toFixed(dist >= 10 ? 1 : 2)}`);
+    pieces.push(steps.length === 1 ? '1 step' : `${steps.length} steps`);
+    if (totalDist > 1e-4) pieces.push(`path ${totalDist.toFixed(totalDist >= 10 ? 1 : 2)}`);
     return pieces.join(', ');
   }
 
@@ -139,24 +153,24 @@ export class ViewTransformAnnotation extends BaseAnnotation {
     try {
       if (!group || !ann) return;
 
-      const solids = Array.isArray(ann.solids) ? ann.solids : [];
-      if (!solids.length) return;
-
-      const origMap = ensureOriginalMap(ann);
+      const traceSets = Array.isArray(ann.__stepTraces) ? ann.__stepTraces : [];
       const showTrace = ann.showTraceLine !== false;
 
-      if (showTrace) {
-        for (const solid of solids) {
-          if (!solid || !solid.isObject3D) continue;
-          const orig = origMap.get(solid.uuid);
-          if (!orig || !orig.worldPosition) continue;
-          const from = new THREE.Vector3().fromArray(orig.worldPosition);
-          const to = solid.getWorldPosition(new THREE.Vector3());
-          if (from.distanceToSquared(to) < 1e-8) continue;
-          const line = makeOverlayLine(from, to, 0x60a5fa);
-          if (line) {
-            line.renderOrder = 9994;
-            group.add(line);
+      if (showTrace && traceSets.length) {
+        const dashSize = ctx.screenSizeWorld ? ctx.screenSizeWorld(16) : 0.1;
+        const gapSize = ctx.screenSizeWorld ? ctx.screenSizeWorld(8) : 0.05;
+        for (const trace of traceSets) {
+          if (!(trace instanceof Map)) continue;
+          for (const seg of trace.values()) {
+            if (!seg || !Array.isArray(seg.start) || !Array.isArray(seg.end)) continue;
+            const from = new THREE.Vector3().fromArray(seg.start);
+            const to = new THREE.Vector3().fromArray(seg.end);
+            if (from.distanceToSquared(to) < 1e-8) continue;
+            const line = makeOverlayDashedLine(from, to, 0x60a5fa, dashSize, gapSize);
+            if (line) {
+              line.renderOrder = 9994;
+              group.add(line);
+            }
           }
         }
       }
@@ -209,57 +223,123 @@ export class ViewTransformAnnotation extends BaseAnnotation {
     } catch { /* ignore */ }
   }
 
-  static applyTransformsToSolids(ann, pmimode) {
+  static applyTransformsToSolids(ann, pmimode, options = {}) {
     const mode = pmimode || ann?.__pmimode || null;
     const solids = Array.isArray(ann?.solids) ? ann.solids : [];
-    if (!solids.length) return;
-
-    const origMap = ensureOriginalMap(ann);
-    this._ensureOriginalSnapshots(ann, solids);
-    const baseCenterArr = getOriginalCenter(ann, solids);
-    const transform = normalizeTransform(ann?.transform, baseCenterArr, true);
-    ann.transform = transform;
-    ann.persistentData = ann.persistentData || {};
-    ann.persistentData.__transformWorld = true;
-
-    const targetPos = new THREE.Vector3().fromArray(transform.position);
-    const baseCenter = baseCenterArr ? new THREE.Vector3().fromArray(baseCenterArr) : null;
-    const offsetPos = baseCenter ? targetPos.clone().sub(baseCenter) : targetPos.clone();
-
-    ann.transform.position = [targetPos.x, targetPos.y, targetPos.z];
-    ann.transform.rotationEuler = transform.rotationEuler.slice();
-    ann.transform.scale = transform.scale.slice();
-
-    const offsetArray = [offsetPos.x, offsetPos.y, offsetPos.z];
-    if (isIdentityTransform({ position: offsetArray, rotationEuler: transform.rotationEuler, scale: transform.scale })) {
-      this.restoreOriginalTransforms(ann, mode);
+    if (!solids.length) {
+      setNonEnumerable(ann, '__stepTraces', []);
       return;
     }
 
-    const offsetEuler = new THREE.Euler(transform.rotationEuler[0], transform.rotationEuler[1], transform.rotationEuler[2], 'XYZ');
-    const offsetQuat = new THREE.Quaternion().setFromEuler(offsetEuler);
-    const offsetScale = new THREE.Vector3().fromArray(transform.scale);
+    const steps = normalizeStepList(ann?.transforms ?? []);
+    if (!steps.length) {
+      this.restoreOriginalTransforms(ann, mode);
+      return;
+    }
+    ann.transforms = steps.map(cloneStep);
+
+    ann.persistentData = ann.persistentData || {};
+    ann.persistentData.__transformWorld = true;
+
+    const origMap = ensureOriginalMap(ann);
+    this._ensureOriginalSnapshots(ann, solids, false);
+
+    const cumulativeState = options.cumulativeState instanceof Map ? options.cumulativeState : null;
+    let startSnapshots = cloneSnapshotMap(options.startSnapshots instanceof Map ? options.startSnapshots : null);
+    if (!startSnapshots || startSnapshots.size === 0) {
+      startSnapshots = new Map();
+      for (const solid of solids) {
+        if (!solid || !solid.uuid) continue;
+        const snap = origMap.get(solid.uuid);
+        if (snap) startSnapshots.set(solid.uuid, cloneSnapshot(snap, false));
+      }
+    }
+
+    const traces = [];
+    let snapshotCursor = startSnapshots;
+
+    for (const step of ann.transforms) {
+      const { trace, nextState } = this._applyStepToSolids(ann, step, {
+        mode,
+        solids,
+        startSnapshots: snapshotCursor,
+        origMap,
+        cumulativeState,
+      });
+      traces.push(trace);
+      snapshotCursor = nextState;
+    }
+
+    if (ann.transforms.length) {
+      ann.transform = cloneStep(ann.transforms[ann.transforms.length - 1]);
+      setNonEnumerable(ann, '__transformInitialized', true);
+    }
+
+    setNonEnumerable(ann, '__stepTraces', traces);
+    try { mode?.viewer?.render(); } catch { }
+  }
+
+  static _applyStepToSolids(ann, step, { mode, solids, startSnapshots, origMap, cumulativeState }) {
+    const transform = normalizeStep(step);
+    step.position = transform.position.slice();
+    step.rotationEuler = transform.rotationEuler.slice();
+    step.scale = transform.scale.slice();
+
+    const deltaPos = new THREE.Vector3().fromArray(transform.position);
+    const deltaEuler = new THREE.Euler(transform.rotationEuler[0], transform.rotationEuler[1], transform.rotationEuler[2], 'XYZ');
+    const deltaQuat = new THREE.Quaternion().setFromEuler(deltaEuler);
+    const deltaScale = new THREE.Vector3().fromArray(transform.scale);
+
+    const identity = isIdentityTransform({ position: transform.position, rotationEuler: transform.rotationEuler, scale: transform.scale });
+    const trace = new Map();
+    const nextState = new Map();
 
     for (const solid of solids) {
       if (!solid || !solid.isObject3D) continue;
-      const snapshot = origMap.get(solid.uuid);
+      const uuid = solid.uuid;
+      const snapshot = startSnapshots.get(uuid) || origMap.get(uuid);
       if (!snapshot) continue;
 
-      const basePos = new THREE.Vector3().fromArray(snapshot.position);
-      const baseQuat = new THREE.Quaternion().fromArray(snapshot.quaternion);
-      const baseScale = new THREE.Vector3().fromArray(snapshot.scale);
+      const startWorld = snapshot && Array.isArray(snapshot.worldPosition)
+        ? new THREE.Vector3().fromArray(snapshot.worldPosition)
+        : solid.getWorldPosition(new THREE.Vector3());
 
-      const nextPos = basePos.clone().add(offsetPos);
-      const nextQuat = baseQuat.clone().multiply(offsetQuat);
-      const nextScale = baseScale.clone().multiply(offsetScale);
+      let endWorld = startWorld.clone();
 
-      solid.position.copy(nextPos);
-      solid.quaternion.copy(nextQuat);
-      solid.scale.copy(nextScale);
-      solid.updateMatrixWorld(true);
+      if (!identity) {
+        const basePos = new THREE.Vector3().fromArray(snapshot.position);
+        const baseQuat = snapshot.quaternion ? new THREE.Quaternion().fromArray(snapshot.quaternion) : new THREE.Quaternion();
+        const baseScale = new THREE.Vector3().fromArray(snapshot.scale || [1, 1, 1]);
+
+        const nextPos = basePos.clone().add(deltaPos);
+        const nextQuat = baseQuat.clone().multiply(deltaQuat);
+        const nextScale = baseScale.clone().multiply(deltaScale);
+
+        solid.position.copy(nextPos);
+        solid.quaternion.copy(nextQuat);
+        solid.scale.copy(nextScale);
+        solid.updateMatrixWorld(true);
+
+        endWorld = solid.getWorldPosition(new THREE.Vector3());
+      }
+
+      trace.set(uuid, {
+        start: [startWorld.x, startWorld.y, startWorld.z],
+        end: [endWorld.x, endWorld.y, endWorld.z],
+      });
+
+      const nextSnapshot = {
+        position: [solid.position.x, solid.position.y, solid.position.z],
+        quaternion: [solid.quaternion.x, solid.quaternion.y, solid.quaternion.z, solid.quaternion.w],
+        scale: [solid.scale.x, solid.scale.y, solid.scale.z],
+        worldPosition: [endWorld.x, endWorld.y, endWorld.z],
+        __fromCumulative: true,
+      };
+      nextState.set(uuid, nextSnapshot);
+      if (cumulativeState) cumulativeState.set(uuid, cloneSnapshot(nextSnapshot, true));
     }
 
-    try { mode?.viewer?.render(); } catch { }
+    return { trace, nextState };
   }
 
   static restoreOriginalTransforms(ann, pmimode) {
@@ -281,15 +361,18 @@ export class ViewTransformAnnotation extends BaseAnnotation {
 
     const baseCenter = getOriginalCenter(ann, solids);
     if (baseCenter) {
-      ann.transform = normalizeTransform(ann.transform, baseCenter, true);
-      ann.transform.position = baseCenter.slice();
+      const normalized = normalizeTransform(ann.transform || DEFAULT_TRS, baseCenter, true);
+      ann.transform = normalized;
       setNonEnumerable(ann, '__transformInitialized', true);
     }
+
+    ann.transforms = normalizeStepList(ann.transforms ?? []);
+    setNonEnumerable(ann, '__stepTraces', []);
 
     try { mode?.viewer?.render(); } catch { }
   }
 
-  static _resolveSolidReferences(ann, pmimode) {
+  static _resolveSolidReferences(ann, pmimode, forceCapture = false) {
     if (!ann || typeof ann !== 'object') return;
     if (pmimode) {
       setNonEnumerable(ann, '__pmimode', pmimode);
@@ -316,27 +399,26 @@ export class ViewTransformAnnotation extends BaseAnnotation {
     }
 
     setNonEnumerable(ann, 'solids', solids);
-    this._ensureOriginalSnapshots(ann, solids, true);
+    this._ensureOriginalSnapshots(ann, solids, forceCapture);
 
     const baseCenter = getOriginalCenter(ann, solids);
     if (baseCenter) setNonEnumerable(ann, '__baseCenter', baseCenter.slice());
 
     const usesWorld = ann?.persistentData?.__transformWorld === true;
-    if (!ann.__transformInitialized || !Array.isArray(ann.transform?.position)) {
-      let normalized = normalizeTransform(ann.transform, baseCenter, usesWorld);
-      if (!usesWorld && baseCenter) {
-        const baseVec = new THREE.Vector3().fromArray(baseCenter);
-        const offsetVec = new THREE.Vector3().fromArray(normalized.position);
-        const worldVec = baseVec.clone().add(offsetVec);
-        normalized = {
-          position: [worldVec.x, worldVec.y, worldVec.z],
-          rotationEuler: normalized.rotationEuler,
-          scale: normalized.scale,
-        };
-      }
-      ann.transform = normalized;
-      setNonEnumerable(ann, '__transformInitialized', true);
+    const lastStep = Array.isArray(ann?.transforms) && ann.transforms.length ? ann.transforms[ann.transforms.length - 1] : DEFAULT_TRS;
+    let normalized = normalizeTransform(lastStep, baseCenter, usesWorld);
+    if (!usesWorld && baseCenter) {
+      const baseVec = new THREE.Vector3().fromArray(baseCenter);
+      const offsetVec = new THREE.Vector3().fromArray(normalized.position);
+      const worldVec = baseVec.clone().add(offsetVec);
+      normalized = {
+        position: [worldVec.x, worldVec.y, worldVec.z],
+        rotationEuler: normalized.rotationEuler,
+        scale: normalized.scale,
+      };
     }
+    ann.transform = normalized;
+    setNonEnumerable(ann, '__transformInitialized', true);
     ann.persistentData = ann.persistentData || {};
     ann.persistentData.__transformWorld = true;
   }
@@ -345,7 +427,15 @@ export class ViewTransformAnnotation extends BaseAnnotation {
     const map = ensureOriginalMap(ann);
     for (const solid of solids) {
       if (!solid || !solid.isObject3D) continue;
-      if (!forceCapture && map.has(solid.uuid)) continue;
+      if (!forceCapture && map.has(solid.uuid)) {
+        const existing = map.get(solid.uuid);
+        if (existing && (!Array.isArray(existing.worldPosition) || existing.worldPosition.length < 3)) {
+          const world = solid.getWorldPosition(new THREE.Vector3());
+          existing.worldPosition = [world.x, world.y, world.z];
+          map.set(solid.uuid, existing);
+        }
+        continue;
+      }
 
       const world = solid.getWorldPosition(new THREE.Vector3());
       const snapshot = {
@@ -362,7 +452,8 @@ export class ViewTransformAnnotation extends BaseAnnotation {
     const out = entry ? { ...entry } : { type: this.type };
     const cleanInput = clonePlainInput(ann);
     cleanInput.solidNames = normalizeNameArray(cleanInput.solidNames ?? []);
-    cleanInput.transform = normalizeTransform(cleanInput.transform, null, true);
+    cleanInput.transforms = normalizeStepList(cleanInput.transforms ?? (cleanInput.transform ? [cleanInput.transform] : []));
+    delete cleanInput.transform;
     cleanInput.showTraceLine = cleanInput.showTraceLine !== false;
     cleanInput.type = this.type;
 
@@ -373,6 +464,10 @@ export class ViewTransformAnnotation extends BaseAnnotation {
       out.__open = !!ann.__open;
     }
     return out;
+}
+
+  static getOriginalSnapshotMap(ann) {
+    return ensureOriginalMap(ann);
   }
 }
 
@@ -390,6 +485,86 @@ function normalizeTransform(raw, baseCenter, useWorldPosition = true) {
   const rotationEuler = toArray3(base.rotationEuler, 0);
   const scale = toArray3(base.scale, 1);
   return { position, rotationEuler, scale };
+}
+
+function computeCenterFromSnapshots(startSnapshots, solids, origMap) {
+  const accum = new THREE.Vector3();
+  let count = 0;
+  if (startSnapshots instanceof Map) {
+    for (const snapshot of startSnapshots.values()) {
+      if (!snapshot || !Array.isArray(snapshot.worldPosition)) continue;
+      accum.x += snapshot.worldPosition[0];
+      accum.y += snapshot.worldPosition[1];
+      accum.z += snapshot.worldPosition[2];
+      count++;
+    }
+  }
+
+  if (count === 0 && origMap) {
+    for (const solid of solids) {
+      const snap = origMap.get(solid.uuid);
+      if (!snap || !Array.isArray(snap.worldPosition)) continue;
+      accum.x += snap.worldPosition[0];
+      accum.y += snap.worldPosition[1];
+      accum.z += snap.worldPosition[2];
+      count++;
+    }
+  }
+
+  if (count === 0) return null;
+  accum.multiplyScalar(1 / count);
+  return [accum.x, accum.y, accum.z];
+}
+
+function cloneSnapshot(snapshot, fromCumulative = false) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const clone = {
+    position: Array.isArray(snapshot.position) ? snapshot.position.slice() : [0, 0, 0],
+    quaternion: Array.isArray(snapshot.quaternion) ? snapshot.quaternion.slice() : [0, 0, 0, 1],
+    scale: Array.isArray(snapshot.scale) ? snapshot.scale.slice() : [1, 1, 1],
+    worldPosition: Array.isArray(snapshot.worldPosition) ? snapshot.worldPosition.slice() : null,
+  };
+  if (!clone.worldPosition && Array.isArray(snapshot.position)) {
+    clone.worldPosition = snapshot.position.slice();
+  }
+  if (fromCumulative || snapshot.__fromCumulative) clone.__fromCumulative = true;
+  return clone;
+}
+
+function cloneSnapshotMap(map) {
+  if (!(map instanceof Map)) return null;
+  const out = new Map();
+  for (const [key, snap] of map.entries()) {
+    const cloned = cloneSnapshot(snap, snap?.__fromCumulative);
+    if (cloned) out.set(key, cloned);
+  }
+  return out;
+}
+
+function normalizeStepList(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((step) => normalizeStep(step));
+}
+
+function normalizeStep(step) {
+  if (!step || typeof step !== 'object') step = DEFAULT_TRS;
+  return {
+    position: toArray3(step.position, 0),
+    rotationEuler: toArray3(step.rotationEuler, 0),
+    scale: toArray3(step.scale, 1),
+    id: step.id,
+  };
+}
+
+function cloneStep(step) {
+  const normalized = normalizeStep(step);
+  const ensureId = normalized.id || `mt-${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    id: ensureId,
+    position: normalized.position.slice(),
+    rotationEuler: normalized.rotationEuler.slice(),
+    scale: normalized.scale.slice(),
+  };
 }
 
 function isIdentityTransform(trs) {
