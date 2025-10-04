@@ -1334,7 +1334,7 @@ export class PMIMode {
 
         if (typeof handler._ensureOriginalSnapshots === 'function') {
           const solids = Array.isArray(ann.solids) ? ann.solids : [];
-          handler._ensureOriginalSnapshots(ann, solids, false);
+          handler._ensureOriginalSnapshots(ann, solids, false, this.viewer);
         }
       }
 

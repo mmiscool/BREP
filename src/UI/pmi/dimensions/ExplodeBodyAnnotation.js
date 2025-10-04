@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { BaseAnnotation } from '../BaseAnnotation.js';
-import { makeOverlayDashedLine, objectRepresentativePoint } from '../annUtils.js';
+import { makeOverlayDashedLine } from '../annUtils.js';
 
 
 const inputParamsSchema = {
@@ -64,14 +64,14 @@ export class ExplodeBodyAnnotation extends BaseAnnotation {
     solids.forEach((solid) => {
       try {
         const snap = snapshots.get(solid.uuid);
-        let start = vectorFromArray(snap?.centerWorld)
-          || (pmimode ? objectRepresentativePoint(pmimode.viewer, solid, snap) : null)
-          || vectorFromArray(snap?.worldPosition)
-          || vectorFromArray(snap?.position);
-        if (!start) return;
-        const end = objectRepresentativePoint(pmimode.viewer, solid)
-          || solid.getWorldPosition(new THREE.Vector3());
-        if (!end) return;
+        const centerLocal = vectorFromArray(snap?.centerLocal)
+          || getSolidLocalCenter(solid);
+        let start = applySnapshotToLocalPoint(centerLocal, snap)
+          || vectorFromArray(snap?.worldPosition);
+        let end = solid ? solid.localToWorld(centerLocal.clone()) : null;
+        if (!isFiniteVec3(start)) start = vectorFromArray(snap?.worldPosition);
+        if (!isFiniteVec3(end)) end = solid.getWorldPosition(new THREE.Vector3());
+        if (!isFiniteVec3(start) || !isFiniteVec3(end)) return;
         if (start.distanceToSquared(end) < 1e-8) return;
         group.add(makeOverlayDashedLine(start, end, 0xf5a524));
       } catch {
@@ -106,7 +106,7 @@ export class ExplodeBodyAnnotation extends BaseAnnotation {
     return out;
   }
 
-  static _ensureOriginalSnapshots(ann, solids, forceRefresh = false) {
+  static _ensureOriginalSnapshots(ann, solids, forceRefresh = false, viewer = null) {
     ensurePersistent(ann);
     let map = ann.__originalSnapshots;
     if (!(map instanceof Map)) {
@@ -118,7 +118,7 @@ export class ExplodeBodyAnnotation extends BaseAnnotation {
     list.forEach((solid) => {
       if (!solid || !solid.uuid) return;
       if (forceRefresh || !map.has(solid.uuid)) {
-        map.set(solid.uuid, captureSnapshot(solid));
+        map.set(solid.uuid, captureSnapshot(solid, viewer));
       }
     });
 
@@ -155,7 +155,7 @@ export class ExplodeBodyAnnotation extends BaseAnnotation {
       if (!solid || !solid.uuid) return;
       const snap = startSnapshots.get(solid.uuid)
         || ExplodeBodyAnnotation.getOriginalSnapshotMap(ann).get(solid.uuid)
-        || captureSnapshot(solid);
+        || captureSnapshot(solid, pmimode?.viewer);
       if (!snap) return;
 
       const basePos = vectorFromArray(snap.position, new THREE.Vector3(0, 0, 0));
@@ -309,17 +309,21 @@ function resolveSolidObject(ref, scene) {
   return null;
 }
 
-function captureSnapshot(object) {
+function captureSnapshot(object, viewer = null) {
   try { object.updateMatrixWorld(true); } catch { }
   const pos = object.position.clone();
   const quat = object.quaternion.clone();
   const scale = object.scale.clone();
   const world = object.getWorldPosition(new THREE.Vector3());
+  const centerLocal = getSolidLocalCenter(object);
+  const centerWorld = centerLocal.clone().applyMatrix4(new THREE.Matrix4().compose(pos.clone(), quat.clone(), scale.clone()));
   return {
     position: pos.toArray(),
     quaternion: quat.toArray(),
     scale: scale.toArray(),
     worldPosition: world.toArray(),
+    centerWorld: centerWorld.toArray(),
+    centerLocal: centerLocal.toArray(),
   };
 }
 
@@ -333,6 +337,8 @@ function snapshotArrayToMap(arr) {
       quaternion: toArray(item.quaternion, [0, 0, 0, 1]),
       scale: toArray(item.scale, [1, 1, 1]),
       worldPosition: toArray(item.worldPosition, null),
+      centerWorld: toArray(item.centerWorld, null),
+      centerLocal: toArray(item.centerLocal, null),
     });
   });
   return map;
@@ -349,6 +355,8 @@ function snapshotMapToArray(map) {
       quaternion: toArray(value.quaternion, [0, 0, 0, 1]),
       scale: toArray(value.scale, [1, 1, 1]),
       worldPosition: toArray(value.worldPosition, null),
+      centerWorld: toArray(value.centerWorld, null),
+      centerLocal: toArray(value.centerLocal, null),
     });
   });
   return arr;
@@ -369,6 +377,7 @@ function toArray(src, fallback) {
 }
 
 function vectorFromArray(arr, fallbackVector) {
+  if (arr instanceof THREE.Vector3) return arr.clone();
   if (Array.isArray(arr) && arr.length >= 3) {
     const x = Number(arr[0]);
     const y = Number(arr[1]);
@@ -408,4 +417,33 @@ function quaternionFromEuler(eulerArray) {
   } catch {
     return new THREE.Quaternion();
   }
+}
+
+function getSolidLocalCenter(solid) {
+  try {
+    if (!solid) return new THREE.Vector3();
+    solid.updateMatrixWorld?.(true);
+    const box = new THREE.Box3().setFromObject(solid);
+    if (!box.isEmpty()) {
+      const worldCenter = box.getCenter(new THREE.Vector3());
+      const localCenter = worldCenter.clone();
+      solid.worldToLocal(localCenter);
+      return localCenter;
+    }
+  } catch { }
+  return new THREE.Vector3();
+}
+
+function applySnapshotToLocalPoint(localPoint, snap) {
+  if (!localPoint || !localPoint.isVector3 || !snap) return null;
+  const position = vectorFromArray(snap.position);
+  const quaternion = quaternionFromArray(snap.quaternion, new THREE.Quaternion());
+  const scale = vectorFromArray(snap.scale, new THREE.Vector3(1, 1, 1));
+  const matrix = new THREE.Matrix4().compose(position, quaternion, scale);
+  return localPoint.clone().applyMatrix4(matrix);
+}
+
+function isFiniteVec3(vec) {
+  if (!vec || !vec.isVector3) return false;
+  return Number.isFinite(vec.x) && Number.isFinite(vec.y) && Number.isFinite(vec.z);
 }
