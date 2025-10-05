@@ -18,6 +18,7 @@ import { test_Chamfer } from './test_chamfer.js';
 import { test_mirror } from './test_mirror.js';
 import { test_fillets_more_dificult } from './test_filletsMoreDifficult.js';
 import { test_tube } from './test_tube.js';
+import { test_tube_closedLoop } from './test_tube_closedLoop.js';
 
 
 export const testFunctions = [
@@ -32,6 +33,7 @@ export const testFunctions = [
     { test: test_stlLoader, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_SweepFace, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_tube, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
+    { test: test_tube_closedLoop, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_ExtrudeFace, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_Fillet, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_fillets_more_dificult, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },

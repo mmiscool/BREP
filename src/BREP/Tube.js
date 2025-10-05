@@ -139,7 +139,7 @@ function smoothPath(points, cornerRadius, tubeRadius) {
   }
 }
 
-function computeFrames(points) {
+function computeFrames(points, closed = false) {
   const tangents = [];
   const normals = [];
   const binormals = [];
@@ -152,18 +152,13 @@ function computeFrames(points) {
   for (let i = 0; i < points.length; i++) {
     const tangent = new THREE.Vector3();
     
-    if (i === 0) {
-      // Forward difference for first point
-      tangent.subVectors(points[1], points[0]);
-    } else if (i === points.length - 1) {
-      // Backward difference for last point
-      tangent.subVectors(points[i], points[i - 1]);
-    } else {
-      // Central difference for intermediate points
-      const forward = new THREE.Vector3().subVectors(points[i + 1], points[i]);
-      const backward = new THREE.Vector3().subVectors(points[i], points[i - 1]);
+    if (closed) {
+      // For closed loops, always use central difference with wraparound
+      const prevIdx = (i - 1 + points.length) % points.length;
+      const nextIdx = (i + 1) % points.length;
+      const forward = new THREE.Vector3().subVectors(points[nextIdx], points[i]);
+      const backward = new THREE.Vector3().subVectors(points[i], points[prevIdx]);
       
-      // Weighted average based on segment lengths for better smoothing
       const forwardLen = forward.length();
       const backwardLen = backward.length();
       
@@ -176,11 +171,40 @@ function computeFrames(points) {
       } else if (backwardLen > EPS) {
         tangent.copy(backward).normalize();
       } else {
-        // Fallback to previous tangent
-        if (tangents.length > 0) {
-          tangent.copy(tangents[tangents.length - 1]);
+        tangent.set(0, 0, 1);
+      }
+    } else {
+      // Original open path logic
+      if (i === 0) {
+        // Forward difference for first point
+        tangent.subVectors(points[1], points[0]);
+      } else if (i === points.length - 1) {
+        // Backward difference for last point
+        tangent.subVectors(points[i], points[i - 1]);
+      } else {
+        // Central difference for intermediate points
+        const forward = new THREE.Vector3().subVectors(points[i + 1], points[i]);
+        const backward = new THREE.Vector3().subVectors(points[i], points[i - 1]);
+        
+        // Weighted average based on segment lengths for better smoothing
+        const forwardLen = forward.length();
+        const backwardLen = backward.length();
+        
+        if (forwardLen > EPS && backwardLen > EPS) {
+          forward.normalize();
+          backward.normalize();
+          tangent.addVectors(forward, backward).normalize();
+        } else if (forwardLen > EPS) {
+          tangent.copy(forward).normalize();
+        } else if (backwardLen > EPS) {
+          tangent.copy(backward).normalize();
         } else {
-          tangent.set(0, 0, 1);
+          // Fallback to previous tangent
+          if (tangents.length > 0) {
+            tangent.copy(tangents[tangents.length - 1]);
+          } else {
+            tangent.set(0, 0, 1);
+          }
         }
       }
     }
@@ -257,6 +281,47 @@ function computeFrames(points) {
     
     // Compute binormal
     binormals[i] = new THREE.Vector3().crossVectors(currTan, normals[i]).normalize();
+  }
+
+  // For closed loops, adjust frames to minimize twist around the entire loop
+  if (closed && points.length > 2) {
+    // Check if the final frame is reasonably aligned with the initial frame
+    const firstNormal = normals[0];
+    const lastNormal = normals[normals.length - 1];
+    const firstTangent = tangents[0];
+    const lastTangent = tangents[tangents.length - 1];
+    
+    // Calculate the rotation needed to align last frame with first frame
+    const rotAxis = new THREE.Vector3().crossVectors(lastTangent, firstTangent);
+    
+    if (rotAxis.lengthSq() > EPS_SQ) {
+      rotAxis.normalize();
+      const angle = Math.acos(THREE.MathUtils.clamp(lastTangent.dot(firstTangent), -1, 1));
+      const rotation = new THREE.Matrix4().makeRotationAxis(rotAxis, angle);
+      const alignedLastNormal = lastNormal.clone().applyMatrix4(rotation);
+      
+      // Ensure orthogonality
+      const projection = firstTangent.clone().multiplyScalar(alignedLastNormal.dot(firstTangent));
+      alignedLastNormal.sub(projection).normalize();
+      
+      // Calculate the twist needed to align normals
+      const normalDot = firstNormal.dot(alignedLastNormal);
+      const twistAngle = Math.acos(THREE.MathUtils.clamp(normalDot, -1, 1));
+      
+      // Check if we need to apply the twist in the opposite direction
+      const crossProduct = new THREE.Vector3().crossVectors(firstNormal, alignedLastNormal);
+      if (crossProduct.dot(firstTangent) < 0) {
+        // Apply the twist distributed over the entire path to minimize discontinuity
+        const twistPerSegment = -twistAngle / (points.length - 1);
+        
+        for (let i = 1; i < points.length; i++) {
+          const segmentTwist = twistPerSegment * i;
+          const twistRotation = new THREE.Matrix4().makeRotationAxis(tangents[i], segmentTwist);
+          normals[i].applyMatrix4(twistRotation);
+          binormals[i] = new THREE.Vector3().crossVectors(tangents[i], normals[i]).normalize();
+        }
+      }
+    }
   }
 
   return { tangents, normals, binormals };
@@ -336,15 +401,15 @@ function addRingCap(solid, name, outerRing, innerRing, outwardDir) {
 }
 
 export class TubeSolid extends Solid {
-  constructor({ points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, name = 'Tube' } = {}) {
+  constructor({ points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = false, name = 'Tube' } = {}) {
     super();
-    this.params = { points, radius, innerRadius, resolution, name };
+    this.params = { points, radius, innerRadius, resolution, closed, name };
     this.name = name;
     this.generate();
   }
 
   generate() {
-    const { points, radius, innerRadius, resolution, name } = this.params;
+    const { points, radius, innerRadius, resolution, closed, name } = this.params;
     if (!(radius > 0)) {
       throw new Error('Tube radius must be greater than zero.');
     }
@@ -378,7 +443,7 @@ export class TubeSolid extends Solid {
       throw new Error(`Tube path collapsed after smoothing; check input. Original: ${vecPoints.length}, Smoothed: ${smoothed.length}`);
     }
 
-    const { tangents, normals, binormals } = computeFrames(smoothed);
+    const { tangents, normals, binormals } = computeFrames(smoothed, closed);
     if (tangents.length < 2) {
       throw new Error('Unable to compute frames for tube path.');
     }
@@ -387,10 +452,12 @@ export class TubeSolid extends Solid {
     const faceTag = name || 'Tube';
 
     // Generate outer surface with consistent winding
-    for (let i = 0; i < outer.length - 1; i++) {
+    const ringCount = closed ? outer.length : outer.length - 1;
+    for (let i = 0; i < ringCount; i++) {
       const ringA = outer[i];
-      const ringB = outer[i + 1];
-      const pathDir = smoothed[i + 1].clone().sub(smoothed[i]).normalize();
+      const ringB = outer[(i + 1) % outer.length]; // For closed loops, wrap around to first ring
+      const nextIdx = (i + 1) % smoothed.length;
+      const pathDir = smoothed[nextIdx].clone().sub(smoothed[i]).normalize();
       
       for (let j = 0; j < segs; j++) {
         const j1 = (j + 1) % segs;
@@ -404,10 +471,12 @@ export class TubeSolid extends Solid {
 
     // Generate inner surface with consistent winding (inward-facing)
     if (innerRings) {
-      for (let i = 0; i < innerRings.length - 1; i++) {
+      const innerRingCount = closed ? innerRings.length : innerRings.length - 1;
+      for (let i = 0; i < innerRingCount; i++) {
         const ringA = innerRings[i];
-        const ringB = innerRings[i + 1];
-        const pathDir = smoothed[i + 1].clone().sub(smoothed[i]).normalize();
+        const ringB = innerRings[(i + 1) % innerRings.length]; // For closed loops, wrap around to first ring
+        const nextIdx = (i + 1) % smoothed.length;
+        const pathDir = smoothed[nextIdx].clone().sub(smoothed[i]).normalize();
         const inwardDir = pathDir.clone().negate(); // Inward for hollow interior
         
         for (let j = 0; j < segs; j++) {
@@ -420,17 +489,20 @@ export class TubeSolid extends Solid {
       }
     }
 
-    const startCenter = [smoothed[0].x, smoothed[0].y, smoothed[0].z];
-    const endCenter = [smoothed[smoothed.length - 1].x, smoothed[smoothed.length - 1].y, smoothed[smoothed.length - 1].z];
-    const startDir = tangents[0].clone().negate();
-    const endDir = tangents[tangents.length - 1].clone();
+    // Only add caps for open tubes (not closed loops)
+    if (!closed) {
+      const startCenter = [smoothed[0].x, smoothed[0].y, smoothed[0].z];
+      const endCenter = [smoothed[smoothed.length - 1].x, smoothed[smoothed.length - 1].y, smoothed[smoothed.length - 1].z];
+      const startDir = tangents[0].clone().negate();
+      const endDir = tangents[tangents.length - 1].clone();
 
-    if (innerRings) {
-      addRingCap(this, `${faceTag}_CapStart`, outer[0], innerRings[0], startDir);
-      addRingCap(this, `${faceTag}_CapEnd`, outer[outer.length - 1], innerRings[innerRings.length - 1], endDir);
-    } else {
-      addDiskCap(this, `${faceTag}_CapStart`, startCenter, outer[0], startDir);
-      addDiskCap(this, `${faceTag}_CapEnd`, endCenter, outer[outer.length - 1], endDir);
+      if (innerRings) {
+        addRingCap(this, `${faceTag}_CapStart`, outer[0], innerRings[0], startDir);
+        addRingCap(this, `${faceTag}_CapEnd`, outer[outer.length - 1], innerRings[innerRings.length - 1], endDir);
+      } else {
+        addDiskCap(this, `${faceTag}_CapStart`, startCenter, outer[0], startDir);
+        addDiskCap(this, `${faceTag}_CapEnd`, endCenter, outer[outer.length - 1], endDir);
+      }
     }
 
     try {

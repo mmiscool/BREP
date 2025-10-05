@@ -290,11 +290,26 @@ export class TubeFeature {
       throw new Error('Unable to build a connected path for the tube.');
     }
 
+    // Detect if the path forms a closed loop
+    const isClosedLoop = pathPoints.length > 2 && (() => {
+      const first = pathPoints[0];
+      const last = pathPoints[pathPoints.length - 1];
+      const dx = first[0] - last[0];
+      const dy = first[1] - last[1];
+      const dz = first[2] - last[2];
+      const distSq = dx * dx + dy * dy + dz * dz;
+      // Use a tolerance based on the path's scale
+      const pathScale = Math.max(...pathPoints.map(p => Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])))) || 1;
+      const tolerance = pathScale * 1e-6;
+      return distSq <= tolerance * tolerance;
+    })();
+
     const tube = new BREP.Tube({
       points: pathPoints,
       radius: radiusValue,
       innerRadius: inner,
       resolution: Math.max(8, Math.floor(Number(resolution) || 32)),
+      closed: isClosedLoop,
       name: featureID,
     });
 
