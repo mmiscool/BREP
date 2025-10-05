@@ -26,6 +26,11 @@ const inputParamsSchema = {
         default_value: 360,
         hint: "Revolve angle",
     },
+    resolution: {
+        type: "number",
+        default_value: 64,
+        hint: "Number of segments used for the revolve sweep",
+    },
     boolean: {
         type: "boolean_operation",
         default_value: { targets: [], operation: 'NONE' },
@@ -44,7 +49,7 @@ export class RevolveFeature {
     }
 
     async run(partHistory) {
-        const { profile, axis, angle } = this.inputParams;
+        const { profile, axis, angle, resolution } = this.inputParams;
 
         // Resolve profile object: accept FACE or SKETCH group object
         const obj = Array.isArray(profile) ? (profile[0] || null) : (profile || null);
@@ -116,7 +121,10 @@ export class RevolveFeature {
 
         const deg = Number.isFinite(angle) ? angle : 360;
         const sweepRad = deg * Math.PI / 180;
-        const steps = Math.max(3, Math.ceil(Math.abs(deg) / 10)); // ~10° per step
+        const rawResolution = Number(resolution);
+        const baseResolution = Number.isFinite(rawResolution) ? rawResolution : 64;
+        const revolvedResolution = Math.max(3, Math.floor(Math.abs(baseResolution) || 0));
+        const steps = Math.max(3, Math.ceil((Math.abs(deg) / 360) * revolvedResolution));
         const dA = sweepRad / steps;
 
         // Helper: rotate world point around axis by angle
