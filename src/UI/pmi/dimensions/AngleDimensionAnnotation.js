@@ -301,6 +301,10 @@ function computeAngleElementsWithGeometry(pmimode, ann, ctx) {
     const B_p = to2D(lineB.p, plane.p, basis);
     const A_d = dirTo2D(lineA.d, basis).normalize();
     const B_d = dirTo2D(lineB.d, basis).normalize();
+    if (ann?.reverseElementOrder) {
+      A_d.multiplyScalar(-1);
+      B_d.multiplyScalar(-1);
+    }
     let V2 = intersectLines2D(A_p, A_d, B_p, B_d);
     if (!V2) V2 = new THREE.Vector2().addVectors(A_p, B_p).multiplyScalar(0.5);
     return { ...elements, __2d: { N: plane.n, P: plane.p, basis, A_p, B_p, A_d, B_d, V2 } };

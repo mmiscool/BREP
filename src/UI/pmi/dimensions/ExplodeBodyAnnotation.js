@@ -34,9 +34,9 @@ const inputParamsSchema = {
 };
 
 export class ExplodeBodyAnnotation extends BaseAnnotation {
-  static type = 'explodeBody';
+  static type = 'exp';
   static title = 'Explode Body';
-  static featureShortName = 'explodeBody';
+  static featureShortName = 'exp';
   static featureName = 'Explode Body';
   static inputParamsSchema = inputParamsSchema;
   static aliases = ['viewTransform'];

@@ -11,6 +11,7 @@ import { genFeatureUI } from '../featureDialogs.js';
 import { annotationRegistry } from './AnnotationRegistry.js';
 import { AnnotationHistory } from './AnnotationHistory.js';
 import { LabelOverlay } from './LabelOverlay.js';
+import { captureCameraSnapshot, applyCameraSnapshot, adjustOrthographicFrustum } from './annUtils.js';
 
 // Register built-in annotation types
 export class PMIMode {
@@ -1134,23 +1135,29 @@ export class PMIMode {
     } catch { }
   }
 
+  #logCameraState(label, camera, controls) {
+    try {
+      if (!camera) {
+        console.log(`[PMI Camera] ${label}: no camera instance`);
+        return;
+      }
+      const snapshot = captureCameraSnapshot(camera, { controls });
+      console.log(`[PMI Camera] ${label}`, JSON.stringify(snapshot, null, 2));
+    } catch (err) {
+      console.warn(`[PMI Camera] Failed to log camera for ${label}`, err);
+    }
+  }
+
   #updateStoredCamera(btnEl) {
     try {
       const camera = this.viewer?.camera;
       if (!camera || !this.viewEntry) return;
 
-      // Store current camera position and quaternion (not rotation), up and zoom
-      const snap = {
-        position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-        quaternion: { x: camera.quaternion.x, y: camera.quaternion.y, z: camera.quaternion.z, w: camera.quaternion.w },
-        up: { x: camera.up.x, y: camera.up.y, z: camera.up.z },
-        zoom: camera.zoom || 1,
-      };
-      // Also store controls target if available
       const ctrls = this.viewer?.controls;
-      if (ctrls && ctrls.target) {
-        snap.target = { x: ctrls.target.x, y: ctrls.target.y, z: ctrls.target.z };
-      }
+      const snap = captureCameraSnapshot(camera, { controls: ctrls });
+      if (!snap) return;
+      console.log('[PMI Camera] Update Camera -> captured snapshot', JSON.stringify(snap, null, 2));
+      this.#logCameraState('Update Camera -> actual camera state (pre-save)', camera, ctrls);
       this.viewEntry.camera = snap;
 
       // Persist the changes if we have a PMI widget
@@ -1193,53 +1200,67 @@ export class PMIMode {
         return;
       }
 
-      // Restore camera position
-      if (storedCamera.position) {
-        camera.position.set(
-          storedCamera.position.x,
-          storedCamera.position.y,
-          storedCamera.position.z
-        );
+      console.log('[PMI Camera] Restore Camera -> stored snapshot', JSON.stringify(storedCamera, null, 2));
+
+      const dom = this.viewer?.renderer?.domElement;
+      const rect = dom?.getBoundingClientRect?.();
+      const viewport = {
+        width: rect?.width || dom?.width || 1,
+        height: rect?.height || dom?.height || 1,
+      };
+      const restored = applyCameraSnapshot(camera, storedCamera, { controls: ctrls, respectParent: true, syncControls: false, viewport });
+
+      if (!restored) {
+        if (storedCamera.position) {
+          camera.position.set(
+            storedCamera.position.x,
+            storedCamera.position.y,
+            storedCamera.position.z
+          );
+        }
+
+        if (storedCamera.quaternion) {
+          camera.quaternion.set(
+            storedCamera.quaternion.x,
+            storedCamera.quaternion.y,
+            storedCamera.quaternion.z,
+            storedCamera.quaternion.w
+          );
+        }
+
+        if (storedCamera.up) {
+          camera.up.set(
+            storedCamera.up.x,
+            storedCamera.up.y,
+            storedCamera.up.z
+          );
+        }
+
+        if (typeof storedCamera.zoom === 'number') {
+          camera.zoom = storedCamera.zoom;
+        }
+
+        if (ctrls && ctrls.target && storedCamera.target) {
+          ctrls.target.set(
+            storedCamera.target.x,
+            storedCamera.target.y,
+            storedCamera.target.z
+          );
+        }
+
+        adjustOrthographicFrustum(camera, storedCamera?.projection || null, viewport);
+        ctrls?.update?.();
       }
 
-      // Restore camera quaternion
-      if (storedCamera.quaternion) {
-        camera.quaternion.set(
-          storedCamera.quaternion.x,
-          storedCamera.quaternion.y,
-          storedCamera.quaternion.z,
-          storedCamera.quaternion.w
-        );
+      adjustOrthographicFrustum(camera, storedCamera?.projection || null, viewport);
+      try { ctrls?.updateMatrixState?.(); } catch {}
+      if (!restored) {
+        // Ensure matrix world reflects fallback changes
+        camera.updateMatrixWorld?.(true);
       }
 
-      // Restore camera up vector
-      if (storedCamera.up) {
-        camera.up.set(
-          storedCamera.up.x,
-          storedCamera.up.y,
-          storedCamera.up.z
-        );
-      }
-
-      // Restore camera zoom
-      if (typeof storedCamera.zoom === 'number') {
-        camera.zoom = storedCamera.zoom;
-      }
-
-      // Restore controls target if available
-      if (ctrls && ctrls.target && storedCamera.target) {
-        ctrls.target.set(
-          storedCamera.target.x,
-          storedCamera.target.y,
-          storedCamera.target.z
-        );
-      }
-
-      // Update camera matrices and controls
-      camera.updateProjectionMatrix();
-      if (ctrls && typeof ctrls.update === 'function') {
-        ctrls.update();
-      }
+      this.#logCameraState('Restore Camera -> actual camera state (immediate)', camera, ctrls);
+      setTimeout(() => this.#logCameraState('Restore Camera -> actual camera state (+1s)', camera, ctrls), 1000);
 
       // Trigger a render
       if (this.viewer?.render) {
@@ -1320,7 +1341,7 @@ export class PMIMode {
 
       const viewAnns = [];
       for (const ann of anns) {
-        if (ann.type === 'viewTransform' || ann.type === 'explodeBody') viewAnns.push(ann);
+        if (ann.type === 'viewTransform' || ann.type === 'explodeBody'  || ann.type === 'exp') viewAnns.push(ann);
       }
 
       const cumulativeState = new Map();

@@ -4,6 +4,7 @@
 // Views are persisted per model via the localStorage shim.
 
 import { localStorage as LS } from '../../localStorageShim.js';
+import { captureCameraSnapshot, applyCameraSnapshot, adjustOrthographicFrustum } from './annUtils.js';
 
 export class PMIViewsWidget {
   constructor(viewer) {
@@ -152,6 +153,10 @@ export class PMIViewsWidget {
       nameButton.title = 'Click to edit annotations for this view';
       nameButton.addEventListener('click', () => {
         this._enterEditMode(v, idx);
+        // Wait 200 ms and re-enter edit mode to ensure PMI mode is active
+        setTimeout(() => {
+          this._enterEditMode(v, idx);
+        }, 200);
       });
       row.appendChild(nameButton);
 
@@ -234,23 +239,13 @@ export class PMIViewsWidget {
       const v = this.viewer;
       const cam = v?.camera;
       if (!cam) return;
-      cam.updateMatrixWorld(true);
+      const cameraSnap = captureCameraSnapshot(cam, { controls: this.viewer?.controls });
+      if (!cameraSnap) return;
       const nameRaw = this.newNameInput?.value || '';
       const name = String(nameRaw || '').trim() || `View ${this.views.length + 1}`;
       const snap = {
         name,
-        camera: {
-          position: { x: cam.position.x, y: cam.position.y, z: cam.position.z },
-          quaternion: { x: cam.quaternion.x, y: cam.quaternion.y, z: cam.quaternion.z, w: cam.quaternion.w },
-          up: { x: cam.up.x, y: cam.up.y, z: cam.up.z },
-          zoom: typeof cam.zoom === 'number' ? cam.zoom : 1,
-          // Controls target if available
-          target: (this.viewer.controls?.target) ? {
-            x: this.viewer.controls.target.x,
-            y: this.viewer.controls.target.y,
-            z: this.viewer.controls.target.z,
-          } : undefined,
-        },
+        camera: cameraSnap,
         // Persist basic view settings (extensible). Currently only wireframe render mode.
         viewSettings: {
           wireframe: this._detectWireframe(v?.scene)
@@ -269,37 +264,45 @@ export class PMIViewsWidget {
       const cam = v?.camera;
       if (!cam || !view || !view.camera) return;
 
-      const c = view.camera;
-      if (c.position) {
-        cam.position.set(c.position.x, c.position.y, c.position.z);
-      }
-      if (c.quaternion) {
-        cam.quaternion.set(c.quaternion.x, c.quaternion.y, c.quaternion.z, c.quaternion.w);
-      }
-      if (c.up) {
-        cam.up.set(c.up.x, c.up.y, c.up.z);
-      }
-      if (typeof c.zoom === 'number' && Number.isFinite(c.zoom) && c.zoom > 0) {
-        cam.zoom = c.zoom;
-      }
-      // Apply controls target if available
-      try {
-        if (c.target && this.viewer?.controls) {
-          const ctrls = this.viewer.controls;
-          if (typeof ctrls.setTarget === 'function') {
-            ctrls.setTarget(c.target.x, c.target.y, c.target.z);
-          } else if (ctrls.target) {
-            ctrls.target.set(c.target.x, c.target.y, c.target.z);
-          }
+      const ctrls = this.viewer?.controls;
+      const dom = this.viewer?.renderer?.domElement;
+      const rect = dom?.getBoundingClientRect?.();
+      const viewport = {
+        width: rect?.width || dom?.width || 1,
+        height: rect?.height || dom?.height || 1,
+      };
+      const applied = applyCameraSnapshot(cam, view.camera, { controls: ctrls, respectParent: true, syncControls: false, viewport });
+
+      if (!applied) {
+        // Fallback for legacy snapshots that somehow failed the structured restore
+        const legacy = view.camera;
+        if (legacy.position) {
+          cam.position.set(legacy.position.x, legacy.position.y, legacy.position.z);
         }
-      } catch { /* ignore */ }
-      cam.updateProjectionMatrix();
-      cam.updateMatrixWorld(true);
-      try {
-        const ctrls = this.viewer.controls;
-        ctrls?.update?.();
-        ctrls?.updateMatrixState?.();
-      } catch { }
+        if (legacy.quaternion) {
+          cam.quaternion.set(legacy.quaternion.x, legacy.quaternion.y, legacy.quaternion.z, legacy.quaternion.w);
+        }
+        if (legacy.up) {
+          cam.up.set(legacy.up.x, legacy.up.y, legacy.up.z);
+        }
+        if (typeof legacy.zoom === 'number' && Number.isFinite(legacy.zoom) && legacy.zoom > 0) {
+          cam.zoom = legacy.zoom;
+        }
+        if (legacy.target && ctrls) {
+          try {
+            if (typeof ctrls.setTarget === 'function') {
+              ctrls.setTarget(legacy.target.x, legacy.target.y, legacy.target.z);
+            } else if (ctrls.target) {
+              ctrls.target.set(legacy.target.x, legacy.target.y, legacy.target.z);
+            }
+          } catch { /* ignore */ }
+        }
+        adjustOrthographicFrustum(cam, legacy?.projection || null, viewport);
+        cam.updateMatrixWorld(true);
+        try { ctrls?.update?.(); } catch {}
+      }
+      adjustOrthographicFrustum(cam, view.camera?.projection || null, viewport);
+      try { ctrls?.updateMatrixState?.(); } catch {}
       // Apply persisted view settings (e.g., wireframe) if present
       try {
         const vs = view.viewSettings || {};

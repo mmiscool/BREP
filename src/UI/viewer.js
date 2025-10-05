@@ -1359,11 +1359,31 @@ export class Viewer {
 
         // Update orthographic frustum for new aspect
         const aspect = width / height || 1;
-        const v = this.viewSize;
-        this.camera.left = -v * aspect;
-        this.camera.right = v * aspect;
-        this.camera.top = v;
-        this.camera.bottom = -v;
+        if (this.camera.isOrthographicCamera) {
+            const spanYRaw = Number.isFinite(this.camera.top) && Number.isFinite(this.camera.bottom)
+                ? this.camera.top - this.camera.bottom
+                : (this.viewSize * 2);
+            const spanY = Math.abs(spanYRaw) > 1e-6 ? spanYRaw : (this.viewSize * 2);
+            const centerY = (Number.isFinite(this.camera.top) && Number.isFinite(this.camera.bottom))
+                ? (this.camera.top + this.camera.bottom) * 0.5
+                : 0;
+            const centerX = (Number.isFinite(this.camera.left) && Number.isFinite(this.camera.right))
+                ? (this.camera.left + this.camera.right) * 0.5
+                : 0;
+            const halfHeight = Math.abs(spanY) * 0.5;
+            const halfWidth = halfHeight * aspect;
+            const signY = spanY >= 0 ? 1 : -1;
+            this.camera.top = centerY + halfHeight * signY;
+            this.camera.bottom = centerY - halfHeight * signY;
+            this.camera.left = centerX - halfWidth;
+            this.camera.right = centerX + halfWidth;
+        } else {
+            const v = this.viewSize;
+            this.camera.left = -v * aspect;
+            this.camera.right = v * aspect;
+            this.camera.top = v;
+            this.camera.bottom = -v;
+        }
         this.camera.updateProjectionMatrix();
 
         // Optional: let controls know something changed
