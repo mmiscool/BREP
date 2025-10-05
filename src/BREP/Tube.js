@@ -40,7 +40,12 @@ function dedupeVectors(vectors, eps = 1e-7) {
 }
 
 function calculateTubeIntersectionTrimming(points, tubeRadius) {
-  if (!Array.isArray(points) || points.length < 3) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return Array.isArray(points) ? points.map(p => p.clone()) : [];
+  }
+
+  // For simple paths (2 points), no trimming needed
+  if (points.length === 2) {
     return points.map(p => p.clone());
   }
 
@@ -52,8 +57,14 @@ function calculateTubeIntersectionTrimming(points, tubeRadius) {
     const curr = points[i];
     const next = points[i + 1];
 
-    const vPrev = curr.clone().sub(prev).normalize();
-    const vNext = next.clone().sub(curr).normalize();
+    // Check for valid points
+    if (!prev || !curr || !next) {
+      out.push(curr.clone());
+      continue;
+    }
+
+    const vPrev = curr.clone().sub(prev);
+    const vNext = next.clone().sub(curr);
     
     // Check for degenerate segments
     if (vPrev.lengthSq() < EPS_SQ || vNext.lengthSq() < EPS_SQ) {
@@ -61,66 +72,71 @@ function calculateTubeIntersectionTrimming(points, tubeRadius) {
       continue;
     }
 
+    vPrev.normalize();
+    vNext.normalize();
+
     const dot = THREE.MathUtils.clamp(vPrev.dot(vNext), -1, 1);
     
     // Calculate the angle between the segments
     const angle = Math.acos(Math.abs(dot));
     
-    // For sharp corners, calculate where tube geometry would intersect
-    if (angle > Math.PI / 6) { // Angles sharper than 30 degrees
+    // Only trim for very sharp corners to be less aggressive
+    if (angle > Math.PI / 3) { // Only angles sharper than 60 degrees
       const halfAngle = angle * 0.5;
-      const sinHalf = Math.sin(halfAngle);
       
       // Calculate the distance from corner where tubes would intersect
-      // This is based on the geometry of two intersecting cylinders
       const intersectionDist = tubeRadius / Math.tan(halfAngle);
       
       // Calculate trimmed points that prevent intersection
       const distPrev = prev.distanceTo(curr);
       const distNext = curr.distanceTo(next);
       
-      const trimDistPrev = Math.min(intersectionDist, distPrev * 0.8);
-      const trimDistNext = Math.min(intersectionDist, distNext * 0.8);
+      // Be more conservative with trimming
+      const trimDistPrev = Math.min(intersectionDist * 0.8, distPrev * 0.6);
+      const trimDistNext = Math.min(intersectionDist * 0.8, distNext * 0.6);
       
-      const trimmedPrev = curr.clone().addScaledVector(vPrev, -trimDistPrev);
-      const trimmedNext = curr.clone().addScaledVector(vNext, trimDistNext);
-      
-      // Add the trimmed points
-      if (out[out.length - 1].distanceTo(trimmedPrev) > 1e-6) {
-        out.push(trimmedPrev);
-      }
-      
-      // For very sharp corners, add the corner point itself
-      if (angle > Math.PI / 3) { // Sharper than 60 degrees
+      // Only trim if we have enough distance
+      if (trimDistPrev > tubeRadius * 0.1 && trimDistNext > tubeRadius * 0.1) {
+        const trimmedPrev = curr.clone().addScaledVector(vPrev, -trimDistPrev);
+        const trimmedNext = curr.clone().addScaledVector(vNext, trimDistNext);
+        
+        // Add the trimmed points
+        if (out[out.length - 1].distanceTo(trimmedPrev) > 1e-6) {
+          out.push(trimmedPrev);
+        }
+        
+        out.push(trimmedNext);
+      } else {
+        // Not enough room to trim safely, just add the corner
         out.push(curr.clone());
       }
-      
-      out.push(trimmedNext);
     } else {
-      // For gentle corners, no trimming needed
+      // For gentler corners, no trimming needed
       out.push(curr.clone());
     }
   }
 
   out.push(points[points.length - 1].clone());
-  return dedupeVectors(out, 1e-9);
+  return dedupeVectors(out, 1e-6);
 }
 
 function smoothPath(points, cornerRadius, tubeRadius) {
-  // First apply intersection trimming to prevent self-intersections
-  const trimmedPoints = calculateTubeIntersectionTrimming(points, tubeRadius);
-  
-  if (!Array.isArray(trimmedPoints) || trimmedPoints.length < 2 || !(cornerRadius > 0)) {
-    return Array.isArray(trimmedPoints) ? trimmedPoints.map(p => p.clone()) : [];
-  }
+  // Just apply intersection trimming and return - no corner "smoothing" for now
+  try {
+    const trimmedPoints = calculateTubeIntersectionTrimming(points, tubeRadius);
+    console.log(`smoothPath: Original ${points.length} -> Trimmed ${trimmedPoints.length}`);
+    
+    if (!Array.isArray(trimmedPoints) || trimmedPoints.length < 2) {
+      console.warn('smoothPath: Insufficient points after trimming');
+      return Array.isArray(points) ? points.map(p => p.clone()) : [];
+    }
 
-  // For two points, just return them as-is
-  if (trimmedPoints.length === 2) {
-    return [trimmedPoints[0].clone(), trimmedPoints[1].clone()];
+    return dedupeVectors(trimmedPoints, 1e-9);
+  } catch (error) {
+    console.error('Error in smoothPath:', error);
+    // Fallback: return original points
+    return points.map(p => p.clone());
   }
-
-  // Now apply gentle smoothing to the trimmed path
-  return dedupeVectors(trimmedPoints, 1e-9);
 }
 
 function computeFrames(points) {
@@ -342,15 +358,24 @@ export class TubeSolid extends Solid {
     const segs = Math.max(8, Math.floor(Number(resolution) || DEFAULT_SEGMENTS));
 
     const vecPoints = dedupeVectors(toVector3Array(points));
+    console.log(`Tube generation: Input points: ${points.length}, Valid points: ${vecPoints.length}`);
+    
     if (vecPoints.length < 2) {
-      throw new Error('Tube requires at least two distinct path points.');
+      throw new Error(`Tube requires at least two distinct path points. Got ${vecPoints.length} valid points from ${points.length} input points.`);
     }
 
-    // Use a corner radius that's a small fraction of the tube radius
-    const cornerRadius = radius * 0.2; // Use 20% of the tube radius for corners
-    const smoothed = smoothPath(vecPoints, cornerRadius, radius);
+    // Apply path smoothing with proper intersection handling
+    let smoothed;
+    try {
+      smoothed = smoothPath(vecPoints, radius, radius);
+      console.log(`Tube generation: Smoothed points: ${smoothed.length}`);
+    } catch (error) {
+      console.error('Error in smoothPath:', error);
+      throw new Error(`Path smoothing failed: ${error.message}`);
+    }
+    
     if (smoothed.length < 2) {
-      throw new Error('Tube path collapsed after smoothing; check input.');
+      throw new Error(`Tube path collapsed after smoothing; check input. Original: ${vecPoints.length}, Smoothed: ${smoothed.length}`);
     }
 
     const { tangents, normals, binormals } = computeFrames(smoothed);
