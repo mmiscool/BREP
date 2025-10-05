@@ -22,6 +22,7 @@ import { TransformFeature } from './features/transform/TransformFeature.js';
 import { PatternFeature } from './features/pattern/PatternFeature.js';
 import { PatternLinearFeature } from './features/patternLinear/PatternLinearFeature.js';
 import { PatternRadialFeature } from './features/patternRadial/PatternRadialFeature.js';
+import { TubeFeature } from './features/tube/TubeFeature.js';
 
 /* ========================================================================
    FeatureRegistry
@@ -51,6 +52,7 @@ export class FeatureRegistry {
     this.register(MirrorFeature);
     this.register(RevolveFeature);
     this.register(SweepFeature);
+    this.register(TubeFeature);
     this.register(RemeshFeature);
     this.register(ImageToFaceFeature);
     this.register(TransformFeature);

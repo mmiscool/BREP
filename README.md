@@ -45,6 +45,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - [Sketch](docs/features/sketch.md) — Implemented
 - [Extrude](docs/features/extrude.md) — Implemented
 - [Sweep](docs/features/sweep.md) — Implemented
+- [Tube](docs/features/tube.md) — Implemented
 - [Loft](docs/features/loft.md) — Implemented
 - [Revolve](docs/features/revolve.md) — Implemented
 - [Mirror](docs/features/mirror.md) — Implemented
