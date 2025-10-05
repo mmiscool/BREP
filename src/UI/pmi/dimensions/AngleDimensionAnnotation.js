@@ -75,11 +75,12 @@ const inputParamsSchema = {
     label: 'Reference',
     hint: 'Mark as reference dimension (parentheses)',
   },
-  useReflexAngle: {
-    type: 'boolean',
-    default_value: false,
-    label: 'Reflex Angle (>180°)',
-    hint: 'Display the reflex angle instead of the acute angle',
+  angleType: {
+    type: 'options',
+    default_value: 'acute',
+    options: ['acute', 'obtuse', 'reflex'],
+    label: 'Angle Type',
+    hint: 'Choose which angle (acute, obtuse, or reflex) to display',
   },
 };
 
@@ -103,7 +104,7 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
       if (!elements || !elements.__2d) return [];
 
       const color = 0xf59e0b;
-      const { N, P, A_p, B_p, A_d, B_d, V2, basis } = elements.__2d;
+      const { N, P, A_p, B_p, A_d, B_d, V2, basis, sweep = 0, dirSign = 1 } = elements.__2d;
 
       let R = null;
       if (ann.persistentData?.labelWorld) {
@@ -121,23 +122,19 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
       }
       R = Math.max(R, ctx.screenSizeWorld ? ctx.screenSizeWorld(30) : screenSizeWorld(pmimode?.viewer, 30));
 
-      const signed = signedAngle2D(A_d, B_d);
-      const baseAngle = Math.abs(signed);
-      const useReflex = Boolean(ann.useReflexAngle);
-      const sweep = useReflex ? (2 * Math.PI - baseAngle) : baseAngle;
-      const dirSign = useReflex ? -Math.sign(signed || 1) : Math.sign(signed || 1);
-      const steps = Math.max(48, Math.floor(sweep * 64));
-
       const arcPoints = [];
-      for (let i = 0; i <= steps; i++) {
-        const t = i / steps;
-        const angle = dirSign * sweep * t;
-        const rot = rotate2D(A_d, angle);
-        const pt2 = new THREE.Vector2(
-          V2.x + rot.x * R,
-          V2.y + rot.y * R,
-        );
-        arcPoints.push(from2D(pt2, P, basis));
+      if (sweep > 1e-6) {
+        const steps = Math.max(48, Math.floor(sweep * 64));
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const angle = dirSign * sweep * t;
+          const rot = rotate2D(A_d, angle);
+          const pt2 = new THREE.Vector2(
+            V2.x + rot.x * R,
+            V2.y + rot.y * R,
+          );
+          arcPoints.push(from2D(pt2, P, basis));
+        }
       }
       if (arcPoints.length >= 2) {
         for (let i = 0; i < arcPoints.length - 1; i++) {
@@ -147,10 +144,12 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
 
       const arrowLength = ctx.screenSizeWorld ? ctx.screenSizeWorld(10) : screenSizeWorld(pmimode?.viewer, 10);
       const arrowWidth = ctx.screenSizeWorld ? ctx.screenSizeWorld(4) : screenSizeWorld(pmimode?.viewer, 4);
-      addArrowCone(group, arcPoints[0], arcPoints[0].clone().sub(arcPoints[1]).normalize(), arrowLength, arrowWidth, color);
-      const last = arcPoints[arcPoints.length - 1];
-      const beforeLast = arcPoints[arcPoints.length - 2] || last.clone();
-      addArrowCone(group, last, last.clone().sub(beforeLast).normalize(), arrowLength, arrowWidth, color);
+      if (arcPoints.length >= 2) {
+        addArrowCone(group, arcPoints[0], arcPoints[0].clone().sub(arcPoints[1]).normalize(), arrowLength, arrowWidth, color);
+        const last = arcPoints[arcPoints.length - 1];
+        const beforeLast = arcPoints[arcPoints.length - 2] || last.clone();
+        addArrowCone(group, last, last.clone().sub(beforeLast).normalize(), arrowLength, arrowWidth, color);
+      }
 
       const ext = R + (ctx.screenSizeWorld ? ctx.screenSizeWorld(25) : screenSizeWorld(pmimode?.viewer, 25));
       const stub = ctx.screenSizeWorld ? ctx.screenSizeWorld(12) : screenSizeWorld(pmimode?.viewer, 12);
@@ -231,6 +230,134 @@ function resolveElementRefNames(ann) {
   return { elementARefName, elementBRefName };
 }
 
+function resolveAngleType(ann) {
+  const raw = ann?.angleType;
+  if (raw === 'acute' || raw === 'obtuse' || raw === 'reflex') return raw;
+  if (ann?.useReflexAngle) return 'reflex';
+  return 'acute';
+}
+
+function isAngleTypeExplicit(ann) {
+  if (!ann || typeof ann !== 'object') return false;
+  if (!Object.prototype.hasOwnProperty.call(ann, 'angleType')) return false;
+  return ann.angleType === 'acute' || ann.angleType === 'obtuse' || ann.angleType === 'reflex';
+}
+
+function resolveAngleOrientation2D(A_dir, B_dir, angleType, isExplicitType = true) {
+  if (!A_dir || !B_dir) return null;
+  const combos = [
+    createAngleCombo(A_dir, B_dir, false, false),
+    createAngleCombo(A_dir, B_dir, false, true),
+    createAngleCombo(A_dir, B_dir, true, false),
+    createAngleCombo(A_dir, B_dir, true, true),
+  ];
+
+  const halfPi = Math.PI / 2;
+  const eps = 1e-6;
+
+  const selectByAngle = (items, comparator) => {
+    if (!items.length) return null;
+    const copy = items.slice().sort(comparator);
+    return copy[0];
+  };
+
+  if (angleType === 'reflex') {
+    const base = combos[0];
+    const baseAbs = Math.abs(base.signedAngle);
+    let reflexAngle = baseAbs < 1e-6 ? 0 : (2 * Math.PI) - baseAbs;
+    const dirSign = -Math.sign(base.signedAngle || 1);
+    const bisector = base.A.clone().add(base.B);
+    if (bisector.lengthSq() < 1e-10) bisector.set(-base.A.y, base.A.x);
+    bisector.normalize().multiplyScalar(-1);
+    return {
+      start: base.A.clone(),
+      end: base.B.clone(),
+      sweep: reflexAngle,
+      dirSign,
+      angleRad: reflexAngle,
+      bisector,
+      angleType: 'reflex',
+      signedAngle: base.signedAngle,
+    };
+  }
+
+  if (angleType === 'acute') {
+    if (!isExplicitType) {
+      const base = combos[0];
+      const bisector = base.A.clone().add(base.B);
+      if (bisector.lengthSq() < 1e-10) bisector.set(-base.A.y, base.A.x);
+      bisector.normalize();
+      const sign = Math.abs(base.signedAngle) < 1e-8 ? 1 : Math.sign(base.signedAngle);
+      const sweep = Math.abs(base.signedAngle);
+      return {
+        start: base.A.clone(),
+        end: base.B.clone(),
+        sweep,
+        dirSign: sign,
+        angleRad: sweep,
+        bisector,
+        angleType: 'acute',
+        signedAngle: base.signedAngle,
+      };
+    }
+    const candidates = combos.filter((c) => c.angle <= halfPi + eps);
+    const selected = selectByAngle(candidates.length ? candidates : combos, (a, b) => a.angle - b.angle);
+    if (!selected) return null;
+    const bisector = selected.A.clone().add(selected.B);
+    if (bisector.lengthSq() < 1e-10) bisector.set(-selected.A.y, selected.A.x);
+    bisector.normalize();
+    const sign = Math.abs(selected.signedAngle) < 1e-8 ? 1 : Math.sign(selected.signedAngle);
+    return {
+      start: selected.A.clone(),
+      end: selected.B.clone(),
+      sweep: selected.angle,
+      dirSign: sign,
+      angleRad: selected.angle,
+      bisector,
+      angleType: 'acute',
+      signedAngle: selected.signedAngle,
+    };
+  }
+
+  if (angleType === 'obtuse') {
+    const candidates = combos.filter((c) => c.angle >= halfPi - eps);
+    let selected = selectByAngle(candidates, (a, b) => a.angle - b.angle);
+    if (!selected) selected = selectByAngle(combos, (a, b) => b.angle - a.angle);
+    if (!selected) return null;
+    const bisector = selected.A.clone().add(selected.B);
+    if (bisector.lengthSq() < 1e-10) bisector.set(-selected.A.y, selected.A.x);
+    bisector.normalize();
+    const sign = Math.abs(selected.signedAngle) < 1e-8 ? 1 : Math.sign(selected.signedAngle);
+    return {
+      start: selected.A.clone(),
+      end: selected.B.clone(),
+      sweep: selected.angle,
+      dirSign: sign,
+      angleRad: selected.angle,
+      bisector,
+      angleType: 'obtuse',
+      signedAngle: selected.signedAngle,
+    };
+  }
+
+  return null;
+}
+
+function createAngleCombo(A_dir, B_dir, flipA, flipB) {
+  const a = flipA ? A_dir.clone().multiplyScalar(-1) : A_dir.clone();
+  const b = flipB ? B_dir.clone().multiplyScalar(-1) : B_dir.clone();
+  const dot = clampToUnit(a.dot(b));
+  const angle = Math.acos(dot);
+  const signedAngle = signedAngle2D(a, b);
+  return { A: a, B: b, angle, signedAngle };
+}
+
+function clampToUnit(value) {
+  if (value > 1) return 1;
+  if (value < -1) return -1;
+  return value;
+}
+
 function formatAngleLabel(measured, ann) {
   if (typeof measured !== 'number' || !Number.isFinite(measured)) {
     return { raw: '—', display: '—' };
@@ -254,9 +381,11 @@ function measureAngleValue(pmimode, ann) {
     const basis = planeBasis(plane.n, lineA.d);
     const dA2 = dirTo2D(lineA.d, basis).normalize();
     const dB2 = dirTo2D(lineB.d, basis).normalize();
-    const dot = Math.max(-1, Math.min(1, dA2.dot(dB2)));
-    let angle = Math.acos(dot) * 180 / Math.PI;
-    if (ann.useReflexAngle) angle = 360 - angle;
+    const type = resolveAngleType(ann);
+    const typeExplicit = isAngleTypeExplicit(ann) || Boolean(ann?.useReflexAngle);
+    const orientation = resolveAngleOrientation2D(dA2, dB2, type, typeExplicit);
+    if (!orientation) return null;
+    const angle = THREE.MathUtils.radToDeg(orientation.angleRad);
     return angle;
   } catch {
     return null;
@@ -299,15 +428,38 @@ function computeAngleElementsWithGeometry(pmimode, ann, ctx) {
     const basis = planeBasis(plane.n, lineA.d);
     const A_p = to2D(lineA.p, plane.p, basis);
     const B_p = to2D(lineB.p, plane.p, basis);
-    const A_d = dirTo2D(lineA.d, basis).normalize();
-    const B_d = dirTo2D(lineB.d, basis).normalize();
+    let A_d = dirTo2D(lineA.d, basis).normalize();
+    let B_d = dirTo2D(lineB.d, basis).normalize();
     if (ann?.reverseElementOrder) {
-      A_d.multiplyScalar(-1);
-      B_d.multiplyScalar(-1);
+      A_d = A_d.multiplyScalar(-1);
+      B_d = B_d.multiplyScalar(-1);
     }
-    let V2 = intersectLines2D(A_p, A_d, B_p, B_d);
+    const angleType = resolveAngleType(ann);
+    const angleExplicit = isAngleTypeExplicit(ann) || Boolean(ann?.useReflexAngle);
+    const orientation = resolveAngleOrientation2D(A_d, B_d, angleType, angleExplicit);
+    if (!orientation) return null;
+    const A_ray = orientation.start.clone();
+    const B_ray = orientation.end.clone();
+    let V2 = intersectLines2D(A_p, A_ray, B_p, B_ray);
     if (!V2) V2 = new THREE.Vector2().addVectors(A_p, B_p).multiplyScalar(0.5);
-    return { ...elements, __2d: { N: plane.n, P: plane.p, basis, A_p, B_p, A_d, B_d, V2 } };
+    return {
+      ...elements,
+      __2d: {
+        N: plane.n,
+        P: plane.p,
+        basis,
+        A_p,
+        B_p,
+        A_d: A_ray,
+        B_d: B_ray,
+        V2,
+        sweep: orientation.sweep,
+        dirSign: orientation.dirSign,
+        angleRad: orientation.angleRad,
+        angleType: orientation.angleType,
+        bisector: orientation.bisector,
+      },
+    };
   } catch {
     return null;
   }
@@ -405,11 +557,10 @@ function lineInPlaneForElement(pmimode, refName, planeNormal, planePoint) {
 
 function resolveLabelPosition(pmimode, ann, elements, radiusOverride, ctx) {
   try {
-    const { N, P, A_d, B_d, V2, basis } = elements.__2d;
-    let bisector = new THREE.Vector2().addVectors(A_d, B_d);
+    const { N, P, A_d, B_d, V2, basis, bisector: storedBisector } = elements.__2d;
+    let bisector = storedBisector ? storedBisector.clone() : new THREE.Vector2().addVectors(A_d, B_d);
     if (bisector.lengthSq() < 1e-10) bisector.set(-A_d.y, A_d.x);
     bisector.normalize();
-    if (ann.useReflexAngle) bisector.multiplyScalar(-1);
     const offsetWorld = ctx.screenSizeWorld ? ctx.screenSizeWorld(70) : screenSizeWorld(pmimode?.viewer, 70);
     let off = Number(ann?.offset);
     if (!Number.isFinite(off) || off <= 0) off = offsetWorld; else off = off + offsetWorld * 0.3;
