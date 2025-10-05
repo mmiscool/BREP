@@ -55,20 +55,6 @@ const inputParamsSchema = {
     label: 'Reverse Selection Order',
     hint: 'Swap Element A and Element B to flip the measured side',
   },
-  alignment: {
-    type: 'options',
-    default_value: 'view',
-    options: ['view', 'XY', 'YZ', 'ZX'],
-    label: 'Alignment',
-    hint: 'Angle alignment mode',
-  },
-  offset: {
-    type: 'number',
-    default_value: 0,
-    label: 'Offset',
-    hint: 'Distance to offset the dimension arc',
-    step: 'any',
-  },
   isReference: {
     type: 'boolean',
     default_value: false,
@@ -116,9 +102,7 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
         }
       }
       if (!Number.isFinite(R) || R <= 0) {
-        const rawOffset = Number(ann.offset);
-        if (Number.isFinite(rawOffset) && rawOffset > 0) R = rawOffset;
-        else R = ctx.screenSizeWorld ? ctx.screenSizeWorld(60) : screenSizeWorld(pmimode?.viewer, 60);
+        R = ctx.screenSizeWorld ? ctx.screenSizeWorld(60) : screenSizeWorld(pmimode?.viewer, 60);
       }
       R = Math.max(R, ctx.screenSizeWorld ? ctx.screenSizeWorld(30) : screenSizeWorld(pmimode?.viewer, 30));
 
@@ -486,7 +470,7 @@ function resolveAnglePlane(pmimode, ann, elements, ctx) {
         return { n: cross.normalize(), p };
       }
     }
-    const fallbackNormal = ctx?.alignNormal ? ctx.alignNormal(ann?.alignment || 'view', ann) : null;
+    const fallbackNormal = ctx?.alignNormal ? ctx.alignNormal('view', ann) : null;
     const n2 = fallbackNormal || elements?.plane || new THREE.Vector3(0, 0, 1);
     const p2 = (elements?.pointA && elements?.pointB)
       ? new THREE.Vector3().addVectors(elements.pointA, elements.pointB).multiplyScalar(0.5)
@@ -562,8 +546,7 @@ function resolveLabelPosition(pmimode, ann, elements, radiusOverride, ctx) {
     if (bisector.lengthSq() < 1e-10) bisector.set(-A_d.y, A_d.x);
     bisector.normalize();
     const offsetWorld = ctx.screenSizeWorld ? ctx.screenSizeWorld(70) : screenSizeWorld(pmimode?.viewer, 70);
-    let off = Number(ann?.offset);
-    if (!Number.isFinite(off) || off <= 0) off = offsetWorld; else off = off + offsetWorld * 0.3;
+    let off = offsetWorld;
     if (Number.isFinite(radiusOverride) && radiusOverride > 0) off = radiusOverride + offsetWorld * 0.3;
     const label2 = new THREE.Vector2(V2.x + bisector.x * off, V2.y + bisector.y * off);
     return from2D(label2, P, basis);

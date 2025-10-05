@@ -23,6 +23,12 @@ export class LabelOverlay {
     try { if (!host.style.position || host.style.position === 'static') host.style.position = 'relative'; } catch {}
     const div = document.createElement('div');
     div.className = 'pmi-label-root';
+    try {
+      div.style.overflow = 'visible';
+      div.style.contain = 'layout paint size';
+      div.style.maxWidth = '100%';
+      div.style.maxHeight = '100%';
+    } catch {}
     host.appendChild(div);
     this._root = div;
   }
@@ -33,6 +39,7 @@ export class LabelOverlay {
     if (!el) {
       el = document.createElement('div');
       el.className = 'pmi-label';
+      try { el.style.width = 'max-content'; } catch {}
       if (text != null) {
         const normalized = String(text).replace(/\r\n/g, '\n');
         el.textContent = normalized;
