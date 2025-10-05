@@ -7,14 +7,75 @@ export function makeOverlayLine(a, b, color = 0x93c5fd) {
   return new THREE.Line(geom, mat);
 }
 
-export function makeOverlayDashedLine(a, b, color = 0x93c5fd, dashSize = 1, gapSize = 1) {
-  const geom = new THREE.BufferGeometry().setFromPoints([a.clone(), b.clone()]);
-  const mat = new THREE.LineDashedMaterial({ color, dashSize, gapSize });
+export function makeOverlayDashedLine(a, b, color = 0x93c5fd, options = {}) {
+  const { viewer = null, dashPixels = 10, gapPixels = 10 } = options || {};
+  const len = a.distanceTo(b);
+  if (!(len > 1e-6)) return makeOverlayLine(a, b, color);
+
+  const dir = b.clone().sub(a).normalize();
+  const midPoint = a.clone().add(b).multiplyScalar(0.5);
+  const wpp = worldUnitsPerPixelAtPoint(viewer, midPoint);
+  const dashLen = clampDashLength(wpp * dashPixels, len);
+  const gapLen = clampGapLength(wpp * gapPixels, len);
+
+  const points = [];
+  let travelled = 0;
+  let cursor = a.clone();
+
+  while (travelled < len - 1e-6) {
+    const dashSegment = Math.min(dashLen, len - travelled);
+    const dashEnd = cursor.clone().addScaledVector(dir, dashSegment);
+    points.push(cursor.clone(), dashEnd.clone());
+    travelled += dashSegment;
+    if (travelled >= len) break;
+    const gapSegment = Math.min(gapLen, len - travelled);
+    cursor = dashEnd.clone().addScaledVector(dir, gapSegment);
+    travelled += gapSegment;
+  }
+
+  if (points.length < 2) return makeOverlayLine(a, b, color);
+
+  const geom = new THREE.BufferGeometry().setFromPoints(points);
+  const mat = new THREE.LineBasicMaterial({ color });
   mat.depthTest = false; mat.depthWrite = false; mat.transparent = true;
-  const line = new THREE.Line(geom, mat);
-  try { line.computeLineDistances(); }
-  catch { /* ignore */ }
+  const line = new THREE.LineSegments(geom, mat);
+  line.renderOrder = 9994;
   return line;
+}
+
+function worldUnitsPerPixelAtPoint(viewer, point) {
+  try {
+    const camera = viewer?.camera;
+    const renderer = viewer?.renderer;
+    if (!camera || !renderer) return 0.01;
+    const dom = renderer.domElement;
+    const height = Math.max(1, dom?.clientHeight || dom?.height || 600);
+
+    if (camera.isOrthographicCamera) {
+      const span = (camera.top - camera.bottom) / Math.max(1e-6, camera.zoom || 1);
+      return span / height;
+    }
+
+    const camPos = camera.getWorldPosition(new THREE.Vector3());
+    const target = point ? point.clone() : camera.getWorldDirection(new THREE.Vector3()).add(camPos);
+    const dist = camPos.distanceTo(target);
+    const fov = (camera.fov || 50) * Math.PI / 180;
+    return 2 * Math.tan(fov / 2) * dist / height;
+  } catch {
+    return 0.01;
+  }
+}
+
+function clampDashLength(value, totalLength) {
+  if (!Number.isFinite(value) || value <= 0) return totalLength * 0.25;
+  const maxDash = Math.max(1e-4, totalLength * 0.5);
+  return Math.max(1e-4, Math.min(value, maxDash));
+}
+
+function clampGapLength(value, totalLength) {
+  if (!Number.isFinite(value) || value < 0) return totalLength * 0.25;
+  const maxGap = Math.max(1e-4, totalLength * 0.5);
+  return Math.max(1e-4, Math.min(value, maxGap));
 }
 
 export function makeOverlaySphere(size, color = 0xffffff) {

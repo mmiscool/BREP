@@ -84,7 +84,7 @@ export class ExplodeBodyAnnotation extends BaseAnnotation {
         const end = applyTransformEntryToPoint(endEntry, centerLocal)
           || getSolidWorldCenter(solid);
         if (isFiniteVec3(start) && isFiniteVec3(end) && start.distanceToSquared(end) >= 1e-8 && shouldDrawTrace) {
-          group.add(makeOverlayDashedLine(start, end, 0xf5a524));
+          group.add(makeOverlayDashedLine(start, end, 0xf5a524, { viewer: pmimode?.viewer }));
         }
         traceState?.set(solid.uuid, endEntry);
       } catch {

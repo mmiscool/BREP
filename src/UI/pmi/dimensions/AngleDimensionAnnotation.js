@@ -49,6 +49,12 @@ const inputParamsSchema = {
     label: 'Projection Plane',
     hint: 'Override projection plane (optional)',
   },
+  reverseElementOrder: {
+    type: 'boolean',
+    default_value: false,
+    label: 'Reverse Selection Order',
+    hint: 'Swap Element A and Element B to flip the measured side',
+  },
   alignment: {
     type: 'options',
     default_value: 'view',
@@ -213,6 +219,18 @@ function ensurePersistent(ann) {
   }
 }
 
+function resolveElementRefNames(ann) {
+  const elementARefName = ann?.elementARefName || '';
+  const elementBRefName = ann?.elementBRefName || '';
+  if (ann?.reverseElementOrder) {
+    return {
+      elementARefName: elementBRefName,
+      elementBRefName: elementARefName,
+    };
+  }
+  return { elementARefName, elementBRefName };
+}
+
 function formatAngleLabel(measured, ann) {
   if (typeof measured !== 'number' || !Number.isFinite(measured)) {
     return { raw: '—', display: '—' };
@@ -229,8 +247,9 @@ function measureAngleValue(pmimode, ann) {
     const elements = computeAngleElements(pmimode, ann);
     const plane = resolveAnglePlane(pmimode, ann, elements);
     if (!plane) return null;
-    const lineA = lineInPlaneForElement(pmimode, ann.elementARefName, plane.n, plane.p);
-    const lineB = lineInPlaneForElement(pmimode, ann.elementBRefName, plane.n, plane.p);
+    const { elementARefName, elementBRefName } = resolveElementRefNames(ann);
+    const lineA = lineInPlaneForElement(pmimode, elementARefName, plane.n, plane.p);
+    const lineB = lineInPlaneForElement(pmimode, elementBRefName, plane.n, plane.p);
     if (!lineA || !lineB) return null;
     const basis = planeBasis(plane.n, lineA.d);
     const dA2 = dirTo2D(lineA.d, basis).normalize();
@@ -248,8 +267,9 @@ function computeAngleElements(pmimode, ann) {
   try {
     const scene = pmimode?.viewer?.partHistory?.scene;
     if (!scene) return null;
-    const objA = ann.elementARefName ? scene.getObjectByName(ann.elementARefName) : null;
-    const objB = ann.elementBRefName ? scene.getObjectByName(ann.elementBRefName) : null;
+    const { elementARefName, elementBRefName } = resolveElementRefNames(ann);
+    const objA = elementARefName ? scene.getObjectByName(elementARefName) : null;
+    const objB = elementBRefName ? scene.getObjectByName(elementBRefName) : null;
     if (!objA || !objB) return null;
     const dirA = getElementDirection(pmimode.viewer, objA);
     const dirB = getElementDirection(pmimode.viewer, objB);
@@ -272,8 +292,9 @@ function computeAngleElementsWithGeometry(pmimode, ann, ctx) {
     if (!elements || !elements.dirA || !elements.dirB) return null;
     const plane = resolveAnglePlane(pmimode, ann, elements, ctx);
     if (!plane) return null;
-    const lineA = lineInPlaneForElement(pmimode, ann.elementARefName, plane.n, plane.p);
-    const lineB = lineInPlaneForElement(pmimode, ann.elementBRefName, plane.n, plane.p);
+    const { elementARefName, elementBRefName } = resolveElementRefNames(ann);
+    const lineA = lineInPlaneForElement(pmimode, elementARefName, plane.n, plane.p);
+    const lineB = lineInPlaneForElement(pmimode, elementBRefName, plane.n, plane.p);
     if (!lineA || !lineB) return null;
     const basis = planeBasis(plane.n, lineA.d);
     const A_p = to2D(lineA.p, plane.p, basis);
