@@ -156,6 +156,9 @@ export class SchemaForm {
         this.schema = schema;
         this.params = params;
         this.options = options;
+        this._useShadowDOM = options && Object.prototype.hasOwnProperty.call(options, 'useShadowDOM')
+            ? options.useShadowDOM !== false
+            : true;
         this._inputs = new Map();
         this._widgets = new Map();
         this._excludedKeys = new Set(['featureID']); // exclude from defaults & rendering
@@ -166,7 +169,12 @@ export class SchemaForm {
         }
 
         this.uiElement = document.createElement('div');
-        this._shadow = this.uiElement.attachShadow({ mode: 'open' });
+        if (!this._useShadowDOM) {
+            this.uiElement.classList.add('schema-form-host');
+        }
+        this._shadow = this._useShadowDOM
+            ? this.uiElement.attachShadow({ mode: 'open' })
+            : this.uiElement;
 
         this._shadow.appendChild(this._makeStyle());
         this._panel = document.createElement('div');
@@ -1112,7 +1120,7 @@ export class SchemaForm {
     _makeStyle() {
         const style = document.createElement('style');
         style.textContent = `
-      :host, .panel {
+      :host, .schema-form-host, .panel {
         --bg: #0f1117;
         --bg-elev: #12141b;
         --border: #262b36;

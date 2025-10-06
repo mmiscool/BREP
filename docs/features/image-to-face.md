@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Image to Face feature dialog](image-to-face.png)
+
 Image to Face traces a source image into planar geometry that can be placed on any sketch plane or selected face. It is ideal for logos, decorative cutouts, and relief features.
 
 ![Image to Face 2D Trace](./image-to-face-2D.png)

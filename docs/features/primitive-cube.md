@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Primitive Cube feature dialog](primitive-cube.png)
+
 Primitive Cube builds an axis-aligned rectangular prism rooted at the origin.
 
 ## Inputs

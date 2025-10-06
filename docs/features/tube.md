@@ -1,5 +1,7 @@
 # Tube Feature
 
+![Tube feature dialog](tube.png)
+
 The Tube feature sweeps a circular profile along one or more connected edges to create pipes, hoses, or other cylindrical runs that follow a path. Corners are automatically rounded by inserting smooth arcs along the path, so the resulting tube keeps a constant outer radius without sharp kinks.
 
 ## Inputs

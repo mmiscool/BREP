@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Primitive Sphere feature dialog](primitive-sphere.png)
+
 Primitive Sphere builds a sphere centered at the origin using `BREP.Sphere`.
 
 ## Inputs

@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Import 3D Model feature dialog](import-3d-model.png)
+
 Import 3D Model loads STL or 3MF data, optionally runs a mesh repair pass, and converts the triangles into a `BREP.MeshToBrep` solid.
 
 ## Inputs

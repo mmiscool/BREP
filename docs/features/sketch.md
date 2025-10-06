@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Sketch feature dialog](sketch.png)
+
 ![Sketch Mode](../SKETCH.png)
 
 Sketch stores 2D geometry in feature-persistent data and visualises it on a selected plane or face. The sketch mode opens a 2D sketcher environment where you can draft profiles that become the basis for Extrude, Revolve, Loft, or Sweep features.

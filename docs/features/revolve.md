@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Revolve feature dialog](revolve.png)
+
 Revolve sweeps a face or sketch profile around an edge-defined axis to create lathe-style solids.
 
 ## Inputs

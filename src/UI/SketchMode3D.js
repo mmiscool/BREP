@@ -143,19 +143,8 @@ export class SketchMode3D {
       try { v.render && v.render(); } catch { }
     } catch { }
 
-    // Hide any existing SKETCH groups in the scene to avoid overlaying
-    try {
-      this._hiddenSketches = [];
-      v.scene.traverse((obj) => {
-        if (obj && obj.type === 'SKETCH') {
-          const wasVisible = !!obj.visible;
-          if (wasVisible) {
-            this._hiddenSketches.push(obj);
-            obj.visible = false;
-          }
-        }
-      });
-    } catch { }
+    // Keep other sketch groups visible so they can be referenced while editing
+    this._hiddenSketches = [];
 
     // Attach lightweight UI and hide the app sidebar + main toolbar during sketch mode
     try {
