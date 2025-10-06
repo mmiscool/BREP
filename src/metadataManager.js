@@ -13,11 +13,11 @@ export class MetadataManager {
         this.metadata = {};
     }
 
-    getMetadata(targetObjectName){
+    getMetadata(targetObjectName) {
         // look up the metadata for the given object name
-        let metadataForTarget =  this.metadata[targetObjectName] || {};
+        const metadataForTarget = this.metadata[targetObjectName] || {};
 
-        // check if there is an atribute called inheritsFrom
+        // check if there is an attribute called inheritsFrom
         if (metadataForTarget.inheritsFrom) {
             const parentMetadata = this.getMetadata(metadataForTarget.inheritsFrom);
             // merge parent metadata with current metadata, giving precedence to current metadata
@@ -25,6 +25,12 @@ export class MetadataManager {
         }
 
         return metadataForTarget;
+    }
+
+    getOwnMetadata(targetObjectName) {
+        // shallow clone to avoid exposing internal references
+        const raw = this.metadata[targetObjectName];
+        return raw ? { ...raw } : {};
     }
 
     setMetadata(targetObjectName, keyName, value) {
@@ -35,5 +41,24 @@ export class MetadataManager {
         this.metadata[targetObjectName][keyName] = value;
     }
 
-
+    setMetadataObject(targetObjectName, metadataObject) {
+        if (metadataObject && Object.keys(metadataObject).length > 0) {
+            this.metadata[targetObjectName] = { ...metadataObject };
+        } else {
+            delete this.metadata[targetObjectName];
+        }
     }
+
+    deleteMetadataKey(targetObjectName, keyName) {
+        const entry = this.metadata[targetObjectName];
+        if (!entry) return;
+        delete entry[keyName];
+        if (Object.keys(entry).length === 0) {
+            delete this.metadata[targetObjectName];
+        }
+    }
+
+    clearMetadata(targetObjectName) {
+        delete this.metadata[targetObjectName];
+    }
+}

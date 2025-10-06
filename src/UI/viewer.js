@@ -742,6 +742,11 @@ export class Viewer {
         if (this._inspectorOpen) {
             try { this._updateInspectorFor(target); } catch (e) { try { console.warn('Inspector update failed:', e); } catch {} }
         }
+        const metadataPanel = this.__metadataPanelController;
+        if (metadataPanel && typeof metadataPanel.handleSelection === 'function') {
+            try { metadataPanel.handleSelection(target); }
+            catch (e) { try { console.warn('Metadata panel update failed:', e); } catch {} }
+        }
         if (typeof target.onClick === 'function') {
             try { target.onClick(); } catch { }
         }

@@ -5,6 +5,7 @@ import { createSaveButton } from './saveButton.js';
 import { createZoomToFitButton } from './zoomToFitButton.js';
 import { createWireframeToggleButton } from './wireframeToggleButton.js';
 import { createInspectorToggleButton } from './inspectorToggleButton.js';
+import { createMetadataButton } from './metadataButton.js';
 import { createImportButton } from './importButton.js';
 import { createExportButton } from './exportButton.js';
 import { createAboutButton } from './aboutButton.js';
@@ -18,6 +19,7 @@ export function registerDefaultToolbarButtons(viewer) {
     createZoomToFitButton,
     createWireframeToggleButton,
     createInspectorToggleButton,
+    createMetadataButton,
     createImportButton,
     createExportButton,
     createAboutButton,
