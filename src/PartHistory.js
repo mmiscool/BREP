@@ -40,8 +40,7 @@ export class PartHistory {
     // Reset MetadataManager
     this.metadataManager = new MetadataManager();
     this.currentHistoryStepId = null;
-    // Clear selection
-    SelectionFilter.clearSelection();
+
 
     // empty the scene without destroying it
     await this.scene.clear();
