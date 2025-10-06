@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { FeatureRegistry } from './FeatureRegistry.js';
 import { SelectionFilter } from './UI/SelectionFilter.js';
 import { localStorage as LS } from './localStorageShim.js';
+import { MetadataManager } from './metadataManager.js';
 
 
 export class PartHistory {
@@ -19,6 +20,7 @@ export class PartHistory {
     this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
     this._ambientLight = null;
     this.pmiViews = [];
+    this.metadataManager = new MetadataManager
   }
 
 
@@ -34,6 +36,13 @@ export class PartHistory {
     this.features = [];
     this.idCounter = 0;
     this.pmiViews = [];
+    this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
+    // Reset MetadataManager
+    this.metadataManager = new MetadataManager();
+    this.currentHistoryStepId = null;
+    // Clear selection
+    SelectionFilter.clearSelection();
+
     // empty the scene without destroying it
     await this.scene.clear();
     // Clear transient state
@@ -262,7 +271,8 @@ export class PartHistory {
       features: this.features,
       idCounter: this.idCounter,
       expressions: this.expressions,
-      pmiViews: this.pmiViews || []
+      pmiViews: this.pmiViews || [],
+      metadata: this.metadataManager.metadata
     }, null, 2);
   }
 
@@ -272,6 +282,7 @@ export class PartHistory {
     this.idCounter = importData.idCounter;
     this.expressions = importData.expressions || "";
     this.pmiViews = importData.pmiViews || [];
+    this.metadataManager.metadata = importData.metadata || {};
   }
 
   async generateId(prefix) {
