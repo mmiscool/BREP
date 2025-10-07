@@ -9,6 +9,7 @@ import { FilletSolid } from "./fillets/fillet.js";
 import { applyBooleanOperation } from "./applyBooleanOperation.js";
 import { MeshToBrep } from "./meshToBrep.js";
 import { MeshRepairer } from "./MeshRepairer.js";
+import { AssemblyComponent } from "./AssemblyComponent.js";
 import * as THREE from 'three';
 
 export const BREP = {
@@ -31,5 +32,6 @@ export const BREP = {
     applyBooleanOperation,
     MeshToBrep,
     MeshRepairer,
+    AssemblyComponent,
 
 }

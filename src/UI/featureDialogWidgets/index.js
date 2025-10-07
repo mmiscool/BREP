@@ -10,6 +10,7 @@ import { renderVec3Field } from './vec3Field.js';
 import { renderFileField } from './fileField.js';
 import { renderButtonField } from './buttonField.js';
 import { renderDefaultField } from './defaultField.js';
+import { renderComponentSelectorField } from './componentSelectorField.js';
 
 const RENDERERS = {
     number: renderNumberField,
@@ -23,6 +24,7 @@ const RENDERERS = {
     vec3: renderVec3Field,
     file: renderFileField,
     button: renderButtonField,
+    component_selector: renderComponentSelectorField,
 };
 
 export function getWidgetRenderer(type) {

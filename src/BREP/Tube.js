@@ -443,6 +443,20 @@ export class TubeSolid extends Solid {
       throw new Error(`Tube path collapsed after smoothing; check input. Original: ${vecPoints.length}, Smoothed: ${smoothed.length}`);
     }
 
+    // For closed loops, ensure we don't have duplicate points at the closure after smoothing
+    if (closed && smoothed.length > 2) {
+      const first = smoothed[0];
+      const last = smoothed[smoothed.length - 1];
+      const closureDistSq = first.distanceToSquared(last);
+      const tolerance = 1e-6; // Small tolerance for floating point comparison
+      
+      if (closureDistSq < tolerance * tolerance) {
+        // Remove the duplicate last point
+        smoothed = smoothed.slice(0, -1);
+        console.log(`Tube generation: Removed duplicate closure point, now ${smoothed.length} points`);
+      }
+    }
+
     const { tangents, normals, binormals } = computeFrames(smoothed, closed);
     if (tangents.length < 2) {
       throw new Error('Unable to compute frames for tube path.');

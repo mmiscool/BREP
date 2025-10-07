@@ -75,6 +75,14 @@ export function createSaveButton(viewer) {
         console.warn('[SaveButton] Failed to load PMI views:', e);
       }
 
+      try {
+        viewer.partHistory.saveAssemblyConstraintsToLocalStorage('autosave');
+        const constraintCount = viewer.partHistory.assemblyConstraintHistory?.size || 0;
+        console.log('[SaveButton] Persisted', constraintCount, 'assembly constraints for autosave.');
+      } catch (e) {
+        console.warn('[SaveButton] Failed to persist assembly constraints for autosave:', e);
+      }
+
       // Produce a compact 3MF that embeds feature history (now includes PMI views) only
       const json = await viewer?.partHistory?.toJSON?.();
       let additionalFiles = undefined;

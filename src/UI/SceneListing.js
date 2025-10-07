@@ -102,8 +102,8 @@ export class SceneListing {
     // Internal -----------------------------------------------------------------
 
     #isSolid(obj) {
-        // Treat SOLID, SKETCH, and DATUM groups as top-level items in the tree
-        return obj && obj.isObject3D && (obj.type === "SOLID" || obj.type === "SKETCH" || obj.type === "DATUM");
+        // Treat SOLID, COMPONENT, SKETCH, and DATUM groups as top-level items in the tree
+        return obj && obj.isObject3D && (obj.type === "SOLID" || obj.type === "COMPONENT" || obj.type === "SKETCH" || obj.type === "DATUM");
     }
     #isFace(obj) { return obj && obj.type === "FACE"; }
     #isEdge(obj) { return obj && obj.type === "EDGE"; }
@@ -120,8 +120,9 @@ export class SceneListing {
             const o = stack.pop();
             if (!o || !o.isObject3D) continue;
             if (this.#isSolid(o)) {
-                // Ensure node for Solid
-                this.#ensureNodeFor(o, null);
+                const parentSolid = (o.parent && this.#isSolid(o.parent)) ? o.parent : null;
+                // Ensure node for Solid (or component) with awareness of parent containers
+                this.#ensureNodeFor(o, parentSolid);
                 // Ensure children nodes for faces/edges/loops/vertices/planes (direct children of Solid/Sketch/Datum)
                 for (const child of o.children) {
                     if (this.#isFace(child) || this.#isEdge(child) || this.#isLoop(child) || this.#isVertex(child) || this.#isPlane(child)) {
@@ -173,8 +174,8 @@ export class SceneListing {
         toggle.className = "st-caret";
         toggle.title = "Expand/Collapse";
         toggle.textContent = "▸";
-        // Solids can expand; leaves don't show caret
-        if (!parentSolid && this.#isSolid(obj)) {
+        // Solids/components can expand; leaves don't show caret
+        if (this.#isSolid(obj)) {
             toggle.addEventListener("click", (e) => {
                 e.stopPropagation();
                 const open = !li.classList.contains("open");
@@ -247,7 +248,7 @@ export class SceneListing {
         this.nodes.set(obj.uuid, info);
 
         // Initial state: solids collapsed by default; restore remembered open state by name
-        if (!parentSolid) this.#setOpen(li, this.#wantOpen(obj));
+        if (this.#isSolid(obj)) this.#setOpen(li, this.#wantOpen(obj));
         this.#applyTypeClass(li, obj);
         return info;
     }

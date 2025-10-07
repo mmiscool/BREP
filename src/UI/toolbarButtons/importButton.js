@@ -106,21 +106,30 @@ export function createImportButton(viewer) {
                   viewer.partHistory.savePMIViewsToLocalStorage(importName);
                   console.log('[ImportButton] Restored', viewer.partHistory.pmiViews?.length || 0, 'PMI views for model:', importName);
                   // Refresh PMI views UI if it exists
-                  try { 
-                    if (viewer?.pmiViewsWidget) {
-                      viewer.pmiViewsWidget.currentModelName = importName;
-                      viewer.pmiViewsWidget.views = viewer.partHistory.pmiViews || [];
-                      viewer.pmiViewsWidget._renderList?.();
-                    }
-                  } catch {}
-                } catch (e) {
-                  console.warn('[ImportButton] Failed to restore PMI views:', e);
-                }
+                try { 
+                  if (viewer?.pmiViewsWidget) {
+                    viewer.pmiViewsWidget.currentModelName = importName;
+                    viewer.pmiViewsWidget.views = viewer.partHistory.pmiViews || [];
+                    viewer.pmiViewsWidget._renderList?.();
+                  }
+                } catch {}
+              } catch (e) {
+                console.warn('[ImportButton] Failed to restore PMI views:', e);
+              }
 
-                await viewer?.partHistory?.runHistory?.();
-                try { viewer?.zoomToFit?.(1.1); } catch {}
-                try { _updateCurrentNameFromFile(viewer, file); } catch {}
-                return;
+              try {
+                const importName = file.name.replace(/\.[^/.]+$/, '') || '__DEFAULT__';
+                viewer.partHistory.saveAssemblyConstraintsToLocalStorage(importName);
+                const constraintCount = viewer.partHistory.assemblyConstraintHistory?.size || 0;
+                console.log('[ImportButton] Restored', constraintCount, 'assembly constraints for model:', importName);
+              } catch (e) {
+                console.warn('[ImportButton] Failed to restore assembly constraints:', e);
+              }
+
+              await viewer?.partHistory?.runHistory?.();
+              try { viewer?.zoomToFit?.(1.1); } catch {}
+              try { _updateCurrentNameFromFile(viewer, file); } catch {}
+              return;
               }
             }
 

@@ -23,6 +23,7 @@ import { PatternFeature } from './features/pattern/PatternFeature.js';
 import { PatternLinearFeature } from './features/patternLinear/PatternLinearFeature.js';
 import { PatternRadialFeature } from './features/patternRadial/PatternRadialFeature.js';
 import { TubeFeature } from './features/tube/TubeFeature.js';
+import { AssemblyComponentFeature } from './features/assemblyComponent/AssemblyComponentFeature.js';
 
 /* ========================================================================
    FeatureRegistry
@@ -58,6 +59,7 @@ export class FeatureRegistry {
     this.register(TransformFeature);
     this.register(PatternLinearFeature);
     this.register(PatternRadialFeature);
+    this.register(AssemblyComponentFeature);
     // Keep legacy combined Pattern for backward compatibility
     this.register(PatternFeature);
 

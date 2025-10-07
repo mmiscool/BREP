@@ -1,6 +1,7 @@
 import { CADmaterials } from "./CADmaterials.js";
 export class SelectionFilter {
     static SOLID = "SOLID";
+    static COMPONENT = "COMPONENT";
     static FACE = "FACE";
     static PLANE = "PLANE";
     static SKETCH = "SKETCH";
@@ -23,7 +24,7 @@ export class SelectionFilter {
         throw new Error("SelectionFilter is static and cannot be instantiated.");
     }
 
-    static get TYPES() { return [this.SOLID, this.FACE, this.PLANE, this.SKETCH, this.EDGE, this.LOOP, this.VERTEX, this.ALL]; }
+    static get TYPES() { return [this.SOLID, this.COMPONENT, this.FACE, this.PLANE, this.SKETCH, this.EDGE, this.LOOP, this.VERTEX, this.ALL]; }
 
     // Convenience: return the list of selectable types for the dropdown (excludes ALL)
     static getAvailableTypes() {
@@ -189,11 +190,20 @@ export class SelectionFilter {
             SelectionFilter._hovered.add(t);
         };
 
-        if (target.type === SelectionFilter.SOLID) {
-            // Highlight all immediate child faces/edges for SOLID
+        if (target.type === SelectionFilter.SOLID || target.type === SelectionFilter.COMPONENT) {
+            // Highlight all immediate child faces/edges for SOLID or COMPONENT children
             if (Array.isArray(target.children)) {
                 for (const ch of target.children) {
-                    if (ch && (ch.type === SelectionFilter.FACE || ch.type === SelectionFilter.EDGE)) applyToOne(ch);
+                    if (!ch) continue;
+                    if (ch.type === SelectionFilter.SOLID || ch.type === SelectionFilter.COMPONENT) {
+                        if (Array.isArray(ch.children)) {
+                            for (const nested of ch.children) {
+                                if (nested && (nested.type === SelectionFilter.FACE || nested.type === SelectionFilter.EDGE)) applyToOne(nested);
+                            }
+                        }
+                    } else if (ch.type === SelectionFilter.FACE || ch.type === SelectionFilter.EDGE) {
+                        applyToOne(ch);
+                    }
                 }
             }
             // Track the solid as a logical hovered root to clear later
@@ -220,7 +230,7 @@ export class SelectionFilter {
             }
         };
 
-        if (obj.type === SelectionFilter.SOLID) {
+        if (obj.type === SelectionFilter.SOLID || obj.type === SelectionFilter.COMPONENT) {
             if (Array.isArray(obj.children)) {
                 for (const ch of obj.children) restoreOne(ch);
             }
@@ -311,7 +321,7 @@ export class SelectionFilter {
             // change the material on the object to indicate it is selected or not.
             //if (objectToToggleSelectionOn.type === ""
             console.log("toggling selection on object:", objectToToggleSelectionOn.type);
-            if (objectToToggleSelectionOn.selected) {
+        if (objectToToggleSelectionOn.selected) {
                 if (objectToToggleSelectionOn.type === SelectionFilter.FACE) {
                     objectToToggleSelectionOn.material = CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.PLANE) {
@@ -320,7 +330,7 @@ export class SelectionFilter {
                     objectToToggleSelectionOn.material = CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.VERTEX) {
                     // Vertex visuals are handled by its selected accessor (point + sphere)
-                } else if (objectToToggleSelectionOn.type === SelectionFilter.SOLID) {
+                } else if (objectToToggleSelectionOn.type === SelectionFilter.SOLID || objectToToggleSelectionOn.type === SelectionFilter.COMPONENT) {
                     parentSelectedAction = true;
                     objectToToggleSelectionOn.children.forEach(child => {
                         // apply selected material based on object type for faces and edges
@@ -339,7 +349,7 @@ export class SelectionFilter {
                     objectToToggleSelectionOn.material = CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.VERTEX) {
                     // Vertex accessor handles its own visual reset
-                } else if (objectToToggleSelectionOn.type === SelectionFilter.SOLID) {
+                } else if (objectToToggleSelectionOn.type === SelectionFilter.SOLID || objectToToggleSelectionOn.type === SelectionFilter.COMPONENT) {
                     parentSelectedAction = true;
                     objectToToggleSelectionOn.children.forEach(child => {
                         // apply selected material based on object type for faces and edges
@@ -383,7 +393,7 @@ export class SelectionFilter {
                     child.material = CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? child.material;
                 } else if (child.type === SelectionFilter.EDGE) {
                     child.material = CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE;
-                } else if (child.type === SelectionFilter.SOLID) {
+                } else if (child.type === SelectionFilter.SOLID || child.type === SelectionFilter.COMPONENT) {
                     child.material = CADmaterials.SOLID?.SELECTED ?? CADmaterials.SOLID;
                 }
             }
@@ -402,7 +412,7 @@ export class SelectionFilter {
                     child.material = CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? child.material;
                 } else if (child.type === SelectionFilter.EDGE) {
                     child.material = CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
-                } else if (child.type === SelectionFilter.SOLID) {
+                } else if (child.type === SelectionFilter.SOLID || child.type === SelectionFilter.COMPONENT) {
                     // For solids, keep children materials consistent with their own selected flags
                     child.children.forEach(grandchild => {
                         if (grandchild.type === SelectionFilter.FACE) {

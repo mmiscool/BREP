@@ -304,8 +304,11 @@ export class TubeFeature {
       return distSq <= tolerance * tolerance;
     })();
 
+    // For closed loops, remove the duplicate end point to prevent self-intersection
+    const finalPoints = isClosedLoop ? pathPoints.slice(0, -1) : pathPoints;
+
     const tube = new BREP.Tube({
-      points: pathPoints,
+      points: finalPoints,
       radius: radiusValue,
       innerRadius: inner,
       resolution: Math.max(8, Math.floor(Number(resolution) || 32)),

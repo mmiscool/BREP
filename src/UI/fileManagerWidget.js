@@ -5,6 +5,15 @@ import * as THREE from 'three';
 import JSZip from 'jszip';
 import { generate3MF } from '../exporters/threeMF.js';
 import { localStorage as LS } from '../localStorageShim.js';
+import {
+  listComponentRecords,
+  getComponentRecord,
+  setComponentRecord,
+  removeComponentRecord,
+  MODEL_STORAGE_PREFIX,
+  uint8ArrayToBase64,
+  base64ToUint8Array,
+} from '../services/componentLibrary.js';
 
 export class FileManagerWidget {
   constructor(viewer) {
@@ -13,7 +22,7 @@ export class FileManagerWidget {
     // Legacy aggregate index key (pre-refactor)
     this._storageKey = '__BREP_MODELS__';
     // New per-model storage prefix
-    this._modelPrefix = '__BREP_MODEL__:';
+    this._modelPrefix = MODEL_STORAGE_PREFIX;
     this._lastKey = '__BREP_MODELS_LASTNAME__';
     this.currentName = this._loadLastName() || '';
     this._iconsOnly = this._loadIconsPref();
@@ -85,46 +94,26 @@ export class FileManagerWidget {
   }
   // List all saved model records from per-model keys
   _listModels() {
-    const items = [];
-    try {
-      for (let i = 0; i < LS.length; i++) {
-        const k = LS.key(i);
-        if (!k || !k.startsWith(this._modelPrefix)) continue;
-        try {
-          const raw = LS.getItem(k);
-          if (!raw) continue;
-          const parsed = JSON.parse(raw);
-          const encName = k.slice(this._modelPrefix.length);
-          const name = decodeURIComponent(encName);
-          // Keep both legacy JSON (data) and new 3MF (data3mf) fields
-          // Do NOT persist thumbnail separately anymore; extract from 3MF when needed.
-          items.push({ name, savedAt: parsed?.savedAt, data: parsed?.data, data3mf: parsed?.data3mf });
-        } catch {
-          // skip malformed entries
-        }
-      }
-    } catch {
-      // localStorage access issue; return empty list
-    }
-    return items;
+    const records = listComponentRecords();
+    return records.map(({ name, savedAt, record }) => ({
+      name,
+      savedAt,
+      data: record?.data,
+      data3mf: record?.data3mf,
+      thumbnail: record?.thumbnail,
+    }));
   }
   // Fetch one model record
   _getModel(name) {
-    try {
-      const raw = LS.getItem(this._modelKey(name));
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      // Do not surface legacy 'thumbnail' field anymore; we derive from 3MF on demand
-      return { name, savedAt: parsed?.savedAt, data: parsed?.data, data3mf: parsed?.data3mf };
-    } catch { return null; }
+    return getComponentRecord(name);
   }
   // Persist one model record
   _setModel(name, dataObj) {
-    LS.setItem(this._modelKey(name), JSON.stringify(dataObj));
+    setComponentRecord(name, dataObj);
   }
   // Remove one model record
   _removeModel(name) {
-    LS.removeItem(this._modelKey(name));
+    removeComponentRecord(name);
   }
   // One-time migration from legacy aggregate index array to per-model keys
   _migrateFromLegacy() {
@@ -135,7 +124,7 @@ export class FileManagerWidget {
       if (!Array.isArray(arr)) return;
       for (const it of arr) {
         if (!it || !it.name) continue;
-        const existing = LS.getItem(this._modelKey(it.name));
+        const existing = getComponentRecord(it.name);
         if (existing) continue; // don't overwrite existing per-model
         const record = { savedAt: it.savedAt || new Date().toISOString(), data: it.data };
         this._setModel(it.name, record);
@@ -256,24 +245,6 @@ export class FileManagerWidget {
     this.nameInput.value = '';
   }
 
-  // Convert Uint8Array to base64 string in chunks (browser-safe)
-  _uint8ToBase64(uint8) {
-    let binary = '';
-    const chunk = 0x8000;
-    for (let i = 0; i < uint8.length; i += chunk) {
-      const sub = uint8.subarray(i, i + chunk);
-      binary += String.fromCharCode.apply(null, sub);
-    }
-    return btoa(binary);
-  }
-  // Convert base64 string back to Uint8Array
-  _base64ToUint8(b64) {
-    const binary = atob(b64);
-    const out = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
-    return out;
-  }
-
   async saveCurrent() {
     if (!this.viewer || !this.viewer.partHistory) return;
     let name = (this.nameInput.value || '').trim();
@@ -292,6 +263,14 @@ export class FileManagerWidget {
       console.warn('[FileManagerWidget] Failed to load PMI views:', e);
     }
 
+    try {
+      this.viewer.partHistory.saveAssemblyConstraintsToLocalStorage(name);
+      const constraintCount = this.viewer.partHistory.assemblyConstraintHistory?.size || 0;
+      console.log('[FileManagerWidget] Persisted', constraintCount, 'assembly constraints for model:', name);
+    } catch (e) {
+      console.warn('[FileManagerWidget] Failed to persist assembly constraints:', e);
+    }
+
     // Get feature history JSON (now includes PMI views) and embed into a 3MF archive as Metadata/featureHistory.json
     const jsonString = await this.viewer.partHistory.toJSON();
     let additionalFiles = undefined;
@@ -308,11 +287,12 @@ export class FileManagerWidget {
 
     // Generate a compact 3MF. For local storage we only need history (no meshes), but we do embed a thumbnail.
     const threeMfBytes = await generate3MF([], { unit: 'millimeter', precision: 6, scale: 1, additionalFiles, modelMetadata, thumbnail });
-    const threeMfB64 = this._uint8ToBase64(threeMfBytes);
+    const threeMfB64 = uint8ArrayToBase64(threeMfBytes);
     const now = new Date().toISOString();
 
     // Store only the 3MF (with embedded thumbnail) and timestamp
     const record = { savedAt: now, data3mf: threeMfB64 };
+    if (thumbnail) record.thumbnail = thumbnail;
     this._setModel(name, record);
     // Update in-memory thumbnail cache so UI reflects the new preview immediately
     try { if (thumbnail) this._thumbCache.set(name, thumbnail); } catch { }
@@ -334,7 +314,7 @@ export class FileManagerWidget {
         if (b64.startsWith('data:') && b64.includes(';base64,')) {
           b64 = b64.split(';base64,')[1];
         }
-        const bytes = this._base64ToUint8(b64);
+        const bytes = base64ToUint8Array(b64);
         // Try to extract feature history from 3MF
         const zip = await JSZip.loadAsync(bytes.buffer);
         const files = {};
@@ -373,6 +353,14 @@ export class FileManagerWidget {
               }, 100);
             } catch (e) {
               console.warn('[FileManagerWidget] Failed to restore PMI views:', e);
+            }
+
+            try {
+              this.viewer.partHistory.saveAssemblyConstraintsToLocalStorage(name);
+              const constraintCount = this.viewer.partHistory.assemblyConstraintHistory?.size || 0;
+              console.log('[FileManagerWidget] Restored', constraintCount, 'assembly constraints for model:', name);
+            } catch (e) {
+              console.warn('[FileManagerWidget] Failed to restore assembly constraints:', e);
             }
             
             if (seq !== this._loadSeq) return;
@@ -435,7 +423,6 @@ export class FileManagerWidget {
 
   refreshList() {
     const items = this._listModels();
-    // Clear
     while (this.listEl.firstChild) this.listEl.removeChild(this.listEl.firstChild);
 
     if (!items.length) {
@@ -446,84 +433,52 @@ export class FileManagerWidget {
       return;
     }
 
-    // Newest first
     const sorted = items.slice().sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
     if (this._iconsOnly) {
       this._renderIconsView(sorted);
       return;
     }
+
     for (const it of sorted) {
       const row = document.createElement('div');
       row.className = 'fm-row';
 
-      // Thumbnail (60x60) if available
       const thumb = document.createElement('img');
       thumb.className = 'fm-thumb';
-      // Defer loading: extract from embedded 3MF thumbnail
       thumb.alt = `${it.name} thumbnail`;
       this._applyThumbnailToImg(it, thumb);
-      // Make thumbnail clickable to open
       thumb.addEventListener('click', () => this.loadModel(it.name));
       row.appendChild(thumb);
 
       const left = document.createElement('div');
       left.className = 'fm-left fm-grow';
-      const nameSpan = document.createElement('div');
-      nameSpan.className = 'fm-name';
-      nameSpan.textContent = it.name;
-      // Click file name to load the model
-      nameSpan.addEventListener('click', () => this.loadModel(it.name));
-      left.appendChild(nameSpan);
+      const nameDiv = document.createElement('div');
+      nameDiv.className = 'fm-name';
+      nameDiv.textContent = it.name;
+      nameDiv.addEventListener('click', () => this.loadModel(it.name));
+      left.appendChild(nameDiv);
       const dt = new Date(it.savedAt);
-      const dateLine = document.createElement('div');
-      dateLine.className = 'fm-date';
-      dateLine.textContent = isNaN(dt) ? String(it.savedAt) : dt.toLocaleString();
-      left.appendChild(dateLine);
+      const dateEl = document.createElement('div');
+      dateEl.className = 'fm-date';
+      dateEl.textContent = isNaN(dt) ? String(it.savedAt || '') : dt.toLocaleString();
+      left.appendChild(dateEl);
       row.appendChild(left);
 
       const openBtn = document.createElement('button');
+      openBtn.type = 'button';
       openBtn.className = 'fm-btn';
-      // Use an open folder icon
       openBtn.textContent = '📂';
       openBtn.addEventListener('click', () => this.loadModel(it.name));
       row.appendChild(openBtn);
 
       const delBtn = document.createElement('button');
+      delBtn.type = 'button';
       delBtn.className = 'fm-btn danger';
       delBtn.textContent = '✕';
       delBtn.addEventListener('click', () => this.deleteModel(it.name));
       row.appendChild(delBtn);
 
       this.listEl.appendChild(row);
-    }
-  }
-
-  _renderIconsView(items) {
-    const grid = document.createElement('div');
-    grid.className = 'fm-grid';
-    this.listEl.appendChild(grid);
-
-    for (const it of items) {
-      const cell = document.createElement('div');
-      cell.className = 'fm-item';
-      cell.title = `${it.name}\n${new Date(it.savedAt).toLocaleString()}`;
-      cell.addEventListener('click', () => this.loadModel(it.name));
-
-      const img = document.createElement('img');
-      img.className = 'fm-thumb';
-      img.alt = `${it.name} thumbnail`;
-      // Load embedded 3MF thumbnail on demand
-      this._applyThumbnailToImg(it, img);
-      cell.appendChild(img);
-
-      const del = document.createElement('button');
-      del.className = 'fm-btn danger fm-del';
-      del.textContent = '✕';
-      del.title = `Delete ${it.name}`;
-      del.addEventListener('click', (e) => { e.stopPropagation(); this.deleteModel(it.name); });
-      cell.appendChild(del);
-
-      grid.appendChild(cell);
     }
   }
 
@@ -544,113 +499,80 @@ export class FileManagerWidget {
     }
   }
 
-  // ----- Thumbnail helpers -----
-  async _extractThumbnailFrom3MFBase64(b64) {
-    try {
-      if (!b64) return null;
-      if (b64.startsWith('data:') && b64.includes(';base64,')) {
-        // Extract the base64 payload from a data URL
-        b64 = b64.split(';base64,')[1];
-      }
-      const bytes = this._base64ToUint8(b64);
-      const zip = await JSZip.loadAsync(bytes.buffer);
-      const files = {};
-      Object.keys(zip.files || {}).forEach(p => files[p.toLowerCase()] = p);
+  _renderIconsView(items) {
+    const grid = document.createElement('div');
+    grid.className = 'fm-grid';
+    this.listEl.appendChild(grid);
 
-      // 1) Check root package relationships for a thumbnail target (recommended by 3MF/OPC)
-      let relsKeyRoot = files['_rels/.rels'];
-      if (relsKeyRoot) {
-        try {
-          const relsXml = await zip.file(relsKeyRoot).async('string');
-          const relRe = /<Relationship\s+[^>]*Type="[^"]*metadata\/thumbnail[^"]*"[^>]*>/ig;
-          const tgtRe = /Target="([^"]+)"/i;
-          let m;
-          while ((m = relRe.exec(relsXml))) {
-            const tag = m[0];
-            const tm = tgtRe.exec(tag);
-            if (tm && tm[1]) {
-              let target = tm[1];
-              // Resolve relative to package root
-              if (target.startsWith('/')) target = target.replace(/^\/+/, '');
-              const lf = target.toLowerCase();
-              const real = files[lf];
-              if (real) {
-                const mime = lf.endsWith('.png') ? 'image/png' : (lf.match(/\.(jpe?g)$/) ? 'image/jpeg' : 'application/octet-stream');
-                const imgU8 = await zip.file(real).async('uint8array');
-                const imgB64 = this._uint8ToBase64(imgU8);
-                return `data:${mime};base64,${imgB64}`;
-              }
-            }
-          }
-        } catch { /* ignore parse errors */ }
-      }
+    for (const it of items) {
+      const cell = document.createElement('div');
+      cell.className = 'fm-item';
+      const dt = new Date(it.savedAt);
+      cell.title = `${it.name}\n${isNaN(dt) ? String(it.savedAt || '') : dt.toLocaleString()}`;
+      cell.addEventListener('click', () => this.loadModel(it.name));
 
-      // 2) Check model part relationships for a thumbnail target
-      let relsKey = files['3d/_rels/3dmodel.model.rels'];
-      if (relsKey) {
-        try {
-          const relsXml = await zip.file(relsKey).async('string');
-          // Lightweight parse for Target with thumbnail relationship type
-          const relRe = /<Relationship\s+[^>]*Type="[^"]*metadata\/thumbnail[^"]*"[^>]*>/ig;
-          const tgtRe = /Target="([^"]+)"/i;
-          let m;
-          while ((m = relRe.exec(relsXml))) {
-            const tag = m[0];
-            const tm = tgtRe.exec(tag);
-            if (tm && tm[1]) {
-              let target = tm[1];
-              // Resolve relative to 3D/ (model part location)
-              if (target.startsWith('/')) {
-                target = target.replace(/^\/+/, '');
-              } else {
-                // e.g., '../Thumbnails/thumbnail.png' or 'Thumbnails/thumbnail.png'
-                target = '3D/' + target;
-                // Normalize '../'
-                target = target.replace(/(^|\/)\.{2}\/(?!\.{2}|$)/g, '/');
-                target = target.replace(/^\/+/, '');
-              }
-              const lf = target.toLowerCase();
-              const real = files[lf];
-              if (real) {
-                // Determine mime by extension
-                const mime = lf.endsWith('.png') ? 'image/png' : (lf.match(/\.(jpe?g)$/) ? 'image/jpeg' : 'application/octet-stream');
-                const imgU8 = await zip.file(real).async('uint8array');
-                const imgB64 = this._uint8ToBase64(imgU8);
-                return `data:${mime};base64,${imgB64}`;
-              }
-            }
-          }
-        } catch { /* ignore rels parse errors */ }
-      }
+      const img = document.createElement('img');
+      img.className = 'fm-thumb';
+      img.alt = `${it.name} thumbnail`;
+      this._applyThumbnailToImg(it, img);
+      cell.appendChild(img);
 
-      // 3) Fallback: first image under Metadata/ or Thumbnails/
-      let thumbPath = Object.keys(files).find(k => k.startsWith('metadata/') && (k.endsWith('.png') || k.endsWith('.jpg') || k.endsWith('.jpeg')));
-      if (!thumbPath) thumbPath = Object.keys(files).find(k => k.startsWith('thumbnails/') && (k.endsWith('.png') || k.endsWith('.jpg') || k.endsWith('.jpeg')));
-      if (thumbPath) {
-        const real = files[thumbPath];
-        const mime = thumbPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
-        const imgU8 = await zip.file(real).async('uint8array');
-        const imgB64 = this._uint8ToBase64(imgU8);
-        return `data:${mime};base64,${imgB64}`;
-      }
-      return null;
-    } catch { return null; }
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'fm-btn danger fm-del';
+      del.textContent = '✕';
+      del.title = `Delete ${it.name}`;
+      del.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        this.deleteModel(it.name);
+      });
+      cell.appendChild(del);
+
+      grid.appendChild(cell);
+    }
   }
-
   async _applyThumbnailToImg(rec, imgEl) {
     try {
-      if (!rec?.data3mf || !imgEl) return;
+      if (!imgEl) return;
+      if (!rec?.data3mf) {
+        imgEl.style.display = 'none';
+        return;
+      }
+      imgEl.style.display = '';
+      if (rec.thumbnail) {
+        imgEl.src = rec.thumbnail;
+        if (this._thumbCache) this._thumbCache.set(rec.name, rec.thumbnail);
+        return;
+      }
       if (this._thumbCache && this._thumbCache.has(rec.name)) {
         const cached = this._thumbCache.get(rec.name);
         if (cached) imgEl.src = cached;
         return;
       }
-      const src = await this._extractThumbnailFrom3MFBase64(rec.data3mf);
+      const src = await extractThumbnailFrom3MFBase64(rec.data3mf);
       if (src) {
         imgEl.src = src;
         if (this._thumbCache) this._thumbCache.set(rec.name, src);
+        this._persistThumbnail(rec.name, src);
+      } else {
+        imgEl.style.display = 'none';
       }
-    } catch {}
+    } catch {
+      if (imgEl) imgEl.style.display = 'none';
+    }
+  }
+
+  _persistThumbnail(name, thumbnail) {
+    if (!name || !thumbnail) return;
+    const existing = getComponentRecord(name);
+    if (!existing) return;
+    const payload = {
+      savedAt: existing.savedAt || new Date().toISOString(),
+      data3mf: existing.data3mf,
+      data: existing.data,
+      thumbnail,
+    };
+    setComponentRecord(name, payload);
   }
 
   async _captureThumbnail(size = 60) {

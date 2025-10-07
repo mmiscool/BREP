@@ -2213,6 +2213,7 @@ export class Solid extends THREE.Group {
         try {
             const endpoints = new Map();
             const vertexToEdges = new Map(); // Track which edges meet at each vertex
+            const usedVertexNames = new Set();
             
             // First pass: collect all endpoint positions and track which edges meet at each vertex
             for (const ch of this.children) {
@@ -2245,7 +2246,15 @@ export class Solid extends THREE.Group {
                 for (const [positionKey, position] of endpoints.entries()) {
                     try {
                         const meetingEdges = vertexToEdges.get(positionKey);
-                        const vertexName = generateVertexName(position, meetingEdges ? Array.from(meetingEdges) : []);
+                        let vertexName = generateVertexName(position, meetingEdges ? Array.from(meetingEdges) : []);
+                        if (usedVertexNames.has(vertexName)) {
+                            let suffix = 1;
+                            while (usedVertexNames.has(`${vertexName}[${suffix}]`)) {
+                                suffix++;
+                            }
+                            vertexName = `${vertexName}[${suffix}]`;
+                        }
+                        usedVertexNames.add(vertexName);
                         this.add(new Vertex(position, { name: vertexName }));
                     } catch {}
                 }

@@ -10,6 +10,7 @@ import { CADmaterials, CADmaterialWidget } from './CADmaterials.js';
 import { AccordionWidget } from './AccordionWidget.js';
 import { OrthoCameraIdle } from './OrthoCameraIdle.js';
 import { HistoryWidget } from './HistoryWidget.js';
+import { AssemblyConstraintsWidget } from './assembly/AssemblyConstraintsWidget.js';
 import { PartHistory } from '../PartHistory.js';
 import { SelectionFilter } from './SelectionFilter.js';
 import './expressionsManager.js'
@@ -249,6 +250,10 @@ export class Viewer {
         };
         const historySection = await this.accordion.addSection("History");
         await historySection.uiElement.appendChild(await this.historyWidget.uiElement);
+
+        this.assemblyConstraintsWidget = new AssemblyConstraintsWidget(this);
+        const constraintsSection = await this.accordion.addSection('Assembly Constraints');
+        constraintsSection.uiElement.appendChild(this.assemblyConstraintsWidget.uiElement);
 
         // setup expressions
         this.expressionsManager = await new expressionsManager(this);

@@ -7,6 +7,8 @@ import { FeatureRegistry } from './FeatureRegistry.js';
 import { SelectionFilter } from './UI/SelectionFilter.js';
 import { localStorage as LS } from './localStorageShim.js';
 import { MetadataManager } from './metadataManager.js';
+import { AssemblyConstraintRegistry } from './assemblyConstraints/AssemblyConstraintRegistry.js';
+import { AssemblyConstraintHistory } from './assemblyConstraints/AssemblyConstraintHistory.js';
 
 
 export class PartHistory {
@@ -15,12 +17,18 @@ export class PartHistory {
     this.scene = new THREE.Scene();
     this.idCounter = 0;
     this.featureRegistry = new FeatureRegistry();
+    this.assemblyConstraintRegistry = new AssemblyConstraintRegistry();
+    this.assemblyConstraintHistory = new AssemblyConstraintHistory(this, this.assemblyConstraintRegistry);
     this.callbacks = {};
     this.currentHistoryStepId = null;
     this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
     this._ambientLight = null;
     this.pmiViews = [];
     this.metadataManager = new MetadataManager
+    if (this.assemblyConstraintHistory) {
+      this.assemblyConstraintHistory.clear();
+      this.assemblyConstraintHistory.setPartHistory?.(this);
+    }
   }
 
 
@@ -48,6 +56,11 @@ export class PartHistory {
     this._ambientLight = null;
     if (this.callbacks.reset) {
       await this.callbacks.reset();
+    }
+
+    if (this.assemblyConstraintHistory) {
+      this.assemblyConstraintHistory.clear();
+      this.assemblyConstraintHistory.setPartHistory?.(this);
     }
 
 
@@ -173,21 +186,10 @@ export class PartHistory {
         for (const ch of flagged) this.scene.remove(ch);
       }
 
-      // add the artifacts to the scene
+      // add the artifacts to the scene and ensure selection handlers are wired on the full subtree
       for (const artifact of instance.resultArtifacts) {
         await this.scene.add(artifact);
-
-        // MONKEY PATCH .onClick() event on to the artifact
-        artifact.onClick = () => {
-          SelectionFilter.toggleSelection(artifact);
-        };
-
-        // MONKEY PATCH .onClick() to each child of the artifact
-        for (const child of artifact.children) {
-          child.onClick = () => {
-            if (!SelectionFilter.toggleSelection(child.parent)) SelectionFilter.toggleSelection(child);
-          };
-        }
+        this._attachSelectionHandlers(artifact);
       }
 
       // Final sweep: remove any newly-flagged items after adding artifacts
@@ -199,6 +201,12 @@ export class PartHistory {
         }
       }
       // monitored code goes here
+    }
+
+    try {
+      await this.runAssemblyConstraints();
+    } catch (error) {
+      console.warn('[PartHistory] Assembly constraints run failed:', error);
     }
 
     const endTime = Date.now();
@@ -239,6 +247,27 @@ export class PartHistory {
     return out;
   }
 
+  _attachSelectionHandlers(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    obj.onClick = () => {
+      try {
+        if (obj.type === SelectionFilter.SOLID && obj.parent && obj.parent.type === SelectionFilter.COMPONENT) {
+          const handledByParent = SelectionFilter.toggleSelection(obj.parent);
+          if (!handledByParent) SelectionFilter.toggleSelection(obj);
+          return;
+        }
+        SelectionFilter.toggleSelection(obj);
+      } catch (error) {
+        try { console.warn('[PartHistory] toggleSelection failed:', error); }
+        catch (_) { /* no-op */ }
+      }
+    };
+    const children = Array.isArray(obj.children) ? obj.children : [];
+    for (const child of children) {
+      this._attachSelectionHandlers(child);
+    }
+  }
+
   _safeRemove(obj) {
     if (!obj) return;
     try {
@@ -266,12 +295,15 @@ export class PartHistory {
   // methods to store and retrieve feature history to JSON strings
   // We will store the features, idCounter, expressions, and optionally PMI views
   async toJSON() {
+    const constraintsSnapshot = this.assemblyConstraintHistory?.snapshot?.() || { idCounter: 0, constraints: [] };
     return JSON.stringify({
       features: this.features,
       idCounter: this.idCounter,
       expressions: this.expressions,
       pmiViews: this.pmiViews || [],
-      metadata: this.metadataManager.metadata
+      metadata: this.metadataManager.metadata,
+      assemblyConstraints: constraintsSnapshot.constraints,
+      assemblyConstraintIdCounter: constraintsSnapshot.idCounter,
     }, null, 2);
   }
 
@@ -282,11 +314,82 @@ export class PartHistory {
     this.expressions = importData.expressions || "";
     this.pmiViews = importData.pmiViews || [];
     this.metadataManager.metadata = importData.metadata || {};
+
+    if (this.assemblyConstraintHistory) {
+      this.assemblyConstraintHistory.setPartHistory?.(this);
+      const constraintsList = Array.isArray(importData.assemblyConstraints)
+        ? importData.assemblyConstraints
+        : [];
+      const constraintCounter = Number(importData.assemblyConstraintIdCounter) || 0;
+
+      if (constraintsList.length > 0) {
+        await this.assemblyConstraintHistory.replaceAll(constraintsList, constraintCounter);
+      } else {
+        this.assemblyConstraintHistory.clear();
+        this.assemblyConstraintHistory.idCounter = constraintCounter;
+      }
+    }
   }
 
   async generateId(prefix) {
     this.idCounter += 1;
     return `${prefix}${this.idCounter}`;
+  }
+
+  async runAssemblyConstraints() {
+    if (!this.assemblyConstraintHistory) return [];
+    this.assemblyConstraintHistory.setPartHistory?.(this);
+    return await this.assemblyConstraintHistory.runAll(this);
+  }
+
+  syncAssemblyComponentTransforms() {
+    if (!this.scene || !Array.isArray(this.features)) return;
+
+    const featureById = new Map();
+    for (const feature of this.features) {
+      if (!feature || !feature.inputParams) continue;
+      const id = feature.inputParams.featureID;
+      if (!id && id !== 0) continue;
+      featureById.set(String(id), feature);
+    }
+
+    const tempEuler = new THREE.Euler();
+
+    const syncOne = (component) => {
+      if (!component || !component.isAssemblyComponent) return;
+      const featureIdRaw = component.owningFeatureID;
+      if (!featureIdRaw && featureIdRaw !== 0) return;
+      const feature = featureById.get(String(featureIdRaw));
+      if (!feature) return;
+
+      component.updateMatrixWorld?.(true);
+
+      const pos = component.position || new THREE.Vector3();
+      const quat = component.quaternion || new THREE.Quaternion();
+      const scl = component.scale || new THREE.Vector3(1, 1, 1);
+
+      tempEuler.setFromQuaternion(quat, 'XYZ');
+
+      const transform = {
+        position: [pos.x, pos.y, pos.z],
+        rotationEuler: [
+          THREE.MathUtils.radToDeg(tempEuler.x),
+          THREE.MathUtils.radToDeg(tempEuler.y),
+          THREE.MathUtils.radToDeg(tempEuler.z),
+        ],
+        scale: [scl.x, scl.y, scl.z],
+      };
+
+      feature.inputParams = feature.inputParams || {};
+      feature.inputParams.transform = transform;
+    };
+
+    if (typeof this.scene.traverse === 'function') {
+      this.scene.traverse((obj) => { syncOne(obj); });
+    } else {
+      const children = Array.isArray(this.scene.children) ? this.scene.children : [];
+      for (const child of children) syncOne(child);
+    }
   }
 
   // PMI Views management - sync with localStorage for widget compatibility
@@ -330,6 +433,28 @@ export class PartHistory {
           window.dispatchEvent(event);
         } catch {}
       }
+    } catch {}
+  }
+
+  async loadAssemblyConstraintsFromLocalStorage(modelName) {
+    if (!this.assemblyConstraintHistory) return;
+    try {
+      const key = '__BREP_ASSEMBLY_CONSTRAINTS__:' + encodeURIComponent(modelName || '__DEFAULT__');
+      const raw = LS.getItem(key);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      const list = Array.isArray(data?.constraints) ? data.constraints : [];
+      const counter = Number(data?.idCounter) || 0;
+      await this.assemblyConstraintHistory.replaceAll(list, counter);
+    } catch {}
+  }
+
+  saveAssemblyConstraintsToLocalStorage(modelName) {
+    if (!this.assemblyConstraintHistory) return;
+    try {
+      const key = '__BREP_ASSEMBLY_CONSTRAINTS__:' + encodeURIComponent(modelName || '__DEFAULT__');
+      const snapshot = this.assemblyConstraintHistory.snapshot();
+      LS.setItem(key, JSON.stringify(snapshot));
     } catch {}
   }
 
@@ -527,4 +652,3 @@ export function extractDefaultValues(schema) {
   }
   return result;
 }
-
