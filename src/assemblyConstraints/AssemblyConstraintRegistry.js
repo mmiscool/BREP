@@ -1,6 +1,8 @@
 import { CoincidentConstraint } from './constraints/CoincidentConstraint.js';
+import { DistanceConstraint } from './constraints/DistanceConstraint.js';
 import { FixedConstraint } from './constraints/FixedConstraint.js';
 import { ParallelConstraint } from './constraints/ParallelConstraint.js';
+import { TouchAlignConstraint } from './constraints/TouchAlignConstraint.js';
 
 const normalizeKey = (value) => {
   if (value == null) return '';
@@ -14,8 +16,10 @@ export class AssemblyConstraintRegistry {
 
     // Register built-ins immediately.
     this.register(CoincidentConstraint);
+    this.register(DistanceConstraint);
     this.register(FixedConstraint);
     this.register(ParallelConstraint);
+    this.register(TouchAlignConstraint);
   }
 
   /**

@@ -17,7 +17,7 @@ export class AssemblyConstraintsWidget {
     this._highlighted = new Map();
     this._highlightPalette = ['#ff3b30', '#30d158', '#0a84ff', '#ffd60a'];
 
-    this._defaultIterations = 10;
+    this._defaultIterations = 100;
     this._normalArrows = new Set();
     this._debugNormalsEnabled = false;
     this._delayInput = null;

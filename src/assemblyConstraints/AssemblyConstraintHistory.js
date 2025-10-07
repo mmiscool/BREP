@@ -47,7 +47,7 @@ function toFiniteNumber(value, fallback) {
 function clampIterations(value) {
   const num = Math.floor(toFiniteNumber(value, DEFAULT_SOLVER_ITERATIONS));
   if (!Number.isFinite(num) || num < 1) return DEFAULT_SOLVER_ITERATIONS;
-  if (num > 1000) return 1000;
+
   return num;
 }
 
