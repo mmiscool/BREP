@@ -1,3 +1,4 @@
+import { AngleConstraint } from './constraints/AngleConstraint.js';
 import { CoincidentConstraint } from './constraints/CoincidentConstraint.js';
 import { DistanceConstraint } from './constraints/DistanceConstraint.js';
 import { FixedConstraint } from './constraints/FixedConstraint.js';
@@ -16,6 +17,7 @@ export class AssemblyConstraintRegistry {
 
     // Register built-ins immediately.
     this.register(CoincidentConstraint);
+    this.register(AngleConstraint);
     this.register(DistanceConstraint);
     this.register(FixedConstraint);
     this.register(ParallelConstraint);
