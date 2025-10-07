@@ -13,13 +13,13 @@ const inputParamsSchema = {
     type: 'reference_selection',
     label: 'Element A',
     hint: 'Select the first reference (point, edge, face, or component).',
-    selectionFilter: ['VERTEX', 'EDGE', 'FACE'],
+    selectionFilter: [ 'FACE','VERTEX', 'EDGE',],
   },
   element_B: {
     type: 'reference_selection',
     label: 'Element B',
     hint: 'Select the second reference (point, edge, face, or component).',
-    selectionFilter: ['VERTEX', 'EDGE', 'FACE'],
+    selectionFilter: ['FACE','VERTEX', 'EDGE', ],
   },
   distance: {
     type: 'number',

@@ -13,13 +13,13 @@ const inputParamsSchema = {
     type: 'reference_selection',
     label: 'Element A',
     hint: 'Select the first face or edge.',
-    selectionFilter: ['EDGE', 'FACE'],
+    selectionFilter: ['FACE', 'EDGE',],
   },
   element_B: {
     type: 'reference_selection',
     label: 'Element B',
     hint: 'Select the second face or edge.',
-    selectionFilter: ['EDGE', 'FACE'],
+    selectionFilter: [ 'FACE', 'EDGE'],
   },
   angle: {
     type: 'number',
@@ -384,7 +384,7 @@ export class AngleConstraint extends BaseAssemblyConstraint {
       try {
         const rep = objectRepresentativePoint(null, object);
         if (rep && typeof rep.clone === 'function') return rep.clone();
-      } catch {}
+      } catch { }
       if (typeof object.getWorldPosition === 'function') {
         return object.getWorldPosition(new THREE.Vector3());
       }
