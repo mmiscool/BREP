@@ -71,6 +71,10 @@ export class LabelOverlay {
     if (worldPos) this._position(el, worldPos);
   }
 
+  getElement(idx) {
+    return this._labelMap.get(idx) || null;
+  }
+
   #trackPointerDown(e, idx, ann) {
     console.log('LabelOverlay #trackPointerDown called', { e, idx, ann });
     if (typeof e !== 'object') return;

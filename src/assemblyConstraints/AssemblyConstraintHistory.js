@@ -252,6 +252,24 @@ export class AssemblyConstraintHistory {
     return true;
   }
 
+  setExclusiveOpen(constraintID) {
+    const targetId = normalizeTypeString(constraintID);
+    if (!targetId) return false;
+    let changed = false;
+    for (const entry of this.constraints) {
+      if (!entry) continue;
+      const entryId = normalizeTypeString(entry?.inputParams?.constraintID);
+      const shouldOpen = entryId === targetId;
+      const currentOpen = entry.__open !== false;
+      if (currentOpen !== shouldOpen) {
+        entry.__open = shouldOpen;
+        changed = true;
+      }
+    }
+    if (changed) this.#emitChange();
+    return changed;
+  }
+
   clear() {
     this.constraints = [];
     this.idCounter = 0;

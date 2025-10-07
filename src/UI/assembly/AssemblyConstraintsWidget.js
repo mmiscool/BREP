@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { genFeatureUI } from '../featureDialogs.js';
 import { SelectionFilter } from '../SelectionFilter.js';
 import { objectRepresentativePoint } from '../pmi/annUtils.js';
+import { LabelOverlay } from '../pmi/LabelOverlay.js';
+
 
 const ROOT_CLASS = 'constraints-history';
 
@@ -17,13 +19,40 @@ export class AssemblyConstraintsWidget {
     this._highlighted = new Map();
     this._highlightPalette = ['#ff3b30', '#30d158', '#0a84ff', '#ffd60a'];
 
-    this._defaultIterations = 100;
+    this._defaultIterations = 1000;
     this._normalArrows = new Set();
     this._debugNormalsEnabled = false;
     this._delayInput = null;
+    this._constraintLines = new Map();
+    this._labelPositions = new Map();
+    this._onControlsChange = () => this._refreshConstraintLabels();
+    this._onWindowResize = () => this._refreshConstraintLabels();
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
+
+    if (this.viewer?.scene) {
+      this._constraintGroup = new THREE.Group();
+      this._constraintGroup.name = 'assembly-constraint-overlays';
+      this._constraintGroup.userData.excludeFromFit = true;
+      try { this.viewer.scene.add(this._constraintGroup); }
+      catch { this._constraintGroup = null; }
+    } else {
+      this._constraintGroup = null;
+    }
+
+    if (this.viewer) {
+      this._labelOverlay = new LabelOverlay(
+        this.viewer,
+        null,
+        null,
+        (idx, ann, ev) => { try { this.#handleLabelClick(idx, ann, ev); } catch {} },
+      );
+      try { this.viewer.controls?.addEventListener('change', this._onControlsChange); } catch {}
+      try { window.addEventListener('resize', this._onWindowResize); } catch {}
+    } else {
+      this._labelOverlay = null;
+    }
 
     this._solverControls = this._buildSolverControls();
     this.uiElement.appendChild(this._solverControls);
@@ -54,6 +83,17 @@ export class AssemblyConstraintsWidget {
 
   dispose() {
     this._clearHighlights();
+    this._clearConstraintVisuals();
+    try { this.viewer?.controls?.removeEventListener('change', this._onControlsChange); } catch {}
+    try { window.removeEventListener('resize', this._onWindowResize); } catch {}
+    if (this._constraintGroup && this.viewer?.scene) {
+      try { this.viewer.scene.remove(this._constraintGroup); } catch {}
+    }
+    this._constraintGroup = null;
+    this._constraintLines.clear();
+    this._labelPositions.clear();
+    try { this._labelOverlay?.dispose?.(); } catch {}
+    this._labelOverlay = null;
     if (this._unsubscribe) {
       try { this._unsubscribe(); } catch { /* ignore */ }
       this._unsubscribe = null;
@@ -78,6 +118,7 @@ export class AssemblyConstraintsWidget {
 
     const entries = this.history ? this.history.list() : [];
     if (!entries || entries.length === 0) {
+      this._clearConstraintVisuals();
       const empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = 'No assembly constraints yet.';
@@ -96,6 +137,7 @@ export class AssemblyConstraintsWidget {
 
       const item = document.createElement('div');
       item.className = 'acc-item';
+      item.dataset.constraintId = constraintID;
       if (isOpen) item.classList.add('open');
       if (statusInfo.error) item.classList.add('has-error');
 
@@ -227,6 +269,8 @@ export class AssemblyConstraintsWidget {
 
       this._accordion.appendChild(item);
     });
+
+    this._updateConstraintVisuals(entries);
   }
 
   async _handleSolve() {
@@ -410,6 +454,92 @@ export class AssemblyConstraintsWidget {
     try { this.viewer?.render?.(); } catch { /* ignore */ }
   }
 
+  _updateConstraintVisuals(entries = []) {
+    const scene = this.viewer?.scene || null;
+    if (!scene) return;
+
+    const activeIds = new Set();
+    this._labelPositions.clear();
+    if (this._labelOverlay) {
+      try { this._labelOverlay.clear(); } catch {}
+    }
+
+    if (!entries || entries.length === 0) {
+      this._removeUnusedConstraintLines(activeIds);
+      this._refreshConstraintLabels();
+      return;
+    }
+
+    entries.forEach((entry, index) => {
+      if (!entry) return;
+      const constraintID = entry?.inputParams?.constraintID || `constraint-${index}`;
+      const points = this.#constraintPoints(entry);
+      if (!points) {
+        this.#removeConstraintLine(constraintID);
+        return;
+      }
+      const [pointA, pointB] = points;
+      this.#upsertConstraintLine(constraintID, pointA, pointB);
+
+      const midpoint = pointA.clone().add(pointB).multiplyScalar(0.5);
+      const text = this.#constraintLabelText(entry);
+      const overlayData = { constraintID };
+
+      try { this._labelOverlay?.updateLabel(constraintID, text, midpoint.clone(), overlayData); } catch {}
+      const el = this._labelOverlay?.getElement?.(constraintID);
+      if (el) {
+        try {
+          el.classList.add('constraint-label');
+          el.dataset.constraintId = constraintID;
+        } catch {}
+      }
+
+      this._labelPositions.set(constraintID, {
+        position: midpoint.clone(),
+        text,
+        data: overlayData,
+      });
+      activeIds.add(constraintID);
+    });
+
+    this._removeUnusedConstraintLines(activeIds);
+    this._refreshConstraintLabels();
+    try { this.viewer?.render?.(); } catch {}
+  }
+
+  _refreshConstraintLabels() {
+    if (!this._labelOverlay || !this._labelPositions.size) return;
+    for (const [constraintID, entry] of this._labelPositions.entries()) {
+      if (!entry || !entry.position) continue;
+      try {
+        this._labelOverlay.updateLabel(constraintID, entry.text, entry.position.clone(), entry.data);
+        const el = this._labelOverlay.getElement(constraintID);
+        if (el) {
+          el.classList.add('constraint-label');
+          el.dataset.constraintId = constraintID;
+        }
+      } catch {}
+    }
+  }
+
+  _clearConstraintVisuals() {
+    this._labelPositions.clear();
+    if (this._labelOverlay) {
+      try { this._labelOverlay.clear(); } catch {}
+    }
+    for (const constraintID of Array.from(this._constraintLines.keys())) {
+      this.#removeConstraintLine(constraintID);
+    }
+  }
+
+  _removeUnusedConstraintLines(activeIds) {
+    for (const constraintID of Array.from(this._constraintLines.keys())) {
+      if (!activeIds.has(constraintID)) {
+        this.#removeConstraintLine(constraintID);
+      }
+    }
+  }
+
   _isFaceObject(object) {
     if (!object) return false;
     const type = object.userData?.type || object.userData?.brepType || object.type;
@@ -520,6 +650,168 @@ export class AssemblyConstraintsWidget {
       catch {}
     }
     this._normalArrows.clear();
+  }
+
+  #constraintPoints(entry) {
+    if (!entry?.inputParams) return null;
+    const pointA = this.#resolveSelectionPoint(entry.inputParams.element_A);
+    const pointB = this.#resolveSelectionPoint(entry.inputParams.element_B);
+    if (!pointA || !pointB) return null;
+    return [pointA, pointB];
+  }
+
+  #constraintLabelText(entry) {
+    const cls = this._resolveConstraintClass(entry);
+    const id = entry?.inputParams?.constraintID;
+    const base = cls?.constraintShortName || cls?.constraintName || entry?.constraintType || entry?.type || 'Constraint';
+    let suffix = '';
+    if (entry?.type === 'distance' || cls?.constraintType === 'distance') {
+      const distance = Number(entry?.inputParams?.distance);
+      if (Number.isFinite(distance)) suffix = ` ${distance}`;
+    }
+    const label = id ? `${id}${suffix}` : `${base}${suffix}`;
+    return label.trim();
+  }
+
+  #upsertConstraintLine(constraintID, pointA, pointB) {
+    if (!this._constraintGroup) return;
+    let line = this._constraintLines.get(constraintID);
+    if (!line) {
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(6);
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const material = new THREE.LineBasicMaterial({
+        color: 0xffd60a,
+        linewidth: 1,
+        transparent: true,
+        opacity: 0.85,
+        depthTest: false,
+        depthWrite: false,
+      });
+      line = new THREE.Line(geometry, material);
+      line.name = `constraint-line-${constraintID}`;
+      line.renderOrder = 9999;
+      line.userData.excludeFromFit = true;
+      try { this._constraintGroup.add(line); } catch {}
+      this._constraintLines.set(constraintID, line);
+    }
+    const attr = line.geometry.getAttribute('position');
+    attr.setXYZ(0, pointA.x, pointA.y, pointA.z);
+    attr.setXYZ(1, pointB.x, pointB.y, pointB.z);
+    attr.needsUpdate = true;
+    line.geometry.computeBoundingSphere?.();
+  }
+
+  #removeConstraintLine(constraintID) {
+    const line = this._constraintLines.get(constraintID);
+    if (!line) return;
+    try { line.parent?.remove(line); } catch {}
+    try { line.geometry?.dispose?.(); } catch {}
+    try { line.material?.dispose?.(); } catch {}
+    this._constraintLines.delete(constraintID);
+  }
+
+  #resolveSelectionPoint(selection) {
+    if (!selection) return null;
+    const candidates = this._resolveReferenceObjects(selection);
+    const object = candidates?.find((obj) => obj) || null;
+    if (object) {
+      const point = this.#extractWorldPoint(object);
+      if (point) return point;
+    }
+    if (Array.isArray(selection)) {
+      for (const item of selection) {
+        const point = this.#resolveSelectionPoint(item);
+        if (point) return point;
+      }
+    }
+    if (selection && typeof selection === 'object') {
+      if (Number.isFinite(selection.x) && Number.isFinite(selection.y) && Number.isFinite(selection.z)) {
+        return new THREE.Vector3(selection.x, selection.y, selection.z);
+      }
+      if (Array.isArray(selection) && selection.length >= 3 && selection.every((v) => Number.isFinite(v))) {
+        return new THREE.Vector3(selection[0], selection[1], selection[2]);
+      }
+      if (selection.point && typeof selection.point === 'object') {
+        const p = selection.point;
+        if (Array.isArray(p) && p.length >= 3 && p.every((v) => Number.isFinite(v))) {
+          return new THREE.Vector3(p[0], p[1], p[2]);
+        }
+        if (Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
+          return new THREE.Vector3(p.x, p.y, p.z);
+        }
+      }
+      if (selection.origin && Number.isFinite(selection.origin.x)) {
+        return new THREE.Vector3(selection.origin.x, selection.origin.y, selection.origin.z);
+      }
+    }
+    return null;
+  }
+
+  #extractWorldPoint(object) {
+    if (!object) return null;
+    try { object.updateMatrixWorld?.(true); }
+    catch {}
+    try {
+      const rep = objectRepresentativePoint?.(null, object);
+      if (rep && typeof rep.clone === 'function') return rep.clone();
+      if (rep && rep.isVector3) return rep.clone();
+    } catch {}
+    try {
+      if (typeof object.getWorldPosition === 'function') {
+        return object.getWorldPosition(new THREE.Vector3());
+      }
+    } catch {}
+    try {
+      if (object.isVector3) return object.clone();
+    } catch {}
+    try {
+      if (object.position) {
+        const pos = object.position.clone ? object.position.clone() : new THREE.Vector3(object.position.x, object.position.y, object.position.z);
+        if (object.parent?.matrixWorld) {
+          object.parent.updateMatrixWorld?.(true);
+          return pos.applyMatrix4(object.parent.matrixWorld);
+        }
+        return pos;
+      }
+    } catch {}
+    return null;
+  }
+
+  #handleLabelClick(idx, _ann, ev) {
+    if (idx == null) return;
+    const id = String(idx);
+    if (!id) return;
+    if (ev) {
+      try { ev.preventDefault(); } catch {}
+      try { ev.stopPropagation(); } catch {}
+    }
+    let changed = false;
+    if (typeof this.history?.setExclusiveOpen === 'function') {
+      changed = this.history.setExclusiveOpen(id);
+    }
+    if (!changed) {
+      const entries = this.history?.list?.() || [];
+      for (const entry of entries) {
+        const entryId = entry?.inputParams?.constraintID;
+        const shouldOpen = entryId === id;
+        const current = entry?.__open !== false;
+        if (current !== shouldOpen) {
+          this.history?.setOpenState(entryId, shouldOpen);
+        }
+      }
+      this.history?.setOpenState?.(id, true);
+    }
+
+    requestAnimationFrame(() => {
+      try {
+        const selector = `.acc-item[data-constraint-id="${CSS?.escape ? CSS.escape(id) : id}"]`;
+        const target = this._accordion?.querySelector?.(selector);
+        if (target && typeof target.scrollIntoView === 'function') {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      } catch {}
+    });
   }
 
   _createNormalArrow(object, color, label) {
@@ -1085,6 +1377,51 @@ export class AssemblyConstraintsWidget {
     .${ROOT_CLASS} .menu-empty {
       padding: 10px;
       color: var(--muted);
+    }
+    .pmi-label-root {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      pointer-events: none;
+      z-index: 6;
+      overflow: visible;
+      contain: layout paint size;
+      max-width: 100%;
+      max-height: 100%;
+    }
+    .pmi-label {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      background: rgba(28, 31, 40, 0.92);
+      color: #eceff7;
+      padding: 4px 6px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+      pointer-events: none;
+      border: 1px solid rgba(110,168,254,0.35);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    }
+    .pmi-label.constraint-label {
+      background: rgba(15,17,23,0.92);
+      border: 1px solid rgba(110,168,254,0.45);
+      border-radius: 8px;
+      padding: 4px 8px;
+      color: #e6f1ff;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      pointer-events: auto;
+      cursor: pointer;
+      box-shadow: 0 6px 14px rgba(0,0,0,0.35);
+      user-select: none;
+    }
+    .pmi-label.constraint-label:hover {
+      border-color: rgba(110,168,254,0.8);
+      background: rgba(17,20,27,0.96);
     }
   `;
   document.head.appendChild(style);
