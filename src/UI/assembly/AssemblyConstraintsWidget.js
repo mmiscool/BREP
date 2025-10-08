@@ -15,14 +15,13 @@ export class AssemblyConstraintsWidget {
     this.history = this.partHistory?.assemblyConstraintHistory || null;
     if (this.history) this.history.setPartHistory?.(this.partHistory);
 
-    this._forms = new Map();
+    this._sections = new Map();
     this._highlighted = new Map();
     this._highlightPalette = ['#ff3b30', '#30d158', '#0a84ff', '#ffd60a'];
 
     this._defaultIterations = 1000;
     this._normalArrows = new Set();
     this._debugNormalsEnabled = false;
-    this._delayInput = null;
     this._constraintLines = new Map();
     this._labelPositions = new Map();
     this._onControlsChange = () => this._refreshConstraintLabels();
@@ -31,6 +30,9 @@ export class AssemblyConstraintsWidget {
     this._constraintGraphicsCheckbox = null;
     this._hoverHighlights = new Map();
     this._activeHoverConstraintId = null;
+    this._idsSignature = '';
+    this._syncScheduled = false;
+    this._emptyStateEl = null;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
@@ -69,7 +71,7 @@ export class AssemblyConstraintsWidget {
     this._footer = this._buildAddConstraintFooter();
     this.uiElement.appendChild(this._footer);
 
-    this._unsubscribe = this.history?.onChange(() => this.render()) || null;
+    this._unsubscribe = this.history?.onChange(() => this._scheduleSync()) || null;
 
     this._onGlobalClick = (ev) => {
       const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
@@ -101,180 +103,422 @@ export class AssemblyConstraintsWidget {
     this._iterationInput = null;
     this._solveButton = null;
     this._constraintGraphicsCheckbox = null;
-    for (const form of this._forms.values()) {
-      try { form?.destroy?.(); } catch { /* ignore */ }
+    for (const section of this._sections.values()) {
+      this.#teardownSectionForm(section);
+      try {
+        if (section?.root?.parentNode) section.root.parentNode.removeChild(section.root);
+      } catch { /* ignore */ }
     }
-    this._forms.clear();
+    this._sections.clear();
+    this._idsSignature = '';
+    if (this._emptyStateEl?.parentNode) {
+      try { this._emptyStateEl.parentNode.removeChild(this._emptyStateEl); } catch { /* ignore */ }
+    }
+    this._emptyStateEl = null;
   }
 
   render() {
+    this._scheduleSync();
+  }
+
+  _scheduleSync() {
+    if (this._syncScheduled) return;
+    this._syncScheduled = true;
+    const doSync = () => {
+      this._syncScheduled = false;
+      try {
+        this._syncNow();
+      } catch (error) {
+        console.warn('[AssemblyConstraintsWidget] Sync failed:', error);
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        if (typeof queueMicrotask === 'function') queueMicrotask(doSync);
+        else Promise.resolve().then(doSync);
+      });
+    } else {
+      setTimeout(doSync, 0);
+    }
+  }
+
+  _syncNow() {
     this._toggleAddMenu(false);
     this._clearHighlights();
-    for (const form of this._forms.values()) {
-      try { form?.destroy?.(); } catch { /* ignore */ }
-    }
-    this._forms.clear();
-    this._accordion.textContent = '';
 
     const entries = this.history ? this.history.list() : [];
-    if (!entries || entries.length === 0) {
+    const list = Array.isArray(entries) ? entries : [];
+    const idToEntry = new Map();
+    const newIds = [];
+
+    for (let index = 0; index < list.length; index += 1) {
+      const entry = list[index];
+      if (!entry) continue;
+      const rawId = entry?.inputParams?.constraintID;
+      const constraintID = rawId ? String(rawId) : `constraint-${index}`;
+      newIds.push(constraintID);
+      idToEntry.set(constraintID, entry);
+    }
+
+    if (newIds.length === 0) {
+      this._clearAllSections();
+      this._showEmptyState();
       this._clearConstraintVisuals();
-      const empty = document.createElement('div');
-      empty.className = 'empty';
-      empty.textContent = 'No assembly constraints yet.';
-      this._accordion.appendChild(empty);
+      this._idsSignature = '';
+      try { this.viewer?.render?.(); } catch {}
       return;
     }
 
-    entries.forEach((entry, index) => {
-      const constraintID = entry?.inputParams?.constraintID || `constraint-${index}`;
-      const isOpen = entry.__open !== false;
-      const ConstraintClass = this._resolveConstraintClass(entry);
-      const schema = ConstraintClass?.inputParamsSchema ? { ...ConstraintClass.inputParamsSchema } : {};
-      if (entry?.inputParams) entry.inputParams.applyImmediately = true;
-      const titleText = entry?.inputParams?.label
-        || ConstraintClass?.constraintShortName
-        || ConstraintClass?.constraintName
-        || constraintID;
-      const statusInfo = this.#statusText(entry);
+    this._hideEmptyState();
 
-      const item = document.createElement('div');
-      item.className = 'acc-item';
-      item.dataset.constraintId = constraintID;
-      if (isOpen) item.classList.add('open');
-      if (statusInfo.error) item.classList.add('has-error');
-
-      const headerRow = document.createElement('div');
-      headerRow.className = 'acc-header-row';
-      item.appendChild(headerRow);
-
-      const headerBtn = document.createElement('button');
-      headerBtn.type = 'button';
-      headerBtn.className = 'acc-header';
-      headerBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-      headerBtn.addEventListener('click', () => {
-        const next = !isOpen;
-        this.history?.setOpenState(constraintID, next);
-      });
-
-      const title = document.createElement('span');
-      title.className = 'acc-title';
-      title.textContent = titleText;
-      headerBtn.appendChild(title);
-
-      const status = document.createElement('span');
-      status.className = 'acc-status';
-      status.textContent = statusInfo.label;
-      if (statusInfo.title) status.title = statusInfo.title;
-      else status.removeAttribute('title');
-      headerBtn.appendChild(status);
-
-      headerRow.appendChild(headerBtn);
-
-      const actions = document.createElement('div');
-      actions.className = 'acc-actions';
-      headerRow.appendChild(actions);
-
-      const upBtn = document.createElement('button');
-      upBtn.type = 'button';
-      upBtn.className = 'icon-btn';
-      upBtn.textContent = '▲';
-      upBtn.title = 'Move up';
-      upBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        this.history?.moveConstraint(constraintID, -1);
-      });
-      actions.appendChild(upBtn);
-
-      const downBtn = document.createElement('button');
-      downBtn.type = 'button';
-      downBtn.className = 'icon-btn';
-      downBtn.textContent = '▼';
-      downBtn.title = 'Move down';
-      downBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        this.history?.moveConstraint(constraintID, 1);
-      });
-      actions.appendChild(downBtn);
-
-      const removeBtn = document.createElement('button');
-      removeBtn.type = 'button';
-      removeBtn.className = 'icon-btn danger';
-      removeBtn.textContent = '✕';
-      removeBtn.title = 'Remove constraint';
-      removeBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        this.history?.removeConstraint(constraintID);
-      });
-      actions.appendChild(removeBtn);
-
-      const content = document.createElement('div');
-      content.className = 'acc-content';
-      content.hidden = !isOpen;
-      item.appendChild(content);
-
-      if (isOpen) {
-        const body = document.createElement('div');
-        body.className = 'acc-body';
-        content.appendChild(body);
-
-        const form = new genFeatureUI(schema, entry.inputParams, {
-          viewer: this.viewer,
-          partHistory: this.partHistory,
-          scene: this.viewer?.scene || null,
-          featureRef: entry,
-          excludeKeys: ['constraintID', 'applyImmediately'],
-          onChange: (_featureId, details) => {
-            const id = entry.inputParams?.constraintID;
-            if (!id) return;
-            this.history?.updateConstraintParams(id, (params) => {
-              if (details && details.key && Object.prototype.hasOwnProperty.call(details, 'value')) {
-                params[details.key] = details.value;
-              }
-            });
-          },
-          onReferenceChipRemove: (name) => {
-            try { SelectionFilter.deselectItem?.(this.viewer?.scene, name); }
-            catch { /* ignore */ }
-          },
-        });
-        body.appendChild(form.uiElement);
-
-        const actionsWrap = document.createElement('div');
-        actionsWrap.className = 'constraint-dialog-actions';
-
-        const highlightBtn = document.createElement('button');
-        highlightBtn.type = 'button';
-        highlightBtn.className = 'btn highlight-btn';
-        highlightBtn.textContent = 'Highlight Selection';
-        highlightBtn.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          this._highlightConstraint(entry, ConstraintClass);
-        });
-        actionsWrap.appendChild(highlightBtn);
-
-        const clearBtn = document.createElement('button');
-        clearBtn.type = 'button';
-        clearBtn.className = 'btn';
-        clearBtn.textContent = 'Clear Highlight';
-        clearBtn.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          this._clearHighlights();
-        });
-        actionsWrap.appendChild(clearBtn);
-
-        body.appendChild(actionsWrap);
-
-        this._forms.set(constraintID, form);
+    for (const id of Array.from(this._sections.keys())) {
+      if (!idToEntry.has(id)) {
+        this._removeSection(id);
       }
+    }
 
-      this._accordion.appendChild(item);
+    for (const id of newIds) {
+      if (!this._sections.has(id)) {
+        const entry = idToEntry.get(id);
+        this._addSection(id, entry);
+      }
+    }
+
+    const newSig = newIds.join('|');
+    if (newSig !== this._idsSignature) {
+      this._reorderSections(newIds);
+    }
+    this._idsSignature = newSig;
+
+    this._refreshSections(idToEntry);
+    this._updateConstraintVisuals(list);
+    try { this.viewer?.render?.(); } catch {}
+  }
+
+  _showEmptyState() {
+    if (!this._emptyStateEl) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'No assembly constraints yet.';
+      this._emptyStateEl = empty;
+    }
+    if (!this._emptyStateEl.parentNode) {
+      this._accordion.appendChild(this._emptyStateEl);
+    }
+  }
+
+  _hideEmptyState() {
+    if (this._emptyStateEl?.parentNode) {
+      this._emptyStateEl.parentNode.removeChild(this._emptyStateEl);
+    }
+  }
+
+  _clearAllSections() {
+    for (const id of Array.from(this._sections.keys())) {
+      this._removeSection(id);
+    }
+  }
+
+  _addSection(id, entry) {
+    if (!id) return;
+    const constraintId = String(id);
+    const ConstraintClass = this._resolveConstraintClass(entry);
+    const statusInfo = this.#statusText(entry);
+    const isOpen = entry?.__open !== false;
+
+    const item = document.createElement('div');
+    item.className = 'acc-item';
+    item.dataset.constraintId = constraintId;
+    if (statusInfo.error) item.classList.add('has-error');
+
+    const headerRow = document.createElement('div');
+    headerRow.className = 'acc-header-row';
+    item.appendChild(headerRow);
+
+    const headerBtn = document.createElement('button');
+    headerBtn.type = 'button';
+    headerBtn.className = 'acc-header';
+    headerBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    headerRow.appendChild(headerBtn);
+
+    const title = document.createElement('span');
+    title.className = 'acc-title';
+    title.textContent = entry?.inputParams?.label
+      || ConstraintClass?.constraintShortName
+      || ConstraintClass?.constraintName
+      || constraintId;
+    headerBtn.appendChild(title);
+
+    const status = document.createElement('span');
+    status.className = 'acc-status';
+    status.textContent = statusInfo.label;
+    if (statusInfo.title) status.title = statusInfo.title;
+    headerBtn.appendChild(status);
+
+    const actions = document.createElement('div');
+    actions.className = 'acc-actions';
+    headerRow.appendChild(actions);
+
+    const upBtn = document.createElement('button');
+    upBtn.type = 'button';
+    upBtn.className = 'icon-btn';
+    upBtn.textContent = '▲';
+    upBtn.title = 'Move up';
+    upBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      this.history?.moveConstraint(constraintId, -1);
+    });
+    actions.appendChild(upBtn);
+
+    const downBtn = document.createElement('button');
+    downBtn.type = 'button';
+    downBtn.className = 'icon-btn';
+    downBtn.textContent = '▼';
+    downBtn.title = 'Move down';
+    downBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      this.history?.moveConstraint(constraintId, 1);
+    });
+    actions.appendChild(downBtn);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'icon-btn danger';
+    removeBtn.textContent = '✕';
+    removeBtn.title = 'Remove constraint';
+    removeBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      this.history?.removeConstraint(constraintId);
+    });
+    actions.appendChild(removeBtn);
+
+    const content = document.createElement('div');
+    content.className = 'acc-content';
+    content.hidden = !isOpen;
+    item.appendChild(content);
+
+    const body = document.createElement('div');
+    body.className = 'acc-body';
+    content.appendChild(body);
+
+    const formContainer = document.createElement('div');
+    formContainer.className = 'constraint-form-container';
+    body.appendChild(formContainer);
+
+    const actionsWrap = document.createElement('div');
+    actionsWrap.className = 'constraint-dialog-actions';
+
+    const highlightBtn = document.createElement('button');
+    highlightBtn.type = 'button';
+    highlightBtn.className = 'btn highlight-btn';
+    highlightBtn.textContent = 'Highlight Selection';
+    highlightBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const latest = this._getConstraintEntryById(constraintId);
+      const latestClass = this._resolveConstraintClass(latest);
+      if (latest) this._highlightConstraint(latest, latestClass);
+    });
+    actionsWrap.appendChild(highlightBtn);
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'btn';
+    clearBtn.textContent = 'Clear Highlight';
+    clearBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this._clearHighlights();
+    });
+    actionsWrap.appendChild(clearBtn);
+
+    body.appendChild(actionsWrap);
+
+    const section = {
+      id: constraintId,
+      root: item,
+      headerBtn,
+      titleEl: title,
+      statusEl: status,
+      content,
+      body,
+      formContainer,
+      actionsWrap,
+      highlightBtn,
+      clearBtn,
+      form: null,
+      isOpen: false,
+      constraintClass: ConstraintClass,
+      type: entry?.type || null,
+    };
+
+    headerBtn.addEventListener('click', () => {
+      const next = !section.isOpen;
+      this.history?.setOpenState(constraintId, next);
     });
 
-    this._updateConstraintVisuals(entries);
+    this._sections.set(constraintId, section);
+    this._accordion.appendChild(item);
+    this.#setSectionOpen(section, isOpen, entry);
   }
+
+  _removeSection(id) {
+    const section = this._sections.get(String(id));
+    if (!section) return;
+    this.#teardownSectionForm(section);
+    if (section.root?.parentNode) {
+      section.root.parentNode.removeChild(section.root);
+    }
+    this._sections.delete(String(id));
+  }
+
+  _reorderSections(targetOrder) {
+    if (!Array.isArray(targetOrder)) return;
+    for (const id of targetOrder) {
+      const section = this._sections.get(id);
+      if (!section?.root) continue;
+      this._accordion.appendChild(section.root);
+    }
+  }
+
+  _refreshSections(idToEntry) {
+    for (const [id, section] of this._sections) {
+      const entry = idToEntry.get(id);
+      if (!entry) continue;
+      const ConstraintClass = this._resolveConstraintClass(entry);
+      section.constraintClass = ConstraintClass;
+      section.type = entry?.type || section.type || null;
+
+      if (entry?.inputParams) entry.inputParams.applyImmediately = true;
+
+      if (section.titleEl) {
+        section.titleEl.textContent = entry?.inputParams?.label
+          || ConstraintClass?.constraintShortName
+          || ConstraintClass?.constraintName
+          || id;
+      }
+
+      const statusInfo = this.#statusText(entry);
+      if (section.statusEl) {
+        section.statusEl.textContent = statusInfo.label;
+        if (statusInfo.title) section.statusEl.title = statusInfo.title;
+        else section.statusEl.removeAttribute('title');
+      }
+      if (section.root) {
+        section.root.dataset.constraintId = id;
+        section.root.classList.toggle('has-error', !!statusInfo.error);
+      }
+
+      const shouldOpen = entry.__open !== false;
+      this.#setSectionOpen(section, shouldOpen, entry);
+    }
+  }
+
+  _getConstraintEntryById(constraintID) {
+    const id = constraintID ? String(constraintID) : '';
+    if (!id) return null;
+    if (typeof this.history?.findById === 'function') {
+      const entry = this.history.findById(id);
+      if (entry) return entry;
+    }
+    try {
+      const list = this.history?.list?.();
+      if (Array.isArray(list)) {
+        return list.find((entry) => (entry?.inputParams?.constraintID ? String(entry.inputParams.constraintID) : '') === id) || null;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  #setSectionOpen(section, open, entry) {
+    if (!section) return;
+    const next = !!open;
+    const prev = !!section.isOpen;
+    section.isOpen = next;
+
+    if (section.headerBtn) {
+      section.headerBtn.setAttribute('aria-expanded', next ? 'true' : 'false');
+    }
+    if (section.root) {
+      section.root.classList.toggle('open', next);
+    }
+    if (section.content) {
+      section.content.hidden = !next;
+    }
+
+    if (next) {
+      this.#ensureSectionForm(section, entry);
+      this.#refreshSectionForm(section, entry);
+    } else if (prev) {
+      this.#teardownSectionForm(section);
+    }
+  }
+
+  #ensureSectionForm(section, entry) {
+    if (!section || section.form) return;
+    const container = section.formContainer;
+    if (!container) return;
+    const constraintEntry = entry || this._getConstraintEntryById(section.id);
+    const ConstraintClass = section.constraintClass || this._resolveConstraintClass(constraintEntry);
+    const schema = ConstraintClass?.inputParamsSchema ? { ...ConstraintClass.inputParamsSchema } : {};
+    const params = constraintEntry?.inputParams || {};
+    if (params && typeof params === 'object') {
+      params.applyImmediately = true;
+    }
+    const constraintId = section.id;
+    const form = new genFeatureUI(schema, params, {
+      viewer: this.viewer,
+      partHistory: this.partHistory,
+      scene: this.viewer?.scene || null,
+      featureRef: constraintEntry,
+      excludeKeys: ['constraintID', 'applyImmediately'],
+      onChange: (_featureId, details) => {
+        if (!constraintId) return;
+        if (!details || !details.key || !Object.prototype.hasOwnProperty.call(details, 'value')) return;
+        this.history?.updateConstraintParams(constraintId, (targetParams) => {
+          if (!targetParams || typeof targetParams !== 'object') return;
+          targetParams[details.key] = details.value;
+        });
+      },
+      onReferenceChipRemove: (name) => {
+        try { SelectionFilter.deselectItem?.(this.viewer?.scene, name); }
+        catch { /* ignore */ }
+      },
+    });
+    try { container.textContent = ''; } catch { /* ignore */ }
+    container.appendChild(form.uiElement);
+    section.form = form;
+  }
+
+  #refreshSectionForm(section, entry) {
+    if (!section?.form) return;
+    const form = section.form;
+    const params = entry?.inputParams || form.params || {};
+    if (params && typeof params === 'object') {
+      params.applyImmediately = true;
+    }
+    form.params = params;
+    try {
+      if (typeof form.refreshFromParams === 'function') {
+        form.refreshFromParams();
+      }
+    } catch { /* ignore */ }
+    try { form.featureRef = entry; } catch { /* ignore */ }
+  }
+
+  #teardownSectionForm(section) {
+    if (!section) return;
+    const form = section.form;
+    if (form) {
+      try { form._stopActiveReferenceSelection?.(); } catch { /* ignore */ }
+      try { form.destroy?.(); } catch { /* ignore */ }
+    }
+    if (section.formContainer) {
+      try { section.formContainer.textContent = ''; } catch { /* ignore */ }
+    }
+    section.form = null;
+  }
+
 
   async _handleSolve() {
     if (!this.history) return;
@@ -307,7 +551,6 @@ export class AssemblyConstraintsWidget {
     wrap.className = 'constraints-control-panel';
 
     wrap.appendChild(this._buildSolverControls());
-    wrap.appendChild(this._buildDelayControls());
     wrap.appendChild(this._buildVisualizationControls());
     wrap.appendChild(this._buildDebugControls());
 
@@ -357,40 +600,6 @@ export class AssemblyConstraintsWidget {
 
     this._iterationInput = input;
     this._solveButton = runBtn;
-
-    return wrap;
-  }
-
-  _buildDelayControls() {
-    const wrap = document.createElement('div');
-    wrap.className = 'control-panel-section delay-controls';
-
-    const label = document.createElement('label');
-    label.className = 'solver-iterations';
-
-    const span = document.createElement('span');
-    span.className = 'solver-iterations-label';
-    span.textContent = 'Delay (ms)';
-
-    const input = document.createElement('input');
-    input.type = 'number';
-    input.min = '0';
-    input.step = '50';
-    input.inputMode = 'numeric';
-    input.value = '20';
-    input.style.width = '100%';
-    input.addEventListener('change', () => {
-      const value = Number(input.value);
-      if (!Number.isFinite(value) || value < 0) {
-        input.value = '0';
-      }
-    });
-
-    label.appendChild(span);
-    label.appendChild(input);
-    wrap.appendChild(label);
-
-    this._delayInput = input;
 
     return wrap;
   }
@@ -445,8 +654,6 @@ export class AssemblyConstraintsWidget {
     label.appendChild(checkbox);
     label.appendChild(span);
     wrap.appendChild(label);
-
-    this._debugCheckbox = checkbox;
 
     return wrap;
   }
@@ -526,14 +733,8 @@ export class AssemblyConstraintsWidget {
     }
 
     const schema = ConstraintClass?.inputParamsSchema || {};
-    let refFields = Object.entries(schema).filter(([, def]) => def?.type === 'reference_selection');
-    if (!refFields.length) {
-      const fallbackKeys = ['element_A', 'element_B', 'element_a', 'element_b'];
-      refFields = fallbackKeys
-        .filter((key) => entry.inputParams[key] != null)
-        .map((key) => [key, null]);
-      if (!refFields.length) return false;
-    }
+    const refFields = Object.entries(schema).filter(([, def]) => def?.type === 'reference_selection');
+    if (!refFields.length) return false;
 
     let colorIndex = 0;
     let foundTargets = false;
@@ -915,10 +1116,6 @@ export class AssemblyConstraintsWidget {
 
   #constraintPoints(entry) {
     if (!entry?.inputParams) return null;
-    const pointA = this.#resolveSelectionPoint(entry.inputParams.element_A);
-    const pointB = this.#resolveSelectionPoint(entry.inputParams.element_B);
-    if (pointA && pointB) return [pointA, pointB];
-
     const refPoints = this.#collectReferenceSelectionPoints(entry);
     if (refPoints.length >= 2) return refPoints.slice(0, 2);
 

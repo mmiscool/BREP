@@ -162,8 +162,6 @@ function selectionDirection(constraint, context, selection, selectionLabel) {
 
 function describeSelectionLabel(label) {
   if (!label) return 'selection';
-  if (label === 'element_A') return 'Element A';
-  if (label === 'element_B') return 'Element B';
   const match = /^elements\[(\d+)\]$/i.exec(String(label));
   if (match) {
     const index = Number(match[1]);
@@ -224,8 +222,8 @@ export function solveParallelAlignment({
   selectionA,
   selectionB,
   opposeNormals = false,
-  selectionLabelA = 'element_A',
-  selectionLabelB = 'element_B',
+  selectionLabelA = 'elements[0]',
+  selectionLabelB = 'elements[1]',
 }) {
   if (!constraint) throw new Error('solveParallelAlignment requires a constraint instance.');
 
