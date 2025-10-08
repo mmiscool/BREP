@@ -17,11 +17,11 @@ export class AssemblyConstraintsWidget {
 
     this._sections = new Map();
     this._highlighted = new Map();
-    this._highlightPalette = ['#ff3b30', '#30d158', '#0a84ff', '#ffd60a'];
+    this._highlightPalette = ['#ffd60a', '#30d158', '#0a84ff', '#ff3b30',];
 
     this._defaultIterations = 1000;
     this._normalArrows = new Set();
-    this._debugNormalsEnabled = false;
+    this._debugMode = false;
     this._constraintLines = new Map();
     this._labelPositions = new Map();
     this._onControlsChange = () => this._refreshConstraintLabels();
@@ -41,6 +41,12 @@ export class AssemblyConstraintsWidget {
     this._solverConstraintLabel = null;
     this._pauseCheckbox = null;
     this._solverContinueButton = null;
+    this._animateCheckbox = null;
+    this._animateDelayInput = null;
+    this._animateControlsRow = null;
+    this._animateDelayContainer = null;
+    this._animateEnabled = true;
+    this._animateDelayMs = 10;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
@@ -60,10 +66,10 @@ export class AssemblyConstraintsWidget {
         this.viewer,
         null,
         null,
-        (idx, ann, ev) => { try { this.#handleLabelClick(idx, ann, ev); } catch {} },
+        (idx, ann, ev) => { try { this.#handleLabelClick(idx, ann, ev); } catch { } },
       );
-      try { this.viewer.controls?.addEventListener('change', this._onControlsChange); } catch {}
-      try { window.addEventListener('resize', this._onWindowResize); } catch {}
+      try { this.viewer.controls?.addEventListener('change', this._onControlsChange); } catch { }
+      try { window.addEventListener('resize', this._onWindowResize); } catch { }
     } else {
       this._labelOverlay = null;
     }
@@ -93,15 +99,15 @@ export class AssemblyConstraintsWidget {
   dispose() {
     this._clearHighlights();
     this._clearConstraintVisuals();
-    try { this.viewer?.controls?.removeEventListener('change', this._onControlsChange); } catch {}
-    try { window.removeEventListener('resize', this._onWindowResize); } catch {}
+    try { this.viewer?.controls?.removeEventListener('change', this._onControlsChange); } catch { }
+    try { window.removeEventListener('resize', this._onWindowResize); } catch { }
     if (this._constraintGroup && this.viewer?.scene) {
-      try { this.viewer.scene.remove(this._constraintGroup); } catch {}
+      try { this.viewer.scene.remove(this._constraintGroup); } catch { }
     }
     this._constraintGroup = null;
     this._constraintLines.clear();
     this._labelPositions.clear();
-    try { this._labelOverlay?.dispose?.(); } catch {}
+    try { this._labelOverlay?.dispose?.(); } catch { }
     this._labelOverlay = null;
     if (this._unsubscribe) {
       try { this._unsubscribe(); } catch { /* ignore */ }
@@ -110,7 +116,7 @@ export class AssemblyConstraintsWidget {
     document.removeEventListener('mousedown', this._onGlobalClick, true);
     const stopPromise = this._stopSolver({ wait: false });
     if (stopPromise?.catch) {
-      try { stopPromise.catch(() => {}); } catch { /* ignore */ }
+      try { stopPromise.catch(() => { }); } catch { /* ignore */ }
     }
     this._solverRun = null;
     this._iterationInput = null;
@@ -121,6 +127,10 @@ export class AssemblyConstraintsWidget {
     this._solverConstraintLabel = null;
     this._pauseCheckbox = null;
     this._solverContinueButton = null;
+    this._animateCheckbox = null;
+    this._animateDelayInput = null;
+    this._animateControlsRow = null;
+    this._animateDelayContainer = null;
     this._constraintGraphicsCheckbox = null;
     for (const section of this._sections.values()) {
       this.#teardownSectionForm(section);
@@ -184,7 +194,7 @@ export class AssemblyConstraintsWidget {
       this._showEmptyState();
       this._clearConstraintVisuals();
       this._idsSignature = '';
-      try { this.viewer?.render?.(); } catch {}
+      try { this.viewer?.render?.(); } catch { }
       return;
     }
 
@@ -211,7 +221,7 @@ export class AssemblyConstraintsWidget {
 
     this._refreshSections(idToEntry);
     this._updateConstraintVisuals(list);
-    try { this.viewer?.render?.(); } catch {}
+    try { this.viewer?.render?.(); } catch { }
   }
 
   _showEmptyState() {
@@ -610,14 +620,14 @@ export class AssemblyConstraintsWidget {
       },
     };
 
-    const iterationDelayMs = this._debugNormalsEnabled ? 10 : 0;
+    const iterationDelayMs = this.#computeIterationDelay();
 
     run.promise = (async () => {
       try {
         const results = await this.history.runAll(this.partHistory, {
           iterations,
           viewer: this.viewer || null,
-          debugMode: !!this._debugNormalsEnabled,
+          debugMode: !!this._debugMode,
           iterationDelayMs,
           controller: {
             signal: abortController.signal,
@@ -718,6 +728,31 @@ export class AssemblyConstraintsWidget {
     return 1;
   }
 
+  #normalizeAnimateDelayValue() {
+    let delay = Number(this._animateDelayInput?.value ?? this._animateDelayMs);
+    if (!Number.isFinite(delay) || delay < 0) delay = this._animateDelayMs;
+    delay = Math.max(0, Math.floor(delay));
+    if (this._animateDelayInput) this._animateDelayInput.value = String(delay);
+    this._animateDelayMs = delay;
+    return delay;
+  }
+
+  #computeIterationDelay() {
+    const animate = this._animateCheckbox ? this._animateCheckbox.checked : this._animateEnabled;
+    if (!animate) return 0;
+    return this.#normalizeAnimateDelayValue();
+  }
+
+  _handleAnimateCheckboxChange() {
+    this._animateEnabled = this._animateCheckbox?.checked !== false;
+    this._updateSolverUI();
+  }
+
+  _handleAnimateDelayChange() {
+    this.#normalizeAnimateDelayValue();
+    this._updateSolverUI();
+  }
+
   _updateSolverUI() {
     const run = this._solverRun;
     const running = !!run?.running && !run?.abortController?.signal?.aborted;
@@ -732,6 +767,17 @@ export class AssemblyConstraintsWidget {
     }
     if (this._iterationInput) {
       this._iterationInput.disabled = running || stopping;
+    }
+    if (this._animateCheckbox) {
+      this._animateCheckbox.disabled = running || stopping;
+    }
+    if (this._animateDelayInput) {
+      const animateChecked = this._animateCheckbox ? this._animateCheckbox.checked : this._animateEnabled;
+      this._animateDelayInput.disabled = !animateChecked || running || stopping;
+    }
+    if (this._animateDelayContainer) {
+      const animateChecked = this._animateCheckbox ? this._animateCheckbox.checked : this._animateEnabled;
+      this._animateDelayContainer.style.display = animateChecked ? '' : 'none';
     }
 
     if (this._solverStatusLabel) {
@@ -838,7 +884,7 @@ export class AssemblyConstraintsWidget {
       ev.stopPropagation();
       const promise = this._handleStartClick();
       if (promise?.catch) {
-        try { promise.catch(() => {}); } catch { /* ignore */ }
+        try { promise.catch(() => { }); } catch { /* ignore */ }
       }
     });
 
@@ -852,7 +898,7 @@ export class AssemblyConstraintsWidget {
       ev.stopPropagation();
       const stopPromise = this._stopSolver({ wait: false });
       if (stopPromise?.catch) {
-        try { stopPromise.catch(() => {}); } catch { /* ignore */ }
+        try { stopPromise.catch(() => { }); } catch { /* ignore */ }
       }
     });
 
@@ -880,6 +926,47 @@ export class AssemblyConstraintsWidget {
     statusRow.appendChild(statusLabel);
     statusRow.appendChild(loopLabel);
     statusRow.appendChild(constraintLabel);
+
+    const animateRow = document.createElement('div');
+    animateRow.className = 'solver-row solver-row-animate';
+
+    const animateLabel = document.createElement('label');
+    animateLabel.className = 'toggle-control solver-animate-toggle';
+
+    const animateCheckbox = document.createElement('input');
+    animateCheckbox.type = 'checkbox';
+    animateCheckbox.checked = true;
+    animateCheckbox.addEventListener('change', () => {
+      this._handleAnimateCheckboxChange();
+    });
+
+    const animateText = document.createElement('span');
+    animateText.textContent = 'Animate solve';
+
+    animateLabel.appendChild(animateCheckbox);
+    animateLabel.appendChild(animateText);
+
+    const delayContainer = document.createElement('div');
+    delayContainer.className = 'solver-animate-delay';
+
+    const delayLabel = document.createElement('span');
+    delayLabel.textContent = 'Step speed (ms)';
+
+    const delayInput = document.createElement('input');
+    delayInput.type = 'number';
+    delayInput.min = '0';
+    delayInput.step = '1';
+    delayInput.inputMode = 'numeric';
+    delayInput.value = String(this._animateDelayMs);
+    delayInput.addEventListener('change', () => {
+      this._handleAnimateDelayChange();
+    });
+
+    delayContainer.appendChild(delayLabel);
+    delayContainer.appendChild(delayInput);
+
+    animateRow.appendChild(animateLabel);
+    animateRow.appendChild(delayContainer);
 
     const pauseRow = document.createElement('div');
     pauseRow.className = 'solver-row solver-row-pause';
@@ -916,6 +1003,7 @@ export class AssemblyConstraintsWidget {
 
     wrap.appendChild(mainRow);
     wrap.appendChild(statusRow);
+    wrap.appendChild(animateRow);
     wrap.appendChild(pauseRow);
 
     this._iterationInput = input;
@@ -926,6 +1014,11 @@ export class AssemblyConstraintsWidget {
     this._solverConstraintLabel = constraintLabel;
     this._pauseCheckbox = pauseCheckbox;
     this._solverContinueButton = continueBtn;
+    this._animateCheckbox = animateCheckbox;
+    this._animateDelayInput = delayInput;
+    this._animateControlsRow = animateRow;
+    this._animateDelayContainer = delayContainer;
+    this._animateEnabled = true;
 
     this._updateSolverUI();
 
@@ -968,12 +1061,12 @@ export class AssemblyConstraintsWidget {
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.addEventListener('change', () => {
-      this._debugNormalsEnabled = checkbox.checked;
+      this._debugMode = checkbox.checked;
       this.#clearConstraintDebugArrows();
-      if (!this._debugNormalsEnabled) {
+      if (!this._debugMode) {
         this._clearNormalArrows();
       }
-      try { this.viewer?.render?.(); } catch {}
+      try { this.viewer?.render?.(); } catch { }
     });
 
     const span = document.createElement('span');
@@ -1008,7 +1101,7 @@ export class AssemblyConstraintsWidget {
       this.#clearActiveHoverHighlight();
     }
 
-    try { this.viewer?.render?.(); } catch {}
+    try { this.viewer?.render?.(); } catch { }
   }
 
   _restoreHighlightRecords(map) {
@@ -1118,10 +1211,10 @@ export class AssemblyConstraintsWidget {
       return;
     }
     const onEnter = () => {
-      try { this.#handleConstraintLabelHover(entry, constraintID); } catch {}
+      try { this.#handleConstraintLabelHover(entry, constraintID); } catch { }
     };
     const onLeave = () => {
-      try { this.#handleConstraintLabelHoverEnd(constraintID); } catch {}
+      try { this.#handleConstraintLabelHoverEnd(constraintID); } catch { }
     };
     element.addEventListener('mouseenter', onEnter);
     element.addEventListener('mouseleave', onLeave);
@@ -1145,14 +1238,14 @@ export class AssemblyConstraintsWidget {
       emitWarnings: false,
     });
     this.#setConstraintLineHighlight(constraintID, true);
-    try { this.viewer?.render?.(); } catch {}
+    try { this.viewer?.render?.(); } catch { }
   }
 
   #handleConstraintLabelHoverEnd(constraintID) {
     if (!constraintID) return;
     if (this._activeHoverConstraintId !== constraintID) {
       this.#setConstraintLineHighlight(constraintID, false);
-      try { this.viewer?.render?.(); } catch {}
+      try { this.viewer?.render?.(); } catch { }
       return;
     }
     this.#clearActiveHoverHighlight();
@@ -1164,7 +1257,7 @@ export class AssemblyConstraintsWidget {
     this._activeHoverConstraintId = null;
     this._clearHoverHighlights();
     this.#setConstraintLineHighlight(activeId, false);
-    try { this.viewer?.render?.(); } catch {}
+    try { this.viewer?.render?.(); } catch { }
   }
 
   #setConstraintLineHighlight(constraintID, active) {
@@ -1183,10 +1276,10 @@ export class AssemblyConstraintsWidget {
           depthWrite: mat.depthWrite,
         };
       }
-      try { mat.color?.set('#ffffff'); } catch {}
-      try { mat.opacity = 1; } catch {}
-      try { mat.linewidth = 2; } catch {}
-      try { mat.depthTest = false; mat.depthWrite = false; } catch {}
+      try { mat.color?.set('#ffffff'); } catch { }
+      try { mat.opacity = 1; } catch { }
+      try { mat.linewidth = 2; } catch { }
+      try { mat.depthTest = false; mat.depthWrite = false; } catch { }
       line.renderOrder = 10050;
     } else {
       const original = line.userData.__hoverOriginal;
@@ -1197,13 +1290,13 @@ export class AssemblyConstraintsWidget {
           if (original.linewidth != null) mat.linewidth = original.linewidth;
           if (original.depthTest != null) mat.depthTest = original.depthTest;
           if (original.depthWrite != null) mat.depthWrite = original.depthWrite;
-        } catch {}
+        } catch { }
       }
       delete line.userData.__hoverOriginal;
       line.renderOrder = 9999;
     }
 
-    try { mat.needsUpdate = true; } catch {}
+    try { mat.needsUpdate = true; } catch { }
   }
 
   _updateConstraintVisuals(entries = []) {
@@ -1215,7 +1308,7 @@ export class AssemblyConstraintsWidget {
     const activeIds = new Set();
     this._labelPositions.clear();
     if (this._labelOverlay) {
-      try { this._labelOverlay.clear(); } catch {}
+      try { this._labelOverlay.clear(); } catch { }
     }
 
     if (!entries || entries.length === 0) {
@@ -1245,13 +1338,13 @@ export class AssemblyConstraintsWidget {
       const overlayData = { constraintID };
 
       if (this._constraintGraphicsEnabled) {
-        try { this._labelOverlay?.updateLabel(constraintID, text, labelPosition.clone(), overlayData); } catch {}
+        try { this._labelOverlay?.updateLabel(constraintID, text, labelPosition.clone(), overlayData); } catch { }
         const el = this._labelOverlay?.getElement?.(constraintID);
         if (el) {
           try {
             el.classList.add('constraint-label');
             el.dataset.constraintId = constraintID;
-          } catch {}
+          } catch { }
           this.#attachLabelHoverHandlers(el, entry, constraintID);
         }
       }
@@ -1267,7 +1360,7 @@ export class AssemblyConstraintsWidget {
 
     this._removeUnusedConstraintLines(activeIds);
     this._refreshConstraintLabels();
-    try { this.viewer?.render?.(); } catch {}
+    try { this.viewer?.render?.(); } catch { }
   }
 
   _refreshConstraintLabels() {
@@ -1283,7 +1376,7 @@ export class AssemblyConstraintsWidget {
           el.dataset.constraintId = constraintID;
           this.#attachLabelHoverHandlers(el, record.entry, constraintID);
         }
-      } catch {}
+      } catch { }
     }
   }
 
@@ -1291,7 +1384,7 @@ export class AssemblyConstraintsWidget {
     this.#clearActiveHoverHighlight();
     this._labelPositions.clear();
     if (this._labelOverlay) {
-      try { this._labelOverlay.clear(); } catch {}
+      try { this._labelOverlay.clear(); } catch { }
     }
     for (const constraintID of Array.from(this._constraintLines.keys())) {
       this.#removeConstraintLine(constraintID);
@@ -1420,7 +1513,7 @@ export class AssemblyConstraintsWidget {
     if (!scene || !this._normalArrows) return;
     for (const arrow of this._normalArrows) {
       try { arrow?.parent?.remove?.(arrow); }
-      catch {}
+      catch { }
     }
     this._normalArrows.clear();
   }
@@ -1442,7 +1535,7 @@ export class AssemblyConstraintsWidget {
     });
     for (const obj of toRemove) {
       try { obj.parent?.remove?.(obj); }
-      catch {}
+      catch { }
     }
   }
 
@@ -1526,7 +1619,7 @@ export class AssemblyConstraintsWidget {
       line.name = `constraint-line-${constraintID}`;
       line.renderOrder = 9999;
       line.userData.excludeFromFit = true;
-      try { this._constraintGroup.add(line); } catch {}
+      try { this._constraintGroup.add(line); } catch { }
       this._constraintLines.set(constraintID, line);
     }
     const attr = line.geometry.getAttribute('position');
@@ -1539,9 +1632,9 @@ export class AssemblyConstraintsWidget {
   #removeConstraintLine(constraintID) {
     const line = this._constraintLines.get(constraintID);
     if (!line) return;
-    try { line.parent?.remove(line); } catch {}
-    try { line.geometry?.dispose?.(); } catch {}
-    try { line.material?.dispose?.(); } catch {}
+    try { line.parent?.remove(line); } catch { }
+    try { line.geometry?.dispose?.(); } catch { }
+    try { line.material?.dispose?.(); } catch { }
     this._constraintLines.delete(constraintID);
   }
 
@@ -1604,7 +1697,7 @@ export class AssemblyConstraintsWidget {
     for (const obj of objects) {
       if (!obj) continue;
       try { obj.updateMatrixWorld?.(true); }
-      catch {}
+      catch { }
 
       tmpBox.makeEmpty();
       tmpBox.setFromObject(obj);
@@ -1642,20 +1735,20 @@ export class AssemblyConstraintsWidget {
   #extractWorldPoint(object) {
     if (!object) return null;
     try { object.updateMatrixWorld?.(true); }
-    catch {}
+    catch { }
     try {
       const rep = objectRepresentativePoint?.(null, object);
       if (rep && typeof rep.clone === 'function') return rep.clone();
       if (rep && rep.isVector3) return rep.clone();
-    } catch {}
+    } catch { }
     try {
       if (typeof object.getWorldPosition === 'function') {
         return object.getWorldPosition(new THREE.Vector3());
       }
-    } catch {}
+    } catch { }
     try {
       if (object.isVector3) return object.clone();
-    } catch {}
+    } catch { }
     try {
       if (object.position) {
         const pos = object.position.clone ? object.position.clone() : new THREE.Vector3(object.position.x, object.position.y, object.position.z);
@@ -1665,7 +1758,7 @@ export class AssemblyConstraintsWidget {
         }
         return pos;
       }
-    } catch {}
+    } catch { }
     return null;
   }
 
@@ -1674,8 +1767,8 @@ export class AssemblyConstraintsWidget {
     const id = String(idx);
     if (!id) return;
     if (ev) {
-      try { ev.preventDefault(); } catch {}
-      try { ev.stopPropagation(); } catch {}
+      try { ev.preventDefault(); } catch { }
+      try { ev.stopPropagation(); } catch { }
     }
     let changed = false;
     if (typeof this.history?.setExclusiveOpen === 'function') {
@@ -1701,7 +1794,7 @@ export class AssemblyConstraintsWidget {
         if (target && typeof target.scrollIntoView === 'function') {
           target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-      } catch {}
+      } catch { }
     });
   }
 
@@ -1727,7 +1820,7 @@ export class AssemblyConstraintsWidget {
     try {
       const pt = objectRepresentativePoint?.(null, object);
       if (pt && typeof pt.clone === 'function') return pt.clone();
-    } catch {}
+    } catch { }
     const geom = object.geometry;
     if (geom?.computeBoundingBox) {
       try {
@@ -1737,7 +1830,7 @@ export class AssemblyConstraintsWidget {
           object.updateMatrixWorld?.(true);
           return center.applyMatrix4(object.matrixWorld);
         }
-      } catch {}
+      } catch { }
     }
     if (typeof object.getWorldPosition === 'function') {
       return object.getWorldPosition(new THREE.Vector3());
@@ -1752,7 +1845,7 @@ export class AssemblyConstraintsWidget {
         const avg = object.getAverageNormal();
         if (avg && avg.lengthSq() > 1e-10) return avg.clone().normalize();
       }
-    } catch {}
+    } catch { }
 
     const geom = object.geometry;
     if (!geom?.isBufferGeometry) return null;
@@ -1814,7 +1907,7 @@ export class AssemblyConstraintsWidget {
         geom.computeBoundingSphere();
         const radius = geom.boundingSphere?.radius;
         if (Number.isFinite(radius) && radius > 0) return Math.max(radius, 10);
-      } catch {}
+      } catch { }
     }
     return 10;
   }
@@ -2092,6 +2185,11 @@ export class AssemblyConstraintsWidget {
       color: var(--muted);
       gap: 12px;
     }
+    .${ROOT_CLASS} .solver-row-animate {
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
     .${ROOT_CLASS} .solver-status-label {
       display: inline-flex;
       align-items: center;
@@ -2126,6 +2224,29 @@ export class AssemblyConstraintsWidget {
     .${ROOT_CLASS} .solver-constraint-label {
       color: var(--muted);
       font-weight: 500;
+    }
+    .${ROOT_CLASS} .solver-animate-delay {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      flex-wrap: wrap;
+    }
+    .${ROOT_CLASS} .solver-animate-delay input {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px 8px;
+      background: var(--input-bg);
+      color: var(--text);
+      width: 5em;
+      font-size: 13px;
+    }
+    .${ROOT_CLASS} .solver-animate-delay input:focus {
+      outline: none;
+      border-color: var(--focus);
+      box-shadow: 0 0 0 3px rgba(59,130,246,.15);
     }
     .${ROOT_CLASS} .solver-row-pause {
       justify-content: space-between;
