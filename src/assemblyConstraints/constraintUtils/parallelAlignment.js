@@ -3,6 +3,7 @@ import { objectRepresentativePoint, getElementDirection } from '../../UI/pmi/ann
 
 export const ANGLE_TOLERANCE = THREE.MathUtils.degToRad(0.5);
 export const MAX_ROTATION_PER_ITERATION = THREE.MathUtils.degToRad(20);
+const MAX_EDGE_SAMPLE_POINTS = 256;
 
 function getWorldNormal(object) {
   if (!object) return null;
@@ -18,19 +19,6 @@ function getWorldNormal(object) {
   }
 
   return computeNormalFromObject(object);
-}
-
-function resolveDirection(object) {
-  if (!object) return null;
-  const worldNormal = getWorldNormal(object);
-  if (worldNormal && worldNormal.lengthSq() > 0) return worldNormal.normalize();
-  try {
-    const dir = getElementDirection(null, object);
-    if (dir && dir.lengthSq() > 0) return dir.clone().normalize();
-  } catch {}
-  const fallback = computeNormalFromObject(object);
-  if (fallback && fallback.lengthSq() > 0) return fallback.normalize();
-  return null;
 }
 
 function resolveOrigin(object, component) {
@@ -127,23 +115,317 @@ function computeNormalFromGeometry(object, geometry) {
   return accum.normalize();
 }
 
+function normalizeOrNull(vec) {
+  if (!vec) return null;
+  const clone = vec instanceof THREE.Vector3
+    ? vec.clone()
+    : new THREE.Vector3(vec.x ?? 0, vec.y ?? 0, vec.z ?? 0);
+  if (clone.lengthSq() <= 1e-12) return null;
+  return clone.normalize();
+}
+
+function readAttributeVector(attr, index) {
+  if (!attr || typeof attr.getX !== 'function') return null;
+  if (index < 0 || index >= attr.count) return null;
+  return new THREE.Vector3(attr.getX(index), attr.getY(index), attr.getZ(index));
+}
+
+function elementDirectionFrom(target) {
+  if (!target) return null;
+  try {
+    const dir = getElementDirection(null, target);
+    if (dir && dir.lengthSq() > 1e-12) {
+      return dir.clone ? dir.clone() : new THREE.Vector3(dir.x, dir.y, dir.z);
+    }
+  } catch {}
+  return null;
+}
+
+function collectEdgeSamplePoints(target, maxSamples = MAX_EDGE_SAMPLE_POINTS) {
+  if (!target) return null;
+
+  const polyline = target.userData?.polylineLocal;
+  const closedLoop = !!target.userData?.closedLoop;
+  const points = [];
+
+  target.updateMatrixWorld?.(true);
+  const matrixWorld = target.matrixWorld;
+
+  const pushPoint = (x, y, z) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+    const p = new THREE.Vector3(x, y, z);
+    p.applyMatrix4(matrixWorld);
+    points.push(p);
+  };
+
+  if (Array.isArray(polyline) && polyline.length >= 2) {
+    for (const entry of polyline) {
+      if (!entry) continue;
+      if (Array.isArray(entry) && entry.length >= 3) {
+        pushPoint(entry[0], entry[1], entry[2]);
+        continue;
+      }
+      if (typeof entry === 'object') {
+        pushPoint(entry.x ?? entry[0] ?? 0, entry.y ?? entry[1] ?? 0, entry.z ?? entry[2] ?? 0);
+      }
+    }
+    return points.length >= 2 ? { points, closedLoop } : null;
+  }
+
+  const geom = target.geometry;
+  if (!geom) return null;
+
+  const sampleAttribute = (attrCount, getter) => {
+    if (attrCount <= 0) return;
+    const total = attrCount;
+    const sampleCount = Math.min(Math.max(total, 1), Math.max(2, Math.min(total, maxSamples)));
+    const denom = sampleCount > 1 ? (sampleCount - 1) : 1;
+    let lastIndex = -1;
+    for (let i = 0; i < sampleCount; i += 1) {
+      const t = denom === 0 ? 0 : i / denom;
+      const idx = Math.min(total - 1, Math.round(t * (total - 1)));
+      if (idx === lastIndex) continue;
+      lastIndex = idx;
+      const vec = getter(idx);
+      if (vec) pushPoint(vec.x, vec.y, vec.z);
+    }
+    if (lastIndex !== total - 1) {
+      const tail = getter(total - 1);
+      if (tail) pushPoint(tail.x, tail.y, tail.z);
+    }
+  };
+
+  const posAttr = geom.getAttribute?.('position');
+  if (posAttr && posAttr.itemSize === 3 && posAttr.count >= 1) {
+    sampleAttribute(posAttr.count, (idx) => readAttributeVector(posAttr, idx));
+    return points.length >= 2 ? { points, closedLoop } : null;
+  }
+
+  const arr = geom.attributes?.position?.array;
+  if (arr && (Array.isArray(arr) || ArrayBuffer.isView(arr))) {
+    const total = Math.floor(arr.length / 3);
+    if (total <= 0) return null;
+    sampleAttribute(total, (idx) => {
+      const base = idx * 3;
+      return new THREE.Vector3(arr[base], arr[base + 1], arr[base + 2]);
+    });
+    return points.length >= 2 ? { points, closedLoop } : null;
+  }
+
+  return null;
+}
+
+function principalAxisFromPoints(points) {
+  if (!Array.isArray(points) || points.length < 2) return null;
+  const centroid = new THREE.Vector3();
+  for (const p of points) centroid.add(p);
+  centroid.multiplyScalar(1 / points.length);
+
+  let xx = 0;
+  let xy = 0;
+  let xz = 0;
+  let yy = 0;
+  let yz = 0;
+  let zz = 0;
+  for (const p of points) {
+    const dx = p.x - centroid.x;
+    const dy = p.y - centroid.y;
+    const dz = p.z - centroid.z;
+    xx += dx * dx;
+    xy += dx * dy;
+    xz += dx * dz;
+    yy += dy * dy;
+    yz += dy * dz;
+    zz += dz * dz;
+  }
+
+  const vec = new THREE.Vector3(1, 0, 0);
+  if (yy > xx && yy >= zz) vec.set(0, 1, 0);
+  else if (zz > xx && zz > yy) vec.set(0, 0, 1);
+
+  for (let i = 0; i < 10; i += 1) {
+    const x = xx * vec.x + xy * vec.y + xz * vec.z;
+    const y = xy * vec.x + yy * vec.y + yz * vec.z;
+    const z = xz * vec.x + yz * vec.y + zz * vec.z;
+    const len = Math.hypot(x, y, z);
+    if (len <= 1e-9) return null;
+    vec.set(x / len, y / len, z / len);
+  }
+  return vec.normalize();
+}
+
+function resolveEdgeData(object) {
+  if (!object) return null;
+  const samplePayload = collectEdgeSamplePoints(object);
+  if (!samplePayload) return null;
+
+  const { points: samples, closedLoop } = samplePayload;
+  if (!samples || samples.length < 2) return null;
+
+  if (closedLoop) {
+    const error = new Error('ParallelConstraint: Selected edge is a closed loop and has no unique tangent direction.');
+    error.details = {
+      objectName: object?.name || null,
+      reason: 'edge-closed-loop',
+    };
+    throw error;
+  }
+
+  const first = samples[0].clone();
+  const last = samples[samples.length - 1].clone();
+  const endpoints = [first.clone(), last.clone()];
+
+  const centroid = samples.reduce((acc, p) => acc.add(p), new THREE.Vector3()).multiplyScalar(1 / samples.length);
+  const midpoint = first.distanceToSquared(last) > 1e-14
+    ? first.clone().add(last).multiplyScalar(0.5)
+    : centroid.clone();
+
+  const segmentAccum = new THREE.Vector3();
+  let totalSegmentLength = 0;
+  for (let i = 1; i < samples.length; i += 1) {
+    const seg = samples[i].clone().sub(samples[i - 1]);
+    const segLength = seg.length();
+    if (segLength > 1e-9) {
+      segmentAccum.add(seg);
+      totalSegmentLength += segLength;
+    }
+  }
+
+  const chord = last.clone().sub(first);
+  const chordLength = chord.length();
+
+  let direction = principalAxisFromPoints(samples);
+  let directionSource = direction ? 'edge-principal-axis' : null;
+
+  if (!direction && totalSegmentLength > 1e-9) {
+    direction = segmentAccum.clone().normalize();
+    directionSource = 'edge-segment-average';
+  }
+
+  if (!direction && chordLength > 1e-9) {
+    direction = chord.clone().normalize();
+    directionSource = 'edge-chord';
+  }
+
+  if (!direction || direction.lengthSq() <= 1e-12) {
+    return {
+      endpoints,
+      midpoint,
+      sampleCount: samples.length,
+      chord: chordLength > 1e-9 ? chord.clone() : null,
+      segmentAccum: totalSegmentLength > 1e-9 ? segmentAccum.clone() : null,
+      direction: null,
+      directionSource: 'edge-direction-unresolved',
+      totalSegmentLength,
+      chordLength,
+    };
+  }
+
+  if (chordLength > 1e-9 && direction.dot(chord) < 0) {
+    direction.negate();
+  }
+
+  return {
+    endpoints,
+    midpoint,
+    sampleCount: samples.length,
+    chord: chordLength > 1e-9 ? chord.clone() : null,
+    segmentAccum: totalSegmentLength > 1e-9 ? segmentAccum.clone() : null,
+    direction: direction ? direction.clone() : null,
+    directionSource,
+    totalSegmentLength,
+    chordLength,
+    closedLoop: !!closedLoop,
+  };
+}
+
+function resolveDirection(object, component, kind, edgeData) {
+  const preferEdgeTangent = kind === 'EDGE';
+  const elementDirCandidate = preferEdgeTangent
+    ? null
+    : normalizeOrNull(elementDirectionFrom(object) || elementDirectionFrom(component));
+
+  if (preferEdgeTangent) {
+    const edgeDir = normalizeOrNull(edgeData?.direction);
+    if (edgeDir) {
+      return { direction: edgeDir, source: edgeData?.directionSource || 'edge-data' };
+    }
+
+    return { direction: null, source: edgeData?.directionSource || 'edge-direction-unresolved' };
+  }
+
+  const worldNormal = normalizeOrNull(getWorldNormal(object));
+  if (worldNormal) {
+    return { direction: worldNormal, source: 'surface-normal' };
+  }
+
+  if (elementDirCandidate) {
+    const source = preferEdgeTangent ? 'edge-element-direction' : 'element-direction';
+    return { direction: elementDirCandidate, source };
+  }
+
+  const geometryNormal = normalizeOrNull(computeNormalFromObject(object));
+  if (geometryNormal) {
+    return { direction: geometryNormal, source: 'geometry-normal' };
+  }
+
+  return { direction: null, source: preferEdgeTangent ? 'edge-direction-unresolved' : 'unresolved' };
+}
+
+function selectionKindFrom(object, selection) {
+  const candidates = [];
+  if (selection && typeof selection.kind === 'string') candidates.push(selection.kind);
+  const userData = object?.userData;
+  if (userData?.type) candidates.push(userData.type);
+  if (userData?.brepType) candidates.push(userData.brepType);
+  if (object?.type) candidates.push(object.type);
+
+  for (const raw of candidates) {
+    const val = String(raw || '').toUpperCase();
+    if (!val) continue;
+    if (val.includes('FACE')) return 'FACE';
+    if (val.includes('EDGE')) return 'EDGE';
+    if (val.includes('VERTEX') || val.includes('POINT')) return 'POINT';
+    if (val.includes('COMPONENT')) return 'COMPONENT';
+  }
+  return 'UNKNOWN';
+}
+
 function selectionDirection(constraint, context, selection, selectionLabel) {
   const object = context.resolveObject?.(selection) || null;
   const component = context.resolveComponent?.(selection) || null;
+  const kind = selectionKindFrom(object, selection);
+  const preferEdgeTangent = kind === 'EDGE';
+  const edgeData = preferEdgeTangent ? resolveEdgeData(object) : null;
   if (context.scene?.updateMatrixWorld) {
     try { context.scene.updateMatrixWorld(true); } catch {}
   }
   component?.updateMatrixWorld?.(true);
   object?.updateMatrixWorld?.(true);
 
-  const origin = resolveOrigin(object, component);
-  const dirFromObject = resolveDirection(object);
+  let origin = resolveOrigin(object, component);
+  if (edgeData?.midpoint) {
+    origin = edgeData.midpoint.clone();
+  }
+
+  const resolved = resolveDirection(object, component, kind, edgeData);
+  const dirFromObject = resolved.direction;
   if (!dirFromObject || dirFromObject.lengthSq() === 0) {
     const failureDetails = {
       selectionLabel,
       selection,
       objectName: object?.name || null,
       componentName: component?.name || null,
+      kind,
+      edgeData: edgeData ? {
+        endpoints: edgeData.endpoints?.map?.((p) => p.toArray()) || null,
+        directionSource: edgeData.directionSource || null,
+        sampleCount: edgeData.sampleCount ?? null,
+        chordLength: edgeData.chordLength ?? null,
+        totalSegmentLength: edgeData.totalSegmentLength ?? null,
+        closedLoop: edgeData.closedLoop ?? null,
+      } : null,
+      reason: resolved.source,
     };
     const error = new Error('ParallelConstraint: Unable to resolve a surface normal for the provided selection.');
     error.details = failureDetails;
@@ -156,7 +438,9 @@ function selectionDirection(constraint, context, selection, selectionLabel) {
     origin,
     object,
     component: component || null,
-    directionSource: 'object',
+    directionSource: resolved.source,
+    kind,
+    edgeData,
   };
 }
 

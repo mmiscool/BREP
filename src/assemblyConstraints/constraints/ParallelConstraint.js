@@ -89,17 +89,19 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
         ? result.angleDeg
         : (typeof angle === 'number' ? THREE.MathUtils.radToDeg(angle) : null);
 
-      console.log('[ParallelConstraint] normals', {
+      console.log('[ParallelConstraint] directions', {
         constraintID: this.inputParams?.constraintID || null,
-        faceA: {
+        selectionA: {
           normal: dirA?.toArray?.() || null,
           point: infoA.origin?.toArray?.() || null,
           source: infoA.directionSource,
+          kind: infoA.kind || null,
         },
-        faceB: {
+        selectionB: {
           normal: dirB?.toArray?.() || null,
           point: infoB.origin?.toArray?.() || null,
           source: infoB.directionSource,
+          kind: infoB.kind || null,
         },
         angleRad: angle,
         angleDeg,

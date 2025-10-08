@@ -738,6 +738,8 @@ export class AssemblyConstraintsWidget {
 
     let colorIndex = 0;
     let foundTargets = false;
+    let sawFace = false;
+    let arrowsCreated = false;
     for (const [key] of refFields) {
       const color = this._highlightPalette[colorIndex % this._highlightPalette.length];
       colorIndex += 1;
@@ -747,7 +749,9 @@ export class AssemblyConstraintsWidget {
       for (const obj of targets) {
         const changed = this._applyHighlightMaterial(obj, color, store, skipSets);
         if (changed && includeNormals && this._isFaceObject(obj)) {
-          this._createNormalArrow(obj, color, `${entry?.inputParams?.constraintID || 'constraint'}:${key}`);
+          sawFace = true;
+          const arrow = this._createNormalArrow(obj, color, `${entry?.inputParams?.constraintID || 'constraint'}:${key}`);
+          if (arrow) arrowsCreated = true;
         }
       }
     }
@@ -756,7 +760,7 @@ export class AssemblyConstraintsWidget {
       console.warn('[AssemblyConstraintsWidget] No reference objects could be highlighted for constraint:', entry?.inputParams?.constraintID);
     }
 
-    if (emitWarnings && includeNormals && this._normalArrows.size === 0) {
+    if (emitWarnings && includeNormals && sawFace && !arrowsCreated) {
       console.warn('[AssemblyConstraintsWidget] No face normals could be visualized for constraint:', entry?.inputParams?.constraintID);
     }
 
@@ -1387,6 +1391,7 @@ export class AssemblyConstraintsWidget {
     arrow.name = `selection-normal-${object.uuid}-${label || 'face'}`;
     scene.add(arrow);
     this._normalArrows.add(arrow);
+    return arrow;
   }
 
   _computeFaceOrigin(object) {

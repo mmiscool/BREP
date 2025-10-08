@@ -43,7 +43,7 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
     this.#clearNormalDebug(scene);
   }
 
-  async solve(context = {}) {
+  async run(context = {}) {
     const pd = this.persistentData = this.persistentData || {};
     const [selA, selB] = selectionPair(this.inputParams);
 
@@ -56,8 +56,45 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
       pd.message = 'Select two references to define the constraint.';
       pd.satisfied = false;
       pd.lastAppliedMoves = [];
+      pd.lastAppliedRotations = [];
       return { ok: false, status: 'incomplete', satisfied: false, applied: false, message: pd.message };
     }
+
+    const objectA = context.resolveObject?.(selA) || null;
+    const objectB = context.resolveObject?.(selB) || null;
+    const kindA = normalizeSelectionKind(selectionKindFrom(objectA, selA));
+    const kindB = normalizeSelectionKind(selectionKindFrom(objectB, selB));
+
+    if (kindA === 'FACE' && kindB === 'FACE') {
+      return this.faceToFace(context, selA, selB);
+    }
+
+    if (kindA === 'EDGE' && kindB === 'EDGE') {
+      return this.edgeToEdge(context, selA, selB);
+    }
+
+    if (kindA === 'POINT' && kindB === 'POINT') {
+      return this.pointToPoint(context, selA, selB);
+    }
+
+    const message = 'Touch Align requires two selections of the same type. Face-to-face alignment is currently supported.';
+    pd.status = 'unsupported-selection';
+    pd.message = message;
+    pd.satisfied = false;
+    pd.error = null;
+    pd.errorDeg = null;
+    pd.lastAppliedMoves = [];
+    pd.lastAppliedRotations = [];
+    if (pd.exception) delete pd.exception;
+    return { ok: false, status: 'unsupported-selection', satisfied: false, applied: false, message };
+  }
+
+  async solve(context = {}) {
+    return this.run(context);
+  }
+
+  async faceToFace(context, selA, selB) {
+    const pd = this.persistentData = this.persistentData || {};
 
     const parallelResult = solveParallelAlignment({
       constraint: this,
@@ -117,6 +154,18 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
 
     const dirA = infoA.direction.clone().normalize();
     const delta = new THREE.Vector3().subVectors(infoB.origin, infoA.origin);
+    const moves = [];
+    let applied = false;
+
+    const applyMove = (component, vec) => {
+      if (!component || !vec || vec.lengthSq() === 0) return false;
+      const ok = context.applyTranslation?.(component, vec);
+      if (ok) {
+        moves.push({ component: component.name || component.uuid, move: vectorToArray(vec) });
+      }
+      return ok;
+    };
+
     const separation = delta.dot(dirA);
     const distance = Math.abs(separation);
 
@@ -161,18 +210,6 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
       };
     }
 
-    const moves = [];
-    let applied = false;
-
-    const applyMove = (component, vec) => {
-      if (!component || !vec || vec.lengthSq() === 0) return false;
-      const ok = context.applyTranslation?.(component, vec);
-      if (ok) {
-        moves.push({ component: component.name || component.uuid, move: vectorToArray(vec) });
-      }
-      return ok;
-    };
-
     const correction = -separation * Math.max(0, Math.min(1, translationGain));
     const halfCorrection = correction * 0.5;
 
@@ -215,8 +252,32 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
     };
   }
 
-  async run(context = {}) {
-    return this.solve(context);
+  async edgeToEdge(_context, _selA, _selB) {
+    const pd = this.persistentData = this.persistentData || {};
+    const message = 'Edge-to-edge touch alignment is not implemented.';
+    pd.status = 'unsupported-selection';
+    pd.message = message;
+    pd.satisfied = false;
+    pd.error = null;
+    pd.errorDeg = null;
+    pd.lastAppliedMoves = [];
+    pd.lastAppliedRotations = [];
+    if (pd.exception) delete pd.exception;
+    return { ok: false, status: 'unsupported-selection', satisfied: false, applied: false, message };
+  }
+
+  async pointToPoint(_context, _selA, _selB) {
+    const pd = this.persistentData = this.persistentData || {};
+    const message = 'Point-to-point touch alignment is not implemented.';
+    pd.status = 'unsupported-selection';
+    pd.message = message;
+    pd.satisfied = false;
+    pd.error = null;
+    pd.errorDeg = null;
+    pd.lastAppliedMoves = [];
+    pd.lastAppliedRotations = [];
+    if (pd.exception) delete pd.exception;
+    return { ok: false, status: 'unsupported-selection', satisfied: false, applied: false, message };
   }
 
   #updateNormalDebug(context, infoA, infoB) {
@@ -305,4 +366,23 @@ function selectionPair(params) {
 function vectorToArray(vec) {
   if (!vec) return [0, 0, 0];
   return [vec.x, vec.y, vec.z];
+}
+
+function selectionKindFrom(object, selection) {
+  const raw = (selection?.kind
+    || object?.userData?.type
+    || object?.userData?.brepType
+    || object?.type
+    || '').toString().toUpperCase();
+  if (!raw) return 'UNKNOWN';
+  if (raw.includes('FACE')) return 'FACE';
+  if (raw.includes('EDGE')) return 'EDGE';
+  if (raw.includes('VERTEX') || raw.includes('POINT')) return 'POINT';
+  if (raw.includes('COMPONENT')) return 'COMPONENT';
+  return raw;
+}
+
+function normalizeSelectionKind(kind) {
+  if (kind === 'COMPONENT') return 'FACE';
+  return kind;
 }
