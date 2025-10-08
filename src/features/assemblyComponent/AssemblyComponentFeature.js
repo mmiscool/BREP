@@ -81,6 +81,7 @@ export class AssemblyComponentFeature {
       return [];
     }
 
+    const featureId = this._sanitizeFeatureId(this.inputParams?.featureID);
     const group = await this._loadThreeMF(componentData.bytes);
     if (!group) {
       console.warn('[AssemblyComponentFeature] Failed to parse 3MF component.');
@@ -93,12 +94,38 @@ export class AssemblyComponentFeature {
       return [];
     }
 
-    const componentName = this.inputParams.componentName || componentData.name || 'Component';
-    const component = new BREP.AssemblyComponent({ name: componentName, fixed: !!this.inputParams.isFixed });
+    //const componentName = this.inputParams.componentName || componentData.name ;
+    const componentName = `${this.inputParams.componentName || componentData.name}_${featureId}`;
+    const component = new BREP.AssemblyComponent({
+      name: componentName,
+      fixed: !!this.inputParams.isFixed,
+    });
+
 
     for (const solid of solids) {
-      try { solid.visualize(); } catch { /* ignore */ }
+      if (featureId) {
+        if (solid?.type === 'SOLID') {
+          this._applyFeaturePrefixToSolid(solid, featureId);
+        } else {
+          this._applyFeaturePrefixToObject3D(solid, featureId);
+        }
+      }
+
+      try {
+        if (typeof solid?.visualize === 'function') {
+          solid.visualize();
+        }
+      } catch { /* ignore */ }
+
+      if (featureId) {
+        this._applyFeaturePrefixToObject3D(solid, featureId);
+      }
+
       component.addBody(solid);
+    }
+
+    if (featureId) {
+      this._applyFeaturePrefixToObject3D(component, featureId);
     }
 
     const transformMatrix = this._composeTransformMatrix(this.inputParams.transform || DEFAULT_TRANSFORM);
@@ -477,6 +504,91 @@ export class AssemblyComponentFeature {
     const clean = String(original || '').trim();
     if (clean.length) return clean;
     return `${componentName}_Body${index}`;
+  }
+
+  _sanitizeFeatureId(rawId) {
+    if (typeof rawId !== 'string') return null;
+    const trimmed = rawId.trim();
+    return trimmed.length ? trimmed : null;
+  }
+
+  _withFeaturePrefix(featureId, name, fallback = '') {
+    const id = this._sanitizeFeatureId(featureId);
+    const base = this._safeName(name || fallback);
+    if (!id || base === id) return base;
+    const prefix = `${id}_`;
+    return base.startsWith(prefix) ? base : `${prefix}${base}`;
+  }
+
+  _applyFeaturePrefixToSolid(solid, featureId) {
+    const id = this._sanitizeFeatureId(featureId);
+    if (!id || !solid) return;
+
+    solid.name = this._withFeaturePrefix(id, solid.name, solid.type || 'SOLID');
+
+    const idToFace = solid._idToFaceName instanceof Map ? solid._idToFaceName : null;
+    if (idToFace && idToFace.size) {
+      const renamedIdToFace = new Map();
+      const renamedFaceToId = new Map();
+      for (const [faceId, faceName] of idToFace.entries()) {
+        const renamed = this._withFeaturePrefix(id, faceName, `FACE_${faceId}`);
+        renamedIdToFace.set(faceId, renamed);
+        renamedFaceToId.set(renamed, faceId);
+      }
+      solid._idToFaceName = renamedIdToFace;
+      solid._faceNameToID = renamedFaceToId;
+    }
+
+    const faceMetadata = solid._faceMetadata instanceof Map ? solid._faceMetadata : null;
+    if (faceMetadata && faceMetadata.size) {
+      const renamedMetadata = new Map();
+      for (const [faceName, metadata] of faceMetadata.entries()) {
+        const renamed = this._withFeaturePrefix(id, faceName, faceName || 'FACE');
+        renamedMetadata.set(renamed, metadata);
+      }
+      solid._faceMetadata = renamedMetadata;
+    }
+
+    if (Array.isArray(solid._auxEdges) && solid._auxEdges.length) {
+      for (const aux of solid._auxEdges) {
+        if (!aux) continue;
+        aux.name = this._withFeaturePrefix(id, aux.name, 'EDGE');
+        if (typeof aux.faceA === 'string') {
+          aux.faceA = this._withFeaturePrefix(id, aux.faceA, aux.faceA);
+        }
+        if (typeof aux.faceB === 'string') {
+          aux.faceB = this._withFeaturePrefix(id, aux.faceB, aux.faceB);
+        }
+      }
+    }
+  }
+
+  _applyFeaturePrefixToObject3D(object3D, featureId) {
+    const id = this._sanitizeFeatureId(featureId);
+    if (!id || !object3D) return;
+
+    const renamed = this._withFeaturePrefix(id, object3D.name, object3D.type || 'Object');
+    if (renamed !== object3D.name) {
+      object3D.name = renamed;
+    }
+
+    if (object3D.userData && typeof object3D.userData === 'object') {
+      if (typeof object3D.userData.faceName === 'string') {
+        object3D.userData.faceName = this._withFeaturePrefix(id, object3D.userData.faceName, object3D.userData.faceName);
+      }
+      if (typeof object3D.userData.faceA === 'string') {
+        object3D.userData.faceA = this._withFeaturePrefix(id, object3D.userData.faceA, object3D.userData.faceA);
+      }
+      if (typeof object3D.userData.faceB === 'string') {
+        object3D.userData.faceB = this._withFeaturePrefix(id, object3D.userData.faceB, object3D.userData.faceB);
+      }
+    }
+
+    if (Array.isArray(object3D.children) && object3D.children.length) {
+      for (const child of object3D.children) {
+        this._applyFeaturePrefixToObject3D(child, id);
+      }
+    }
   }
 
   async _extractFeatureInfo(bytes) {

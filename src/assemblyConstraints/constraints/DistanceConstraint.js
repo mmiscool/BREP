@@ -13,13 +13,13 @@ const inputParamsSchema = {
     type: 'reference_selection',
     label: 'Element A',
     hint: 'Select the first reference (point, edge, face, or component).',
-    selectionFilter: [ 'FACE','VERTEX', 'EDGE',],
+    selectionFilter: ['FACE', 'VERTEX', 'EDGE',],
   },
   element_B: {
     type: 'reference_selection',
     label: 'Element B',
     hint: 'Select the second reference (point, edge, face, or component).',
-    selectionFilter: ['FACE','VERTEX', 'EDGE', ],
+    selectionFilter: ['FACE', 'VERTEX', 'EDGE',],
   },
   distance: {
     type: 'number',
@@ -34,46 +34,6 @@ const inputParamsSchema = {
     hint: 'For face-to-face mode, flip Element B normal before alignment.',
   },
 };
-
-function firstSelection(value) {
-  if (!value) return null;
-  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
-}
-
-function vectorToArray(vec) {
-  if (!vec) return [0, 0, 0];
-  return [vec.x, vec.y, vec.z];
-}
-
-function normalizeOrNull(vec) {
-  if (!vec) return null;
-  if (vec.lengthSq() === 0) return null;
-  return vec.normalize();
-}
-
-function arbitraryPerpendicular(dir) {
-  if (!dir || dir.lengthSq() === 0) return new THREE.Vector3(0, 0, 1);
-  const axis = Math.abs(dir.dot(new THREE.Vector3(0, 0, 1))) < 0.9
-    ? new THREE.Vector3(0, 0, 1)
-    : new THREE.Vector3(0, 1, 0);
-  const perp = new THREE.Vector3().crossVectors(dir, axis);
-  if (perp.lengthSq() === 0) {
-    perp.crossVectors(dir, new THREE.Vector3(1, 0, 0));
-  }
-  return perp.lengthSq() === 0 ? new THREE.Vector3(1, 0, 0) : perp.normalize();
-}
-
-function selectionKindFrom(object, selection) {
-  const val = (selection && typeof selection.kind === 'string') ? selection.kind : null;
-  const raw = (object?.userData?.type || object?.userData?.brepType || object?.type || val || '').toString().toUpperCase();
-  if (!raw) return 'UNKNOWN';
-  if (raw.includes('FACE')) return 'FACE';
-  if (raw.includes('EDGE')) return 'EDGE';
-  if (raw.includes('VERTEX') || raw.includes('POINT')) return 'POINT';
-  if (raw.includes('COMPONENT')) return 'COMPONENT';
-  return raw;
-}
-
 export class DistanceConstraint extends BaseAssemblyConstraint {
   static constraintShortName = 'DIST';
   static constraintName = 'Distance Constraint';
@@ -329,7 +289,7 @@ export class DistanceConstraint extends BaseAssemblyConstraint {
       try {
         const rep = objectRepresentativePoint(null, object);
         if (rep && typeof rep.clone === 'function') return rep.clone();
-      } catch {}
+      } catch { }
       if (typeof object.getWorldPosition === 'function') {
         return object.getWorldPosition(new THREE.Vector3());
       }
@@ -580,12 +540,12 @@ export class DistanceConstraint extends BaseAssemblyConstraint {
     const pushBound = (obj) => {
       if (!obj) return;
       if (obj.geometry?.computeBoundingSphere && !obj.geometry.boundingSphere) {
-        try { obj.geometry.computeBoundingSphere(); } catch {}
+        try { obj.geometry.computeBoundingSphere(); } catch { }
       }
       const sphere = obj.geometry?.boundingSphere;
       if (sphere?.radius) candidates.push(Math.abs(sphere.radius));
       if (obj.geometry?.computeBoundingBox && !obj.geometry.boundingBox) {
-        try { obj.geometry.computeBoundingBox(); } catch {}
+        try { obj.geometry.computeBoundingBox(); } catch { }
       }
       const box = obj.geometry?.boundingBox;
       if (box) candidates.push(box.getSize(new THREE.Vector3()).length() / 2);
@@ -608,3 +568,45 @@ export class DistanceConstraint extends BaseAssemblyConstraint {
     return Number.isFinite(max) && max > 0 ? max : 0;
   }
 }
+
+
+function firstSelection(value) {
+  if (!value) return null;
+  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
+}
+
+function vectorToArray(vec) {
+  if (!vec) return [0, 0, 0];
+  return [vec.x, vec.y, vec.z];
+}
+
+function normalizeOrNull(vec) {
+  if (!vec) return null;
+  if (vec.lengthSq() === 0) return null;
+  return vec.normalize();
+}
+
+function arbitraryPerpendicular(dir) {
+  if (!dir || dir.lengthSq() === 0) return new THREE.Vector3(0, 0, 1);
+  const axis = Math.abs(dir.dot(new THREE.Vector3(0, 0, 1))) < 0.9
+    ? new THREE.Vector3(0, 0, 1)
+    : new THREE.Vector3(0, 1, 0);
+  const perp = new THREE.Vector3().crossVectors(dir, axis);
+  if (perp.lengthSq() === 0) {
+    perp.crossVectors(dir, new THREE.Vector3(1, 0, 0));
+  }
+  return perp.lengthSq() === 0 ? new THREE.Vector3(1, 0, 0) : perp.normalize();
+}
+
+function selectionKindFrom(object, selection) {
+  const val = (selection && typeof selection.kind === 'string') ? selection.kind : null;
+  const raw = (object?.userData?.type || object?.userData?.brepType || object?.type || val || '').toString().toUpperCase();
+  if (!raw) return 'UNKNOWN';
+  if (raw.includes('FACE')) return 'FACE';
+  if (raw.includes('EDGE')) return 'EDGE';
+  if (raw.includes('VERTEX') || raw.includes('POINT')) return 'POINT';
+  if (raw.includes('COMPONENT')) return 'COMPONENT';
+  return raw;
+}
+
+

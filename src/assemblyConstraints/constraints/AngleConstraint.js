@@ -29,68 +29,6 @@ const inputParamsSchema = {
   },
 };
 
-function firstSelection(value) {
-  if (!value) return null;
-  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
-}
-
-function selectionKindFrom(object, selection) {
-  const val = (selection && typeof selection.kind === 'string') ? selection.kind : null;
-  const raw = (object?.userData?.type || object?.userData?.brepType || object?.type || val || '')
-    .toString()
-    .toUpperCase();
-  if (!raw) return 'UNKNOWN';
-  if (raw.includes('FACE')) return 'FACE';
-  if (raw.includes('EDGE')) return 'EDGE';
-  if (raw.includes('VERTEX') || raw.includes('POINT')) return 'POINT';
-  if (raw.includes('COMPONENT')) return 'COMPONENT';
-  return raw;
-}
-
-function normalizeOrNull(vec) {
-  if (!vec) return null;
-  if (vec.lengthSq() === 0) return null;
-  return vec.clone().normalize();
-}
-
-function arbitraryPerpendicular(dir) {
-  if (!dir || dir.lengthSq() === 0) return new THREE.Vector3(0, 0, 1);
-  const axis = Math.abs(dir.dot(new THREE.Vector3(0, 0, 1))) < 0.9
-    ? new THREE.Vector3(0, 0, 1)
-    : new THREE.Vector3(0, 1, 0);
-  const perp = new THREE.Vector3().crossVectors(dir, axis);
-  if (perp.lengthSq() === 0) {
-    perp.crossVectors(dir, new THREE.Vector3(1, 0, 0));
-  }
-  return perp.lengthSq() === 0 ? new THREE.Vector3(1, 0, 0) : perp.normalize();
-}
-
-function clampAndNormalizeAngleDeg(value) {
-  const safeValue = Number.isFinite(value) ? THREE.MathUtils.clamp(value, -360, 360) : 0;
-  const wrapped = ((safeValue % 360) + 360) % 360;
-  if (wrapped === 180) return safeValue < 0 ? -180 : 180;
-  return wrapped > 180 ? wrapped - 360 : wrapped;
-}
-
-function computeRotationTowards(fromDir, toDir, gain = 1) {
-  if (!fromDir || !toDir) return null;
-  const a = fromDir.clone().normalize();
-  const b = toDir.clone().normalize();
-  const dot = THREE.MathUtils.clamp(a.dot(b), -1, 1);
-  let angle = Math.acos(dot);
-  if (!Number.isFinite(angle) || angle <= 1e-6) return null;
-  let axis = new THREE.Vector3().crossVectors(a, b);
-  if (axis.lengthSq() <= 1e-12) {
-    axis = arbitraryPerpendicular(a);
-  }
-  if (axis.lengthSq() <= 1e-12) return null;
-  axis.normalize();
-  const clampedGain = Math.max(0, Math.min(1, gain));
-  const intendedAngle = angle * clampedGain;
-  const appliedAngle = Math.min(intendedAngle, MAX_ROTATION_PER_ITERATION, angle);
-  if (appliedAngle <= 1e-6) return null;
-  return new THREE.Quaternion().setFromAxisAngle(axis, appliedAngle);
-}
 
 export class AngleConstraint extends BaseAssemblyConstraint {
   static constraintShortName = 'ANGL';
@@ -476,3 +414,70 @@ export class AngleConstraint extends BaseAssemblyConstraint {
     return out.normalize();
   }
 }
+
+
+
+
+function firstSelection(value) {
+  if (!value) return null;
+  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
+}
+
+function selectionKindFrom(object, selection) {
+  const val = (selection && typeof selection.kind === 'string') ? selection.kind : null;
+  const raw = (object?.userData?.type || object?.userData?.brepType || object?.type || val || '')
+    .toString()
+    .toUpperCase();
+  if (!raw) return 'UNKNOWN';
+  if (raw.includes('FACE')) return 'FACE';
+  if (raw.includes('EDGE')) return 'EDGE';
+  if (raw.includes('VERTEX') || raw.includes('POINT')) return 'POINT';
+  if (raw.includes('COMPONENT')) return 'COMPONENT';
+  return raw;
+}
+
+function normalizeOrNull(vec) {
+  if (!vec) return null;
+  if (vec.lengthSq() === 0) return null;
+  return vec.clone().normalize();
+}
+
+function arbitraryPerpendicular(dir) {
+  if (!dir || dir.lengthSq() === 0) return new THREE.Vector3(0, 0, 1);
+  const axis = Math.abs(dir.dot(new THREE.Vector3(0, 0, 1))) < 0.9
+    ? new THREE.Vector3(0, 0, 1)
+    : new THREE.Vector3(0, 1, 0);
+  const perp = new THREE.Vector3().crossVectors(dir, axis);
+  if (perp.lengthSq() === 0) {
+    perp.crossVectors(dir, new THREE.Vector3(1, 0, 0));
+  }
+  return perp.lengthSq() === 0 ? new THREE.Vector3(1, 0, 0) : perp.normalize();
+}
+
+function clampAndNormalizeAngleDeg(value) {
+  const safeValue = Number.isFinite(value) ? THREE.MathUtils.clamp(value, -360, 360) : 0;
+  const wrapped = ((safeValue % 360) + 360) % 360;
+  if (wrapped === 180) return safeValue < 0 ? -180 : 180;
+  return wrapped > 180 ? wrapped - 360 : wrapped;
+}
+
+function computeRotationTowards(fromDir, toDir, gain = 1) {
+  if (!fromDir || !toDir) return null;
+  const a = fromDir.clone().normalize();
+  const b = toDir.clone().normalize();
+  const dot = THREE.MathUtils.clamp(a.dot(b), -1, 1);
+  let angle = Math.acos(dot);
+  if (!Number.isFinite(angle) || angle <= 1e-6) return null;
+  let axis = new THREE.Vector3().crossVectors(a, b);
+  if (axis.lengthSq() <= 1e-12) {
+    axis = arbitraryPerpendicular(a);
+  }
+  if (axis.lengthSq() <= 1e-12) return null;
+  axis.normalize();
+  const clampedGain = Math.max(0, Math.min(1, gain));
+  const intendedAngle = angle * clampedGain;
+  const appliedAngle = Math.min(intendedAngle, MAX_ROTATION_PER_ITERATION, angle);
+  if (appliedAngle <= 1e-6) return null;
+  return new THREE.Quaternion().setFromAxisAngle(axis, appliedAngle);
+}
+

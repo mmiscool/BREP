@@ -34,40 +34,6 @@ const inputParamsSchema = {
   },
 };
 
-function firstSelection(value) {
-  if (!value) return null;
-  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
-}
-
-function resolvePoint(constraint, object, component) {
-  if (object) {
-    try {
-      const rep = objectRepresentativePoint(null, object);
-      if (rep && typeof rep.clone === 'function') return rep.clone();
-    } catch {}
-    const worldPoint = constraint.getWorldPoint(object);
-    if (worldPoint) return worldPoint;
-  }
-  if (component) {
-    component.updateMatrixWorld?.(true);
-    const worldPoint = constraint.getWorldPoint(component);
-    if (worldPoint) return worldPoint;
-  }
-  return null;
-}
-
-function selectionInfo(constraint, context, selection) {
-  const object = context.resolveObject?.(selection) || null;
-  const component = context.resolveComponent?.(selection) || null;
-  const point = resolvePoint(constraint, object, component);
-  return { object, component, point };
-}
-
-function vectorToArray(vec) {
-  if (!vec) return [0, 0, 0];
-  return [vec.x, vec.y, vec.z];
-}
-
 export class CoincidentConstraint extends BaseAssemblyConstraint {
   static constraintShortName = 'COIN';
   static constraintName = 'Coincident Constraint';
@@ -188,3 +154,39 @@ export class CoincidentConstraint extends BaseAssemblyConstraint {
     return this.solve(context);
   }
 }
+
+
+function firstSelection(value) {
+  if (!value) return null;
+  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
+}
+
+function resolvePoint(constraint, object, component) {
+  if (object) {
+    try {
+      const rep = objectRepresentativePoint(null, object);
+      if (rep && typeof rep.clone === 'function') return rep.clone();
+    } catch {}
+    const worldPoint = constraint.getWorldPoint(object);
+    if (worldPoint) return worldPoint;
+  }
+  if (component) {
+    component.updateMatrixWorld?.(true);
+    const worldPoint = constraint.getWorldPoint(component);
+    if (worldPoint) return worldPoint;
+  }
+  return null;
+}
+
+function selectionInfo(constraint, context, selection) {
+  const object = context.resolveObject?.(selection) || null;
+  const component = context.resolveComponent?.(selection) || null;
+  const point = resolvePoint(constraint, object, component);
+  return { object, component, point };
+}
+
+function vectorToArray(vec) {
+  if (!vec) return [0, 0, 0];
+  return [vec.x, vec.y, vec.z];
+}
+

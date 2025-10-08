@@ -27,6 +27,10 @@ export class AssemblyConstraintsWidget {
     this._labelPositions = new Map();
     this._onControlsChange = () => this._refreshConstraintLabels();
     this._onWindowResize = () => this._refreshConstraintLabels();
+    this._constraintGraphicsEnabled = true;
+    this._constraintGraphicsCheckbox = null;
+    this._hoverHighlights = new Map();
+    this._activeHoverConstraintId = null;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
@@ -54,14 +58,9 @@ export class AssemblyConstraintsWidget {
       this._labelOverlay = null;
     }
 
-    this._solverControls = this._buildSolverControls();
-    this.uiElement.appendChild(this._solverControls);
-
-    this._delayControls = this._buildDelayControls();
-    this.uiElement.appendChild(this._delayControls);
-
-    this._debugControls = this._buildDebugControls();
-    this.uiElement.appendChild(this._debugControls);
+    this._controlsPanel = this._buildControlsPanel();
+    this.uiElement.appendChild(this._controlsPanel);
+    this._setConstraintGraphicsEnabled(this._constraintGraphicsEnabled);
 
     this._accordion = document.createElement('div');
     this._accordion.className = 'accordion';
@@ -101,6 +100,7 @@ export class AssemblyConstraintsWidget {
     document.removeEventListener('mousedown', this._onGlobalClick, true);
     this._iterationInput = null;
     this._solveButton = null;
+    this._constraintGraphicsCheckbox = null;
     for (const form of this._forms.values()) {
       try { form?.destroy?.(); } catch { /* ignore */ }
     }
@@ -297,9 +297,21 @@ export class AssemblyConstraintsWidget {
     }
   }
 
+  _buildControlsPanel() {
+    const wrap = document.createElement('div');
+    wrap.className = 'constraints-control-panel';
+
+    wrap.appendChild(this._buildSolverControls());
+    wrap.appendChild(this._buildDelayControls());
+    wrap.appendChild(this._buildVisualizationControls());
+    wrap.appendChild(this._buildDebugControls());
+
+    return wrap;
+  }
+
   _buildSolverControls() {
     const wrap = document.createElement('div');
-    wrap.className = 'solver-controls';
+    wrap.className = 'control-panel-section solver-controls';
 
     const label = document.createElement('label');
     label.className = 'solver-iterations';
@@ -314,6 +326,7 @@ export class AssemblyConstraintsWidget {
     input.step = '1';
     input.inputMode = 'numeric';
     input.value = String(this._defaultIterations);
+    input.style.width = '5em';
     input.addEventListener('change', () => {
       const value = Number(input.value);
       if (!Number.isFinite(value) || value < 1) {
@@ -345,10 +358,10 @@ export class AssemblyConstraintsWidget {
 
   _buildDelayControls() {
     const wrap = document.createElement('div');
-    wrap.className = 'delay-controls';
+    wrap.className = 'control-panel-section delay-controls';
 
     const label = document.createElement('label');
-    label.className = 'delay-iterations';
+    label.className = 'solver-iterations';
 
     const span = document.createElement('span');
     span.className = 'solver-iterations-label';
@@ -360,6 +373,7 @@ export class AssemblyConstraintsWidget {
     input.step = '50';
     input.inputMode = 'numeric';
     input.value = '500';
+    input.style.width = '100%';
     input.addEventListener('change', () => {
       const value = Number(input.value);
       if (!Number.isFinite(value) || value < 0) {
@@ -376,12 +390,38 @@ export class AssemblyConstraintsWidget {
     return wrap;
   }
 
-  _buildDebugControls() {
+  _buildVisualizationControls() {
     const wrap = document.createElement('div');
-    wrap.className = 'debug-controls';
+    wrap.className = 'control-panel-section visualization-controls';
 
     const label = document.createElement('label');
-    label.className = 'debug-toggle';
+    label.className = 'toggle-control';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = this._constraintGraphicsEnabled;
+    checkbox.addEventListener('change', () => {
+      this._setConstraintGraphicsEnabled(checkbox.checked);
+    });
+
+    const span = document.createElement('span');
+    span.textContent = 'Show Constraint Graphics';
+
+    label.appendChild(checkbox);
+    label.appendChild(span);
+    wrap.appendChild(label);
+
+    this._constraintGraphicsCheckbox = checkbox;
+
+    return wrap;
+  }
+
+  _buildDebugControls() {
+    const wrap = document.createElement('div');
+    wrap.className = 'control-panel-section debug-controls';
+
+    const label = document.createElement('label');
+    label.className = 'toggle-control';
 
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
@@ -405,9 +445,34 @@ export class AssemblyConstraintsWidget {
     return wrap;
   }
 
-  _clearHighlights() {
-    this._clearNormalArrows();
-    for (const record of this._highlighted.values()) {
+  _setConstraintGraphicsEnabled(enabled) {
+    const value = !!enabled;
+    this._constraintGraphicsEnabled = value;
+
+    if (this._constraintGroup) {
+      this._constraintGroup.visible = value;
+    }
+
+    if (typeof this._labelOverlay?.setVisible === 'function') {
+      this._labelOverlay.setVisible(value);
+    }
+
+    if (this._constraintGraphicsCheckbox && this._constraintGraphicsCheckbox.checked !== value) {
+      this._constraintGraphicsCheckbox.checked = value;
+    }
+
+    if (value) {
+      this._refreshConstraintLabels();
+    } else {
+      this.#clearActiveHoverHighlight();
+    }
+
+    try { this.viewer?.render?.(); } catch {}
+  }
+
+  _restoreHighlightRecords(map) {
+    if (!map || typeof map.size !== 'number' || map.size === 0) return;
+    for (const record of map.values()) {
       try {
         if (record.replaced && record.originalMaterial) {
           record.object.material = record.originalMaterial;
@@ -416,47 +481,197 @@ export class AssemblyConstraintsWidget {
         }
       } catch { /* ignore */ }
     }
-    this._highlighted.clear();
+    map.clear();
+  }
+
+  _clearHoverHighlights() {
+    this._restoreHighlightRecords(this._hoverHighlights);
+  }
+
+  _clearHighlights() {
+    this.#clearActiveHoverHighlight();
+    this._restoreHighlightRecords(this._highlighted);
     this._clearNormalArrows();
     try { SelectionFilter.clearHover?.(); } catch { /* ignore */ }
     try { this.viewer?.render?.(); } catch { /* ignore */ }
   }
 
-  _highlightConstraint(entry, ConstraintClass) {
-    this._clearHighlights();
-    const scene = this.viewer?.scene || null;
-    if (!scene || !entry?.inputParams) return;
+  _applyConstraintHighlight(entry, ConstraintClass, options = {}) {
+    if (!entry?.inputParams) return false;
+
+    const store = options.store ?? this._highlighted;
+    const clearExisting = options.clearExisting !== false;
+    const includeNormals = options.includeNormals ?? (store === this._highlighted);
+    const skipSets = Array.isArray(options.skipSets) && options.skipSets.length
+      ? options.skipSets
+      : [store];
+    const emitWarnings = options.emitWarnings || false;
+
+    const useHoverStore = store === this._hoverHighlights;
+
+    if (useHoverStore) {
+      this._clearHoverHighlights();
+      if (clearExisting && store !== this._highlighted) {
+        this._restoreHighlightRecords(this._highlighted);
+        this._clearNormalArrows();
+      }
+    } else if (clearExisting) {
+      this._clearHighlights();
+    }
 
     const schema = ConstraintClass?.inputParamsSchema || {};
-    const refFields = Object.entries(schema).filter(([, def]) => def?.type === 'reference_selection');
+    let refFields = Object.entries(schema).filter(([, def]) => def?.type === 'reference_selection');
+    if (!refFields.length) {
+      const fallbackKeys = ['element_A', 'element_B', 'element_a', 'element_b'];
+      refFields = fallbackKeys
+        .filter((key) => entry.inputParams[key] != null)
+        .map((key) => [key, null]);
+      if (!refFields.length) return false;
+    }
 
     let colorIndex = 0;
+    let foundTargets = false;
     for (const [key] of refFields) {
       const color = this._highlightPalette[colorIndex % this._highlightPalette.length];
       colorIndex += 1;
       const targets = this._resolveReferenceObjects(entry.inputParams[key]);
+      if (!targets || targets.length === 0) continue;
+      foundTargets = true;
       for (const obj of targets) {
-        this._applyHighlightMaterial(obj, color);
-        if (this._isFaceObject(obj)) {
+        const changed = this._applyHighlightMaterial(obj, color, store, skipSets);
+        if (changed && includeNormals && this._isFaceObject(obj)) {
           this._createNormalArrow(obj, color, `${entry?.inputParams?.constraintID || 'constraint'}:${key}`);
         }
       }
     }
 
-    if (this._highlighted.size === 0) {
+    if (emitWarnings && !foundTargets) {
       console.warn('[AssemblyConstraintsWidget] No reference objects could be highlighted for constraint:', entry?.inputParams?.constraintID);
     }
 
-    if (this._normalArrows.size === 0) {
+    if (emitWarnings && includeNormals && this._normalArrows.size === 0) {
       console.warn('[AssemblyConstraintsWidget] No face normals could be visualized for constraint:', entry?.inputParams?.constraintID);
     }
 
     try { this.viewer?.render?.(); } catch { /* ignore */ }
+    return foundTargets;
+  }
+
+  _highlightConstraint(entry, ConstraintClass) {
+    this._applyConstraintHighlight(entry, ConstraintClass, {
+      store: this._highlighted,
+      clearExisting: true,
+      includeNormals: true,
+      skipSets: [this._highlighted],
+      emitWarnings: true,
+    });
+  }
+
+  #attachLabelHoverHandlers(element, entry, constraintID) {
+    if (!element) return;
+    const prev = element.__constraintHoverHandlers;
+    if (prev) {
+      element.removeEventListener('mouseenter', prev.enter);
+      element.removeEventListener('mouseleave', prev.leave);
+    }
+    if (!entry) {
+      element.__constraintHoverHandlers = null;
+      return;
+    }
+    const onEnter = () => {
+      try { this.#handleConstraintLabelHover(entry, constraintID); } catch {}
+    };
+    const onLeave = () => {
+      try { this.#handleConstraintLabelHoverEnd(constraintID); } catch {}
+    };
+    element.addEventListener('mouseenter', onEnter);
+    element.addEventListener('mouseleave', onLeave);
+    element.__constraintHoverHandlers = { enter: onEnter, leave: onLeave };
+  }
+
+  #handleConstraintLabelHover(entry, constraintID) {
+    if (!this._constraintGraphicsEnabled) return;
+    if (this._activeHoverConstraintId && this._activeHoverConstraintId !== constraintID) {
+      this.#clearActiveHoverHighlight();
+    }
+
+    const ConstraintClass = this._resolveConstraintClass(entry);
+
+    this._activeHoverConstraintId = constraintID;
+    this._applyConstraintHighlight(entry, ConstraintClass, {
+      store: this._hoverHighlights,
+      clearExisting: false,
+      includeNormals: false,
+      skipSets: [this._highlighted, this._hoverHighlights],
+      emitWarnings: false,
+    });
+    this.#setConstraintLineHighlight(constraintID, true);
+    try { this.viewer?.render?.(); } catch {}
+  }
+
+  #handleConstraintLabelHoverEnd(constraintID) {
+    if (!constraintID) return;
+    if (this._activeHoverConstraintId !== constraintID) {
+      this.#setConstraintLineHighlight(constraintID, false);
+      try { this.viewer?.render?.(); } catch {}
+      return;
+    }
+    this.#clearActiveHoverHighlight();
+  }
+
+  #clearActiveHoverHighlight() {
+    if (!this._activeHoverConstraintId) return;
+    const activeId = this._activeHoverConstraintId;
+    this._activeHoverConstraintId = null;
+    this._clearHoverHighlights();
+    this.#setConstraintLineHighlight(activeId, false);
+    try { this.viewer?.render?.(); } catch {}
+  }
+
+  #setConstraintLineHighlight(constraintID, active) {
+    const line = this._constraintLines.get(constraintID);
+    if (!line || !line.material) return;
+    const mat = line.material;
+    line.userData = line.userData || {};
+
+    if (active) {
+      if (!line.userData.__hoverOriginal) {
+        line.userData.__hoverOriginal = {
+          color: mat.color ? mat.color.clone() : null,
+          linewidth: mat.linewidth,
+          opacity: mat.opacity,
+          depthTest: mat.depthTest,
+          depthWrite: mat.depthWrite,
+        };
+      }
+      try { mat.color?.set('#ffffff'); } catch {}
+      try { mat.opacity = 1; } catch {}
+      try { mat.linewidth = 2; } catch {}
+      try { mat.depthTest = false; mat.depthWrite = false; } catch {}
+      line.renderOrder = 10050;
+    } else {
+      const original = line.userData.__hoverOriginal;
+      if (original) {
+        try {
+          if (original.color && mat.color) mat.color.copy(original.color);
+          if (original.opacity != null) mat.opacity = original.opacity;
+          if (original.linewidth != null) mat.linewidth = original.linewidth;
+          if (original.depthTest != null) mat.depthTest = original.depthTest;
+          if (original.depthWrite != null) mat.depthWrite = original.depthWrite;
+        } catch {}
+      }
+      delete line.userData.__hoverOriginal;
+      line.renderOrder = 9999;
+    }
+
+    try { mat.needsUpdate = true; } catch {}
   }
 
   _updateConstraintVisuals(entries = []) {
     const scene = this.viewer?.scene || null;
     if (!scene) return;
+
+    this.#clearActiveHoverHighlight();
 
     const activeIds = new Set();
     this._labelPositions.clear();
@@ -485,19 +700,23 @@ export class AssemblyConstraintsWidget {
       const text = this.#constraintLabelText(entry);
       const overlayData = { constraintID };
 
-      try { this._labelOverlay?.updateLabel(constraintID, text, midpoint.clone(), overlayData); } catch {}
-      const el = this._labelOverlay?.getElement?.(constraintID);
-      if (el) {
-        try {
-          el.classList.add('constraint-label');
-          el.dataset.constraintId = constraintID;
-        } catch {}
+      if (this._constraintGraphicsEnabled) {
+        try { this._labelOverlay?.updateLabel(constraintID, text, midpoint.clone(), overlayData); } catch {}
+        const el = this._labelOverlay?.getElement?.(constraintID);
+        if (el) {
+          try {
+            el.classList.add('constraint-label');
+            el.dataset.constraintId = constraintID;
+          } catch {}
+          this.#attachLabelHoverHandlers(el, entry, constraintID);
+        }
       }
 
       this._labelPositions.set(constraintID, {
         position: midpoint.clone(),
         text,
         data: overlayData,
+        entry,
       });
       activeIds.add(constraintID);
     });
@@ -508,21 +727,24 @@ export class AssemblyConstraintsWidget {
   }
 
   _refreshConstraintLabels() {
+    if (!this._constraintGraphicsEnabled) return;
     if (!this._labelOverlay || !this._labelPositions.size) return;
-    for (const [constraintID, entry] of this._labelPositions.entries()) {
-      if (!entry || !entry.position) continue;
+    for (const [constraintID, record] of this._labelPositions.entries()) {
+      if (!record || !record.position) continue;
       try {
-        this._labelOverlay.updateLabel(constraintID, entry.text, entry.position.clone(), entry.data);
+        this._labelOverlay.updateLabel(constraintID, record.text, record.position.clone(), record.data);
         const el = this._labelOverlay.getElement(constraintID);
         if (el) {
           el.classList.add('constraint-label');
           el.dataset.constraintId = constraintID;
+          this.#attachLabelHoverHandlers(el, record.entry, constraintID);
         }
       } catch {}
     }
   }
 
   _clearConstraintVisuals() {
+    this.#clearActiveHoverHighlight();
     this._labelPositions.clear();
     if (this._labelOverlay) {
       try { this._labelOverlay.clear(); } catch {}
@@ -594,8 +816,11 @@ export class AssemblyConstraintsWidget {
     return 1;
   }
 
-  _applyHighlightMaterial(object, color) {
-    if (!object || !color) return;
+  _applyHighlightMaterial(object, color, store = this._highlighted, skipSets = [store]) {
+    if (!object || !color || !store) return false;
+
+    const guardSets = Array.isArray(skipSets) ? skipSets.filter((m) => m && typeof m.has === 'function') : [];
+    if (guardSets.length === 0) guardSets.push(store);
 
     const targets = [];
     object.traverse?.((child) => {
@@ -606,9 +831,10 @@ export class AssemblyConstraintsWidget {
       targets.push(object);
     }
 
+    let modified = false;
     for (const target of targets) {
       const key = target.uuid;
-      if (this._highlighted.has(key)) continue;
+      if (guardSets.some((map) => map.has(key))) continue;
 
       const originalMaterial = target.material;
       let replaced = false;
@@ -633,13 +859,16 @@ export class AssemblyConstraintsWidget {
         target.material = highlightMaterial;
       }
 
-      this._highlighted.set(key, {
+      store.set(key, {
         object: target,
         replaced,
         originalMaterial,
         previousColor,
       });
+      modified = true;
     }
+
+    return modified;
   }
 
   _clearNormalArrows() {
@@ -1158,33 +1387,26 @@ export class AssemblyConstraintsWidget {
       flex-direction: column;
       gap: 4px;
     }
-    .${ROOT_CLASS} .debug-controls {
+    .${ROOT_CLASS} .constraints-control-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 8px 8px 0 8px;
+    }
+    .${ROOT_CLASS} .control-panel-section {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 6px 12px 0 12px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .${ROOT_CLASS} .debug-toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      cursor: pointer;
-    }
-    .${ROOT_CLASS} .debug-toggle input {
-      width: 14px;
-      height: 14px;
-      cursor: pointer;
-    }
-    .${ROOT_CLASS} .solver-controls {
-      display: flex;
-      align-items: center;
-      gap: 10px;
+      gap: 12px;
       padding: 10px 12px;
       border: 1px solid var(--border);
       border-radius: 10px;
       background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
+    }
+    .${ROOT_CLASS} .solver-controls {
+      justify-content: space-between;
+    }
+    .${ROOT_CLASS} .delay-controls {
+      justify-content: space-between;
     }
     .${ROOT_CLASS} .solver-iterations {
       display: flex;
@@ -1234,6 +1456,24 @@ export class AssemblyConstraintsWidget {
       opacity: .6;
       cursor: default;
       transform: none;
+    }
+    .${ROOT_CLASS} .toggle-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text);
+      user-select: none;
+    }
+    .${ROOT_CLASS} .toggle-control input {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+    .${ROOT_CLASS} .toggle-control span {
+      color: var(--muted);
     }
     .${ROOT_CLASS} .acc-item {
       background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01));

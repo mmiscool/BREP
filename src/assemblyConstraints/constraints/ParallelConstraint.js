@@ -34,11 +34,6 @@ const inputParamsSchema = {
   },
 };
 
-function firstSelection(value) {
-  if (!value) return null;
-  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
-}
-
 export class ParallelConstraint extends BaseAssemblyConstraint {
   static constraintShortName = 'PARA';
   static constraintName = 'Parallel Constraint';
@@ -216,4 +211,10 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
     const max = candidates.reduce((acc, val) => (Number.isFinite(val) ? Math.max(acc, val) : acc), 0);
     return Number.isFinite(max) && max > 0 ? max : 0;
   }
+}
+
+
+function firstSelection(value) {
+  if (!value) return null;
+  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
 }

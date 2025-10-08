@@ -14,10 +14,6 @@ const inputParamsSchema = {
   },
 };
 
-function firstSelection(value) {
-  if (!value) return null;
-  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
-}
 
 export class FixedConstraint extends BaseAssemblyConstraint {
   static constraintShortName = 'FIXD';
@@ -74,3 +70,11 @@ export class FixedConstraint extends BaseAssemblyConstraint {
     return this.solve(context);
   }
 }
+
+
+function firstSelection(value) {
+  if (!value) return null;
+  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
+}
+
+

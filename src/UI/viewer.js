@@ -888,7 +888,8 @@ export class Viewer {
         try { if (SchemaForm && typeof SchemaForm.__stopGlobalActiveXform === 'function') SchemaForm.__stopGlobalActiveXform(); } catch { }
 
         const controls = new TCctor(this.camera, this.renderer.domElement);
-        try { controls.setMode('translate'); } catch { }
+        const initialMode = 'translate';
+        try { controls.setMode(initialMode); } catch { controls.mode = initialMode; }
         try { controls.showX = controls.showY = controls.showZ = true; } catch { }
 
         const target = new THREE.Object3D();
@@ -903,11 +904,15 @@ export class Viewer {
             : box.getCenter(new THREE.Vector3());
         target.position.copy(center);
 
+        const componentWorldQuat = component.getWorldQuaternion(new THREE.Quaternion());
+        target.quaternion.copy(componentWorldQuat);
+
         const parent = component.parent || this.scene;
         try { parent?.updateMatrixWorld?.(true); } catch { }
 
-        const worldComponentPos = component.getWorldPosition(new THREE.Vector3());
-        const offsetWorld = worldComponentPos.clone().sub(center);
+        const offsetLocal = component.getWorldPosition(new THREE.Vector3()).sub(center);
+        const initialTargetQuatInv = componentWorldQuat.clone().invert();
+        offsetLocal.applyQuaternion(initialTargetQuatInv);
 
         const parentInverse = new THREE.Matrix4();
         if (parent && parent.isObject3D) {
@@ -960,16 +965,43 @@ export class Viewer {
         const scratchTargetWorld = new THREE.Vector3();
         const scratchComponentWorld = new THREE.Vector3();
         const scratchLocal = new THREE.Vector3();
+        const scratchRotatedOffset = new THREE.Vector3();
+        const scratchTargetQuat = new THREE.Quaternion();
+        const scratchParentQuat = new THREE.Quaternion();
+        const scratchParentQuatInv = new THREE.Quaternion();
+        const scratchComponentQuat = new THREE.Quaternion();
 
         const updateComponentTransform = (commit = false) => {
             try {
+                try { this.scene.updateMatrixWorld?.(true); } catch { }
+                try { target.updateMatrixWorld?.(true); } catch { }
+                if (parent && parent.isObject3D) {
+                    try { parent.updateMatrixWorld?.(true); } catch { }
+                    parentInverse.copy(parent.matrixWorld).invert();
+                    parent.getWorldQuaternion(scratchParentQuat);
+                    scratchParentQuatInv.copy(scratchParentQuat).invert();
+                } else {
+                    parentInverse.identity();
+                    scratchParentQuat.set(0, 0, 0, 1);
+                    scratchParentQuatInv.copy(scratchParentQuat);
+                }
+
                 target.getWorldPosition(scratchTargetWorld);
-                scratchComponentWorld.copy(scratchTargetWorld).add(offsetWorld);
+                target.getWorldQuaternion(scratchTargetQuat);
+
+                scratchRotatedOffset.copy(offsetLocal).applyQuaternion(scratchTargetQuat);
+                scratchComponentWorld.copy(scratchTargetWorld).add(scratchRotatedOffset);
                 scratchLocal.copy(scratchComponentWorld);
                 if (parent && parent.isObject3D) {
                     scratchLocal.applyMatrix4(parentInverse);
                 }
                 component.position.copy(scratchLocal);
+                if (parent && parent.isObject3D) {
+                    scratchComponentQuat.copy(scratchParentQuatInv).multiply(scratchTargetQuat);
+                    component.quaternion.copy(scratchComponentQuat);
+                } else {
+                    component.quaternion.copy(scratchTargetQuat);
+                }
                 component.updateMatrixWorld?.(true);
                 this.render();
                 if (commit && this.partHistory && typeof this.partHistory.syncAssemblyComponentTransforms === 'function') {
@@ -1026,6 +1058,8 @@ export class Viewer {
         };
         try { window.__BREP_activeXform = globalState; } catch { }
 
+        const sessionMode = (typeof controls.getMode === 'function') ? controls.getMode() : (controls.mode || initialMode);
+
         this._componentTransformSession = {
             component,
             controls,
@@ -1035,6 +1069,7 @@ export class Viewer {
             dragHandler,
             objectChangeHandler,
             globalState,
+            mode: sessionMode,
         };
 
         updateComponentTransform(false);
@@ -1064,7 +1099,22 @@ export class Viewer {
             return;
         }
 
-        if (this._componentTransformSession && this._componentTransformSession.component === component) {
+        const session = this._componentTransformSession;
+        if (session && session.component === component) {
+            const controls = session.controls;
+            const currentMode = (typeof controls?.getMode === 'function') ? controls.getMode() : (controls?.mode || session.mode || 'translate');
+            if (currentMode === 'translate') {
+                const nextMode = 'rotate';
+                try { controls?.setMode(nextMode); } catch { if (controls) controls.mode = nextMode; }
+                session.mode = nextMode;
+                try { session.globalState?.updateForCamera?.(); } catch { }
+                try { this.render(); } catch { }
+                return;
+            }
+            if (currentMode === 'rotate') {
+                this._stopComponentTransformSession();
+                return;
+            }
             this._stopComponentTransformSession();
             return;
         }

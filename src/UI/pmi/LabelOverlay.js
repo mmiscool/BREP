@@ -10,6 +10,7 @@ export class LabelOverlay {
     this.onDragEnd = typeof onDragEnd === 'function' ? onDragEnd : null;
     this._labelMap = new Map(); // idx -> HTMLElement
     this._root = null;
+    this._visible = true;
     this._activePointers = new Map(); // pointerId -> { idx, ann, startX, startY, moved }
     this._onGlobalPointerMove = (ev) => this.#handleGlobalPointerMove(ev);
     this._onGlobalPointerUp = (ev) => this.#handleGlobalPointerUp(ev);
@@ -31,6 +32,12 @@ export class LabelOverlay {
     } catch {}
     host.appendChild(div);
     this._root = div;
+    if (!this._visible) {
+      try {
+        this._root.style.display = 'none';
+        this._root.style.pointerEvents = 'none';
+      } catch {}
+    }
   }
 
   updateLabel(idx, text, worldPos, ann) {
@@ -155,6 +162,21 @@ export class LabelOverlay {
   clear() {
     try { this._labelMap.forEach((el) => el?.remove()); } catch {}
     try { this._labelMap.clear(); } catch {}
+  }
+
+  setVisible(visible) {
+    this._visible = !!visible;
+    this._ensureRoot();
+    if (!this._root) return;
+    const display = this._visible ? '' : 'none';
+    try {
+      this._root.style.display = display;
+      this._root.style.pointerEvents = this._visible ? '' : 'none';
+    } catch {}
+  }
+
+  isVisible() {
+    return this._visible;
   }
 
   dispose() {
