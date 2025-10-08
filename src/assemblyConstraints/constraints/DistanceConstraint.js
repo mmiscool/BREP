@@ -3,6 +3,8 @@ import { BaseAssemblyConstraint } from '../BaseAssemblyConstraint.js';
 import { solveParallelAlignment, resolveParallelSelection } from '../constraintUtils/parallelAlignment.js';
 import { objectRepresentativePoint, getElementDirection } from '../../UI/pmi/annUtils.js';
 
+const DEFAULT_DISTANCE_TOLERANCE = 1e-6;
+
 const inputParamsSchema = {
   constraintID: {
     type: 'string',
@@ -63,7 +65,7 @@ export class DistanceConstraint extends BaseAssemblyConstraint {
       return { ok: false, status: 'incomplete', satisfied: false, applied: false, message: pd.message };
     }
 
-    const tolerance = Math.max(Math.abs(context.tolerance ?? 1e-4), 1e-8);
+    const tolerance = Math.max(Math.abs(context.tolerance ?? DEFAULT_DISTANCE_TOLERANCE), 1e-8);
     const translationGain = Math.max(0, Math.min(1, context.translationGain ?? 1));
 
     const faceFace = this.#isFaceFace(context, selA, selB);

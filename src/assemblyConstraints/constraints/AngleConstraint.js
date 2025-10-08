@@ -3,6 +3,8 @@ import { BaseAssemblyConstraint } from '../BaseAssemblyConstraint.js';
 import { ANGLE_TOLERANCE, MAX_ROTATION_PER_ITERATION, resolveParallelSelection } from '../constraintUtils/parallelAlignment.js';
 import { objectRepresentativePoint, getElementDirection } from '../../UI/pmi/annUtils.js';
 
+const DEFAULT_ANGLE_LINEAR_TOLERANCE = 1e-12;
+
 const inputParamsSchema = {
   constraintID: {
     type: 'string',
@@ -133,7 +135,7 @@ export class AngleConstraint extends BaseAssemblyConstraint {
     const fixedA = context.isComponentFixed?.(infoA.component);
     const fixedB = context.isComponentFixed?.(infoB.component);
 
-    const linearTolerance = Math.abs(context.tolerance ?? 1e-4);
+    const linearTolerance = Math.abs(context.tolerance ?? DEFAULT_ANGLE_LINEAR_TOLERANCE);
     const explicitAngleTol = Number.isFinite(context.angleTolerance) ? Math.abs(context.angleTolerance) : null;
     const angleTolerance = explicitAngleTol && explicitAngleTol > 0
       ? Math.max(ANGLE_TOLERANCE, explicitAngleTol)

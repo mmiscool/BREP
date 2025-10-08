@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { objectRepresentativePoint, getElementDirection } from '../../UI/pmi/annUtils.js';
 
-export const ANGLE_TOLERANCE = THREE.MathUtils.degToRad(0.5);
-export const MAX_ROTATION_PER_ITERATION = THREE.MathUtils.degToRad(20);
+export const ANGLE_TOLERANCE = THREE.MathUtils.degToRad(0.001);
+export const MAX_ROTATION_PER_ITERATION = THREE.MathUtils.degToRad(10);
 const MAX_EDGE_SAMPLE_POINTS = 256;
+const DEFAULT_PARALLEL_ALIGNMENT_TOLERANCE = 1e-12;
 
 function getWorldNormal(object) {
   if (!object) return null;
@@ -592,7 +593,7 @@ export function solveParallelAlignment({
   const angle = Math.acos(dot);
   const angleDeg = THREE.MathUtils.radToDeg(angle);
 
-  const contextTolerance = Math.abs(context.tolerance ?? 1e-4);
+  const contextTolerance = Math.abs(context.tolerance ?? DEFAULT_PARALLEL_ALIGNMENT_TOLERANCE);
   const angleTolerance = Math.max(ANGLE_TOLERANCE, contextTolerance * 10);
 
   const fixedA = context.isComponentFixed?.(infoA.component);

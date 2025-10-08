@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { BaseAssemblyConstraint } from '../BaseAssemblyConstraint.js';
 import { solveParallelAlignment, resolveParallelSelection } from '../constraintUtils/parallelAlignment.js';
 
+const DEFAULT_TOUCH_TOLERANCE = 1e-6;
+
 const inputParamsSchema = {
   constraintID: {
     type: 'string',
@@ -176,7 +178,7 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
     const fixedA = context.isComponentFixed?.(infoA.component);
     const fixedB = context.isComponentFixed?.(infoB.component);
     const translationGain = context.translationGain ?? 1;
-    const tolerance = Math.max(Math.abs(context.tolerance ?? 1e-4), 1e-8);
+    const tolerance = Math.max(Math.abs(context.tolerance ?? DEFAULT_TOUCH_TOLERANCE), 1e-8);
 
     const dirA = infoA.direction.clone().normalize();
     const delta = new THREE.Vector3().subVectors(infoB.origin, infoA.origin);
@@ -342,7 +344,7 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
     const fixedA = context.isComponentFixed?.(infoA.component);
     const fixedB = context.isComponentFixed?.(infoB.component);
     const translationGain = Math.max(0, Math.min(1, context.translationGain ?? 1));
-    const tolerance = Math.max(Math.abs(context.tolerance ?? 1e-4), 1e-8);
+    const tolerance = Math.max(Math.abs(context.tolerance ?? DEFAULT_TOUCH_TOLERANCE), 1e-8);
 
     const dir = infoA.direction.clone().normalize();
     const delta = new THREE.Vector3().subVectors(infoB.origin, infoA.origin);

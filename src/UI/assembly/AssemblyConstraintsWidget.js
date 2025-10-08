@@ -43,7 +43,6 @@ export class AssemblyConstraintsWidget {
     this._solverContinueButton = null;
     this._animateCheckbox = null;
     this._animateDelayInput = null;
-    this._animateControlsRow = null;
     this._animateDelayContainer = null;
     this._animateEnabled = true;
     this._animateDelayMs = 10;
@@ -129,7 +128,6 @@ export class AssemblyConstraintsWidget {
     this._solverContinueButton = null;
     this._animateCheckbox = null;
     this._animateDelayInput = null;
-    this._animateControlsRow = null;
     this._animateDelayContainer = null;
     this._constraintGraphicsCheckbox = null;
     for (const section of this._sections.values()) {
@@ -571,7 +569,6 @@ export class AssemblyConstraintsWidget {
       currentConstraintID: null,
       awaitingContinue: false,
       continueDeferred: null,
-      results: [],
       aborted: false,
       promise: null,
     };
@@ -597,14 +594,9 @@ export class AssemblyConstraintsWidget {
         run.currentConstraintID = constraintID || null;
         this._updateSolverUI();
       },
-      onConstraintEnd: ({ result }) => {
-        if (this._solverRun !== run) return;
-        run.lastConstraintResult = result || null;
-      },
-      onIterationComplete: async ({ iteration, applied }) => {
+      onIterationComplete: async ({ iteration }) => {
         if (this._solverRun !== run) return;
         run.iterationsCompleted = Number.isFinite(iteration) ? iteration + 1 : run.iterationsCompleted;
-        run.lastIterationApplied = !!applied;
         this._updateSolverUI();
         if (this._shouldPauseBetweenLoops() && !run.abortController.signal.aborted) {
           await this.#waitForIterationContinue(run);
@@ -624,7 +616,7 @@ export class AssemblyConstraintsWidget {
 
     run.promise = (async () => {
       try {
-        const results = await this.history.runAll(this.partHistory, {
+        await this.history.runAll(this.partHistory, {
           iterations,
           viewer: this.viewer || null,
           debugMode: !!this._debugMode,
@@ -634,7 +626,6 @@ export class AssemblyConstraintsWidget {
             hooks,
           },
         });
-        if (this._solverRun === run) run.results = results;
       } catch (error) {
         console.warn('[AssemblyConstraintsWidget] Solve failed:', error);
       } finally {
@@ -1016,7 +1007,6 @@ export class AssemblyConstraintsWidget {
     this._solverContinueButton = continueBtn;
     this._animateCheckbox = animateCheckbox;
     this._animateDelayInput = delayInput;
-    this._animateControlsRow = animateRow;
     this._animateDelayContainer = delayContainer;
     this._animateEnabled = true;
 
@@ -1320,13 +1310,24 @@ export class AssemblyConstraintsWidget {
     entries.forEach((entry, index) => {
       if (!entry) return;
       const constraintID = entry?.inputParams?.constraintID || `constraint-${index}`;
-      const points = this.#constraintPoints(entry);
+      const segments = this.#constraintSegments(entry);
       let labelPosition = null;
 
-      if (Array.isArray(points) && points.length === 2) {
-        const [pointA, pointB] = points;
-        this.#upsertConstraintLine(constraintID, pointA, pointB);
-        labelPosition = pointA.clone().add(pointB).multiplyScalar(0.5);
+      if (Array.isArray(segments) && segments.length > 0) {
+        this.#upsertConstraintLines(constraintID, segments);
+        const midpoint = new THREE.Vector3();
+        let midpointCount = 0;
+        for (const [start, end] of segments) {
+          if (!start || !end) continue;
+          midpoint.add(start.clone().add(end).multiplyScalar(0.5));
+          midpointCount += 1;
+        }
+        if (midpointCount > 0) {
+          midpoint.divideScalar(midpointCount);
+          labelPosition = midpoint;
+        } else {
+          labelPosition = this.#constraintStandalonePosition(entry);
+        }
       } else {
         this.#removeConstraintLine(constraintID);
         labelPosition = this.#constraintStandalonePosition(entry);
@@ -1406,23 +1407,11 @@ export class AssemblyConstraintsWidget {
   }
 
   _resolveReferenceObjects(value) {
-    const scene = this.viewer?.scene || null;
-    if (!scene) return [];
-    const results = [];
     const values = Array.isArray(value) ? value : (value ? [value] : []);
+    const results = [];
     for (const item of values) {
-      if (!item) continue;
-      if (item.isObject3D) {
-        results.push(item);
-        continue;
-      }
-      const name = typeof item === 'string'
-        ? item
-        : (typeof item?.name === 'string' ? item.name : null);
-      if (name) {
-        const found = this._findObjectByName(scene, name);
-        if (found) results.push(found);
-      }
+      const resolved = this.#resolveSelectionObject(item);
+      if (resolved) results.push(resolved);
     }
     return results;
   }
@@ -1443,6 +1432,149 @@ export class AssemblyConstraintsWidget {
     if (best) return best;
     if (typeof scene.getObjectByName === 'function') return scene.getObjectByName(name);
     return null;
+  }
+
+  #resolveSelectionObject(selection) {
+    const scene = this.viewer?.scene || null;
+    if (!scene || selection == null) return null;
+
+    if (selection.isObject3D) return selection;
+
+    if (Array.isArray(selection)) {
+      for (const item of selection) {
+        const resolved = this.#resolveSelectionObject(item);
+        if (resolved) return resolved;
+      }
+      return null;
+    }
+
+    if (typeof selection === 'string') {
+      return this.#resolveObjectFromString(selection);
+    }
+
+    if (typeof selection === 'object') {
+      if (selection.isObject3D) return selection;
+      const { uuid, name, id, path, reference, target } = selection;
+
+      if (typeof uuid === 'string') {
+        try {
+          const found = scene.getObjectByProperty?.('uuid', uuid);
+          if (found) return found;
+        } catch { /* ignore */ }
+      }
+
+      const tryIdOrName = (candidate) => {
+        if (!candidate) return null;
+        return this.#resolveObjectFromString(candidate);
+      };
+
+      const nameCandidate = typeof name === 'string' ? name : (typeof selection?.selectionName === 'string' ? selection.selectionName : null);
+      const idCandidate = typeof id === 'string' ? id : null;
+
+      const nameResolved = tryIdOrName(nameCandidate);
+      if (nameResolved) return nameResolved;
+
+      const idResolved = tryIdOrName(idCandidate);
+      if (idResolved) return idResolved;
+
+      if (Array.isArray(path)) {
+        for (let i = path.length - 1; i >= 0; i -= 1) {
+          const segment = path[i];
+          if (typeof segment !== 'string') continue;
+          const resolved = this.#resolveObjectFromString(segment);
+          if (resolved) return resolved;
+        }
+      }
+
+      if (reference != null) {
+        const resolved = this.#resolveSelectionObject(reference);
+        if (resolved) return resolved;
+      }
+
+      if (target != null) {
+        const resolved = this.#resolveSelectionObject(target);
+        if (resolved) return resolved;
+      }
+    }
+
+    return null;
+  }
+
+  #resolveObjectFromString(value) {
+    const scene = this.viewer?.scene || null;
+    if (!scene) return null;
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed != null) {
+          const resolved = this.#resolveSelectionObject(parsed);
+          if (resolved) return resolved;
+        }
+      } catch { /* ignore JSON parse errors */ }
+    }
+
+    const direct = this._findObjectByName(scene, trimmed);
+    if (direct) return direct;
+
+    if (this.#looksLikeUUID(trimmed)) {
+      try {
+        const byUuid = scene.getObjectByProperty?.('uuid', trimmed);
+        if (byUuid) return byUuid;
+      } catch { /* ignore */ }
+    }
+
+    const candidates = new Set();
+    candidates.add(trimmed);
+
+    const splitByDelims = trimmed.split(/›|>|\/|\||→|->/);
+    if (splitByDelims.length > 1) {
+      splitByDelims.forEach((segment) => {
+        const s = segment.trim();
+        if (s) candidates.add(s);
+      });
+    }
+
+    if (trimmed.includes(':')) {
+      trimmed.split(':').forEach((segment) => {
+        const s = segment.trim();
+        if (s) candidates.add(s);
+      });
+    }
+
+    for (const candidate of candidates) {
+      const found = this._findObjectByName(scene, candidate);
+      if (found) return found;
+    }
+
+    let fallback = null;
+    try {
+      scene.traverse?.((obj) => {
+        if (fallback || !obj?.name) return;
+        if (!trimmed.includes(obj.name)) return;
+        if (!fallback) {
+          fallback = obj;
+          return;
+        }
+        const currentScore = this._scoreObjectForNormal(fallback);
+        const nextScore = this._scoreObjectForNormal(obj);
+        if (nextScore > currentScore || obj.name.length > fallback.name.length) {
+          fallback = obj;
+        }
+      });
+    } catch { /* ignore */ }
+
+    return fallback;
+  }
+
+  #looksLikeUUID(value) {
+    if (typeof value !== 'string') return false;
+    const trimmed = value.trim();
+    if (trimmed.length !== 36) return false;
+    return /^[0-9a-fA-F-]{36}$/.test(trimmed);
   }
 
   _scoreObjectForNormal(object) {
@@ -1539,15 +1671,26 @@ export class AssemblyConstraintsWidget {
     }
   }
 
-  #constraintPoints(entry) {
-    if (!entry?.inputParams) return null;
-    const refPoints = this.#collectReferenceSelectionPoints(entry);
-    if (refPoints.length >= 2) return refPoints.slice(0, 2);
+  #constraintSegments(entry) {
+    if (!entry?.inputParams) return [];
+    const refPoints = this.#collectReferenceSelectionPoints(entry, { limit: Infinity });
+    if (refPoints.length < 2) return [];
 
-    return null;
+    if (refPoints.length === 2) {
+      return [[refPoints[0], refPoints[1]]];
+    }
+
+    const anchor = refPoints[0];
+    const segments = [];
+    for (let i = 1; i < refPoints.length; i += 1) {
+      const point = refPoints[i];
+      if (!point) continue;
+      segments.push([anchor.clone(), point.clone()]);
+    }
+    return segments;
   }
 
-  #collectReferenceSelectionPoints(entry) {
+  #collectReferenceSelectionPoints(entry, { limit = Infinity } = {}) {
     const cls = this._resolveConstraintClass(entry);
     const schema = cls?.inputParamsSchema || {};
     const refKeys = Object.entries(schema)
@@ -1557,11 +1700,11 @@ export class AssemblyConstraintsWidget {
 
     const points = [];
     const pushSelection = (value) => {
-      if (!value || points.length >= 2) return;
+      if (!value || points.length >= limit) return;
       if (Array.isArray(value)) {
         for (const item of value) {
           pushSelection(item);
-          if (points.length >= 2) break;
+          if (points.length >= limit) break;
         }
         return;
       }
@@ -1571,7 +1714,7 @@ export class AssemblyConstraintsWidget {
 
     for (const key of refKeys) {
       pushSelection(entry.inputParams[key]);
-      if (points.length >= 2) break;
+      if (points.length >= limit) break;
     }
 
     return points;
@@ -1600,13 +1743,11 @@ export class AssemblyConstraintsWidget {
     return parts.join(' ').trim();
   }
 
-  #upsertConstraintLine(constraintID, pointA, pointB) {
-    if (!this._constraintGroup) return;
+  #upsertConstraintLines(constraintID, segments) {
+    if (!this._constraintGroup || !Array.isArray(segments) || segments.length === 0) return;
     let line = this._constraintLines.get(constraintID);
     if (!line) {
       const geometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(6);
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       const material = new THREE.LineBasicMaterial({
         color: 0xffd60a,
         linewidth: 1,
@@ -1622,10 +1763,31 @@ export class AssemblyConstraintsWidget {
       try { this._constraintGroup.add(line); } catch { }
       this._constraintLines.set(constraintID, line);
     }
-    const attr = line.geometry.getAttribute('position');
-    attr.setXYZ(0, pointA.x, pointA.y, pointA.z);
-    attr.setXYZ(1, pointB.x, pointB.y, pointB.z);
+
+    const vertexCount = segments.length * 2;
+    const expectedArrayLength = vertexCount * 3;
+    let attr = line.geometry.getAttribute('position');
+    if (!attr || attr.count !== vertexCount) {
+      const positions = new Float32Array(expectedArrayLength);
+      line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      attr = line.geometry.getAttribute('position');
+    }
+
+    let writeIndex = 0;
+    for (const [start, end] of segments) {
+      if (!start || !end) continue;
+      attr.setXYZ(writeIndex, start.x, start.y, start.z);
+      attr.setXYZ(writeIndex + 1, end.x, end.y, end.z);
+      writeIndex += 2;
+    }
+
+    if (writeIndex < 2) {
+      this.#removeConstraintLine(constraintID);
+      return;
+    }
+
     attr.needsUpdate = true;
+    line.geometry.setDrawRange(0, writeIndex);
     line.geometry.computeBoundingSphere?.();
   }
 
@@ -1681,8 +1843,11 @@ export class AssemblyConstraintsWidget {
     const typeValue = entry?.type || constraintClass?.constraintType;
     const type = typeof typeValue === 'string' ? typeValue.toLowerCase() : String(typeValue || '').toLowerCase();
     if (type === 'fixed') {
-      return this.#componentBoundingBoxCenter(entry?.inputParams?.component);
+      const center = this.#componentBoundingBoxCenter(entry?.inputParams?.component);
+      if (center) return center;
     }
+    const [firstPoint] = this.#collectReferenceSelectionPoints(entry, { limit: 1 });
+    if (firstPoint) return firstPoint;
     return null;
   }
 
@@ -1736,6 +1901,28 @@ export class AssemblyConstraintsWidget {
     if (!object) return null;
     try { object.updateMatrixWorld?.(true); }
     catch { }
+    try {
+      if (typeof object.type === 'string' && object.type.toUpperCase() === 'EDGE' && typeof object.points === 'function') {
+        const pts = object.points(true);
+        if (Array.isArray(pts) && pts.length) {
+          const total = new THREE.Vector3();
+          let count = 0;
+          for (const pt of pts) {
+            if (!pt) continue;
+            const x = Number(pt.x);
+            const y = Number(pt.y);
+            const z = Number(pt.z);
+            if ([x, y, z].some((v) => !Number.isFinite(v))) continue;
+            total.add(new THREE.Vector3(x, y, z));
+            count += 1;
+          }
+          if (count > 0) {
+            total.divideScalar(count);
+            return total;
+          }
+        }
+      }
+    } catch { }
     try {
       const rep = objectRepresentativePoint?.(null, object);
       if (rep && typeof rep.clone === 'function') return rep.clone();

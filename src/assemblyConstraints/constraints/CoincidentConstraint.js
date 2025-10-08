@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { BaseAssemblyConstraint } from '../BaseAssemblyConstraint.js';
 import { objectRepresentativePoint } from '../../UI/pmi/annUtils.js';
 
+const DEFAULT_COINCIDENT_TOLERANCE = 1e-6;
+
 const inputParamsSchema = {
   constraintID: {
     type: 'string',
@@ -40,7 +42,7 @@ export class CoincidentConstraint extends BaseAssemblyConstraint {
 
   async solve(context = {}) {
     const pd = this.persistentData = this.persistentData || {};
-    const tolerance = context.tolerance ?? 1e-4;
+    const tolerance = Math.max(Math.abs(context.tolerance ?? DEFAULT_COINCIDENT_TOLERANCE), 1e-8);
 
     const [selA, selB] = selectionPair(this.inputParams);
 

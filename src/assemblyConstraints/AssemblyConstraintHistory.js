@@ -34,7 +34,7 @@ function normalizeTypeString(type) {
   return String(type).trim();
 }
 
-const DEFAULT_SOLVER_TOLERANCE = 1e-4;
+const DEFAULT_SOLVER_TOLERANCE = 1e-6;
 const DEFAULT_SOLVER_ITERATIONS = 1;
 const DEFAULT_TRANSLATION_GAIN = 0.5;
 const DEFAULT_ROTATION_GAIN = 0.5;
