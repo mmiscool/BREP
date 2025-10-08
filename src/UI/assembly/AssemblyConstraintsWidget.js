@@ -3,6 +3,7 @@ import { genFeatureUI } from '../featureDialogs.js';
 import { SelectionFilter } from '../SelectionFilter.js';
 import { objectRepresentativePoint } from '../pmi/annUtils.js';
 import { LabelOverlay } from '../pmi/LabelOverlay.js';
+import { AssemblyConstraintControlsWidget } from './AssemblyConstraintControlsWidget.js';
 
 
 const ROOT_CLASS = 'constraints-history';
@@ -46,6 +47,7 @@ export class AssemblyConstraintsWidget {
     this._animateDelayContainer = null;
     this._animateEnabled = true;
     this._animateDelayMs = 10;
+    this._controlsWidget = null;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
@@ -73,7 +75,8 @@ export class AssemblyConstraintsWidget {
       this._labelOverlay = null;
     }
 
-    this._controlsPanel = this._buildControlsPanel();
+    this._controlsWidget = new AssemblyConstraintControlsWidget(this);
+    this._controlsPanel = this._controlsWidget.element;
     this.uiElement.appendChild(this._controlsPanel);
     this._setConstraintGraphicsEnabled(this._constraintGraphicsEnabled);
 
@@ -130,6 +133,9 @@ export class AssemblyConstraintsWidget {
     this._animateDelayInput = null;
     this._animateDelayContainer = null;
     this._constraintGraphicsCheckbox = null;
+    this._controlsWidget?.dispose?.();
+    this._controlsWidget = null;
+    this._controlsPanel = null;
     for (const section of this._sections.values()) {
       this.#teardownSectionForm(section);
       try {
@@ -744,6 +750,15 @@ export class AssemblyConstraintsWidget {
     this._updateSolverUI();
   }
 
+  _handleDebugCheckboxChange(checked) {
+    this._debugMode = !!checked;
+    this.#clearConstraintDebugArrows();
+    if (!this._debugMode) {
+      this._clearNormalArrows();
+    }
+    try { this.viewer?.render?.(); } catch { }
+  }
+
   _updateSolverUI() {
     const run = this._solverRun;
     const running = !!run?.running && !run?.abortController?.signal?.aborted;
@@ -821,253 +836,6 @@ export class AssemblyConstraintsWidget {
     }
   }
 
-  _buildControlsPanel() {
-    const wrap = document.createElement('div');
-    wrap.className = 'constraints-control-panel';
-
-    wrap.appendChild(this._buildSolverControls());
-    wrap.appendChild(this._buildVisualizationControls());
-    wrap.appendChild(this._buildDebugControls());
-
-    return wrap;
-  }
-
-  _buildSolverControls() {
-    const wrap = document.createElement('div');
-    wrap.className = 'control-panel-section solver-controls';
-
-    const mainRow = document.createElement('div');
-    mainRow.className = 'solver-row solver-row-main';
-
-    const label = document.createElement('label');
-    label.className = 'solver-iterations';
-
-    const labelText = document.createElement('span');
-    labelText.className = 'solver-iterations-label';
-    labelText.textContent = 'Iterations';
-
-    const input = document.createElement('input');
-    input.type = 'number';
-    input.min = '1';
-    input.step = '1';
-    input.inputMode = 'numeric';
-    input.value = String(this._defaultIterations);
-    input.style.width = '5em';
-    input.addEventListener('change', () => {
-      const value = Number(input.value);
-      if (!Number.isFinite(value) || value < 1) {
-        input.value = String(this._defaultIterations);
-      }
-    });
-
-    label.appendChild(labelText);
-    label.appendChild(input);
-
-    const buttonGroup = document.createElement('div');
-    buttonGroup.className = 'solver-button-group';
-
-    const startBtn = document.createElement('button');
-    startBtn.type = 'button';
-    startBtn.className = 'btn solver-start-btn';
-    startBtn.textContent = 'Start';
-    startBtn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const promise = this._handleStartClick();
-      if (promise?.catch) {
-        try { promise.catch(() => { }); } catch { /* ignore */ }
-      }
-    });
-
-    const stopBtn = document.createElement('button');
-    stopBtn.type = 'button';
-    stopBtn.className = 'btn solver-stop-btn';
-    stopBtn.textContent = 'Stop';
-    stopBtn.disabled = true;
-    stopBtn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const stopPromise = this._stopSolver({ wait: false });
-      if (stopPromise?.catch) {
-        try { stopPromise.catch(() => { }); } catch { /* ignore */ }
-      }
-    });
-
-    buttonGroup.appendChild(startBtn);
-    buttonGroup.appendChild(stopBtn);
-
-    mainRow.appendChild(label);
-    mainRow.appendChild(buttonGroup);
-
-    const statusRow = document.createElement('div');
-    statusRow.className = 'solver-row solver-row-status';
-
-    const statusLabel = document.createElement('span');
-    statusLabel.className = 'solver-status-label';
-    statusLabel.textContent = 'Status: Idle';
-
-    const loopLabel = document.createElement('span');
-    loopLabel.className = 'solver-loop-label';
-    loopLabel.textContent = 'Loop: —';
-
-    const constraintLabel = document.createElement('span');
-    constraintLabel.className = 'solver-constraint-label';
-    constraintLabel.textContent = 'Constraint: —';
-
-    statusRow.appendChild(statusLabel);
-    statusRow.appendChild(loopLabel);
-    statusRow.appendChild(constraintLabel);
-
-    const animateRow = document.createElement('div');
-    animateRow.className = 'solver-row solver-row-animate';
-
-    const animateLabel = document.createElement('label');
-    animateLabel.className = 'toggle-control solver-animate-toggle';
-
-    const animateCheckbox = document.createElement('input');
-    animateCheckbox.type = 'checkbox';
-    animateCheckbox.checked = true;
-    animateCheckbox.addEventListener('change', () => {
-      this._handleAnimateCheckboxChange();
-    });
-
-    const animateText = document.createElement('span');
-    animateText.textContent = 'Animate solve';
-
-    animateLabel.appendChild(animateCheckbox);
-    animateLabel.appendChild(animateText);
-
-    const delayContainer = document.createElement('div');
-    delayContainer.className = 'solver-animate-delay';
-
-    const delayLabel = document.createElement('span');
-    delayLabel.textContent = 'Step speed (ms)';
-
-    const delayInput = document.createElement('input');
-    delayInput.type = 'number';
-    delayInput.min = '0';
-    delayInput.step = '1';
-    delayInput.inputMode = 'numeric';
-    delayInput.value = String(this._animateDelayMs);
-    delayInput.addEventListener('change', () => {
-      this._handleAnimateDelayChange();
-    });
-
-    delayContainer.appendChild(delayLabel);
-    delayContainer.appendChild(delayInput);
-
-    animateRow.appendChild(animateLabel);
-    animateRow.appendChild(delayContainer);
-
-    const pauseRow = document.createElement('div');
-    pauseRow.className = 'solver-row solver-row-pause';
-
-    const pauseLabel = document.createElement('label');
-    pauseLabel.className = 'toggle-control solver-pause-toggle';
-
-    const pauseCheckbox = document.createElement('input');
-    pauseCheckbox.type = 'checkbox';
-    pauseCheckbox.addEventListener('change', () => {
-      this._handlePauseCheckboxChange();
-    });
-
-    const pauseText = document.createElement('span');
-    pauseText.textContent = 'Pause between loops';
-
-    pauseLabel.appendChild(pauseCheckbox);
-    pauseLabel.appendChild(pauseText);
-
-    const continueBtn = document.createElement('button');
-    continueBtn.type = 'button';
-    continueBtn.className = 'btn solver-continue-btn';
-    continueBtn.textContent = 'Continue';
-    continueBtn.disabled = true;
-    continueBtn.style.display = 'none';
-    continueBtn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      this._handleContinueClick();
-    });
-
-    pauseRow.appendChild(pauseLabel);
-    pauseRow.appendChild(continueBtn);
-
-    wrap.appendChild(mainRow);
-    wrap.appendChild(statusRow);
-    wrap.appendChild(animateRow);
-    wrap.appendChild(pauseRow);
-
-    this._iterationInput = input;
-    this._startButton = startBtn;
-    this._stopButton = stopBtn;
-    this._solverStatusLabel = statusLabel;
-    this._solverLoopLabel = loopLabel;
-    this._solverConstraintLabel = constraintLabel;
-    this._pauseCheckbox = pauseCheckbox;
-    this._solverContinueButton = continueBtn;
-    this._animateCheckbox = animateCheckbox;
-    this._animateDelayInput = delayInput;
-    this._animateDelayContainer = delayContainer;
-    this._animateEnabled = true;
-
-    this._updateSolverUI();
-
-    return wrap;
-  }
-
-  _buildVisualizationControls() {
-    const wrap = document.createElement('div');
-    wrap.className = 'control-panel-section visualization-controls';
-
-    const label = document.createElement('label');
-    label.className = 'toggle-control';
-
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = this._constraintGraphicsEnabled;
-    checkbox.addEventListener('change', () => {
-      this._setConstraintGraphicsEnabled(checkbox.checked);
-    });
-
-    const span = document.createElement('span');
-    span.textContent = 'Show Constraint Graphics';
-
-    label.appendChild(checkbox);
-    label.appendChild(span);
-    wrap.appendChild(label);
-
-    this._constraintGraphicsCheckbox = checkbox;
-
-    return wrap;
-  }
-
-  _buildDebugControls() {
-    const wrap = document.createElement('div');
-    wrap.className = 'control-panel-section debug-controls';
-
-    const label = document.createElement('label');
-    label.className = 'toggle-control';
-
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.addEventListener('change', () => {
-      this._debugMode = checkbox.checked;
-      this.#clearConstraintDebugArrows();
-      if (!this._debugMode) {
-        this._clearNormalArrows();
-      }
-      try { this.viewer?.render?.(); } catch { }
-    });
-
-    const span = document.createElement('span');
-    span.textContent = 'Debug Normals';
-
-    label.appendChild(checkbox);
-    label.appendChild(span);
-    wrap.appendChild(label);
-
-    return wrap;
-  }
 
   _setConstraintGraphicsEnabled(enabled) {
     const value = !!enabled;
