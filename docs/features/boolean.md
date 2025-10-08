@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Boolean feature dialog](boolean.png)
+![Boolean feature dialog](Boolean.png)
 
 Boolean combines existing solids by running Manifold CSG through `BREP.applyBooleanOperation`. The feature keeps face labels intact so downstream selections survive.
 

@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Pattern Radial feature dialog](pattern-radial.png)
+![Pattern Radial feature dialog](Pattern_Radial.png)
 
 Pattern Radial rotates copies of solids about a selected edge axis.
 

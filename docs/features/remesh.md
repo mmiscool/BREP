@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Remesh feature dialog](remesh.png)
+![Remesh feature dialog](Remesh.png)
 
 Remesh clones a selected solid and refines its triangulation based on a target edge length.
 

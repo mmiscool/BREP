@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Primitive Cone feature dialog](primitive-cone.png)
+![Primitive Cone feature dialog](Primitive_Cone.png)
 
 Primitive Cone builds a frustum aligned to the +Y axis using `BREP.Cone`.
 

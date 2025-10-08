@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Pattern Linear feature dialog](pattern-linear.png)
+![Pattern Linear feature dialog](Pattern_Linear.png)
 
 Pattern Linear duplicates solids by translating copies along a single offset vector.
 

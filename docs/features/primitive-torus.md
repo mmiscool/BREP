@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Primitive Torus feature dialog](primitive-torus.png)
+![Primitive Torus feature dialog](Primitive_Torus.png)
 
 Primitive Torus creates a torus (full or partial) around the local Y axis.
 

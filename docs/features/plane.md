@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Plane feature dialog](plane.png)
+![Plane feature dialog](Plane.png)
 
 Plane creates a square construction mesh that can be used as a sketch or measurement reference.
 

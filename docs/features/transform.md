@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Transform feature dialog](transform.png)
+![Transform feature dialog](Transform.png)
 
 Transform applies translation, rotation, and scale to selected solids.
 

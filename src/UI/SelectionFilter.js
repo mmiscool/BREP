@@ -322,25 +322,38 @@ export class SelectionFilter {
                 // Update the reference input with the chosen object
                 const objType = targetObj.type;
                 const objectName = targetObj.name || `${objType}(${targetObj.position?.x || 0},${targetObj.position?.y || 0},${targetObj.position?.z || 0})`;
+
+                const snapshotSelections = (inputEl) => {
+                    const data = inputEl?.dataset || {};
+                    let values = null;
+                    if (data.selectedValues) {
+                        try {
+                            const parsed = JSON.parse(data.selectedValues);
+                            if (Array.isArray(parsed)) values = parsed;
+                        } catch (_) { /* ignore */ }
+                    }
+                    if (!Array.isArray(values) && typeof inputEl?.__getSelectionList === 'function') {
+                        try {
+                            const list = inputEl.__getSelectionList();
+                            if (Array.isArray(list)) values = list.slice();
+                        } catch (_) { /* ignore */ }
+                    }
+                    let count = 0;
+                    if (Array.isArray(values)) {
+                        count = values.length;
+                    } else if (data.selectedCount !== undefined) {
+                        const parsed = Number(data.selectedCount);
+                        if (Number.isFinite(parsed) && parsed >= 0) count = parsed;
+                    }
+                    return count;
+                };
+
                 activeRefInput.value = objectName;
                 activeRefInput.dispatchEvent(new Event('change'));
+                const afterSelectionCount = snapshotSelections(activeRefInput);
 
-                let keepActive = false;
-                if (isMultiRef) {
-                    let updatedCount = 0;
-                    try {
-                        if (typeof activeRefInput.__getSelectionList === 'function') {
-                            const list = activeRefInput.__getSelectionList();
-                            if (Array.isArray(list)) updatedCount = list.length;
-                        } else if (activeRefInput.dataset && activeRefInput.dataset.selectedCount !== undefined) {
-                            const parsed = Number(activeRefInput.dataset.selectedCount);
-                            if (Number.isFinite(parsed)) updatedCount = parsed;
-                        }
-                    } catch (_) { /* ignore */ }
-                    if (!hasMax || updatedCount < maxSelections) {
-                        keepActive = true;
-                    }
-                }
+                const didReachLimit = isMultiRef && hasMax && afterSelectionCount >= maxSelections;
+                const keepActive = isMultiRef && !didReachLimit;
 
                 if (!keepActive) {
                     // Clean up the reference selection state
@@ -353,6 +366,8 @@ export class SelectionFilter {
                     // Restore selection filter
                     SelectionFilter.restoreAllowedSelectionTypes();
                 } else {
+                    activeRefInput.setAttribute('active-reference-selection', 'true');
+                    activeRefInput.style.filter = 'invert(1)';
                     try {
                         const wrap = activeRefInput.closest('.ref-single-wrap, .ref-multi-wrap');
                         if (wrap) wrap.classList.add('ref-active');

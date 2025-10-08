@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Sketch feature dialog](sketch.png)
+![Sketch feature dialog](Sketch.png)
 
 ![Sketch Mode](../SKETCH.png)
 

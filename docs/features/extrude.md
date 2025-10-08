@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Extrude feature dialog](extrude.png)
+![Extrude feature dialog](Extrude.png)
 
 Extrude offsets a single face or sketch profile along its normal using the `BREP.Sweep` translator. Draft or directional flips are not yet exposed.
 
