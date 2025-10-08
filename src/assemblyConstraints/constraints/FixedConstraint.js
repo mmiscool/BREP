@@ -16,10 +16,10 @@ const inputParamsSchema = {
 
 
 export class FixedConstraint extends BaseAssemblyConstraint {
-  static constraintShortName = 'FIXD';
-  static constraintName = 'Fixed Constraint';
+  static constraintShortName = '⏚';
+  static constraintName = '⏚ Fixed Constraint';
   static constraintType = 'fixed';
-  static aliases = ['fix', 'fixed constraint'];
+  static aliases = ['fix', 'fixed constraint', 'fixed', 'FIXD'];
   static inputParamsSchema = inputParamsSchema;
 
   async solve(context = {}) {

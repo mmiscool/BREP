@@ -35,10 +35,10 @@ const inputParamsSchema = {
 };
 
 export class ParallelConstraint extends BaseAssemblyConstraint {
-  static constraintShortName = 'PARA';
-  static constraintName = 'Parallel Constraint';
+  static constraintShortName = '∥';
+  static constraintName = '∥ Parallel Constraint';
   static constraintType = 'parallel';
-  static aliases = ['parallel', 'parallel_faces', 'face_parallel'];
+  static aliases = ['parallel', 'parallel_faces', 'face_parallel', 'PARA'];
   static inputParamsSchema = inputParamsSchema;
 
   constructor(partHistory) {

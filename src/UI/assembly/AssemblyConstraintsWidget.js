@@ -132,7 +132,10 @@ export class AssemblyConstraintsWidget {
       const ConstraintClass = this._resolveConstraintClass(entry);
       const schema = ConstraintClass?.inputParamsSchema ? { ...ConstraintClass.inputParamsSchema } : {};
       if (entry?.inputParams) entry.inputParams.applyImmediately = true;
-      const titleText = entry?.inputParams?.label || ConstraintClass?.constraintName || constraintID;
+      const titleText = entry?.inputParams?.label
+        || ConstraintClass?.constraintShortName
+        || ConstraintClass?.constraintName
+        || constraintID;
       const statusInfo = this.#statusText(entry);
 
       const item = document.createElement('div');
@@ -689,19 +692,24 @@ export class AssemblyConstraintsWidget {
       if (!entry) return;
       const constraintID = entry?.inputParams?.constraintID || `constraint-${index}`;
       const points = this.#constraintPoints(entry);
-      if (!points) {
-        this.#removeConstraintLine(constraintID);
-        return;
-      }
-      const [pointA, pointB] = points;
-      this.#upsertConstraintLine(constraintID, pointA, pointB);
+      let labelPosition = null;
 
-      const midpoint = pointA.clone().add(pointB).multiplyScalar(0.5);
+      if (Array.isArray(points) && points.length === 2) {
+        const [pointA, pointB] = points;
+        this.#upsertConstraintLine(constraintID, pointA, pointB);
+        labelPosition = pointA.clone().add(pointB).multiplyScalar(0.5);
+      } else {
+        this.#removeConstraintLine(constraintID);
+        labelPosition = this.#constraintStandalonePosition(entry);
+      }
+
+      if (!labelPosition) return;
+
       const text = this.#constraintLabelText(entry);
       const overlayData = { constraintID };
 
       if (this._constraintGraphicsEnabled) {
-        try { this._labelOverlay?.updateLabel(constraintID, text, midpoint.clone(), overlayData); } catch {}
+        try { this._labelOverlay?.updateLabel(constraintID, text, labelPosition.clone(), overlayData); } catch {}
         const el = this._labelOverlay?.getElement?.(constraintID);
         if (el) {
           try {
@@ -713,7 +721,7 @@ export class AssemblyConstraintsWidget {
       }
 
       this._labelPositions.set(constraintID, {
-        position: midpoint.clone(),
+        position: labelPosition.clone(),
         text,
         data: overlayData,
         entry,
@@ -891,15 +899,25 @@ export class AssemblyConstraintsWidget {
 
   #constraintLabelText(entry) {
     const cls = this._resolveConstraintClass(entry);
-    const id = entry?.inputParams?.constraintID;
-    const base = cls?.constraintShortName || cls?.constraintName || entry?.constraintType || entry?.type || 'Constraint';
-    let suffix = '';
+    const rawShortName = cls?.constraintShortName;
+    const shortName = rawShortName != null ? String(rawShortName).trim() : '';
+    const base = shortName
+      || cls?.constraintName
+      || entry?.constraintType
+      || entry?.type
+      || 'Constraint';
+
+    let distanceSuffix = '';
     if (entry?.type === 'distance' || cls?.constraintType === 'distance') {
       const distance = Number(entry?.inputParams?.distance);
-      if (Number.isFinite(distance)) suffix = ` ${distance}`;
+      if (Number.isFinite(distance)) distanceSuffix = String(distance);
     }
-    const label = id ? `${id}${suffix}` : `${base}${suffix}`;
-    return label.trim();
+
+    const parts = [];
+    if (base) parts.push(String(base).trim());
+    if (distanceSuffix) parts.push(distanceSuffix);
+
+    return parts.join(' ').trim();
   }
 
   #upsertConstraintLine(constraintID, pointA, pointB) {
@@ -974,6 +992,63 @@ export class AssemblyConstraintsWidget {
         return new THREE.Vector3(selection.origin.x, selection.origin.y, selection.origin.z);
       }
     }
+    return null;
+  }
+
+  #constraintStandalonePosition(entry, cls) {
+    if (!entry) return null;
+    const constraintClass = cls || this._resolveConstraintClass(entry);
+    const typeValue = entry?.type || constraintClass?.constraintType;
+    const type = typeof typeValue === 'string' ? typeValue.toLowerCase() : String(typeValue || '').toLowerCase();
+    if (type === 'fixed') {
+      return this.#componentBoundingBoxCenter(entry?.inputParams?.component);
+    }
+    return null;
+  }
+
+  #componentBoundingBoxCenter(selection) {
+    const objects = this._resolveReferenceObjects(selection);
+    if (!objects || objects.length === 0) return null;
+
+    const totalBox = new THREE.Box3();
+    const tmpBox = new THREE.Box3();
+    let hasBox = false;
+
+    for (const obj of objects) {
+      if (!obj) continue;
+      try { obj.updateMatrixWorld?.(true); }
+      catch {}
+
+      tmpBox.makeEmpty();
+      tmpBox.setFromObject(obj);
+
+      const min = tmpBox.min;
+      const max = tmpBox.max;
+      const valid = Number.isFinite(min.x) && Number.isFinite(min.y) && Number.isFinite(min.z)
+        && Number.isFinite(max.x) && Number.isFinite(max.y) && Number.isFinite(max.z)
+        && !tmpBox.isEmpty();
+      if (!valid) continue;
+
+      if (!hasBox) {
+        totalBox.copy(tmpBox);
+        hasBox = true;
+      } else {
+        totalBox.union(tmpBox);
+      }
+    }
+
+    if (hasBox) {
+      const center = totalBox.getCenter(new THREE.Vector3());
+      if (center && Number.isFinite(center.x) && Number.isFinite(center.y) && Number.isFinite(center.z)) {
+        return center;
+      }
+    }
+
+    for (const obj of objects) {
+      const fallback = this.#extractWorldPoint(obj);
+      if (fallback) return fallback;
+    }
+
     return null;
   }
 
