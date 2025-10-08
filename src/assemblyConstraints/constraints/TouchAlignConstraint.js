@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { BaseAssemblyConstraint } from '../BaseAssemblyConstraint.js';
-import { solveParallelAlignment } from '../constraintUtils/parallelAlignment.js';
+import { solveParallelAlignment, resolveParallelSelection } from '../constraintUtils/parallelAlignment.js';
 
 const inputParamsSchema = {
   constraintID: {
@@ -17,11 +17,11 @@ const inputParamsSchema = {
     minSelections: 2,
     maxSelections: 2,
   },
-  opposeNormals: {
+  reverse: {
     type: 'boolean',
-    label: 'Oppose Normals',
+    label: 'Reverse',
     default_value: false,
-    hint: 'When enabled, Element B will be aligned to face Element A.',
+    hint: 'Flip the stored orientation preference.',
   },
 };
 
@@ -93,15 +93,41 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
     return this.run(context);
   }
 
+  #effectiveOppose(context, selectionA, selectionB) {
+    const base = this.#preferredOppose(context, selectionA, selectionB);
+    const reverseToggle = !!this.inputParams.reverse;
+    return reverseToggle ? !base : base;
+  }
+
+  #preferredOppose(context, selectionA, selectionB) {
+    const pd = this.persistentData = this.persistentData || {};
+    if (typeof pd.preferredOppose !== 'boolean') {
+      const infoA = resolveParallelSelection(this, context, selectionA, 'elements[0]');
+      const infoB = resolveParallelSelection(this, context, selectionB, 'elements[1]');
+      const dirA = infoA?.direction?.clone()?.normalize();
+      const dirB = infoB?.direction?.clone()?.normalize();
+      if (!dirA || !dirB || dirA.lengthSq() === 0 || dirB.lengthSq() === 0) {
+        throw new Error('TouchAlignConstraint: Unable to resolve directions for orientation preference.');
+      }
+      const dot = THREE.MathUtils.clamp(dirA.dot(dirB), -1, 1);
+      pd.preferredOppose = dot < 0;
+      pd.lastOrientationDot = dot;
+    }
+    pd.isNewConstraint = false;
+    return !!pd.preferredOppose;
+  }
+
   async faceToFace(context, selA, selB) {
     const pd = this.persistentData = this.persistentData || {};
+
+    const opposeNormals = this.#effectiveOppose(context, selA, selB);
 
     const parallelResult = solveParallelAlignment({
       constraint: this,
       context,
       selectionA: selA,
       selectionB: selB,
-      opposeNormals: !!this.inputParams.opposeNormals,
+      opposeNormals,
       selectionLabelA: 'elements[0]',
       selectionLabelB: 'elements[1]',
     });
@@ -253,17 +279,179 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
   }
 
   async edgeToEdge(_context, _selA, _selB) {
+    const context = _context || {};
     const pd = this.persistentData = this.persistentData || {};
-    const message = 'Edge-to-edge touch alignment is not implemented.';
-    pd.status = 'unsupported-selection';
+
+    const opposeNormals = this.#effectiveOppose(context, _selA, _selB);
+
+    const parallelResult = solveParallelAlignment({
+      constraint: this,
+      context,
+      selectionA: _selA,
+      selectionB: _selB,
+      opposeNormals,
+      selectionLabelA: 'elements[0]',
+      selectionLabelB: 'elements[1]',
+    });
+
+    const infoA = parallelResult.infoA || null;
+    const infoB = parallelResult.infoB || null;
+
+    if (context.debugMode && infoA && infoB) {
+      this.#updateNormalDebug(context, infoA, infoB);
+    }
+
+    pd.lastAppliedRotations = Array.isArray(parallelResult.rotations) ? parallelResult.rotations : [];
+
+    if (!parallelResult.ok) {
+      pd.status = parallelResult.status;
+      pd.message = parallelResult.message || '';
+      pd.satisfied = false;
+      pd.error = parallelResult.error ?? null;
+      pd.errorDeg = parallelResult.angleDeg ?? null;
+      pd.lastAppliedMoves = [];
+      pd.exception = parallelResult.exception || null;
+      return parallelResult;
+    }
+
+    if (!parallelResult.satisfied) {
+      pd.status = parallelResult.status;
+      pd.message = parallelResult.message || 'Aligning edge directions…';
+      pd.satisfied = false;
+      pd.error = parallelResult.angle ?? null;
+      pd.errorDeg = parallelResult.angleDeg ?? null;
+      pd.lastAppliedMoves = [];
+      if (pd.exception) delete pd.exception;
+      return {
+        ...parallelResult,
+        stage: 'orientation',
+      };
+    }
+
+    if (!infoA || !infoB || !infoA.origin || !infoB.origin || !infoA.direction) {
+      const message = 'Unable to resolve edge data after alignment.';
+      pd.status = 'invalid-selection';
+      pd.message = message;
+      pd.satisfied = false;
+      pd.lastAppliedMoves = [];
+      pd.error = null;
+      pd.errorDeg = null;
+      return { ok: false, status: 'invalid-selection', satisfied: false, applied: false, message };
+    }
+
+    const fixedA = context.isComponentFixed?.(infoA.component);
+    const fixedB = context.isComponentFixed?.(infoB.component);
+    const translationGain = Math.max(0, Math.min(1, context.translationGain ?? 1));
+    const tolerance = Math.max(Math.abs(context.tolerance ?? 1e-4), 1e-8);
+
+    const dir = infoA.direction.clone().normalize();
+    const delta = new THREE.Vector3().subVectors(infoB.origin, infoA.origin);
+    const parallelComponent = dir.clone().multiplyScalar(delta.dot(dir));
+    const separationVec = delta.clone().sub(parallelComponent);
+    const distance = separationVec.length();
+
+    pd.error = distance;
+    pd.errorDeg = null;
+
+    if (distance <= tolerance) {
+      const message = 'Edges are colinear within tolerance.';
+      pd.status = 'satisfied';
+      pd.message = message;
+      pd.satisfied = true;
+      pd.lastAppliedMoves = [];
+      if (pd.exception) delete pd.exception;
+      return {
+        ok: true,
+        status: 'satisfied',
+        satisfied: true,
+        applied: false,
+        error: distance,
+        message,
+        infoA,
+        infoB,
+        diagnostics: {
+          separationVector: separationVec.toArray(),
+          parallelComponent: parallelComponent.toArray(),
+        },
+      };
+    }
+
+    if (fixedA && fixedB) {
+      const message = 'Both components are fixed; unable to translate to make edges colinear.';
+      pd.status = 'blocked';
+      pd.message = message;
+      pd.satisfied = false;
+      pd.lastAppliedMoves = [];
+      if (pd.exception) delete pd.exception;
+      return {
+        ok: false,
+        status: 'blocked',
+        satisfied: false,
+        applied: false,
+        error: distance,
+        message,
+        infoA,
+        infoB,
+        diagnostics: {
+          separationVector: separationVec.toArray(),
+          parallelComponent: parallelComponent.toArray(),
+        },
+      };
+    }
+
+    const correctionVec = separationVec.clone().multiplyScalar(translationGain);
+    const moves = [];
+    let applied = false;
+
+    const applyMove = (component, vec) => {
+      if (!component || !vec || vec.lengthSq() === 0) return false;
+      const ok = context.applyTranslation?.(component, vec);
+      if (ok) {
+        moves.push({ component: component.name || component.uuid, move: vectorToArray(vec) });
+      }
+      return ok;
+    };
+
+    if (!fixedA && !fixedB) {
+      const moveA = correctionVec.clone().multiplyScalar(0.5);
+      const moveB = correctionVec.clone().multiplyScalar(-0.5);
+      applied = applyMove(infoA.component, moveA) || applied;
+      applied = applyMove(infoB.component, moveB) || applied;
+    } else if (fixedA && !fixedB) {
+      const moveB = correctionVec.clone().negate();
+      applied = applyMove(infoB.component, moveB) || applied;
+    } else if (!fixedA && fixedB) {
+      const moveA = correctionVec.clone();
+      applied = applyMove(infoA.component, moveA) || applied;
+    }
+
+    const status = applied ? 'adjusted' : 'pending';
+    const message = applied
+      ? 'Applied translation to bring edges onto the same line.'
+      : 'Waiting for a movable component to translate.';
+
+    pd.status = status;
     pd.message = message;
     pd.satisfied = false;
-    pd.error = null;
-    pd.errorDeg = null;
-    pd.lastAppliedMoves = [];
-    pd.lastAppliedRotations = [];
+    pd.lastAppliedMoves = moves;
     if (pd.exception) delete pd.exception;
-    return { ok: false, status: 'unsupported-selection', satisfied: false, applied: false, message };
+
+    return {
+      ok: true,
+      status,
+      satisfied: false,
+      applied,
+      error: distance,
+      message,
+      infoA,
+      infoB,
+      diagnostics: {
+        separationVector: separationVec.toArray(),
+        parallelComponent: parallelComponent.toArray(),
+        moves,
+      },
+      stage: 'translation',
+    };
   }
 
   async pointToPoint(_context, _selA, _selB) {

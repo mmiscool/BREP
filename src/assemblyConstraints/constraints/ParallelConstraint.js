@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { BaseAssemblyConstraint } from '../BaseAssemblyConstraint.js';
-import { solveParallelAlignment } from '../constraintUtils/parallelAlignment.js';
+import { solveParallelAlignment, resolveParallelSelection } from '../constraintUtils/parallelAlignment.js';
 
 const inputParamsSchema = {
   constraintID: {
@@ -23,11 +23,11 @@ const inputParamsSchema = {
     default_value: false,
     hint: 'Maintained for compatibility; solver applies adjustments iteratively.',
   },
-  opposeNormals: {
+  reverse: {
     type: 'boolean',
-    label: 'Oppose Normals',
+    label: 'Reverse',
     default_value: false,
-    hint: 'Rotate so the reference directions point opposite each other.',
+    hint: 'Flip the stored orientation preference.',
   },
 };
 
@@ -64,12 +64,14 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
       return { ok: false, status: 'incomplete', satisfied: false, applied: false, message: pd.message };
     }
 
+    const opposeNormals = this.#effectiveOppose(context, selA, selB);
+
     const result = solveParallelAlignment({
       constraint: this,
       context,
       selectionA: selA,
       selectionB: selB,
-      opposeNormals: !!this.inputParams.opposeNormals,
+      opposeNormals,
       selectionLabelA: 'elements[0]',
       selectionLabelB: 'elements[1]',
     });
@@ -139,6 +141,30 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
 
   async run(context = {}) {
     return this.solve(context);
+  }
+
+  #effectiveOppose(context, selectionA, selectionB) {
+    const base = this.#preferredOppose(context, selectionA, selectionB);
+    const reverseToggle = !!this.inputParams.reverse;
+    return reverseToggle ? !base : base;
+  }
+
+  #preferredOppose(context, selectionA, selectionB) {
+    const pd = this.persistentData = this.persistentData || {};
+    if (typeof pd.preferredOppose !== 'boolean') {
+      const infoA = resolveParallelSelection(this, context, selectionA, 'elements[0]');
+      const infoB = resolveParallelSelection(this, context, selectionB, 'elements[1]');
+      const dirA = infoA?.direction?.clone()?.normalize();
+      const dirB = infoB?.direction?.clone()?.normalize();
+      if (!dirA || !dirB || dirA.lengthSq() === 0 || dirB.lengthSq() === 0) {
+        throw new Error('ParallelConstraint: Unable to resolve directions for orientation preference.');
+      }
+      const dot = THREE.MathUtils.clamp(dirA.dot(dirB), -1, 1);
+      pd.preferredOppose = dot < 0;
+      pd.lastOrientationDot = dot;
+    }
+    pd.isNewConstraint = false;
+    return !!pd.preferredOppose;
   }
 
   #updateNormalDebug(context, infoA, infoB) {

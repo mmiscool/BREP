@@ -380,6 +380,32 @@ export class AssemblyConstraintHistory {
       try { viewer?.requestRender?.(); } catch {}
     };
 
+    const controller = options?.controller && typeof options.controller === 'object'
+      ? options.controller
+      : null;
+    const signal = controller?.signal || options?.signal || null;
+
+    let aborted = false;
+    const shouldAbort = () => {
+      if (signal?.aborted) {
+        aborted = true;
+        return true;
+      }
+      return false;
+    };
+
+    const rawHooks = controller?.hooks || options?.hooks;
+    const hooks = rawHooks && typeof rawHooks === 'object' ? rawHooks : {};
+    const safeCallHook = async (name, payload = {}) => {
+      const fn = hooks?.[name];
+      if (typeof fn !== 'function') return;
+      try {
+        await fn({ controller, signal, aborted, ...payload });
+      } catch (error) {
+        console.warn(`[AssemblyConstraintHistory] hook "${name}" failed:`, error);
+      }
+    };
+
     const scene = ph.scene || null;
 
     const features = Array.isArray(ph.features) ? ph.features.filter(Boolean) : [];
@@ -509,11 +535,46 @@ export class AssemblyConstraintHistory {
       runtime.instance?.clearDebugArrows?.({ scene });
     }
 
+    await safeCallHook('onStart', {
+      maxIterations,
+      constraintCount: runtimeEntries.length,
+    });
+
+    let iterationsCompleted = 0;
+    const totalConstraints = runtimeEntries.length;
+
+    outerLoop:
     for (let iter = 0; iter < maxIterations; iter += 1) {
+      if (shouldAbort()) break;
+
+      await safeCallHook('onIterationStart', {
+        iteration: iter,
+        maxIterations,
+      });
+      if (shouldAbort()) break;
+
       let iterationApplied = false;
 
-      for (const runtime of runtimeEntries) {
-        if (!runtime.instance) continue;
+      for (let idx = 0; idx < runtimeEntries.length; idx += 1) {
+        if (shouldAbort()) break outerLoop;
+        const runtime = runtimeEntries[idx];
+        const constraintID = runtime?.entry?.inputParams?.constraintID || null;
+        const constraintType = runtime?.entry?.type || null;
+        const hookBase = {
+          iteration: iter,
+          index: idx,
+          constraintID,
+          constraintType,
+          totalConstraints,
+        };
+
+        if (!runtime.instance) {
+          await safeCallHook('onConstraintSkipped', hookBase);
+          continue;
+        }
+
+        await safeCallHook('onConstraintStart', hookBase);
+        if (shouldAbort()) break outerLoop;
 
         const context = { ...baseContext, iteration: iter, maxIterations };
 
@@ -540,6 +601,12 @@ export class AssemblyConstraintHistory {
         runtime.result = this.#finalizeConstraintResult(runtime.instance, result, iter);
 
         if (runtime.result.applied) iterationApplied = true;
+
+        await safeCallHook('onConstraintEnd', {
+          ...hookBase,
+          result: runtime.result,
+        });
+        if (shouldAbort()) break outerLoop;
       }
 
       if (typeof baseContext.renderScene === 'function') {
@@ -550,8 +617,21 @@ export class AssemblyConstraintHistory {
         await new Promise((resolve) => setTimeout(resolve, iterationDelayMs));
       }
 
+      if (shouldAbort()) break;
+
+      iterationsCompleted = iter + 1;
+
+      await safeCallHook('onIterationComplete', {
+        iteration: iter,
+        maxIterations,
+        applied: iterationApplied,
+      });
+      if (shouldAbort()) break;
+
       if (!iterationApplied) break;
     }
+
+    aborted = aborted || signal?.aborted || false;
 
     const now = Date.now();
     const finalResults = [];
@@ -598,6 +678,14 @@ export class AssemblyConstraintHistory {
     }
 
     this.#emitChange();
+
+    await safeCallHook('onComplete', {
+      results: finalResults.slice(),
+      aborted,
+      iterationsCompleted,
+      maxIterations,
+    });
+
     return finalResults;
   }
 

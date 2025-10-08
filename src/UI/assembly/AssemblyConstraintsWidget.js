@@ -33,6 +33,14 @@ export class AssemblyConstraintsWidget {
     this._idsSignature = '';
     this._syncScheduled = false;
     this._emptyStateEl = null;
+    this._solverRun = null;
+    this._startButton = null;
+    this._stopButton = null;
+    this._solverStatusLabel = null;
+    this._solverLoopLabel = null;
+    this._solverConstraintLabel = null;
+    this._pauseCheckbox = null;
+    this._solverContinueButton = null;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
@@ -100,8 +108,19 @@ export class AssemblyConstraintsWidget {
       this._unsubscribe = null;
     }
     document.removeEventListener('mousedown', this._onGlobalClick, true);
+    const stopPromise = this._stopSolver({ wait: false });
+    if (stopPromise?.catch) {
+      try { stopPromise.catch(() => {}); } catch { /* ignore */ }
+    }
+    this._solverRun = null;
     this._iterationInput = null;
-    this._solveButton = null;
+    this._startButton = null;
+    this._stopButton = null;
+    this._solverStatusLabel = null;
+    this._solverLoopLabel = null;
+    this._solverConstraintLabel = null;
+    this._pauseCheckbox = null;
+    this._solverContinueButton = null;
     this._constraintGraphicsCheckbox = null;
     for (const section of this._sections.values()) {
       this.#teardownSectionForm(section);
@@ -518,31 +537,250 @@ export class AssemblyConstraintsWidget {
     }
     section.form = null;
   }
+  async _handleStartClick() {
+    const iterations = this.#normalizeIterationInputValue();
+    if (iterations < 1) return;
 
+    await this._stopSolver({ wait: true });
+    this._startSolver(iterations);
+  }
 
-  async _handleSolve() {
+  _startSolver(iterations) {
     if (!this.history) return;
     this.#clearConstraintDebugArrows();
     this._clearNormalArrows();
 
+    const abortController = new AbortController();
+    const run = {
+      abortController,
+      running: true,
+      iterations,
+      maxIterations: iterations,
+      currentIteration: 0,
+      iterationsCompleted: 0,
+      currentConstraintID: null,
+      awaitingContinue: false,
+      continueDeferred: null,
+      results: [],
+      aborted: false,
+      promise: null,
+    };
+
+    this._solverRun = run;
+    this._updateSolverUI();
+
+    const hooks = {
+      onStart: ({ maxIterations: total }) => {
+        if (this._solverRun !== run) return;
+        if (Number.isFinite(total)) run.maxIterations = total;
+        this._updateSolverUI();
+      },
+      onIterationStart: ({ iteration, maxIterations: total }) => {
+        if (this._solverRun !== run) return;
+        run.currentIteration = Number.isFinite(iteration) ? iteration : 0;
+        if (Number.isFinite(total)) run.maxIterations = total;
+        run.currentConstraintID = null;
+        this._updateSolverUI();
+      },
+      onConstraintStart: ({ constraintID }) => {
+        if (this._solverRun !== run) return;
+        run.currentConstraintID = constraintID || null;
+        this._updateSolverUI();
+      },
+      onConstraintEnd: ({ result }) => {
+        if (this._solverRun !== run) return;
+        run.lastConstraintResult = result || null;
+      },
+      onIterationComplete: async ({ iteration, applied }) => {
+        if (this._solverRun !== run) return;
+        run.iterationsCompleted = Number.isFinite(iteration) ? iteration + 1 : run.iterationsCompleted;
+        run.lastIterationApplied = !!applied;
+        this._updateSolverUI();
+        if (this._shouldPauseBetweenLoops() && !run.abortController.signal.aborted) {
+          await this.#waitForIterationContinue(run);
+        }
+      },
+      onComplete: ({ aborted, iterationsCompleted }) => {
+        if (this._solverRun !== run) return;
+        run.aborted = !!aborted;
+        if (Number.isFinite(iterationsCompleted)) {
+          run.iterationsCompleted = iterationsCompleted;
+        }
+        this._updateSolverUI();
+      },
+    };
+
+    const iterationDelayMs = this._debugNormalsEnabled ? 10 : 0;
+
+    run.promise = (async () => {
+      try {
+        const results = await this.history.runAll(this.partHistory, {
+          iterations,
+          viewer: this.viewer || null,
+          debugMode: !!this._debugNormalsEnabled,
+          iterationDelayMs,
+          controller: {
+            signal: abortController.signal,
+            hooks,
+          },
+        });
+        if (this._solverRun === run) run.results = results;
+      } catch (error) {
+        console.warn('[AssemblyConstraintsWidget] Solve failed:', error);
+      } finally {
+        if (this._solverRun === run) {
+          this._solverRun = null;
+        }
+        run.running = false;
+        this._resolveIterationGate(run);
+        this._updateSolverUI();
+      }
+    })();
+  }
+
+  async _stopSolver({ wait = false } = {}) {
+    const run = this._solverRun;
+    if (!run) return;
+    try {
+      if (!run.abortController.signal.aborted) {
+        run.abortController.abort();
+      }
+    } catch { /* ignore */ }
+    this._resolveIterationGate(run);
+    this._updateSolverUI();
+    if (wait && run.promise) {
+      try { await run.promise; }
+      catch { /* ignore */ }
+    }
+  }
+
+  _resolveIterationGate(run = this._solverRun) {
+    if (!run || !run.continueDeferred) return;
+    const { resolve } = run.continueDeferred;
+    run.continueDeferred = null;
+    run.awaitingContinue = false;
+    if (typeof resolve === 'function') {
+      try { resolve(); } catch { /* ignore */ }
+    }
+  }
+
+  async #waitForIterationContinue(run) {
+    if (!run) return;
+    if (run.continueDeferred) {
+      try { await run.continueDeferred.promise; }
+      catch { /* ignore */ }
+      return;
+    }
+    run.awaitingContinue = true;
+    this._updateSolverUI();
+    run.continueDeferred = {};
+    run.continueDeferred.promise = new Promise((resolve) => {
+      run.continueDeferred.resolve = () => {
+        run.awaitingContinue = false;
+        run.continueDeferred = null;
+        resolve();
+      };
+    });
+    try {
+      await run.continueDeferred.promise;
+    } catch { /* ignore */ }
+  }
+
+  _handlePauseCheckboxChange() {
+    if (!this._shouldPauseBetweenLoops()) {
+      this._resolveIterationGate();
+    }
+    this._updateSolverUI();
+  }
+
+  _shouldPauseBetweenLoops() {
+    return this._pauseCheckbox?.checked === true;
+  }
+
+  _handleContinueClick() {
+    this._resolveIterationGate();
+    this._updateSolverUI();
+  }
+
+  #normalizeIterationInputValue() {
     let iterations = Number(this._iterationInput?.value ?? this._defaultIterations ?? 1);
     if (!Number.isFinite(iterations) || iterations < 1) iterations = 1;
     iterations = Math.floor(iterations);
     if (this._iterationInput) this._iterationInput.value = String(iterations);
+    return iterations;
+  }
 
-    const button = this._solveButton;
-    if (button) button.disabled = true;
-    try {
-      await this.history.runAll(this.partHistory, {
-        iterations,
-        viewer: this.viewer || null,
-        debugMode: !!this._debugNormalsEnabled,
-        iterationDelayMs: this._debugNormalsEnabled ? 500 : 0,
-      });
-    } catch (error) {
-      console.warn('[AssemblyConstraintsWidget] Solve failed:', error);
-    } finally {
-      if (button) button.disabled = false;
+  #getIterationInputValue() {
+    const raw = Number(this._iterationInput?.value);
+    if (Number.isFinite(raw) && raw >= 1) return Math.floor(raw);
+    const fallback = Number(this._defaultIterations);
+    if (Number.isFinite(fallback) && fallback >= 1) return Math.floor(fallback);
+    return 1;
+  }
+
+  _updateSolverUI() {
+    const run = this._solverRun;
+    const running = !!run?.running && !run?.abortController?.signal?.aborted;
+    const stopping = !!run?.abortController?.signal?.aborted && !!run?.running;
+    const awaitingContinue = !!run?.awaitingContinue;
+
+    if (this._startButton) {
+      this._startButton.disabled = running || stopping;
+    }
+    if (this._stopButton) {
+      this._stopButton.disabled = !run || (!running && !stopping);
+    }
+    if (this._iterationInput) {
+      this._iterationInput.disabled = running || stopping;
+    }
+
+    if (this._solverStatusLabel) {
+      let text = 'Status: Idle';
+      if (stopping) text = 'Status: Stopping';
+      else if (awaitingContinue) text = 'Status: Paused';
+      else if (running) text = 'Status: Running';
+      else if (run) {
+        text = run.aborted ? 'Status: Stopped' : 'Status: Completed';
+      }
+      this._solverStatusLabel.textContent = text;
+      this._solverStatusLabel.dataset.state = text.split(':')[1]?.trim()?.toLowerCase() || 'idle';
+    }
+
+    if (this._solverLoopLabel) {
+      if (run) {
+        const max = Number.isFinite(run.maxIterations)
+          ? run.maxIterations
+          : Number.isFinite(run.iterations)
+            ? run.iterations
+            : this.#getIterationInputValue();
+        const current = awaitingContinue
+          ? run.iterationsCompleted
+          : Number.isFinite(run.currentIteration) ? run.currentIteration + 1 : run.iterationsCompleted;
+        const displayCurrent = Number.isFinite(current) && current > 0 ? current : 0;
+        if (Number.isFinite(max) && max > 0) {
+          this._solverLoopLabel.textContent = `Loop: ${Math.min(displayCurrent, max)}/${max}`;
+        } else if (displayCurrent > 0) {
+          this._solverLoopLabel.textContent = `Loop: ${displayCurrent}`;
+        } else {
+          this._solverLoopLabel.textContent = 'Loop: —';
+        }
+      } else {
+        this._solverLoopLabel.textContent = 'Loop: —';
+      }
+    }
+
+    if (this._solverConstraintLabel) {
+      if (run && run.currentConstraintID) {
+        this._solverConstraintLabel.textContent = `Constraint: ${run.currentConstraintID}`;
+      } else {
+        this._solverConstraintLabel.textContent = 'Constraint: —';
+      }
+    }
+
+    if (this._solverContinueButton) {
+      const pauseEnabled = this._shouldPauseBetweenLoops();
+      this._solverContinueButton.style.display = pauseEnabled ? '' : 'none';
+      this._solverContinueButton.disabled = !awaitingContinue;
     }
   }
 
@@ -560,6 +798,9 @@ export class AssemblyConstraintsWidget {
   _buildSolverControls() {
     const wrap = document.createElement('div');
     wrap.className = 'control-panel-section solver-controls';
+
+    const mainRow = document.createElement('div');
+    mainRow.className = 'solver-row solver-row-main';
 
     const label = document.createElement('label');
     label.className = 'solver-iterations';
@@ -585,21 +826,108 @@ export class AssemblyConstraintsWidget {
     label.appendChild(labelText);
     label.appendChild(input);
 
-    const runBtn = document.createElement('button');
-    runBtn.type = 'button';
-    runBtn.className = 'btn solver-run-btn';
-    runBtn.textContent = 'Solve';
-    runBtn.addEventListener('click', (ev) => {
+    const buttonGroup = document.createElement('div');
+    buttonGroup.className = 'solver-button-group';
+
+    const startBtn = document.createElement('button');
+    startBtn.type = 'button';
+    startBtn.className = 'btn solver-start-btn';
+    startBtn.textContent = 'Start';
+    startBtn.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      this._handleSolve();
+      const promise = this._handleStartClick();
+      if (promise?.catch) {
+        try { promise.catch(() => {}); } catch { /* ignore */ }
+      }
     });
 
-    wrap.appendChild(label);
-    wrap.appendChild(runBtn);
+    const stopBtn = document.createElement('button');
+    stopBtn.type = 'button';
+    stopBtn.className = 'btn solver-stop-btn';
+    stopBtn.textContent = 'Stop';
+    stopBtn.disabled = true;
+    stopBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const stopPromise = this._stopSolver({ wait: false });
+      if (stopPromise?.catch) {
+        try { stopPromise.catch(() => {}); } catch { /* ignore */ }
+      }
+    });
+
+    buttonGroup.appendChild(startBtn);
+    buttonGroup.appendChild(stopBtn);
+
+    mainRow.appendChild(label);
+    mainRow.appendChild(buttonGroup);
+
+    const statusRow = document.createElement('div');
+    statusRow.className = 'solver-row solver-row-status';
+
+    const statusLabel = document.createElement('span');
+    statusLabel.className = 'solver-status-label';
+    statusLabel.textContent = 'Status: Idle';
+
+    const loopLabel = document.createElement('span');
+    loopLabel.className = 'solver-loop-label';
+    loopLabel.textContent = 'Loop: —';
+
+    const constraintLabel = document.createElement('span');
+    constraintLabel.className = 'solver-constraint-label';
+    constraintLabel.textContent = 'Constraint: —';
+
+    statusRow.appendChild(statusLabel);
+    statusRow.appendChild(loopLabel);
+    statusRow.appendChild(constraintLabel);
+
+    const pauseRow = document.createElement('div');
+    pauseRow.className = 'solver-row solver-row-pause';
+
+    const pauseLabel = document.createElement('label');
+    pauseLabel.className = 'toggle-control solver-pause-toggle';
+
+    const pauseCheckbox = document.createElement('input');
+    pauseCheckbox.type = 'checkbox';
+    pauseCheckbox.addEventListener('change', () => {
+      this._handlePauseCheckboxChange();
+    });
+
+    const pauseText = document.createElement('span');
+    pauseText.textContent = 'Pause between loops';
+
+    pauseLabel.appendChild(pauseCheckbox);
+    pauseLabel.appendChild(pauseText);
+
+    const continueBtn = document.createElement('button');
+    continueBtn.type = 'button';
+    continueBtn.className = 'btn solver-continue-btn';
+    continueBtn.textContent = 'Continue';
+    continueBtn.disabled = true;
+    continueBtn.style.display = 'none';
+    continueBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this._handleContinueClick();
+    });
+
+    pauseRow.appendChild(pauseLabel);
+    pauseRow.appendChild(continueBtn);
+
+    wrap.appendChild(mainRow);
+    wrap.appendChild(statusRow);
+    wrap.appendChild(pauseRow);
 
     this._iterationInput = input;
-    this._solveButton = runBtn;
+    this._startButton = startBtn;
+    this._stopButton = stopBtn;
+    this._solverStatusLabel = statusLabel;
+    this._solverLoopLabel = loopLabel;
+    this._solverConstraintLabel = constraintLabel;
+    this._pauseCheckbox = pauseCheckbox;
+    this._solverContinueButton = continueBtn;
+
+    this._updateSolverUI();
 
     return wrap;
   }
@@ -1738,7 +2066,110 @@ export class AssemblyConstraintsWidget {
       background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
     }
     .${ROOT_CLASS} .solver-controls {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .${ROOT_CLASS} .solver-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+    .${ROOT_CLASS} .solver-row-main {
       justify-content: space-between;
+      gap: 16px;
+    }
+    .${ROOT_CLASS} .solver-button-group {
+      display: inline-flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .${ROOT_CLASS} .solver-row-status {
+      justify-content: space-between;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--muted);
+      gap: 12px;
+    }
+    .${ROOT_CLASS} .solver-status-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .${ROOT_CLASS} .solver-status-label::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      box-shadow: 0 0 6px rgba(0,0,0,.4);
+    }
+    .${ROOT_CLASS} .solver-status-label[data-state="running"]::before {
+      background: #22c55e;
+    }
+    .${ROOT_CLASS} .solver-status-label[data-state="paused"]::before {
+      background: #facc15;
+    }
+    .${ROOT_CLASS} .solver-status-label[data-state="stopping"]::before {
+      background: #f97316;
+    }
+    .${ROOT_CLASS} .solver-status-label[data-state="stopped"]::before {
+      background: var(--danger);
+    }
+    .${ROOT_CLASS} .solver-status-label[data-state="completed"]::before {
+      background: var(--accent);
+    }
+    .${ROOT_CLASS} .solver-loop-label,
+    .${ROOT_CLASS} .solver-constraint-label {
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .${ROOT_CLASS} .solver-row-pause {
+      justify-content: space-between;
+    }
+    .${ROOT_CLASS} .solver-start-btn,
+    .${ROOT_CLASS} .solver-stop-btn,
+    .${ROOT_CLASS} .solver-continue-btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.04);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: border-color .15s ease, background-color .15s ease, transform .05s ease;
+    }
+    .${ROOT_CLASS} .solver-start-btn:hover,
+    .${ROOT_CLASS} .solver-continue-btn:hover {
+      border-color: var(--focus);
+      background: rgba(59,130,246,.15);
+    }
+    .${ROOT_CLASS} .solver-stop-btn {
+      border-color: rgba(239,68,68,.6);
+      background: rgba(239,68,68,.075);
+    }
+    .${ROOT_CLASS} .solver-stop-btn:hover {
+      border-color: var(--danger);
+      background: rgba(239,68,68,.18);
+    }
+    .${ROOT_CLASS} .solver-start-btn:active,
+    .${ROOT_CLASS} .solver-stop-btn:active,
+    .${ROOT_CLASS} .solver-continue-btn:active {
+      transform: translateY(1px);
+    }
+    .${ROOT_CLASS} .solver-start-btn:disabled,
+    .${ROOT_CLASS} .solver-stop-btn:disabled,
+    .${ROOT_CLASS} .solver-continue-btn:disabled {
+      opacity: .6;
+      cursor: default;
+      transform: none;
+    }
+    .${ROOT_CLASS} .solver-continue-btn {
+      margin-left: auto;
     }
     .${ROOT_CLASS} .delay-controls {
       justify-content: space-between;
@@ -1768,29 +2199,6 @@ export class AssemblyConstraintsWidget {
       outline: none;
       border-color: var(--focus);
       box-shadow: 0 0 0 3px rgba(59,130,246,.15);
-    }
-    .${ROOT_CLASS} .solver-run-btn {
-      appearance: none;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,.04);
-      color: var(--text);
-      border-radius: 8px;
-      padding: 8px 16px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: border-color .15s ease, background-color .15s ease, transform .05s ease;
-    }
-    .${ROOT_CLASS} .solver-run-btn:hover {
-      border-color: var(--focus);
-      background: rgba(59,130,246,.15);
-    }
-    .${ROOT_CLASS} .solver-run-btn:active {
-      transform: translateY(1px);
-    }
-    .${ROOT_CLASS} .solver-run-btn:disabled {
-      opacity: .6;
-      cursor: default;
-      transform: none;
     }
     .${ROOT_CLASS} .toggle-control {
       display: inline-flex;
