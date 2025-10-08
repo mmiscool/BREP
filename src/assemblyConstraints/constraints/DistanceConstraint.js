@@ -9,17 +9,14 @@ const inputParamsSchema = {
     default_value: null,
     hint: 'Unique identifier for the constraint.',
   },
-  element_A: {
+  elements: {
     type: 'reference_selection',
-    label: 'Element A',
-    hint: 'Select the first reference (point, edge, face, or component).',
-    selectionFilter: ['FACE', 'VERTEX', 'EDGE',],
-  },
-  element_B: {
-    type: 'reference_selection',
-    label: 'Element B',
-    hint: 'Select the second reference (point, edge, face, or component).',
-    selectionFilter: ['FACE', 'VERTEX', 'EDGE',],
+    label: 'Elements',
+    hint: 'Select two references (point, edge, face, or component).',
+    selectionFilter: ['FACE', 'VERTEX', 'EDGE'],
+    multiple: true,
+    minSelections: 2,
+    maxSelections: 2,
   },
   distance: {
     type: 'number',
@@ -48,8 +45,7 @@ export class DistanceConstraint extends BaseAssemblyConstraint {
 
   async solve(context = {}) {
     const pd = this.persistentData = this.persistentData || {};
-    const selA = firstSelection(this.inputParams.element_A);
-    const selB = firstSelection(this.inputParams.element_B);
+    const [selA, selB] = selectionPair(this.inputParams);
     const targetDistanceRaw = Number(this.inputParams.distance ?? 0);
     const targetDistance = Number.isFinite(targetDistanceRaw) ? Math.max(0, targetDistanceRaw) : 0;
 
@@ -82,6 +78,8 @@ export class DistanceConstraint extends BaseAssemblyConstraint {
         selectionA: selA,
         selectionB: selB,
         opposeNormals: !!this.inputParams.opposeNormals,
+        selectionLabelA: 'elements[0]',
+        selectionLabelB: 'elements[1]',
       });
 
       infoA = parallelResult.infoA || null;
@@ -115,8 +113,8 @@ export class DistanceConstraint extends BaseAssemblyConstraint {
         return { ...parallelResult, stage: 'orientation' };
       }
     } else {
-      infoA = this.#resolveSelectionInfo(context, selA, 'element_A');
-      infoB = this.#resolveSelectionInfo(context, selB, 'element_B');
+      infoA = this.#resolveSelectionInfo(context, selA, 'elements[0]');
+      infoB = this.#resolveSelectionInfo(context, selB, 'elements[1]');
     }
 
     if (!infoA || !infoB || !infoA.origin || !infoB.origin) {
@@ -570,9 +568,14 @@ export class DistanceConstraint extends BaseAssemblyConstraint {
 }
 
 
-function firstSelection(value) {
-  if (!value) return null;
-  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
+function selectionPair(params) {
+  if (!params || typeof params !== 'object') return [null, null];
+  const raw = Array.isArray(params.elements) ? params.elements : [];
+  const picks = raw.filter((item) => item != null).slice(0, 2);
+  params.elements = picks;
+  if (picks.length === 2) return picks;
+  if (picks.length === 1) return [picks[0], null];
+  return [null, null];
 }
 
 function vectorToArray(vec) {
@@ -608,5 +611,3 @@ function selectionKindFrom(object, selection) {
   if (raw.includes('COMPONENT')) return 'COMPONENT';
   return raw;
 }
-
-

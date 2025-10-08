@@ -8,17 +8,14 @@ const inputParamsSchema = {
     default_value: null,
     hint: 'Unique identifier for the constraint.',
   },
-  element_A: {
+  elements: {
     type: 'reference_selection',
-    label: 'Element A',
-    hint: 'Select the first face, edge, or component.',
+    label: 'Elements',
+    hint: 'Select two faces, edges, or components.',
     selectionFilter: ['FACE', 'EDGE', 'COMPONENT'],
-  },
-  element_B: {
-    type: 'reference_selection',
-    label: 'Element B',
-    hint: 'Select the second face, edge, or component.',
-    selectionFilter: ['FACE', 'EDGE', 'COMPONENT'],
+    multiple: true,
+    minSelections: 2,
+    maxSelections: 2,
   },
   applyImmediately: {
     type: 'boolean',
@@ -54,8 +51,7 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
 
   async solve(context = {}) {
     const pd = this.persistentData = this.persistentData || {};
-    const selA = firstSelection(this.inputParams.element_A);
-    const selB = firstSelection(this.inputParams.element_B);
+    const [selA, selB] = selectionPair(this.inputParams);
 
     if ((context.iteration ?? 0) === 0) {
       this.#clearNormalDebug(context.scene || null);
@@ -74,6 +70,8 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
       selectionA: selA,
       selectionB: selB,
       opposeNormals: !!this.inputParams.opposeNormals,
+      selectionLabelA: 'elements[0]',
+      selectionLabelB: 'elements[1]',
     });
 
     const infoA = result.infoA || null;
@@ -214,7 +212,12 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
 }
 
 
-function firstSelection(value) {
-  if (!value) return null;
-  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
+function selectionPair(params) {
+  if (!params || typeof params !== 'object') return [null, null];
+  const raw = Array.isArray(params.elements) ? params.elements : [];
+  const picks = raw.filter((item) => item != null).slice(0, 2);
+  params.elements = picks;
+  if (picks.length === 2) return picks;
+  if (picks.length === 1) return [picks[0], null];
+  return [null, null];
 }

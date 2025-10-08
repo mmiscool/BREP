@@ -951,6 +951,15 @@ export class SchemaForm {
         chipsWrap.textContent = '';
         const arr = Array.isArray(values) ? values : [];
         const normalizedValues = normalizeReferenceList(arr);
+        const inputEl = (this._inputs && typeof this._inputs.get === 'function') ? this._inputs.get(key) : null;
+        if (inputEl) {
+            if (typeof inputEl.__updateSelectionMetadata === 'function') {
+                try { inputEl.__updateSelectionMetadata(normalizedValues); } catch (_) { }
+            } else if (inputEl.dataset && inputEl.dataset.multiple === 'true') {
+                try { inputEl.dataset.selectedCount = String(normalizedValues.length); } catch (_) { }
+                try { inputEl.dataset.selectedValues = JSON.stringify(normalizedValues); } catch (_) { }
+            }
+        }
         if (Array.isArray(this.params[key])) {
             this.params[key] = normalizedValues;
         } else if (this.params[key] && typeof this.params[key] === 'object' && Array.isArray(this.params[key].targets)) {
@@ -1004,12 +1013,28 @@ export class SchemaForm {
 
             chipsWrap.appendChild(chip);
         }
-        if (arr.length === 0) {
+        if (normalizedValues.length === 0) {
             const hint = document.createElement('span');
             hint.className = 'ref-chip';
             hint.style.opacity = '0.6';
-            hint.textContent = 'Click then pick items in scene';
+            let hintText = 'Click then pick items in scene';
+            if (inputEl && inputEl.dataset) {
+                const minAttr = Number(inputEl.dataset.minSelections);
+                if (Number.isFinite(minAttr) && minAttr > 0) {
+                    hintText = `Select at least ${minAttr} item${minAttr === 1 ? '' : 's'}`;
+                }
+            }
+            hint.textContent = hintText;
             chipsWrap.appendChild(hint);
+        } else if (inputEl && inputEl.dataset) {
+            const minAttr = Number(inputEl.dataset.minSelections);
+            if (Number.isFinite(minAttr) && minAttr > 0 && normalizedValues.length < minAttr) {
+                const hint = document.createElement('span');
+                hint.className = 'ref-chip';
+                hint.style.opacity = '0.6';
+                hint.textContent = `Need ${minAttr - normalizedValues.length} more`;
+                chipsWrap.appendChild(hint);
+            }
         }
     }
 
@@ -1236,6 +1261,11 @@ export class SchemaForm {
       /* Multi reference chips */
       .ref-multi-wrap { display: flex; flex-direction: column; gap: 6px; }
       .ref-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; border: 1px dashed var(--border); border-radius: 10px; cursor: pointer; background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01)); max-width: 100%; }
+      .ref-multi-wrap.ref-limit-reached .ref-chips { border-color: #f97316; animation: refLimitPulse 0.48s ease; }
+      @keyframes refLimitPulse {
+        0% { box-shadow: 0 0 0 0 rgba(249,115,22,0.32); }
+        100% { box-shadow: 0 0 0 12px rgba(249,115,22,0); }
+      }
       .ref-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 999px; background: #1a2030; border: 1px solid var(--border); font-size: 12px; max-width: 100%; }
       .ref-chip-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
       .ref-chip-remove { color: var(--muted); cursor: pointer; flex: 0 0 auto; }

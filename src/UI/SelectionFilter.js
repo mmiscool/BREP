@@ -247,6 +247,34 @@ export class SelectionFilter {
         try {
             const activeRefInput = document.querySelector('[active-reference-selection="true"],[active-reference-selection=true]');
             if (activeRefInput) {
+                const dataset = activeRefInput.dataset || {};
+                const isMultiRef = dataset.multiple === 'true';
+                const maxSelections = Number(dataset.maxSelections);
+                const hasMax = Number.isFinite(maxSelections) && maxSelections > 0;
+                if (isMultiRef) {
+                    let currentCount = 0;
+                    try {
+                        if (typeof activeRefInput.__getSelectionList === 'function') {
+                            const list = activeRefInput.__getSelectionList();
+                            if (Array.isArray(list)) currentCount = list.length;
+                        } else if (dataset.selectedCount !== undefined) {
+                            const parsed = Number(dataset.selectedCount);
+                            if (Number.isFinite(parsed)) currentCount = parsed;
+                        }
+                    } catch (_) { /* ignore */ }
+                    if (hasMax && currentCount >= maxSelections) {
+                        try {
+                            const wrap = activeRefInput.closest('.ref-single-wrap, .ref-multi-wrap');
+                            if (wrap) {
+                                wrap.classList.add('ref-limit-reached');
+                                setTimeout(() => {
+                                    try { wrap.classList.remove('ref-limit-reached'); } catch (_) {}
+                                }, 480);
+                            }
+                        } catch (_) { }
+                        return true;
+                    }
+                }
                 // Respect the current selection type when a reference selection is active.
                 const want = SelectionFilter.getCurrentType?.();
                 const allowed = SelectionFilter.allowedSelectionTypes;
@@ -297,16 +325,39 @@ export class SelectionFilter {
                 activeRefInput.value = objectName;
                 activeRefInput.dispatchEvent(new Event('change'));
 
-                // Clean up the reference selection state
-                activeRefInput.removeAttribute('active-reference-selection');
-                activeRefInput.style.filter = 'none';
-                try {
-                    const wrap = activeRefInput.closest('.ref-single-wrap, .ref-multi-wrap');
-                    if (wrap) wrap.classList.remove('ref-active');
-                } catch (_) { }
+                let keepActive = false;
+                if (isMultiRef) {
+                    let updatedCount = 0;
+                    try {
+                        if (typeof activeRefInput.__getSelectionList === 'function') {
+                            const list = activeRefInput.__getSelectionList();
+                            if (Array.isArray(list)) updatedCount = list.length;
+                        } else if (activeRefInput.dataset && activeRefInput.dataset.selectedCount !== undefined) {
+                            const parsed = Number(activeRefInput.dataset.selectedCount);
+                            if (Number.isFinite(parsed)) updatedCount = parsed;
+                        }
+                    } catch (_) { /* ignore */ }
+                    if (!hasMax || updatedCount < maxSelections) {
+                        keepActive = true;
+                    }
+                }
 
-                // Restore selection filter
-                SelectionFilter.restoreAllowedSelectionTypes();
+                if (!keepActive) {
+                    // Clean up the reference selection state
+                    activeRefInput.removeAttribute('active-reference-selection');
+                    activeRefInput.style.filter = 'none';
+                    try {
+                        const wrap = activeRefInput.closest('.ref-single-wrap, .ref-multi-wrap');
+                        if (wrap) wrap.classList.remove('ref-active');
+                    } catch (_) { }
+                    // Restore selection filter
+                    SelectionFilter.restoreAllowedSelectionTypes();
+                } else {
+                    try {
+                        const wrap = activeRefInput.closest('.ref-single-wrap, .ref-multi-wrap');
+                        if (wrap) wrap.classList.add('ref-active');
+                    } catch (_) { }
+                }
                 return true; // handled as a reference selection
             }
         } catch (error) {

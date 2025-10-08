@@ -278,6 +278,8 @@ export class AssemblyConstraintsWidget {
 
   async _handleSolve() {
     if (!this.history) return;
+    this.#clearConstraintDebugArrows();
+    this._clearNormalArrows();
 
     let iterations = Number(this._iterationInput?.value ?? this._defaultIterations ?? 1);
     if (!Number.isFinite(iterations) || iterations < 1) iterations = 1;
@@ -375,7 +377,7 @@ export class AssemblyConstraintsWidget {
     input.min = '0';
     input.step = '50';
     input.inputMode = 'numeric';
-    input.value = '500';
+    input.value = '20';
     input.style.width = '100%';
     input.addEventListener('change', () => {
       const value = Number(input.value);
@@ -430,10 +432,11 @@ export class AssemblyConstraintsWidget {
     checkbox.type = 'checkbox';
     checkbox.addEventListener('change', () => {
       this._debugNormalsEnabled = checkbox.checked;
+      this.#clearConstraintDebugArrows();
       if (!this._debugNormalsEnabled) {
         this._clearNormalArrows();
-        try { this.viewer?.render?.(); } catch {}
       }
+      try { this.viewer?.render?.(); } catch {}
     });
 
     const span = document.createElement('span');
@@ -889,12 +892,67 @@ export class AssemblyConstraintsWidget {
     this._normalArrows.clear();
   }
 
+  #clearConstraintDebugArrows() {
+    const scene = this.viewer?.scene || null;
+    if (!scene || typeof scene.traverse !== 'function') return;
+    const prefixes = [
+      'parallel-constraint-normal-',
+      'distance-constraint-normal-',
+      'touch-align-normal-',
+    ];
+    const toRemove = [];
+    scene.traverse((obj) => {
+      if (!obj || typeof obj.name !== 'string') return;
+      if (prefixes.some((prefix) => obj.name.startsWith(prefix))) {
+        toRemove.push(obj);
+      }
+    });
+    for (const obj of toRemove) {
+      try { obj.parent?.remove?.(obj); }
+      catch {}
+    }
+  }
+
   #constraintPoints(entry) {
     if (!entry?.inputParams) return null;
     const pointA = this.#resolveSelectionPoint(entry.inputParams.element_A);
     const pointB = this.#resolveSelectionPoint(entry.inputParams.element_B);
-    if (!pointA || !pointB) return null;
-    return [pointA, pointB];
+    if (pointA && pointB) return [pointA, pointB];
+
+    const refPoints = this.#collectReferenceSelectionPoints(entry);
+    if (refPoints.length >= 2) return refPoints.slice(0, 2);
+
+    return null;
+  }
+
+  #collectReferenceSelectionPoints(entry) {
+    const cls = this._resolveConstraintClass(entry);
+    const schema = cls?.inputParamsSchema || {};
+    const refKeys = Object.entries(schema)
+      .filter(([, def]) => def?.type === 'reference_selection')
+      .map(([key]) => key);
+    if (!refKeys.length) return [];
+
+    const points = [];
+    const pushSelection = (value) => {
+      if (!value || points.length >= 2) return;
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          pushSelection(item);
+          if (points.length >= 2) break;
+        }
+        return;
+      }
+      const point = this.#resolveSelectionPoint(value);
+      if (point) points.push(point);
+    };
+
+    for (const key of refKeys) {
+      pushSelection(entry.inputParams[key]);
+      if (points.length >= 2) break;
+    }
+
+    return points;
   }
 
   #constraintLabelText(entry) {

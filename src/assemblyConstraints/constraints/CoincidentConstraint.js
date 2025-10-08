@@ -8,17 +8,14 @@ const inputParamsSchema = {
     default_value: null,
     hint: 'Unique identifier for the constraint.',
   },
-  element_A: {
+  elements: {
     type: 'reference_selection',
-    label: 'Element A',
-    hint: 'Select the first reference (vertex, edge, face, or component).',
+    label: 'Elements',
+    hint: 'Select two references (vertex, edge, face, or component).',
     selectionFilter: ['VERTEX', 'EDGE', 'FACE', 'COMPONENT'],
-  },
-  element_B: {
-    type: 'reference_selection',
-    label: 'Element B',
-    hint: 'Select the second reference (vertex, edge, face, or component).',
-    selectionFilter: ['VERTEX', 'EDGE', 'FACE', 'COMPONENT'],
+    multiple: true,
+    minSelections: 2,
+    maxSelections: 2,
   },
   applyImmediately: {
     type: 'boolean',
@@ -45,8 +42,7 @@ export class CoincidentConstraint extends BaseAssemblyConstraint {
     const pd = this.persistentData = this.persistentData || {};
     const tolerance = context.tolerance ?? 1e-4;
 
-    const selA = firstSelection(this.inputParams.element_A);
-    const selB = firstSelection(this.inputParams.element_B);
+    const [selA, selB] = selectionPair(this.inputParams);
 
     if (!selA || !selB) {
       pd.status = 'incomplete';
@@ -156,9 +152,14 @@ export class CoincidentConstraint extends BaseAssemblyConstraint {
 }
 
 
-function firstSelection(value) {
-  if (!value) return null;
-  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
+function selectionPair(params) {
+  if (!params || typeof params !== 'object') return [null, null];
+  const raw = Array.isArray(params.elements) ? params.elements : [];
+  const picks = raw.filter((item) => item != null).slice(0, 2);
+  params.elements = picks;
+  if (picks.length === 2) return picks;
+  if (picks.length === 1) return [picks[0], null];
+  return [null, null];
 }
 
 function resolvePoint(constraint, object, component) {
@@ -189,4 +190,3 @@ function vectorToArray(vec) {
   if (!vec) return [0, 0, 0];
   return [vec.x, vec.y, vec.z];
 }
-

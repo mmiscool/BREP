@@ -62,9 +62,14 @@ function clampGain(value, fallback) {
 function removeExistingDebugArrows(scene) {
   if (!scene || typeof scene.traverse !== 'function') return;
   const toRemove = [];
+  const prefixes = [
+    'parallel-constraint-normal-',
+    'distance-constraint-normal-',
+    'touch-align-normal-',
+  ];
   scene.traverse((obj) => {
     if (!obj || typeof obj.name !== 'string') return;
-    if (obj.name.startsWith('parallel-constraint-normal-')) {
+    if (prefixes.some((prefix) => obj.name.startsWith(prefix))) {
       toRemove.push(obj);
     }
   });

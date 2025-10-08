@@ -9,17 +9,14 @@ const inputParamsSchema = {
     default_value: null,
     hint: 'Unique identifier for the constraint.',
   },
-  element_A: {
+  elements: {
     type: 'reference_selection',
-    label: 'Element A',
-    hint: 'Select the first face or edge.',
-    selectionFilter: ['FACE', 'EDGE',],
-  },
-  element_B: {
-    type: 'reference_selection',
-    label: 'Element B',
-    hint: 'Select the second face or edge.',
-    selectionFilter: [ 'FACE', 'EDGE'],
+    label: 'Elements',
+    hint: 'Select two faces or edges.',
+    selectionFilter: ['FACE', 'EDGE'],
+    multiple: true,
+    minSelections: 2,
+    maxSelections: 2,
   },
   angle: {
     type: 'number',
@@ -43,8 +40,7 @@ export class AngleConstraint extends BaseAssemblyConstraint {
 
   async solve(context = {}) {
     const pd = this.persistentData = this.persistentData || {};
-    const selA = firstSelection(this.inputParams.element_A);
-    const selB = firstSelection(this.inputParams.element_B);
+    const [selA, selB] = selectionPair(this.inputParams);
     const targetAngleValue = Number(this.inputParams.angle ?? 0);
     const targetAngleDeg = clampAndNormalizeAngleDeg(targetAngleValue);
     const targetAngleRad = THREE.MathUtils.degToRad(targetAngleDeg);
@@ -64,8 +60,8 @@ export class AngleConstraint extends BaseAssemblyConstraint {
     let infoB;
 
     try {
-      infoA = this.#resolveSelectionInfo(context, selA, 'element_A');
-      infoB = this.#resolveSelectionInfo(context, selB, 'element_B');
+      infoA = this.#resolveSelectionInfo(context, selA, 'elements[0]');
+      infoB = this.#resolveSelectionInfo(context, selB, 'elements[1]');
     } catch (error) {
       const message = error?.message || 'Unable to resolve selection references.';
       pd.status = 'invalid-selection';
@@ -418,9 +414,14 @@ export class AngleConstraint extends BaseAssemblyConstraint {
 
 
 
-function firstSelection(value) {
-  if (!value) return null;
-  return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
+function selectionPair(params) {
+  if (!params || typeof params !== 'object') return [null, null];
+  const raw = Array.isArray(params.elements) ? params.elements : [];
+  const picks = raw.filter((item) => item != null).slice(0, 2);
+  params.elements = picks;
+  if (picks.length === 2) return picks;
+  if (picks.length === 1) return [picks[0], null];
+  return [null, null];
 }
 
 function selectionKindFrom(object, selection) {
@@ -480,4 +481,3 @@ function computeRotationTowards(fromDir, toDir, gain = 1) {
   if (appliedAngle <= 1e-6) return null;
   return new THREE.Quaternion().setFromAxisAngle(axis, appliedAngle);
 }
-

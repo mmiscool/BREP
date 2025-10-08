@@ -8,6 +8,22 @@ export function renderReferenceSelectionField({ ui, key, def, id, controlWrap, v
     const isMulti = !!def.multiple;
     if (isMulti) inputEl.dataset.multiple = 'true';
 
+    const parseBound = (value) => {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return null;
+        const coerced = Math.max(0, Math.floor(num));
+        return coerced >= 0 ? coerced : null;
+    };
+
+    const minSelections = isMulti ? parseBound(def.minSelections) : null;
+    let maxSelections = isMulti ? parseBound(def.maxSelections) : null;
+    if (isMulti && maxSelections !== null && minSelections !== null && maxSelections < minSelections) {
+        maxSelections = minSelections;
+    }
+
+    if (isMulti && minSelections !== null) inputEl.dataset.minSelections = String(minSelections);
+    if (isMulti && maxSelections !== null) inputEl.dataset.maxSelections = String(maxSelections);
+
     const placeholderText = (typeof def.placeholder === 'string' && def.placeholder.trim())
         ? def.placeholder.trim()
         : 'Click then select in scene…';
@@ -36,6 +52,25 @@ export function renderReferenceSelectionField({ ui, key, def, id, controlWrap, v
     refWrap.className = isMulti ? 'ref-multi-wrap' : 'ref-single-wrap';
 
     let chipsWrap = null;
+    const updateSelectionMetadata = (list) => {
+        if (!isMulti) return;
+        const normalized = normalizeReferenceList(Array.isArray(list) ? list : []);
+        try { inputEl.dataset.selectedCount = String(normalized.length); } catch (_) { }
+        try { inputEl.dataset.selectedValues = JSON.stringify(normalized); } catch (_) { }
+    };
+
+    if (isMulti) {
+        inputEl.__getSelectionList = () => {
+            try {
+                const raw = readRawValue();
+                if (!Array.isArray(raw)) return [];
+                return normalizeReferenceList(raw);
+            } catch (_) {
+                return [];
+            }
+        };
+        inputEl.__updateSelectionMetadata = updateSelectionMetadata;
+    }
     if (isMulti) {
         chipsWrap = document.createElement('div');
         chipsWrap.className = 'ref-chips';
@@ -46,6 +81,7 @@ export function renderReferenceSelectionField({ ui, key, def, id, controlWrap, v
             const current = normalizeReferenceList(Array.isArray(initial) ? initial : []);
             writeRawValue(current);
             ui._renderChips(chipsWrap, key, current);
+            updateSelectionMetadata(current);
         } catch (_) { }
     } else {
         const valueWrap = document.createElement('button');
@@ -111,7 +147,10 @@ export function renderReferenceSelectionField({ ui, key, def, id, controlWrap, v
         if (isMulti) {
             if (inputEl.dataset && inputEl.dataset.forceClear === 'true') {
                 writeRawValue([]);
-                if (chipsWrap) ui._renderChips(chipsWrap, key, []);
+                if (chipsWrap) {
+                    ui._renderChips(chipsWrap, key, []);
+                    updateSelectionMetadata([]);
+                }
                 inputEl.value = '';
                 delete inputEl.dataset.forceClear;
                 emitChange(adapter ? readRawValue() : []);
@@ -134,8 +173,14 @@ export function renderReferenceSelectionField({ ui, key, def, id, controlWrap, v
                 if (!next.includes(normalized)) next.push(normalized);
             }
             const normalizedList = normalizeReferenceList(next);
+            if (isMulti && maxSelections !== null && normalizedList.length > maxSelections) {
+                normalizedList.length = maxSelections;
+            }
             writeRawValue(normalizedList);
-            if (chipsWrap) ui._renderChips(chipsWrap, key, normalizedList);
+            if (chipsWrap) {
+                ui._renderChips(chipsWrap, key, normalizedList);
+                updateSelectionMetadata(normalizedList);
+            }
             inputEl.value = '';
             emitChange(adapter ? readRawValue() : normalizedList);
         } else {

@@ -160,6 +160,23 @@ function selectionDirection(constraint, context, selection, selectionLabel) {
   };
 }
 
+function describeSelectionLabel(label) {
+  if (!label) return 'selection';
+  if (label === 'element_A') return 'Element A';
+  if (label === 'element_B') return 'Element B';
+  const match = /^elements\[(\d+)\]$/i.exec(String(label));
+  if (match) {
+    const index = Number(match[1]);
+    if (Number.isFinite(index)) return `Element ${index + 1}`;
+  }
+  const trimmed = String(label).trim();
+  if (!trimmed) return 'selection';
+  return trimmed
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b([a-z])/gi, (m, ch) => ch.toUpperCase());
+}
+
 function normalizeQuaternion(quaternion) {
   if (!quaternion) return null;
   const q = quaternion instanceof THREE.Quaternion
@@ -207,20 +224,25 @@ export function solveParallelAlignment({
   selectionA,
   selectionB,
   opposeNormals = false,
+  selectionLabelA = 'element_A',
+  selectionLabelB = 'element_B',
 }) {
   if (!constraint) throw new Error('solveParallelAlignment requires a constraint instance.');
+
+  const labelA = describeSelectionLabel(selectionLabelA);
+  const labelB = describeSelectionLabel(selectionLabelB);
 
   let infoA;
   let infoB;
   try {
-    infoA = selectionDirection(constraint, context, selectionA, 'element_A');
+    infoA = selectionDirection(constraint, context, selectionA, selectionLabelA);
   } catch (error) {
     return {
       ok: false,
       status: 'normal-resolution-failed',
       satisfied: false,
       applied: false,
-      message: 'Failed to resolve a normal for Element A.',
+      message: `Failed to resolve a normal for ${labelA}.`,
       exception: error,
       infoA: null,
       infoB: null,
@@ -228,14 +250,14 @@ export function solveParallelAlignment({
   }
 
   try {
-    infoB = selectionDirection(constraint, context, selectionB, 'element_B');
+    infoB = selectionDirection(constraint, context, selectionB, selectionLabelB);
   } catch (error) {
     return {
       ok: false,
       status: 'normal-resolution-failed',
       satisfied: false,
       applied: false,
-      message: 'Failed to resolve a normal for Element B.',
+      message: `Failed to resolve a normal for ${labelB}.`,
       exception: error,
       infoA,
       infoB: null,
