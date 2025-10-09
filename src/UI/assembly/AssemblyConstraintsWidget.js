@@ -1,8 +1,18 @@
 import * as THREE from 'three';
 import { genFeatureUI } from '../featureDialogs.js';
 import { SelectionFilter } from '../SelectionFilter.js';
-import { objectRepresentativePoint } from '../pmi/annUtils.js';
 import { LabelOverlay } from '../pmi/LabelOverlay.js';
+import { resolveSelectionObject } from './constraintSelectionUtils.js';
+import {
+  isFaceObject,
+  computeFaceOrigin,
+  computeFaceNormal,
+  estimateArrowLength,
+} from './constraintFaceUtils.js';
+import { applyHighlightMaterial, restoreHighlightRecords } from './constraintHighlightUtils.js';
+import { extractWorldPoint } from './constraintPointUtils.js';
+import { constraintStatusInfo } from './constraintStatusUtils.js';
+import { constraintLabelText } from './constraintLabelUtils.js';
 import { AssemblyConstraintControlsWidget } from './AssemblyConstraintControlsWidget.js';
 import './AssemblyConstraintsWidget.css';
 
@@ -77,8 +87,7 @@ export class AssemblyConstraintsWidget {
     }
 
     this._controlsWidget = new AssemblyConstraintControlsWidget(this);
-    this._controlsPanel = this._controlsWidget.element;
-    this.uiElement.appendChild(this._controlsPanel);
+    this.uiElement.appendChild(this._controlsWidget.element);
     this._setConstraintGraphicsEnabled(this._constraintGraphicsEnabled);
 
     this._accordion = document.createElement('div');
@@ -136,7 +145,6 @@ export class AssemblyConstraintsWidget {
     this._constraintGraphicsCheckbox = null;
     this._controlsWidget?.dispose?.();
     this._controlsWidget = null;
-    this._controlsPanel = null;
     for (const section of this._sections.values()) {
       this.#teardownSectionForm(section);
       try {
@@ -257,7 +265,7 @@ export class AssemblyConstraintsWidget {
     if (!id) return;
     const constraintId = String(id);
     const ConstraintClass = this._resolveConstraintClass(entry);
-    const statusInfo = this.#statusText(entry);
+    const statusInfo = constraintStatusInfo(entry);
     const isOpen = entry?.__open !== false;
 
     const item = document.createElement('div');
@@ -375,15 +383,10 @@ export class AssemblyConstraintsWidget {
       titleEl: title,
       statusEl: status,
       content,
-      body,
       formContainer,
-      actionsWrap,
-      highlightBtn,
-      clearBtn,
       form: null,
       isOpen: false,
       constraintClass: ConstraintClass,
-      type: entry?.type || null,
     };
 
     headerBtn.addEventListener('click', () => {
@@ -421,7 +424,6 @@ export class AssemblyConstraintsWidget {
       if (!entry) continue;
       const ConstraintClass = this._resolveConstraintClass(entry);
       section.constraintClass = ConstraintClass;
-      section.type = entry?.type || section.type || null;
 
       if (entry?.inputParams) entry.inputParams.applyImmediately = true;
 
@@ -432,7 +434,7 @@ export class AssemblyConstraintsWidget {
           || id;
       }
 
-      const statusInfo = this.#statusText(entry);
+      const statusInfo = constraintStatusInfo(entry);
       if (section.statusEl) {
         section.statusEl.textContent = statusInfo.label;
         if (statusInfo.title) section.statusEl.title = statusInfo.title;
@@ -863,31 +865,17 @@ export class AssemblyConstraintsWidget {
     try { this.viewer?.render?.(); } catch { }
   }
 
-  _restoreHighlightRecords(map) {
-    if (!map || typeof map.size !== 'number' || map.size === 0) return;
-    for (const record of map.values()) {
-      try {
-        if (record.replaced && record.originalMaterial) {
-          record.object.material = record.originalMaterial;
-        } else if (record.previousColor && record.object.material?.color) {
-          record.object.material.color.copy(record.previousColor);
-        }
-      } catch { /* ignore */ }
-    }
-    map.clear();
-  }
+_clearHoverHighlights() {
+  restoreHighlightRecords(this._hoverHighlights);
+}
 
-  _clearHoverHighlights() {
-    this._restoreHighlightRecords(this._hoverHighlights);
-  }
-
-  _clearHighlights() {
-    this.#clearActiveHoverHighlight();
-    this._restoreHighlightRecords(this._highlighted);
-    this._clearNormalArrows();
-    try { SelectionFilter.clearHover?.(); } catch { /* ignore */ }
-    try { this.viewer?.render?.(); } catch { /* ignore */ }
-  }
+_clearHighlights() {
+  this.#clearActiveHoverHighlight();
+  restoreHighlightRecords(this._highlighted);
+  this._clearNormalArrows();
+  try { SelectionFilter.clearHover?.(); } catch { /* ignore */ }
+  try { this.viewer?.render?.(); } catch { /* ignore */ }
+}
 
   _applyConstraintHighlight(entry, ConstraintClass, options = {}) {
     if (!entry?.inputParams) return false;
@@ -902,15 +890,15 @@ export class AssemblyConstraintsWidget {
 
     const useHoverStore = store === this._hoverHighlights;
 
-    if (useHoverStore) {
-      this._clearHoverHighlights();
-      if (clearExisting && store !== this._highlighted) {
-        this._restoreHighlightRecords(this._highlighted);
-        this._clearNormalArrows();
-      }
-    } else if (clearExisting) {
-      this._clearHighlights();
+  if (useHoverStore) {
+    this._clearHoverHighlights();
+    if (clearExisting && store !== this._highlighted) {
+      restoreHighlightRecords(this._highlighted);
+      this._clearNormalArrows();
     }
+  } else if (clearExisting) {
+    this._clearHighlights();
+  }
 
     const schema = ConstraintClass?.inputParamsSchema || {};
     const refFields = Object.entries(schema).filter(([, def]) => def?.type === 'reference_selection');
@@ -926,9 +914,9 @@ export class AssemblyConstraintsWidget {
       const targets = this._resolveReferenceObjects(entry.inputParams[key]);
       if (!targets || targets.length === 0) continue;
       foundTargets = true;
-      for (const obj of targets) {
-        const changed = this._applyHighlightMaterial(obj, color, store, skipSets);
-        if (changed && includeNormals && this._isFaceObject(obj)) {
+    for (const obj of targets) {
+      const changed = applyHighlightMaterial(obj, color, store, skipSets);
+        if (changed && includeNormals && isFaceObject(obj)) {
           sawFace = true;
           const arrow = this._createNormalArrow(obj, color, `${entry?.inputParams?.constraintID || 'constraint'}:${key}`);
           if (arrow) arrowsCreated = true;
@@ -1079,6 +1067,7 @@ export class AssemblyConstraintsWidget {
     entries.forEach((entry, index) => {
       if (!entry) return;
       const constraintID = entry?.inputParams?.constraintID || `constraint-${index}`;
+      const constraintClass = this._resolveConstraintClass(entry);
       const segments = this.#constraintSegments(entry);
       let labelPosition = null;
 
@@ -1095,16 +1084,16 @@ export class AssemblyConstraintsWidget {
           midpoint.divideScalar(midpointCount);
           labelPosition = midpoint;
         } else {
-          labelPosition = this.#constraintStandalonePosition(entry);
+          labelPosition = this.#constraintStandalonePosition(entry, constraintClass);
         }
       } else {
         this.#removeConstraintLine(constraintID);
-        labelPosition = this.#constraintStandalonePosition(entry);
+        labelPosition = this.#constraintStandalonePosition(entry, constraintClass);
       }
 
       if (!labelPosition) return;
 
-      const text = this.#constraintLabelText(entry);
+      const text = constraintLabelText(entry, constraintClass);
       const overlayData = { constraintID };
 
       if (this._constraintGraphicsEnabled) {
@@ -1169,244 +1158,15 @@ export class AssemblyConstraintsWidget {
     }
   }
 
-  _isFaceObject(object) {
-    if (!object) return false;
-    const type = object.userData?.type || object.userData?.brepType || object.type;
-    return String(type).toUpperCase() === 'FACE';
-  }
-
   _resolveReferenceObjects(value) {
     const values = Array.isArray(value) ? value : (value ? [value] : []);
     const results = [];
+    const scene = this.viewer?.scene || null;
     for (const item of values) {
-      const resolved = this.#resolveSelectionObject(item);
+      const resolved = resolveSelectionObject(scene, item);
       if (resolved) results.push(resolved);
     }
     return results;
-  }
-
-  _findObjectByName(scene, name) {
-    if (!scene || typeof scene.traverse !== 'function') return scene?.getObjectByName?.(name) || null;
-    let best = null;
-    scene.traverse((obj) => {
-      if (!obj || obj.name !== name) return;
-      if (!best) {
-        best = obj;
-        return;
-      }
-      const currentScore = this._scoreObjectForNormal(best);
-      const newScore = this._scoreObjectForNormal(obj);
-      if (newScore > currentScore) best = obj;
-    });
-    if (best) return best;
-    if (typeof scene.getObjectByName === 'function') return scene.getObjectByName(name);
-    return null;
-  }
-
-  #resolveSelectionObject(selection) {
-    const scene = this.viewer?.scene || null;
-    if (!scene || selection == null) return null;
-
-    if (selection.isObject3D) return selection;
-
-    if (Array.isArray(selection)) {
-      for (const item of selection) {
-        const resolved = this.#resolveSelectionObject(item);
-        if (resolved) return resolved;
-      }
-      return null;
-    }
-
-    if (typeof selection === 'string') {
-      return this.#resolveObjectFromString(selection);
-    }
-
-    if (typeof selection === 'object') {
-      if (selection.isObject3D) return selection;
-      const { uuid, name, id, path, reference, target } = selection;
-
-      if (typeof uuid === 'string') {
-        try {
-          const found = scene.getObjectByProperty?.('uuid', uuid);
-          if (found) return found;
-        } catch { /* ignore */ }
-      }
-
-      const tryIdOrName = (candidate) => {
-        if (!candidate) return null;
-        return this.#resolveObjectFromString(candidate);
-      };
-
-      const nameCandidate = typeof name === 'string' ? name : (typeof selection?.selectionName === 'string' ? selection.selectionName : null);
-      const idCandidate = typeof id === 'string' ? id : null;
-
-      const nameResolved = tryIdOrName(nameCandidate);
-      if (nameResolved) return nameResolved;
-
-      const idResolved = tryIdOrName(idCandidate);
-      if (idResolved) return idResolved;
-
-      if (Array.isArray(path)) {
-        for (let i = path.length - 1; i >= 0; i -= 1) {
-          const segment = path[i];
-          if (typeof segment !== 'string') continue;
-          const resolved = this.#resolveObjectFromString(segment);
-          if (resolved) return resolved;
-        }
-      }
-
-      if (reference != null) {
-        const resolved = this.#resolveSelectionObject(reference);
-        if (resolved) return resolved;
-      }
-
-      if (target != null) {
-        const resolved = this.#resolveSelectionObject(target);
-        if (resolved) return resolved;
-      }
-    }
-
-    return null;
-  }
-
-  #resolveObjectFromString(value) {
-    const scene = this.viewer?.scene || null;
-    if (!scene) return null;
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-
-    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (parsed != null) {
-          const resolved = this.#resolveSelectionObject(parsed);
-          if (resolved) return resolved;
-        }
-      } catch { /* ignore JSON parse errors */ }
-    }
-
-    const direct = this._findObjectByName(scene, trimmed);
-    if (direct) return direct;
-
-    if (this.#looksLikeUUID(trimmed)) {
-      try {
-        const byUuid = scene.getObjectByProperty?.('uuid', trimmed);
-        if (byUuid) return byUuid;
-      } catch { /* ignore */ }
-    }
-
-    const candidates = new Set();
-    candidates.add(trimmed);
-
-    const splitByDelims = trimmed.split(/›|>|\/|\||→|->/);
-    if (splitByDelims.length > 1) {
-      splitByDelims.forEach((segment) => {
-        const s = segment.trim();
-        if (s) candidates.add(s);
-      });
-    }
-
-    if (trimmed.includes(':')) {
-      trimmed.split(':').forEach((segment) => {
-        const s = segment.trim();
-        if (s) candidates.add(s);
-      });
-    }
-
-    for (const candidate of candidates) {
-      const found = this._findObjectByName(scene, candidate);
-      if (found) return found;
-    }
-
-    let fallback = null;
-    try {
-      scene.traverse?.((obj) => {
-        if (fallback || !obj?.name) return;
-        if (!trimmed.includes(obj.name)) return;
-        if (!fallback) {
-          fallback = obj;
-          return;
-        }
-        const currentScore = this._scoreObjectForNormal(fallback);
-        const nextScore = this._scoreObjectForNormal(obj);
-        if (nextScore > currentScore || obj.name.length > fallback.name.length) {
-          fallback = obj;
-        }
-      });
-    } catch { /* ignore */ }
-
-    return fallback;
-  }
-
-  #looksLikeUUID(value) {
-    if (typeof value !== 'string') return false;
-    const trimmed = value.trim();
-    if (trimmed.length !== 36) return false;
-    return /^[0-9a-fA-F-]{36}$/.test(trimmed);
-  }
-
-  _scoreObjectForNormal(object) {
-    if (!object) return -Infinity;
-    const type = object.userData?.type || object.userData?.brepType || object.type;
-    if (String(type).toUpperCase() === 'FACE') return 3;
-    if (object.geometry) return 2;
-    return 1;
-  }
-
-  _applyHighlightMaterial(object, color, store = this._highlighted, skipSets = [store]) {
-    if (!object || !color || !store) return false;
-
-    const guardSets = Array.isArray(skipSets) ? skipSets.filter((m) => m && typeof m.has === 'function') : [];
-    if (guardSets.length === 0) guardSets.push(store);
-
-    const targets = [];
-    object.traverse?.((child) => {
-      if (!child || !child.isObject3D) return;
-      if (child.material && child.material.color) targets.push(child);
-    });
-    if (targets.length === 0 && object.material && object.material.color) {
-      targets.push(object);
-    }
-
-    let modified = false;
-    for (const target of targets) {
-      const key = target.uuid;
-      if (guardSets.some((map) => map.has(key))) continue;
-
-      const originalMaterial = target.material;
-      let replaced = false;
-      let highlightMaterial = originalMaterial;
-      if (originalMaterial && typeof originalMaterial.clone === 'function') {
-        try {
-          const clone = originalMaterial.clone();
-          if (clone) {
-            highlightMaterial = clone;
-            replaced = clone !== originalMaterial;
-          }
-        } catch { /* ignore */ }
-      }
-
-      const previousColor = (!replaced && highlightMaterial?.color && highlightMaterial.color.clone)
-        ? highlightMaterial.color.clone()
-        : null;
-
-      try { highlightMaterial?.color?.set(color); } catch { /* ignore */ }
-
-      if (replaced) {
-        target.material = highlightMaterial;
-      }
-
-      store.set(key, {
-        object: target,
-        replaced,
-        originalMaterial,
-        previousColor,
-      });
-      modified = true;
-    }
-
-    return modified;
   }
 
   _clearNormalArrows() {
@@ -1489,29 +1249,6 @@ export class AssemblyConstraintsWidget {
     return points;
   }
 
-  #constraintLabelText(entry) {
-    const cls = this._resolveConstraintClass(entry);
-    const rawShortName = cls?.constraintShortName;
-    const shortName = rawShortName != null ? String(rawShortName).trim() : '';
-    const base = shortName
-      || cls?.constraintName
-      || entry?.constraintType
-      || entry?.type
-      || 'Constraint';
-
-    let distanceSuffix = '';
-    if (entry?.type === 'distance' || cls?.constraintType === 'distance') {
-      const distance = Number(entry?.inputParams?.distance);
-      if (Number.isFinite(distance)) distanceSuffix = String(distance);
-    }
-
-    const parts = [];
-    if (base) parts.push(String(base).trim());
-    if (distanceSuffix) parts.push(distanceSuffix);
-
-    return parts.join(' ').trim();
-  }
-
   #upsertConstraintLines(constraintID, segments) {
     if (!this._constraintGroup || !Array.isArray(segments) || segments.length === 0) return;
     let line = this._constraintLines.get(constraintID);
@@ -1574,7 +1311,7 @@ export class AssemblyConstraintsWidget {
     const candidates = this._resolveReferenceObjects(selection);
     const object = candidates?.find((obj) => obj) || null;
     if (object) {
-      const point = this.#extractWorldPoint(object);
+      const point = extractWorldPoint(object);
       if (point) return point;
     }
     if (Array.isArray(selection)) {
@@ -1659,62 +1396,10 @@ export class AssemblyConstraintsWidget {
     }
 
     for (const obj of objects) {
-      const fallback = this.#extractWorldPoint(obj);
+      const fallback = extractWorldPoint(obj);
       if (fallback) return fallback;
     }
 
-    return null;
-  }
-
-  #extractWorldPoint(object) {
-    if (!object) return null;
-    try { object.updateMatrixWorld?.(true); }
-    catch { }
-    try {
-      if (typeof object.type === 'string' && object.type.toUpperCase() === 'EDGE' && typeof object.points === 'function') {
-        const pts = object.points(true);
-        if (Array.isArray(pts) && pts.length) {
-          const total = new THREE.Vector3();
-          let count = 0;
-          for (const pt of pts) {
-            if (!pt) continue;
-            const x = Number(pt.x);
-            const y = Number(pt.y);
-            const z = Number(pt.z);
-            if ([x, y, z].some((v) => !Number.isFinite(v))) continue;
-            total.add(new THREE.Vector3(x, y, z));
-            count += 1;
-          }
-          if (count > 0) {
-            total.divideScalar(count);
-            return total;
-          }
-        }
-      }
-    } catch { }
-    try {
-      const rep = objectRepresentativePoint?.(null, object);
-      if (rep && typeof rep.clone === 'function') return rep.clone();
-      if (rep && rep.isVector3) return rep.clone();
-    } catch { }
-    try {
-      if (typeof object.getWorldPosition === 'function') {
-        return object.getWorldPosition(new THREE.Vector3());
-      }
-    } catch { }
-    try {
-      if (object.isVector3) return object.clone();
-    } catch { }
-    try {
-      if (object.position) {
-        const pos = object.position.clone ? object.position.clone() : new THREE.Vector3(object.position.x, object.position.y, object.position.z);
-        if (object.parent?.matrixWorld) {
-          object.parent.updateMatrixWorld?.(true);
-          return pos.applyMatrix4(object.parent.matrixWorld);
-        }
-        return pos;
-      }
-    } catch { }
     return null;
   }
 
@@ -1758,114 +1443,17 @@ export class AssemblyConstraintsWidget {
     const scene = this.viewer?.scene || null;
     if (!scene || !object) return;
 
-    const origin = this._computeFaceOrigin(object);
-    const normal = this._computeFaceNormal(object);
+    const origin = computeFaceOrigin(object);
+    const normal = computeFaceNormal(object);
     if (!origin || !normal) return;
 
     const hexColor = new THREE.Color(color).getHex();
-    const length = this._estimateArrowLength(object);
+    const length = estimateArrowLength(object);
     const arrow = new THREE.ArrowHelper(normal, origin, length, hexColor, length * 0.25, length * 0.15);
     arrow.name = `selection-normal-${object.uuid}-${label || 'face'}`;
     scene.add(arrow);
     this._normalArrows.add(arrow);
     return arrow;
-  }
-
-  _computeFaceOrigin(object) {
-    if (!object) return null;
-    try {
-      const pt = objectRepresentativePoint?.(null, object);
-      if (pt && typeof pt.clone === 'function') return pt.clone();
-    } catch { }
-    const geom = object.geometry;
-    if (geom?.computeBoundingBox) {
-      try {
-        geom.computeBoundingBox();
-        const center = geom.boundingBox?.getCenter(new THREE.Vector3());
-        if (center) {
-          object.updateMatrixWorld?.(true);
-          return center.applyMatrix4(object.matrixWorld);
-        }
-      } catch { }
-    }
-    if (typeof object.getWorldPosition === 'function') {
-      return object.getWorldPosition(new THREE.Vector3());
-    }
-    return null;
-  }
-
-  _computeFaceNormal(object) {
-    if (!object) return null;
-    try {
-      if (typeof object.getAverageNormal === 'function') {
-        const avg = object.getAverageNormal();
-        if (avg && avg.lengthSq() > 1e-10) return avg.clone().normalize();
-      }
-    } catch { }
-
-    const geom = object.geometry;
-    if (!geom?.isBufferGeometry) return null;
-    const pos = geom.getAttribute?.('position');
-    if (!pos || pos.itemSize !== 3 || pos.count < 3) return null;
-    const index = geom.getIndex?.();
-
-    const v0 = new THREE.Vector3();
-    const v1 = new THREE.Vector3();
-    const v2 = new THREE.Vector3();
-    const edge1 = new THREE.Vector3();
-    const edge2 = new THREE.Vector3();
-    const accum = new THREE.Vector3();
-
-    object.updateMatrixWorld?.(true);
-
-    const triCount = index ? Math.floor(index.count / 3) : Math.floor(pos.count / 3);
-    const samples = Math.min(triCount, 60);
-    let count = 0;
-    for (let tri = 0; tri < samples; tri += 1) {
-      let i0, i1, i2;
-      if (index) {
-        const base = tri * 3;
-        if (base + 2 >= index.count) break;
-        i0 = index.getX(base);
-        i1 = index.getX(base + 1);
-        i2 = index.getX(base + 2);
-      } else {
-        i0 = tri * 3;
-        i1 = i0 + 1;
-        i2 = i0 + 2;
-        if (i2 >= pos.count) break;
-      }
-
-      v0.set(pos.getX(i0), pos.getY(i0), pos.getZ(i0)).applyMatrix4(object.matrixWorld);
-      v1.set(pos.getX(i1), pos.getY(i1), pos.getZ(i1)).applyMatrix4(object.matrixWorld);
-      v2.set(pos.getX(i2), pos.getY(i2), pos.getZ(i2)).applyMatrix4(object.matrixWorld);
-
-      edge1.subVectors(v1, v0);
-      edge2.subVectors(v2, v0);
-      const normal = new THREE.Vector3().crossVectors(edge1, edge2);
-      if (normal.lengthSq() > 1e-10) {
-        accum.add(normal);
-        count += 1;
-      }
-    }
-
-    if (count === 0) return null;
-    accum.divideScalar(count);
-    if (accum.lengthSq() <= 1e-10) return null;
-
-    return accum.normalize();
-  }
-
-  _estimateArrowLength(object) {
-    const geom = object?.geometry;
-    if (geom?.computeBoundingSphere) {
-      try {
-        geom.computeBoundingSphere();
-        const radius = geom.boundingSphere?.radius;
-        if (Number.isFinite(radius) && radius > 0) return Math.max(radius, 10);
-      } catch { }
-    }
-    return 10;
   }
 
   _buildAddConstraintFooter() {
@@ -1969,98 +1557,4 @@ export class AssemblyConstraintsWidget {
     return null;
   }
 
-  #statusText(entry) {
-    const pd = entry?.persistentData || {};
-    const status = pd.status || 'Idle';
-    const out = { label: '', title: '', error: false };
-    if (status === 'unimplemented') {
-      out.label = 'Unimplemented';
-      out.title = pd.message || 'Constraint solver not implemented yet.';
-      out.error = true;
-      return out;
-    }
-    if (status === 'satisfied') {
-      out.label = 'Satisfied';
-      out.title = pd.message || 'Constraint satisfied within tolerance.';
-      return out;
-    }
-    if (status === 'adjusted') {
-      out.label = 'Adjusting';
-      out.title = pd.message || 'Constraint nudging components toward the solution.';
-      return out;
-    }
-    if (status === 'blocked') {
-      out.label = 'Blocked';
-      out.title = pd.message || 'Constraint cannot adjust locked components.';
-      out.error = true;
-      return out;
-    }
-    if (status === 'pending') {
-      out.label = 'Pending';
-      out.title = pd.message || 'Constraint awaiting convergence.';
-      return out;
-    }
-    if (status === 'error') {
-      out.label = 'Error';
-      out.title = pd.message || 'Constraint evaluation failed.';
-      out.error = true;
-      return out;
-    }
-    if (status === 'applied' || status === 'computed') {
-      const delta = Array.isArray(pd.lastDelta)
-        ? pd.lastDelta.map((v) => Number(v).toFixed(3)).join(', ')
-        : null;
-      out.label = status === 'applied' ? 'Applied' : 'Pending';
-      if (delta) out.label += ` · Δ[${delta}]`;
-      if (Array.isArray(pd.lastAppliedMoves) && pd.lastAppliedMoves.length) {
-        const summary = pd.lastAppliedMoves
-          .map((move) => {
-            if (!move || !Array.isArray(move.move)) return null;
-            const vec = move.move.map((v) => Number(v).toFixed(3)).join(', ');
-            return `${move.element}: [${vec}]`;
-          })
-          .filter(Boolean)
-          .join(' | ');
-        if (summary) out.title = summary;
-      }
-      return out;
-    }
-    if (status === 'incomplete') {
-      out.label = 'Incomplete';
-      out.title = 'Select the required components to define the constraint.';
-      return out;
-    }
-    if (status === 'invalid-selection') {
-      out.label = 'Invalid selection';
-      out.title = 'Unable to resolve world positions for selections.';
-      out.error = true;
-      return out;
-    }
-    if (status === 'pending-component') {
-      out.label = 'Pending component';
-      out.title = 'Offset stored but no component selected to move.';
-      return out;
-    }
-    if (status === 'fixed') {
-      out.label = 'Locked';
-      out.title = pd.message || 'Both components are fixed; nothing moved.';
-      return out;
-    }
-    if (status === 'noop') {
-      out.label = 'No change';
-      out.title = pd.message || 'Selections already satisfy this constraint.';
-      return out;
-    }
-    if (status === 'apply-failed') {
-      out.label = 'Failed';
-      out.title = pd.error || 'Apply failed';
-      out.error = true;
-      return out;
-    }
-    if (status && status !== 'Idle') {
-      out.label = status.charAt(0).toUpperCase() + status.slice(1);
-      if (pd.message) out.title = pd.message;
-    }
-    return out;
-  }
 }

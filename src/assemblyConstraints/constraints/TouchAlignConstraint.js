@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BaseAssemblyConstraint } from '../BaseAssemblyConstraint.js';
 import { solveParallelAlignment, resolveParallelSelection } from '../constraintUtils/parallelAlignment.js';
+import { objectRepresentativePoint } from '../../UI/pmi/annUtils.js';
 
 const DEFAULT_TOUCH_TOLERANCE = 1e-6;
 
@@ -13,8 +14,8 @@ const inputParamsSchema = {
   elements: {
     type: 'reference_selection',
     label: 'Elements',
-    hint: 'Select two faces, edges, or components.',
-    selectionFilter: ['FACE', 'EDGE', 'COMPONENT'],
+    hint: 'Select two faces, edges, or vertices.',
+    selectionFilter: ['FACE', 'EDGE', 'VERTEX'],
     multiple: true,
     minSelections: 2,
     maxSelections: 2,
@@ -457,17 +458,168 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
   }
 
   async pointToPoint(_context, _selA, _selB) {
+    const context = _context || {};
     const pd = this.persistentData = this.persistentData || {};
-    const message = 'Point-to-point touch alignment is not implemented.';
-    pd.status = 'unsupported-selection';
+
+    const infoA = resolvePointSelection(this, context, _selA);
+    const infoB = resolvePointSelection(this, context, _selB);
+
+    if (!infoA?.component || !infoB?.component) {
+      const message = 'Point selections must belong to assembly components.';
+      pd.status = 'invalid-selection';
+      pd.message = message;
+      pd.satisfied = false;
+      pd.error = null;
+      pd.errorDeg = null;
+      pd.lastAppliedMoves = [];
+      pd.lastAppliedRotations = [];
+      if (pd.exception) delete pd.exception;
+      return { ok: false, status: 'invalid-selection', satisfied: false, applied: false, message };
+    }
+
+    if (infoA.component === infoB.component) {
+      const message = 'Select points from different components for touch alignment.';
+      pd.status = 'invalid-selection';
+      pd.message = message;
+      pd.satisfied = false;
+      pd.error = null;
+      pd.errorDeg = null;
+      pd.lastAppliedMoves = [];
+      pd.lastAppliedRotations = [];
+      if (pd.exception) delete pd.exception;
+      return { ok: false, status: 'invalid-selection', satisfied: false, applied: false, message };
+    }
+
+    if (!infoA.point || !infoB.point) {
+      const message = 'Unable to resolve world-space positions for the selected points.';
+      pd.status = 'invalid-selection';
+      pd.message = message;
+      pd.satisfied = false;
+      pd.error = null;
+      pd.errorDeg = null;
+      pd.lastAppliedMoves = [];
+      pd.lastAppliedRotations = [];
+      if (pd.exception) delete pd.exception;
+      return { ok: false, status: 'invalid-selection', satisfied: false, applied: false, message };
+    }
+
+    const tolerance = Math.max(Math.abs(context.tolerance ?? DEFAULT_TOUCH_TOLERANCE), 1e-8);
+    const translationGain = Math.max(0, Math.min(1, context.translationGain ?? 1));
+
+    const fixedA = context.isComponentFixed?.(infoA.component);
+    const fixedB = context.isComponentFixed?.(infoB.component);
+
+    const delta = new THREE.Vector3().subVectors(infoA.point, infoB.point);
+    const distance = delta.length();
+
+    pd.lastAppliedRotations = [];
+    pd.error = distance;
+    pd.errorDeg = null;
+
+    if (distance <= tolerance) {
+      const message = 'Points are coincident within tolerance.';
+      pd.status = 'satisfied';
+      pd.message = message;
+      pd.satisfied = true;
+      pd.lastAppliedMoves = [];
+      if (pd.exception) delete pd.exception;
+      return {
+        ok: true,
+        status: 'satisfied',
+        satisfied: true,
+        applied: false,
+        error: distance,
+        message,
+        infoA,
+        infoB,
+        diagnostics: {
+          distance,
+          delta: delta.toArray(),
+          moves: [],
+        },
+      };
+    }
+
+    if (fixedA && fixedB) {
+      const message = 'Both components are fixed; unable to translate points into contact.';
+      pd.status = 'blocked';
+      pd.message = message;
+      pd.satisfied = false;
+      pd.lastAppliedMoves = [];
+      if (pd.exception) delete pd.exception;
+      return {
+        ok: false,
+        status: 'blocked',
+        satisfied: false,
+        applied: false,
+        error: distance,
+        message,
+        infoA,
+        infoB,
+        diagnostics: {
+          distance,
+          delta: delta.toArray(),
+          moves: [],
+        },
+      };
+    }
+
+    const moves = [];
+    let applied = false;
+
+    const applyMove = (component, vec) => {
+      if (!component || !vec || vec.lengthSq() === 0) return false;
+      const ok = context.applyTranslation?.(component, vec);
+      if (ok) {
+        moves.push({ component: component.name || component.uuid, move: vectorToArray(vec) });
+      }
+      return ok;
+    };
+
+    if (!fixedA && !fixedB) {
+      const step = delta.clone().multiplyScalar(0.5 * translationGain);
+      if (step.lengthSq() > 0) {
+        applied = applyMove(infoA.component, step.clone().negate()) || applied;
+        applied = applyMove(infoB.component, step) || applied;
+      }
+    } else if (fixedA && !fixedB) {
+      const step = delta.clone().multiplyScalar(translationGain);
+      if (step.lengthSq() > 0) {
+        applied = applyMove(infoB.component, step) || applied;
+      }
+    } else if (!fixedA && fixedB) {
+      const step = delta.clone().multiplyScalar(translationGain);
+      if (step.lengthSq() > 0) {
+        applied = applyMove(infoA.component, step.clone().negate()) || applied;
+      }
+    }
+
+    const status = applied ? 'adjusted' : 'pending';
+    const message = applied
+      ? 'Applied translation to align points.'
+      : 'Waiting for a movable component to translate.';
+
+    pd.status = status;
     pd.message = message;
     pd.satisfied = false;
-    pd.error = null;
-    pd.errorDeg = null;
-    pd.lastAppliedMoves = [];
-    pd.lastAppliedRotations = [];
+    pd.lastAppliedMoves = moves;
     if (pd.exception) delete pd.exception;
-    return { ok: false, status: 'unsupported-selection', satisfied: false, applied: false, message };
+
+    return {
+      ok: true,
+      status,
+      satisfied: false,
+      applied,
+      error: distance,
+      message,
+      infoA,
+      infoB,
+      diagnostics: {
+        distance,
+        delta: delta.toArray(),
+        moves,
+      },
+    };
   }
 
   #updateNormalDebug(context, infoA, infoB) {
@@ -556,6 +708,40 @@ function selectionPair(params) {
 function vectorToArray(vec) {
   if (!vec) return [0, 0, 0];
   return [vec.x, vec.y, vec.z];
+}
+
+function resolvePointSelection(constraint, context, selection) {
+  if (!selection) return null;
+  const object = context.resolveObject?.(selection) || null;
+  const component = context.resolveComponent?.(selection) || null;
+  const point = resolveSelectionPoint(constraint, object, component);
+  return {
+    selection,
+    object,
+    component: component || null,
+    point,
+  };
+}
+
+function resolveSelectionPoint(constraint, object, component) {
+  if (object) {
+    try {
+      const rep = objectRepresentativePoint(null, object);
+      if (rep && typeof rep.clone === 'function') return rep.clone();
+    } catch {}
+    const worldPoint = constraint.getWorldPoint(object);
+    if (worldPoint) return worldPoint;
+  }
+  if (component) {
+    try {
+      const rep = objectRepresentativePoint(null, component);
+      if (rep && typeof rep.clone === 'function') return rep.clone();
+    } catch {}
+    component.updateMatrixWorld?.(true);
+    const worldPoint = constraint.getWorldPoint(component);
+    if (worldPoint) return worldPoint;
+  }
+  return null;
 }
 
 function selectionKindFrom(object, selection) {
