@@ -4,6 +4,7 @@ import { solveParallelAlignment, resolveParallelSelection } from '../constraintU
 import { objectRepresentativePoint } from '../../UI/pmi/annUtils.js';
 
 const DEFAULT_TOUCH_TOLERANCE = 1e-6;
+const MAX_POINT_ROTATION_STEP = THREE.MathUtils.degToRad(5);
 
 const inputParamsSchema = {
   constraintID: {
@@ -461,8 +462,10 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
     const context = _context || {};
     const pd = this.persistentData = this.persistentData || {};
 
-    const infoA = resolvePointSelection(this, context, _selA);
-    const infoB = resolvePointSelection(this, context, _selB);
+    let infoA = resolvePointSelection(this, context, _selA);
+    let infoB = resolvePointSelection(this, context, _selB);
+
+    pd.pointToPointNextMode = pd.pointToPointNextMode === 'rotate' ? 'rotate' : 'translate';
 
     if (!infoA?.component || !infoB?.component) {
       const message = 'Point selections must belong to assembly components.';
@@ -473,6 +476,7 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
       pd.errorDeg = null;
       pd.lastAppliedMoves = [];
       pd.lastAppliedRotations = [];
+      pd.pointToPointNextMode = 'translate';
       if (pd.exception) delete pd.exception;
       return { ok: false, status: 'invalid-selection', satisfied: false, applied: false, message };
     }
@@ -486,6 +490,7 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
       pd.errorDeg = null;
       pd.lastAppliedMoves = [];
       pd.lastAppliedRotations = [];
+      pd.pointToPointNextMode = 'translate';
       if (pd.exception) delete pd.exception;
       return { ok: false, status: 'invalid-selection', satisfied: false, applied: false, message };
     }
@@ -499,20 +504,32 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
       pd.errorDeg = null;
       pd.lastAppliedMoves = [];
       pd.lastAppliedRotations = [];
+      pd.pointToPointNextMode = 'translate';
       if (pd.exception) delete pd.exception;
       return { ok: false, status: 'invalid-selection', satisfied: false, applied: false, message };
     }
 
     const tolerance = Math.max(Math.abs(context.tolerance ?? DEFAULT_TOUCH_TOLERANCE), 1e-8);
     const translationGain = Math.max(0, Math.min(1, context.translationGain ?? 1));
+    const rotationGain = Math.max(0, Math.min(1, context.rotationGain ?? 1));
 
     const fixedA = context.isComponentFixed?.(infoA.component);
     const fixedB = context.isComponentFixed?.(infoB.component);
 
-    const delta = new THREE.Vector3().subVectors(infoA.point, infoB.point);
-    const distance = delta.length();
+    let delta = new THREE.Vector3().subVectors(infoA.point, infoB.point);
+    let distance = delta.length();
 
-    pd.lastAppliedRotations = [];
+    const refreshInfo = () => {
+      const nextA = resolvePointSelection(this, context, _selA);
+      const nextB = resolvePointSelection(this, context, _selB);
+      if (nextA?.point && nextB?.point) {
+        infoA = nextA;
+        infoB = nextB;
+        delta = new THREE.Vector3().subVectors(infoA.point, infoB.point);
+        distance = delta.length();
+      }
+    };
+
     pd.error = distance;
     pd.errorDeg = null;
 
@@ -522,6 +539,8 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
       pd.message = message;
       pd.satisfied = true;
       pd.lastAppliedMoves = [];
+      pd.lastAppliedRotations = [];
+      pd.pointToPointNextMode = 'translate';
       if (pd.exception) delete pd.exception;
       return {
         ok: true,
@@ -536,90 +555,245 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
           distance,
           delta: delta.toArray(),
           moves: [],
+          rotations: [],
+          stage: 'satisfied',
         },
       };
     }
 
-    if (fixedA && fixedB) {
-      const message = 'Both components are fixed; unable to translate points into contact.';
-      pd.status = 'blocked';
+    const performRotation = () => {
+      const rotations = [];
+      const moves = [];
+      let appliedRotation = false;
+
+      const applyRotationTowards = (sourceInfo, targetPoint, share) => {
+        const component = sourceInfo?.component;
+        if (!component || share <= 0 || context.isComponentFixed?.(component)) return false;
+        const pivot = resolveComponentMidpoint(this, component);
+        if (!pivot) return false;
+
+        const fromVec = sourceInfo.point.clone().sub(pivot);
+        const toVec = targetPoint.clone().sub(pivot);
+
+        if (fromVec.lengthSq() <= 1e-12 || toVec.lengthSq() <= 1e-12) return false;
+
+        const nFrom = fromVec.clone().normalize();
+        const nTo = toVec.clone().normalize();
+        const dot = THREE.MathUtils.clamp(nFrom.dot(nTo), -1, 1);
+        const angle = Math.acos(dot);
+        if (!Number.isFinite(angle) || angle <= 1e-6) return false;
+
+        const maxStep = Math.min(angle, MAX_POINT_ROTATION_STEP);
+        const stepAngle = maxStep * rotationGain * share;
+        if (!Number.isFinite(stepAngle) || stepAngle <= 1e-6) return false;
+
+        const axis = fromVec.clone().cross(toVec);
+        if (axis.lengthSq() <= 1e-12) return false;
+        axis.normalize();
+
+        const quaternion = new THREE.Quaternion().setFromAxisAngle(axis, stepAngle);
+
+        component.updateMatrixWorld?.(true);
+        const pivotWorld = pivot.clone();
+        let pivotLocal = null;
+        if (typeof component.worldToLocal === 'function' && typeof component.localToWorld === 'function') {
+          pivotLocal = component.worldToLocal(pivot.clone());
+        }
+
+        const ok = context.applyRotation?.(component, quaternion);
+        if (!ok) return false;
+
+        appliedRotation = true;
+
+        const record = {
+          component: component.name || component.uuid,
+          quaternion: quaternion.toArray(),
+          axis: vectorToArray(axis),
+          angleRad: stepAngle,
+          angleDeg: THREE.MathUtils.radToDeg(stepAngle),
+          pivot: vectorToArray(pivotWorld),
+        };
+        rotations.push(record);
+
+        if (pivotLocal) {
+          component.updateMatrixWorld?.(true);
+          const pivotAfter = component.localToWorld(pivotLocal.clone());
+          const correction = pivotWorld.clone().sub(pivotAfter);
+          if (correction.lengthSq() > 1e-12) {
+            const moved = context.applyTranslation?.(component, correction);
+            if (moved) {
+              moves.push({ component: component.name || component.uuid, move: vectorToArray(correction) });
+            }
+          }
+        }
+
+        return true;
+      };
+
+      const movableA = !fixedA && infoA.component;
+      const movableB = !fixedB && infoB.component;
+
+      if (!movableA && !movableB) {
+        return { handled: false };
+      }
+
+      const shareA = movableA && movableB ? 0.5 : (movableA ? 1 : 0);
+      const shareB = movableA && movableB ? 0.5 : (movableB ? 1 : 0);
+
+      if (shareA > 0) applyRotationTowards(infoA, infoB.point, shareA);
+      if (shareB > 0) applyRotationTowards(infoB, infoA.point, shareB);
+
+      if (!appliedRotation) {
+        return { handled: false };
+      }
+
+      refreshInfo();
+      pd.error = distance;
+      pd.status = 'adjusted';
+      pd.message = 'Applied rotation to bring points closer.';
+      pd.satisfied = false;
+      pd.lastAppliedMoves = moves;
+      pd.lastAppliedRotations = rotations;
+      pd.pointToPointNextMode = 'translate';
+      if (pd.exception) delete pd.exception;
+
+      return {
+        handled: true,
+        applied: true,
+        result: {
+          ok: true,
+          status: 'adjusted',
+          satisfied: false,
+          applied: true,
+          error: distance,
+          message: pd.message,
+          infoA,
+          infoB,
+          diagnostics: {
+            distance,
+            delta: delta.toArray(),
+            rotations,
+            moves,
+            stage: 'rotation',
+          },
+        },
+      };
+    };
+
+    const performTranslation = () => {
+      const moves = [];
+      let appliedTranslation = false;
+
+      const applyMove = (component, vec) => {
+        if (!component || !vec || vec.lengthSq() === 0) return false;
+        const ok = context.applyTranslation?.(component, vec);
+        if (ok) {
+          moves.push({ component: component.name || component.uuid, move: vectorToArray(vec) });
+        }
+        return ok;
+      };
+
+      if (fixedA && fixedB) {
+        const message = 'Both components are fixed; unable to translate points into contact.';
+        pd.status = 'blocked';
+        pd.message = message;
+        pd.satisfied = false;
+        pd.lastAppliedMoves = [];
+        pd.lastAppliedRotations = [];
+        pd.pointToPointNextMode = 'translate';
+        if (pd.exception) delete pd.exception;
+        return {
+          result: {
+            ok: false,
+            status: 'blocked',
+            satisfied: false,
+            applied: false,
+            error: distance,
+            message,
+            infoA,
+            infoB,
+            diagnostics: {
+              distance,
+              delta: delta.toArray(),
+              moves: [],
+              rotations: [],
+              stage: 'translation',
+            },
+          },
+          applied: false,
+        };
+      }
+
+      if (!fixedA && !fixedB) {
+        const step = delta.clone().multiplyScalar(0.5 * translationGain);
+        if (step.lengthSq() > 0) {
+          appliedTranslation = applyMove(infoA.component, step.clone().negate()) || appliedTranslation;
+          appliedTranslation = applyMove(infoB.component, step) || appliedTranslation;
+        }
+      } else if (fixedA && !fixedB) {
+        const step = delta.clone().multiplyScalar(translationGain);
+        if (step.lengthSq() > 0) {
+          appliedTranslation = applyMove(infoB.component, step) || appliedTranslation;
+        }
+      } else if (!fixedA && fixedB) {
+        const step = delta.clone().multiplyScalar(translationGain);
+        if (step.lengthSq() > 0) {
+          appliedTranslation = applyMove(infoA.component, step.clone().negate()) || appliedTranslation;
+        }
+      }
+
+      if (appliedTranslation) {
+        refreshInfo();
+        pd.error = distance;
+      }
+
+      const status = appliedTranslation ? 'adjusted' : 'pending';
+      const message = appliedTranslation
+        ? 'Applied translation to align points.'
+        : 'Waiting for a movable component to translate.';
+
+      pd.status = status;
       pd.message = message;
       pd.satisfied = false;
-      pd.lastAppliedMoves = [];
+      pd.lastAppliedMoves = moves;
+      pd.lastAppliedRotations = [];
+      pd.pointToPointNextMode = 'rotate';
       if (pd.exception) delete pd.exception;
+
       return {
-        ok: false,
-        status: 'blocked',
-        satisfied: false,
-        applied: false,
-        error: distance,
-        message,
-        infoA,
-        infoB,
-        diagnostics: {
-          distance,
-          delta: delta.toArray(),
-          moves: [],
+        result: {
+          ok: true,
+          status,
+          satisfied: false,
+          applied: appliedTranslation,
+          error: distance,
+          message,
+          infoA,
+          infoB,
+          diagnostics: {
+            distance,
+            delta: delta.toArray(),
+            moves,
+            rotations: [],
+            stage: 'translation',
+          },
         },
+        applied: appliedTranslation,
       };
-    }
-
-    const moves = [];
-    let applied = false;
-
-    const applyMove = (component, vec) => {
-      if (!component || !vec || vec.lengthSq() === 0) return false;
-      const ok = context.applyTranslation?.(component, vec);
-      if (ok) {
-        moves.push({ component: component.name || component.uuid, move: vectorToArray(vec) });
-      }
-      return ok;
     };
 
-    if (!fixedA && !fixedB) {
-      const step = delta.clone().multiplyScalar(0.5 * translationGain);
-      if (step.lengthSq() > 0) {
-        applied = applyMove(infoA.component, step.clone().negate()) || applied;
-        applied = applyMove(infoB.component, step) || applied;
+    let finalResult = null;
+
+    if (pd.pointToPointNextMode === 'rotate') {
+      const rotationAttempt = performRotation();
+      if (rotationAttempt?.handled) {
+        return rotationAttempt.result;
       }
-    } else if (fixedA && !fixedB) {
-      const step = delta.clone().multiplyScalar(translationGain);
-      if (step.lengthSq() > 0) {
-        applied = applyMove(infoB.component, step) || applied;
-      }
-    } else if (!fixedA && fixedB) {
-      const step = delta.clone().multiplyScalar(translationGain);
-      if (step.lengthSq() > 0) {
-        applied = applyMove(infoA.component, step.clone().negate()) || applied;
-      }
+      // rotation skipped; fall through to translation
     }
 
-    const status = applied ? 'adjusted' : 'pending';
-    const message = applied
-      ? 'Applied translation to align points.'
-      : 'Waiting for a movable component to translate.';
-
-    pd.status = status;
-    pd.message = message;
-    pd.satisfied = false;
-    pd.lastAppliedMoves = moves;
-    if (pd.exception) delete pd.exception;
-
-    return {
-      ok: true,
-      status,
-      satisfied: false,
-      applied,
-      error: distance,
-      message,
-      infoA,
-      infoB,
-      diagnostics: {
-        distance,
-        delta: delta.toArray(),
-        moves,
-      },
-    };
+    finalResult = performTranslation();
+    return finalResult.result;
   }
 
   #updateNormalDebug(context, infoA, infoB) {
@@ -740,6 +914,28 @@ function resolveSelectionPoint(constraint, object, component) {
     component.updateMatrixWorld?.(true);
     const worldPoint = constraint.getWorldPoint(component);
     if (worldPoint) return worldPoint;
+  }
+  return null;
+}
+
+function resolveComponentMidpoint(constraint, component) {
+  if (!component) return null;
+  component.updateMatrixWorld?.(true);
+  try {
+    const rep = objectRepresentativePoint(null, component);
+    if (rep && typeof rep.clone === 'function') return rep.clone();
+  } catch {}
+  const worldPoint = constraint.getWorldPoint(component);
+  if (worldPoint) return worldPoint;
+  if (typeof component.getWorldPosition === 'function') {
+    return component.getWorldPosition(new THREE.Vector3());
+  }
+  if (component.position) {
+    const pos = component.position.clone();
+    if (component.parent?.matrixWorld) {
+      return pos.applyMatrix4(component.parent.matrixWorld);
+    }
+    return pos;
   }
   return null;
 }
