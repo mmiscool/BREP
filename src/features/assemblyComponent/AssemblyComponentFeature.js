@@ -78,20 +78,20 @@ export class AssemblyComponentFeature {
       if (hasSelectionIntent) {
         console.warn('[AssemblyComponentFeature] Component payload missing or failed to load.');
       }
-      return [];
+      return { added: [], removed: [] };
     }
 
     const featureId = this._sanitizeFeatureId(this.inputParams?.featureID);
     const group = await this._loadThreeMF(componentData.bytes);
     if (!group) {
       console.warn('[AssemblyComponentFeature] Failed to parse 3MF component.');
-      return [];
+      return { added: [], removed: [] };
     }
 
     const solids = await this._buildSolidsFromGroup(group, componentData);
     if (!solids.length) {
       console.warn('[AssemblyComponentFeature] No solids recovered from component.');
-      return [];
+      return { added: [], removed: [] };
     }
 
     //const componentName = this.inputParams.componentName || componentData.name ;
@@ -150,7 +150,7 @@ export class AssemblyComponentFeature {
       featureInfo: componentData.featureInfo || null,
     };
 
-    return [component];
+    return { added: [component], removed: [] };
   }
 
   async _resolveComponentData() {

@@ -46,17 +46,17 @@ export class MirrorFeature {
 
         // Resolve targets as objects
         const solidObjs = Array.isArray(this.inputParams.solids) ? this.inputParams.solids.filter(Boolean) : [];
-        if (!solidObjs.length) return [];
+        if (!solidObjs.length) return { added: [], removed: [] };
 
         // Resolve mirror reference (face or plane mesh) as object
         const refObj = Array.isArray(this.inputParams.mirrorPlane)
             ? (this.inputParams.mirrorPlane[0] || null)
             : (this.inputParams.mirrorPlane || null);
-        if (!refObj) return [];
+        if (!refObj) return { added: [], removed: [] };
 
         // Compute plane origin and normal
         const plane = this.#computeMirrorPlane(refObj, Number(this.inputParams.offsetDistance) || 0);
-        if (!plane) return [];
+        if (!plane) return { added: [], removed: [] };
 
         const added = [];
         for (const src of solidObjs) {
@@ -82,7 +82,7 @@ export class MirrorFeature {
             mirrored.visualize();
             added.push(mirrored);
         }
-        return added;
+        return { added, removed: [] };
     }
 
     /**

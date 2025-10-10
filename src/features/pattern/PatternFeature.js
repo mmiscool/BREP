@@ -83,7 +83,7 @@ export class PatternFeature {
     if (solids.length === 0) {
       console.warn('[PatternFeature] No solids resolved from selection.');
     }
-    if (!solids.length) return [];
+    if (!solids.length) return { added: [], removed: [] };
 
     const mode = (this.inputParams.mode || 'LINEAR').toUpperCase();
     const count = Math.max(1, (this.inputParams.count | 0));
@@ -122,7 +122,8 @@ export class PatternFeature {
         out.push(acc);
       }
       try { console.log('[PatternFeature] Union complete for', sources.length, 'source(s).'); } catch {}
-      return out;
+      const removedSources = sources.filter(Boolean);
+      return { added: out, removed: removedSources };
     }
 
     // NON-BOOLEAN: return clones as separate bodies
@@ -134,7 +135,7 @@ export class PatternFeature {
       for (const c of clones) instances.push(c);
     }
     try { console.log(`[PatternFeature] Created ${instances.length} instances (no union).`); } catch {}
-    return instances;
+    return { added: instances, removed: [] };
   }
 
   #linearPattern(src, count, deltaPos, doVisualize = true) {

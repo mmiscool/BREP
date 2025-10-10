@@ -9,6 +9,7 @@ import { localStorage as LS } from './localStorageShim.js';
 import { MetadataManager } from './metadataManager.js';
 import { AssemblyConstraintRegistry } from './assemblyConstraints/AssemblyConstraintRegistry.js';
 import { AssemblyConstraintHistory } from './assemblyConstraints/AssemblyConstraintHistory.js';
+import { add } from 'three/tsl';
 
 
 export class PartHistory {
@@ -27,7 +28,7 @@ export class PartHistory {
     this.metadataManager = new MetadataManager
     if (this.assemblyConstraintHistory) {
       this.assemblyConstraintHistory.clear();
-      this.assemblyConstraintHistory.setPartHistory?.(this);
+      this.assemblyConstraintHistory.setPartHistory(this);
     }
   }
 
@@ -60,7 +61,7 @@ export class PartHistory {
 
     if (this.assemblyConstraintHistory) {
       this.assemblyConstraintHistory.clear();
-      this.assemblyConstraintHistory.setPartHistory?.(this);
+      this.assemblyConstraintHistory.setPartHistory(this);
     }
 
 
@@ -80,6 +81,8 @@ export class PartHistory {
 
     let skipFeature = false;
     let skipAllFeatures = false;
+    let nextFeatureDirty = false;
+    let previouseFeatureTimestamp = this.features[0]?.timestamp || null;
     const nowMs = () => (typeof performance !== 'undefined' && performance?.now ? performance.now() : Date.now());
     for (const feature of this.features) {
       if (skipFeature || skipAllFeatures) {
@@ -102,12 +105,7 @@ export class PartHistory {
       if (this.callbacks.run) {
         await this.callbacks.run(feature.inputParams.featureID);
       }
-      let FeatureClass = null;
-      try {
-        FeatureClass = (this.featureRegistry && typeof this.featureRegistry.getSafe === 'function')
-          ? this.featureRegistry.getSafe(feature.type)
-          : (this.featureRegistry && typeof this.featureRegistry.get === 'function' ? this.featureRegistry.get(feature.type) : null);
-      } catch (_) { FeatureClass = null; }
+      const FeatureClass = this.featureRegistry.getSafe(feature.type);
       if (!FeatureClass) {
         // Record an error on the feature but do not abort the whole run.
         const t1 = nowMs();
@@ -118,61 +116,8 @@ export class PartHistory {
       }
       const instance = new FeatureClass(this);
 
-      await Object.assign(instance.inputParams, feature.inputParams);
+      //await Object.assign(instance.inputParams, feature.inputParams);
       await Object.assign(instance.persistentData, feature.persistentData);
-
-      instance.inputParams = await this.sanitizeInputParams(FeatureClass.inputParamsSchema, feature.inputParams);
-
-      const debugMode = false;
-
-      const t0 = nowMs();
-      if (debugMode === true) {
-        console.log("Debug mode is enabled");
-        try {
-          instance.resultArtifacts = await instance.run(this);
-          // Normalize compatibility with legacy returns { added, removed }
-          const effects = this._normalizeRunResult(instance.resultArtifacts, feature.inputParams.featureID);
-          try { for (const r of effects.removed) { if (r) r.__removeFlag = true; } } catch { }
-          instance.resultArtifacts = effects.added;
-          const t1 = nowMs();
-          const dur = Math.max(0, Math.round(t1 - t0));
-          try {
-            feature.lastRun = { ok: true, startedAt: t0, endedAt: t1, durationMs: dur, error: null };
-          } catch { }
-          try { console.log(`[PartHistory] ${feature.type} #${feature.inputParams.featureID} finished in ${dur} ms`); } catch { }
-        } catch (e) {
-          const t1 = nowMs();
-          const dur = Math.max(0, Math.round(t1 - t0));
-          try {
-            feature.lastRun = { ok: false, startedAt: t0, endedAt: t1, durationMs: dur, error: { message: e?.message || String(e), name: e?.name || 'Error', stack: e?.stack || null } };
-          } catch { }
-          instance.errorString = `Error occurred while running feature ${feature.inputParams.featureID}: ${e.message}`;
-          console.error(e);
-          return;
-        }
-      } else {
-        instance.resultArtifacts = await instance.run(this);
-        // Normalize compatibility with legacy returns { added, removed }
-        const effects = this._normalizeRunResult(instance.resultArtifacts, feature.inputParams.featureID);
-        try { for (const r of effects.removed) { if (r) r.__removeFlag = true; } } catch { }
-        instance.resultArtifacts = effects.added;
-        const t1 = nowMs();
-        const dur = Math.max(0, Math.round(t1 - t0));
-        try {
-          feature.lastRun = { ok: true, startedAt: t0, endedAt: t1, durationMs: dur, error: null };
-        } catch { }
-        try { console.log(`[PartHistory] ${feature.type} #${feature.inputParams.featureID} finished in ${dur} ms`); } catch { }
-      }
-
-      feature.persistentData = instance.persistentData;
-
-      // set the owningFeatureID for each new artifact
-      for (const artifact of instance.resultArtifacts) {
-        artifact.owningFeatureID = feature.inputParams.featureID;
-        try { await artifact.visualize(); } catch { }
-        try { await artifact.free(); } catch { }
-
-      }
 
       // Remove any existing scene children owned by this feature (rerun case)
       const toRemoveOwned = this.scene.children.slice().filter(ch => ch?.owningFeatureID === feature.inputParams.featureID);
@@ -180,27 +125,75 @@ export class PartHistory {
         for (const ch of toRemoveOwned) this.scene.remove(ch);
       }
 
-      // Also remove any scene children flagged for removal (e.g., boolean inputs)
-      const flagged = this.scene.children.slice().filter(ch => ch?.__removeFlag === true);
-      if (flagged.length) {
-        for (const ch of flagged) this.scene.remove(ch);
+
+
+      console.log({ previouseFeatureTimestamp, currentFeatureTimestamp: feature.timestamp });
+      console.log(previouseFeatureTimestamp > feature.timestamp)
+      // if the previous feature had a timestamp later than this feature, we need to
+      // mark this feature as dirty to ensure it gets re-run
+      if (previouseFeatureTimestamp && feature.timestamp && previouseFeatureTimestamp > feature.timestamp) {
+        console.log("previous feature timestamp is later than current feature timestamp, marking current feature dirty");
+        nextFeatureDirty = true;
+        previouseFeatureTimestamp = feature.timestamp;
       }
 
-      // add the artifacts to the scene and ensure selection handlers are wired on the full subtree
-      for (const artifact of instance.resultArtifacts) {
-        await this.scene.add(artifact);
-        this._attachSelectionHandlers(artifact);
-      }
+      console.log("this is our feature", feature);
 
-      // Final sweep: remove any newly-flagged items after adding artifacts
-      const flaggedAfter = this.scene.children.slice().filter(ch => ch?.__removeFlag === true);
-      if (flaggedAfter.length) {
-        for (const ch of flaggedAfter) {
-          try { this.scene.remove(ch); }
-          catch (error) { console.warn(`[PartHistory] Failed to remove flagged child: ${error.message}`); }
+      // Only re-run the feature if its inputParams have changed since last run
+
+      if (nextFeatureDirty || JSON.stringify(feature.inputParams) !== JSON.stringify(feature.lastRunInputParams)) {
+        // Record the current input params as lastRunInputParams
+        feature.lastRunInputParams = JSON.parse(JSON.stringify(feature.inputParams));
+        instance.inputParams = await this.sanitizeInputParams(FeatureClass.inputParamsSchema, feature.inputParams);
+
+        console.log("input params after sanitization:", instance.inputParams);
+
+
+        const t0 = nowMs();
+
+        try {
+          instance.resultArtifacts = await instance.run(this);
+          feature.effects = {
+            added: instance.resultArtifacts.added || [],
+            removed: instance.resultArtifacts.removed || []
+          }
+
+          nextFeatureDirty = true;
+          feature.timestamp = Date.now();
+          previouseFeatureTimestamp = feature.timestamp;
+
+          const t1 = nowMs();
+          const dur = Math.max(0, Math.round(t1 - t0));
+
+          feature.lastRun = { ok: true, startedAt: t0, endedAt: t1, durationMs: dur, error: null };
+
+          try { console.log(`[PartHistory] ${feature.type} #${feature.inputParams.featureID} finished in ${dur} ms`); } catch { }
+        } catch (e) {
+          const t1 = nowMs();
+          const dur = Math.max(0, Math.round(t1 - t0));
+          feature.lastRun = { ok: false, startedAt: t0, endedAt: t1, durationMs: dur, error: { message: e?.message || String(e), name: e?.name || 'Error', stack: e?.stack || null } };
+
+          nextFeatureDirty = true;
+          feature.timestamp = Date.now();
+
+          previouseFeatureTimestamp = feature.timestamp;
+          instance.errorString = `Error occurred while running feature ${feature.inputParams.featureID}: ${e.message}`;
+          console.error(e);
+          return;
         }
+      } else {
+        console.log(`skipping feature run; input params unchanged for featureID=${feature.inputParams.featureID}`);
       }
-      // monitored code goes here
+
+
+
+
+
+
+      await this.applyFeatureEffects(feature.effects, feature.inputParams.featureID);
+
+
+      feature.persistentData = instance.persistentData;
     }
 
     try {
@@ -219,6 +212,58 @@ export class PartHistory {
     return this;
   }
 
+
+  async _coerceRunEffects(result, featureType, featureID) {
+    if (result == null) return { added: [], removed: [] };
+    if (Array.isArray(result)) {
+      throw new Error(`[PartHistory] Feature "${featureType}" returned an array; expected { added, removed } payload (featureID=${featureID}).`);
+    }
+    const added = Array.isArray(result.added) ? result.added.filter(Boolean) : [];
+    const removed = Array.isArray(result.removed) ? result.removed.filter(Boolean) : [];
+
+    // set the owningFeatureID for each item added by this feature
+    for (const artifact of added) {
+      artifact.owningFeatureID = featureID;
+      try { await artifact.visualize(); } catch { }
+      try { await artifact.free(); } catch { }
+
+    }
+
+
+
+    return { added, removed };
+  }
+
+
+  async applyFeatureEffects(effects, featureID) {
+    if (!effects || typeof effects !== 'object') return;
+    const added = Array.isArray(effects.added) ? effects.added : [];
+    const removed = Array.isArray(effects.removed) ? effects.removed : [];
+
+    for (const r of removed) {
+      await this._safeRemove(r);
+    }
+
+    console.log("effects", effects, "added:", added, "removed:", removed);
+    for (const a of added) {
+      if (a && typeof a === 'object') {
+        try { await a.visualize(); } catch { }
+        try { await a.free(); } catch { }
+        await this.scene.add(a);
+        // make sure the flag for removal is cleared
+        try { a.__removeFlag = false; } catch { }
+        console.log("Added to scene:", a);
+        this._attachSelectionHandlers(a);
+      }
+    }
+
+    // apply the featureID to all added/removed items for traceability
+    try { for (const obj of added) { if (obj) obj.owningFeatureID = featureID; } } catch { }
+    try { for (const obj of removed) { if (obj) obj.owningFeatureID = featureID; } } catch { }
+
+
+  }
+
   _ensureAmbientLight() {
     if (this._ambientLight && this.scene.children.includes(this._ambientLight)) return;
     // Remove any stray ambient lights if present
@@ -230,22 +275,7 @@ export class PartHistory {
 
   // Removed unused signature/canonicalization helpers
 
-  _normalizeRunResult(result, featureID) {
-    const out = { added: [], removed: [] };
-    if (!result) return out;
-    // New unified shape
-    if (typeof result === 'object' && !Array.isArray(result) && (result.added || result.removed)) {
-      out.added = Array.isArray(result.added) ? result.added.filter(Boolean) : [];
-      out.removed = Array.isArray(result.removed) ? result.removed.filter(Boolean) : [];
-      return out;
-    }
-    // Back-compat: plain array → all are additions
-    if (Array.isArray(result)) {
-      out.added = result.filter(Boolean);
-      return out;
-    }
-    return out;
-  }
+
 
   _attachSelectionHandlers(obj) {
     if (!obj || typeof obj !== 'object') return;
@@ -316,7 +346,7 @@ export class PartHistory {
     this.metadataManager.metadata = importData.metadata || {};
 
     if (this.assemblyConstraintHistory) {
-      this.assemblyConstraintHistory.setPartHistory?.(this);
+      this.assemblyConstraintHistory.setPartHistory(this);
       const constraintsList = Array.isArray(importData.assemblyConstraints)
         ? importData.assemblyConstraints
         : [];
@@ -338,7 +368,7 @@ export class PartHistory {
 
   async runAssemblyConstraints() {
     if (!this.assemblyConstraintHistory) return [];
-    this.assemblyConstraintHistory.setPartHistory?.(this);
+    this.assemblyConstraintHistory.setPartHistory(this);
     return await this.assemblyConstraintHistory.runAll(this);
   }
 
@@ -403,7 +433,7 @@ export class PartHistory {
           this.pmiViews = arr.filter(Boolean);
         }
       }
-    } catch {}
+    } catch { }
   }
 
   savePMIViewsToLocalStorage(modelName) {
@@ -411,7 +441,7 @@ export class PartHistory {
       const key = '__BREP_PMI_VIEWS__:' + encodeURIComponent(modelName || '__DEFAULT__');
       const validViews = Array.isArray(this.pmiViews) ? this.pmiViews.filter(Boolean) : [];
       LS.setItem(key, JSON.stringify(validViews));
-      
+
       // Trigger storage event to notify PMI Views widget
       try {
         window.dispatchEvent(new StorageEvent('storage', {
@@ -423,17 +453,17 @@ export class PartHistory {
       } catch {
         // Fallback for browsers that don't support StorageEvent constructor
         try {
-          const event = new CustomEvent('storage', { 
-            detail: { 
-              key: key, 
-              oldValue: null, 
-              newValue: JSON.stringify(validViews) 
-            } 
+          const event = new CustomEvent('storage', {
+            detail: {
+              key: key,
+              oldValue: null,
+              newValue: JSON.stringify(validViews)
+            }
           });
           window.dispatchEvent(event);
-        } catch {}
+        } catch { }
       }
-    } catch {}
+    } catch { }
   }
 
   async loadAssemblyConstraintsFromLocalStorage(modelName) {
@@ -446,7 +476,7 @@ export class PartHistory {
       const list = Array.isArray(data?.constraints) ? data.constraints : [];
       const counter = Number(data?.idCounter) || 0;
       await this.assemblyConstraintHistory.replaceAll(list, counter);
-    } catch {}
+    } catch { }
   }
 
   saveAssemblyConstraintsToLocalStorage(modelName) {
@@ -455,7 +485,7 @@ export class PartHistory {
       const key = '__BREP_ASSEMBLY_CONSTRAINTS__:' + encodeURIComponent(modelName || '__DEFAULT__');
       const snapshot = this.assemblyConstraintHistory.snapshot();
       LS.setItem(key, JSON.stringify(snapshot));
-    } catch {}
+    } catch { }
   }
 
   async newFeature(featureType) {
@@ -596,21 +626,7 @@ export class PartHistory {
             sanitized[key] = [0, 0, 0];
           }
         } else if (schema[key].type === "boolean") {
-          // Generic boolean handling with alias for Transform.copy
-          if (key === 'copy') {
-            let v;
-            if (Object.prototype.hasOwnProperty.call(inputParams, 'copy')) {
-              v = inputParams.copy;
-            } else if (Object.prototype.hasOwnProperty.call(inputParams, 'replaceOriginal')) {
-              // Legacy: replaceOriginal means NOT copy
-              v = !inputParams.replaceOriginal;
-            } else {
-              v = schema[key].default_value === true;
-            }
-            sanitized[key] = Boolean(v);
-          } else {
-            sanitized[key] = Boolean(inputParams[key]);
-          }
+          sanitized[key] = Boolean(Object.prototype.hasOwnProperty.call(inputParams, key) ? inputParams[key] : schema[key].default_value);
         } else {
           sanitized[key] = inputParams[key];
         }

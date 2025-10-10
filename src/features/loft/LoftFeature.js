@@ -62,7 +62,7 @@ export class LoftFeature {
     const { profiles } = this.inputParams;
     if (!Array.isArray(profiles) || profiles.length < 2) {
       console.warn("LoftFeature: select at least two profiles (faces or sketches)");
-      return [];
+      return { added: [], removed: [] };
     }
 
     // Resolve input names to FACE objects; allow SKETCH that contains a FACE
@@ -83,7 +83,7 @@ export class LoftFeature {
 
     if (faces.length < 2) {
       console.warn("LoftFeature: need at least two resolved FACE objects");
-      return [];
+      return { added: [], removed: [] };
     }
 
     // Build a sidewall naming map using ONLY the first face's edge names
@@ -622,9 +622,13 @@ export class LoftFeature {
     try { solid.setEpsilon(1e-6); } catch {}
     solid.visualize();
     const effects = await BREP.applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
+    const booleanRemoved = Array.isArray(effects.removed) ? effects.removed : [];
+    const removedArtifacts = [...removed, ...booleanRemoved];
     // Flag removals (sketch parents + boolean effects)
-    try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.__removeFlag = true; } } catch {}
-    // Return only artifacts to add
-    return effects.added || [];
+    try { for (const obj of removedArtifacts) { if (obj) obj.__removeFlag = true; } } catch {}
+    return {
+      added: Array.isArray(effects.added) ? effects.added : [],
+      removed: removedArtifacts,
+    };
   }
 }

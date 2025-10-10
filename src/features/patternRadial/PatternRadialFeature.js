@@ -64,7 +64,7 @@ export class PatternRadialFeature {
       else if (o.parentSolid && o.parentSolid.type === 'SOLID') solids.push(o.parentSolid);
       else if (o.parent && o.parent.type === 'SOLID') solids.push(o.parent);
     }
-    if (!solids.length) return [];
+    if (!solids.length) return { added: [], removed: [] };
 
     const count = Math.max(1, (this.inputParams.count | 0));
     const totalAngleDeg = Number(this.inputParams.totalAngleDeg) || 360;
@@ -95,7 +95,7 @@ export class PatternRadialFeature {
         instances.push(c);
       }
     }
-    return instances;
+    return { added: instances, removed: [] };
   }
 }
 

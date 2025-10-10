@@ -107,14 +107,14 @@ export class ImageToFaceFeature {
     const imageData = await decodeToImageData(fileToImport);
     if (!imageData) {
       console.warn('[IMAGE] No image data decoded');
-      return [];
+      return { added: [], removed: [] };
     }
 
     const mask = rasterToMask(imageData, Number(threshold) || 0, !!invert);
     const loopsGrid = extractLoopsFromMask(mask.width, mask.height, mask.data);
     if (!loopsGrid.length) {
       console.warn('[IMAGE] No contours found in image');
-      return [];
+      return { added: [], removed: [] };
     }
 
     // Convert grid loops (integer node coords in image space, y-down) to world 2D loops (x, y-up)
@@ -214,7 +214,7 @@ export class ImageToFaceFeature {
 
     if (!triPositions.length) {
       console.warn('[IMAGE] Triangulation produced no area');
-      return [];
+      return { added: [], removed: [] };
     }
 
     const geom = new THREE.BufferGeometry();
@@ -353,7 +353,7 @@ export class ImageToFaceFeature {
     sceneGroup.add(face);
     for (const e of edges) sceneGroup.add(e);
 
-    return [sceneGroup];
+    return { added: [sceneGroup], removed: [] };
   }
 }
 

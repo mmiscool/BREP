@@ -116,9 +116,11 @@ export class ExtrudeFeature {
 
     // Apply optional boolean operation via shared helper
     const effects = await BREP.applyBooleanOperation(partHistory || {}, extrude, this.inputParams.boolean, this.inputParams.featureID);
+    const booleanRemoved = Array.isArray(effects.removed) ? effects.removed : [];
+    const removedArtifacts = [...removed, ...booleanRemoved];
     // Flag removals (sketch parent + boolean effects) for PartHistory to collect
-    try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.__removeFlag = true; } } catch {}
-    // Return only artifacts to add
-    return effects.added || [];
+    try { for (const obj of removedArtifacts) { if (obj) obj.__removeFlag = true; } } catch {}
+    const added = Array.isArray(effects.added) ? effects.added : [];
+    return { added, removed: removedArtifacts };
   }
 }

@@ -54,7 +54,7 @@ export class Import3dModelFeature {
         const raw = this.inputParams.fileToImport;
         if (!raw || (typeof raw !== 'string' && !(raw instanceof ArrayBuffer))) {
             console.warn('[Import3D] No model data provided');
-            return [];
+            return { added: [], removed: [] };
         }
 
         // Accept either:
@@ -99,7 +99,7 @@ export class Import3dModelFeature {
                     });
                     if (geometries.length === 0) {
                         console.warn('[Import3D] 3MF file contained no meshes');
-                        return [];
+                        return { added: [], removed: [] };
                     }
                     const merged = BufferGeometryUtils.mergeGeometries(geometries, false);
                     geometry = merged || geometries[0];
@@ -109,11 +109,11 @@ export class Import3dModelFeature {
                 }
             } else {
                 console.warn('[Import3D] Unsupported input type for fileToImport');
-                return [];
+                return { added: [], removed: [] };
             }
         } catch (e) {
             console.warn('[Import3D] Failed to parse input as STL/3MF:', e);
-            return [];
+            return { added: [], removed: [] };
         }
         
         // Optionally center the geometry by its bounding box center
@@ -147,7 +147,6 @@ export class Import3dModelFeature {
         solid.name = this.inputParams.featureID;
         solid.visualize();
 
-        return [solid];
+        return { added: [solid], removed: [] };
     }
 }
-

@@ -48,7 +48,7 @@ export class RemeshFeature {
       ? targetEntry
       : (targetEntry ? await scene.getObjectByName(String(targetEntry)) : null);
 
-    if (!target || target.type !== 'SOLID') return [];
+    if (!target || target.type !== 'SOLID') return { added: [], removed: [] };
 
     const L = Number(this.inputParams.maxEdgeLength);
     const I = Number(this.inputParams.maxIterations);
@@ -64,6 +64,6 @@ export class RemeshFeature {
     try { remeshed.visualize(); } catch (_) {}
 
     try { target.__removeFlag = true; } catch {}
-    return [remeshed];
+    return { added: [remeshed], removed: [target] };
   }
 }

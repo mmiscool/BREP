@@ -49,7 +49,7 @@ export class PatternLinearFeature {
       else if (o.parentSolid && o.parentSolid.type === 'SOLID') solids.push(o.parentSolid);
       else if (o.parent && o.parent.type === 'SOLID') solids.push(o.parent);
     }
-    if (!solids.length) return [];
+    if (!solids.length) return { added: [], removed: [] };
 
     const count = Math.max(1, (this.inputParams.count | 0));
     const d = toVec3(this.inputParams.offset?.position, 10, 0, 0);
@@ -68,7 +68,7 @@ export class PatternLinearFeature {
         instances.push(c);
       }
     }
-    return instances;
+    return { added: instances, removed: [] };
   }
 }
 

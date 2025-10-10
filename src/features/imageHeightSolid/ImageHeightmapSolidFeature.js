@@ -121,14 +121,14 @@ export class ImageHeightmapSolidFeature {
     const imageData = await decodeToImageData(fileToImport);
     if (!imageData) {
       console.warn('[HEIGHTMAP] No image data decoded');
-      return [];
+      return { added: [], removed: [] };
     }
 
     const width = imageData.width | 0;
     const height = imageData.height | 0;
     if (!(width >= 2 && height >= 2)) {
       console.warn('[HEIGHTMAP] Heightmap requires an image at least 2x2 pixels');
-      return [];
+      return { added: [], removed: [] };
     }
 
     const src = imageData.data;
@@ -149,7 +149,7 @@ export class ImageHeightmapSolidFeature {
     const gridHeight = sampleYs.length;
     if (!(gridWidth >= 2 && gridHeight >= 2)) {
       console.warn('[HEIGHTMAP] Sampling produced insufficient grid resolution');
-      return [];
+      return { added: [], removed: [] };
     }
     const idx = (x, y) => y * gridWidth + x;
     const topVerts = new Array(gridWidth * gridHeight);
@@ -196,12 +196,12 @@ export class ImageHeightmapSolidFeature {
 
     if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minZ) || !Number.isFinite(maxZ)) {
       console.warn('[HEIGHTMAP] Failed to compute geometry bounds');
-      return [];
+      return { added: [], removed: [] };
     }
 
     if (!((maxZ - minZ) > 1e-9)) {
       console.warn('[HEIGHTMAP] Heightmap has zero thickness; increase heightScale or height variation');
-      return [];
+      return { added: [], removed: [] };
     }
 
     const centerVec = [

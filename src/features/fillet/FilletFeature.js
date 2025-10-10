@@ -93,17 +93,17 @@ export class FilletFeature {
 
         if (edgeObjs.length === 0) {
             console.warn("No edges selected for fillet");
-            return [];
+            return { added: [], removed: [] };
         }
         const solids = new Set(edgeObjs.map(e => e.parentSolid || e.parent));
 
         if (solids.size === 0) {
             console.warn("Selected edges do not belong to any solid");
-            return [];
+            return { added: [], removed: [] };
         }
         if (solids.size > 1) {
             console.warn("Selected edges belong to multiple solids");
-            return [];
+            return { added: [], removed: [] };
         }
 
         const targetSolid = edgeObjs[0].parentSolid || edgeObjs[0].parent;
@@ -196,7 +196,7 @@ export class FilletFeature {
                 } else {
                     console.warn('[FilletFeature] remesh edge remap failed; no matching edges found.');
                     // If we continue, selected Edge parents are likely null; abort gracefully
-                    return [];
+                    return { added: [], removed: [] };
                 }
             }
         } catch (e) {
@@ -333,7 +333,7 @@ export class FilletFeature {
             out.push(...objectsForBoolean, targetSolid);
         }
         out.push(actualFinalSolid);
-        return out;
+        return { added: out, removed: Array.from(toRemove) };
     }
 }
 

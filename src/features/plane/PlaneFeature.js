@@ -48,7 +48,8 @@ export class PlaneFeature {
         console.log(this.inputParams.featureID, "is the featureID");
 
         const planeMesh = await this.createPlaneMesh();
-        return [planeMesh];
+        const added = planeMesh ? [planeMesh] : [];
+        return { added, removed: [] };
     }
 
     async createPlaneMesh() {

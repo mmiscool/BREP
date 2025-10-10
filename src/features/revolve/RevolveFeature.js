@@ -57,16 +57,16 @@ export class RevolveFeature {
         if (obj && obj.type === 'SKETCH') {
             faceObj = obj.children.find(ch => ch.type === 'FACE') || obj.children.find(ch => ch.userData?.faceName);
         }
-        if (!faceObj || !faceObj.geometry) return [];
+        if (!faceObj || !faceObj.geometry) return { added: [], removed: [] };
         // if the face is a child of a sketch we need to remove the sketch from the scene
 
         if (!axis) {
             console.warn("RevolveFeature: no axis selected");
-            return [];
+            return { added: [], removed: [] };
         }
         if (!faceObj) {
             console.warn("RevolveFeature: no profile face found");
-            return [];
+            return { added: [], removed: [] };
         }
 
         const removed = [];
@@ -337,8 +337,13 @@ export class RevolveFeature {
         try { solid.setEpsilon(1e-6); } catch { }
         solid.visualize();
         const effects = await BREP.applyBooleanOperation(partHistory || {}, solid, this.inputParams.boolean, this.inputParams.featureID);
+        const booleanRemoved = Array.isArray(effects.removed) ? effects.removed : [];
+        const removedArtifacts = [...removed, ...booleanRemoved];
         // Flag removals (sketch parent + boolean effects)
-        try { for (const obj of [...removed, ...effects.removed]) { if (obj) obj.__removeFlag = true; } } catch { }
-        return effects.added || [];
+        try { for (const obj of removedArtifacts) { if (obj) obj.__removeFlag = true; } } catch { }
+        return {
+            added: Array.isArray(effects.added) ? effects.added : [],
+            removed: removedArtifacts,
+        };
     }
 }

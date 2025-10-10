@@ -42,7 +42,7 @@ export class BooleanFeature {
         const toolEntries = Array.isArray(bool.targets) ? bool.targets.filter(Boolean) : [];
         if (op === 'NONE' || toolEntries.length === 0) {
             // No-op: leave scene unchanged
-            return [];
+            return { added: [], removed: [] };
         }
 
         // Collect tool solids (objects preferred, fallback to names)
@@ -63,7 +63,7 @@ export class BooleanFeature {
                 if (obj) tools.push(obj);
             }
         }
-        if (tools.length === 0) return [];
+        if (tools.length === 0) return { added: [], removed: [] };
 
         // Use the shared helper semantics:
         // - For UNION/INTERSECT: base = target, targets = tools → returns [result]; tools removed; we remove target.
@@ -86,6 +86,9 @@ export class BooleanFeature {
 
         // Mark removals and return only additions
         try { for (const obj of effects.removed || []) { if (obj) obj.__removeFlag = true; } } catch { }
-        return effects.added || [];
+        return {
+            added: Array.isArray(effects.added) ? effects.added : [],
+            removed: Array.isArray(effects.removed) ? effects.removed : [],
+        };
     }
 }

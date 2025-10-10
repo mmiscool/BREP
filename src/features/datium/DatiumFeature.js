@@ -65,6 +65,6 @@ export class DatiumFeature {
             group.scale.set(Number(s[0] || 1), Number(s[1] || 1), Number(s[2] || 1));
         } catch (_) { /* ignore */ }
 
-        return [group];
+        return { added: [group], removed: [] };
     }
 }

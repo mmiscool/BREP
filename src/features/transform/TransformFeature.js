@@ -60,20 +60,18 @@ export class TransformFeature {
 
   async run(partHistory) {
     const solids = Array.isArray(this.inputParams.solids) ? this.inputParams.solids.filter(s => s && s.type === 'SOLID') : [];
-    if (!solids.length) return [];
+    if (!solids.length) return { added: [], removed: [] };
 
     const space = (this.inputParams.space || 'WORLD').toUpperCase();
     const pivot = (this.inputParams.pivot || 'ORIGIN').toUpperCase();
     const t = toVec3(this.inputParams.translate, 0, 0, 0);
     const rDeg = toVec3(this.inputParams.rotateEulerDeg, 0, 0, 0);
     const s = toVec3(this.inputParams.scale, 1, 1, 1);
-    // New flag: copy (default false). Back-compat: invert legacy replaceOriginal if present.
-    const copy = (this.inputParams.copy !== undefined)
-      ? !!this.inputParams.copy
-      : (this.inputParams.replaceOriginal !== undefined ? !this.inputParams.replaceOriginal : false);
+    const copy = !!this.inputParams.copy;
     const replace = !copy;
 
     const out = [];
+    const removed = [];
     for (const src of solids) {
       const dst = src.clone();
 
@@ -118,10 +116,11 @@ export class TransformFeature {
 
       if (replace) {
         try { src.__removeFlag = true; } catch {}
+        removed.push(src);
       }
       out.push(dst);
     }
-    return out;
+    return { added: out, removed };
   }
 }
 

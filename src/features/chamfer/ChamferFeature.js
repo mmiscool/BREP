@@ -64,16 +64,16 @@ export class ChamferFeature {
 
         if (edgeObjs.length === 0) {
             console.warn("No edges selected for chamfer");
-            return [];
+            return { added: [], removed: [] };
         }
         const solids = new Set(edgeObjs.map(e => e.parentSolid));
         if (solids.size === 0) {
             console.warn("Selected edges do not belong to any solid");
-            return [];
+            return { added: [], removed: [] };
         }
         if (solids.size > 1) {
             console.warn("Selected edges belong to multiple solids");
-            return [];
+            return { added: [], removed: [] };
         }
 
         const targetSolid = edgeObjs[0].parentSolid || edgeObjs[0].parent;
@@ -110,7 +110,7 @@ export class ChamferFeature {
         const out = [];
         if (this.inputParams.debug) out.push(...objectsForBoolean);
         out.push(finalSolid);
-        return out;
+        return { added: out, removed: [targetSolid] };
     }
 }
 

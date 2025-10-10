@@ -611,6 +611,6 @@ export class SketchFeature {
             }
         }
 
-        return [sceneGroup];
+        return { added: [sceneGroup], removed: [] };
     }
 }
