@@ -326,8 +326,18 @@ export class PartHistory {
   // We will store the features, idCounter, expressions, and optionally PMI views
   async toJSON() {
     const constraintsSnapshot = this.assemblyConstraintHistory?.snapshot?.() || { idCounter: 0, constraints: [] };
+
+
+    // build features object keeping only the inputParams and persistentData
+    const features = this.features.map(f => ({
+      type: f.type,
+      inputParams: f.inputParams,
+      persistentData: f.persistentData,
+      timestamp: f.timestamp || null,
+    }));
+
     return JSON.stringify({
-      features: this.features,
+      features,
       idCounter: this.idCounter,
       expressions: this.expressions,
       pmiViews: this.pmiViews || [],
@@ -340,6 +350,7 @@ export class PartHistory {
   async fromJSON(jsonString) {
     const importData = JSON.parse(jsonString);
     this.features = importData.features;
+    console.log(JSON.stringify(this.features, null, 2));
     this.idCounter = importData.idCounter;
     this.expressions = importData.expressions || "";
     this.pmiViews = importData.pmiViews || [];
