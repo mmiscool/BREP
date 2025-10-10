@@ -1551,6 +1551,9 @@ export class AssemblyConstraintsWidget {
       if (entry && entry.inputParams?.constraintID) {
         this.history?.setOpenState(entry.inputParams.constraintID, true);
       }
+
+      this.#handleLabelClick(entry?.inputParams?.constraintID, null, null);
+
     } catch (error) {
       console.warn('[AssemblyConstraintsWidget] Failed to add constraint:', error);
     }
