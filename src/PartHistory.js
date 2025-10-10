@@ -477,28 +477,6 @@ export class PartHistory {
     } catch { }
   }
 
-  async loadAssemblyConstraintsFromLocalStorage(modelName) {
-    if (!this.assemblyConstraintHistory) return;
-    try {
-      const key = '__BREP_ASSEMBLY_CONSTRAINTS__:' + encodeURIComponent(modelName || '__DEFAULT__');
-      const raw = LS.getItem(key);
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      const list = Array.isArray(data?.constraints) ? data.constraints : [];
-      const counter = Number(data?.idCounter) || 0;
-      await this.assemblyConstraintHistory.replaceAll(list, counter);
-    } catch { }
-  }
-
-  saveAssemblyConstraintsToLocalStorage(modelName) {
-    if (!this.assemblyConstraintHistory) return;
-    try {
-      const key = '__BREP_ASSEMBLY_CONSTRAINTS__:' + encodeURIComponent(modelName || '__DEFAULT__');
-      const snapshot = this.assemblyConstraintHistory.snapshot();
-      LS.setItem(key, JSON.stringify(snapshot));
-    } catch { }
-  }
-
   async newFeature(featureType) {
     const FeatureClass = (this.featureRegistry && typeof this.featureRegistry.getSafe === 'function')
       ? (this.featureRegistry.getSafe(featureType) || this.featureRegistry.get(featureType))

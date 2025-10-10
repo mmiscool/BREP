@@ -117,15 +117,6 @@ export function createImportButton(viewer) {
                 console.warn('[ImportButton] Failed to restore PMI views:', e);
               }
 
-              try {
-                const importName = file.name.replace(/\.[^/.]+$/, '') || '__DEFAULT__';
-                viewer.partHistory.saveAssemblyConstraintsToLocalStorage(importName);
-                const constraintCount = viewer.partHistory.assemblyConstraintHistory?.size || 0;
-                console.log('[ImportButton] Restored', constraintCount, 'assembly constraints for model:', importName);
-              } catch (e) {
-                console.warn('[ImportButton] Failed to restore assembly constraints:', e);
-              }
-
               await viewer?.partHistory?.runHistory?.();
               try { viewer?.zoomToFit?.(1.1); } catch {}
               try { _updateCurrentNameFromFile(viewer, file); } catch {}

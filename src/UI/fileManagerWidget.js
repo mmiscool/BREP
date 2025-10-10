@@ -263,14 +263,6 @@ export class FileManagerWidget {
       console.warn('[FileManagerWidget] Failed to load PMI views:', e);
     }
 
-    try {
-      this.viewer.partHistory.saveAssemblyConstraintsToLocalStorage(name);
-      const constraintCount = this.viewer.partHistory.assemblyConstraintHistory?.size || 0;
-      console.log('[FileManagerWidget] Persisted', constraintCount, 'assembly constraints for model:', name);
-    } catch (e) {
-      console.warn('[FileManagerWidget] Failed to persist assembly constraints:', e);
-    }
-
     // Get feature history JSON (now includes PMI views) and embed into a 3MF archive as Metadata/featureHistory.json
     const jsonString = await this.viewer.partHistory.toJSON();
     let additionalFiles = undefined;
@@ -355,14 +347,6 @@ export class FileManagerWidget {
               console.warn('[FileManagerWidget] Failed to restore PMI views:', e);
             }
 
-            try {
-              this.viewer.partHistory.saveAssemblyConstraintsToLocalStorage(name);
-              const constraintCount = this.viewer.partHistory.assemblyConstraintHistory?.size || 0;
-              console.log('[FileManagerWidget] Restored', constraintCount, 'assembly constraints for model:', name);
-            } catch (e) {
-              console.warn('[FileManagerWidget] Failed to restore assembly constraints:', e);
-            }
-            
             if (seq !== this._loadSeq) return;
             this.currentName = name;
             this.nameInput.value = name;
