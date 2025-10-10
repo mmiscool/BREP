@@ -18,6 +18,7 @@ import { Import3dModelFeature } from './features/import3dModel/Import3dModelFeat
 import { SweepFeature } from './features/sweep/SweepFeature.js';
 import { RemeshFeature } from './features/remesh/RemeshFeature.js';
 import { ImageToFaceFeature } from './features/imageToFace/ImageToFaceFeature.js';
+import { ImageHeightmapSolidFeature } from './features/imageHeightSolid/ImageHeightmapSolidFeature.js';
 import { TransformFeature } from './features/transform/TransformFeature.js';
 import { PatternFeature } from './features/pattern/PatternFeature.js';
 import { PatternLinearFeature } from './features/patternLinear/PatternLinearFeature.js';
@@ -56,6 +57,7 @@ export class FeatureRegistry {
     this.register(TubeFeature);
     this.register(RemeshFeature);
     this.register(ImageToFaceFeature);
+    this.register(ImageHeightmapSolidFeature);
     this.register(TransformFeature);
     this.register(PatternLinearFeature);
     this.register(PatternRadialFeature);
@@ -68,6 +70,10 @@ export class FeatureRegistry {
     this.aliases.set('PNG', ImageToFaceFeature);
     this.aliases.set('PNG TO FACE', ImageToFaceFeature);
     this.aliases.set('PNGTOFACEFEATURE', ImageToFaceFeature);
+    // Heightmap solid variations
+    this.aliases.set('HEIGHTMAP', ImageHeightmapSolidFeature);
+    this.aliases.set('HEIGHT MAP', ImageHeightmapSolidFeature);
+    this.aliases.set('IMAGE HEIGHTMAP', ImageHeightmapSolidFeature);
     // Import 3D Model (formerly STL Import)
     this.aliases.set('STL', Import3dModelFeature);
     this.aliases.set('STL IMPORT', Import3dModelFeature);
