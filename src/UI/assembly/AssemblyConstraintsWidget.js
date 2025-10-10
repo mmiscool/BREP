@@ -865,17 +865,17 @@ export class AssemblyConstraintsWidget {
     try { this.viewer?.render?.(); } catch { }
   }
 
-_clearHoverHighlights() {
-  restoreHighlightRecords(this._hoverHighlights);
-}
+  _clearHoverHighlights() {
+    restoreHighlightRecords(this._hoverHighlights);
+  }
 
-_clearHighlights() {
-  this.#clearActiveHoverHighlight();
-  restoreHighlightRecords(this._highlighted);
-  this._clearNormalArrows();
-  try { SelectionFilter.clearHover?.(); } catch { /* ignore */ }
-  try { this.viewer?.render?.(); } catch { /* ignore */ }
-}
+  _clearHighlights() {
+    this.#clearActiveHoverHighlight();
+    restoreHighlightRecords(this._highlighted);
+    this._clearNormalArrows();
+    try { SelectionFilter.clearHover?.(); } catch { /* ignore */ }
+    try { this.viewer?.render?.(); } catch { /* ignore */ }
+  }
 
   _applyConstraintHighlight(entry, ConstraintClass, options = {}) {
     if (!entry?.inputParams) return false;
@@ -890,15 +890,15 @@ _clearHighlights() {
 
     const useHoverStore = store === this._hoverHighlights;
 
-  if (useHoverStore) {
-    this._clearHoverHighlights();
-    if (clearExisting && store !== this._highlighted) {
-      restoreHighlightRecords(this._highlighted);
-      this._clearNormalArrows();
+    if (useHoverStore) {
+      this._clearHoverHighlights();
+      if (clearExisting && store !== this._highlighted) {
+        restoreHighlightRecords(this._highlighted);
+        this._clearNormalArrows();
+      }
+    } else if (clearExisting) {
+      this._clearHighlights();
     }
-  } else if (clearExisting) {
-    this._clearHighlights();
-  }
 
     const schema = ConstraintClass?.inputParamsSchema || {};
     const refFields = Object.entries(schema).filter(([, def]) => def?.type === 'reference_selection');
@@ -914,8 +914,8 @@ _clearHighlights() {
       const targets = this._resolveReferenceObjects(entry.inputParams[key]);
       if (!targets || targets.length === 0) continue;
       foundTargets = true;
-    for (const obj of targets) {
-      const changed = applyHighlightMaterial(obj, color, store, skipSets);
+      for (const obj of targets) {
+        const changed = applyHighlightMaterial(obj, color, store, skipSets);
         if (changed && includeNormals && isFaceObject(obj)) {
           sawFace = true;
           const arrow = this._createNormalArrow(obj, color, `${entry?.inputParams?.constraintID || 'constraint'}:${key}`);
@@ -1125,8 +1125,23 @@ _clearHighlights() {
   _refreshConstraintLabels() {
     if (!this._constraintGraphicsEnabled) return;
     if (!this._labelOverlay || !this._labelPositions.size) return;
+
+    const activeIds = new Set();
+
     for (const [constraintID, record] of this._labelPositions.entries()) {
       if (!record || !record.position) continue;
+
+      activeIds.add(constraintID);
+
+      if (record.entry) {
+        const segments = this.#constraintSegments(record.entry);
+        if (Array.isArray(segments) && segments.length > 0) {
+          this.#upsertConstraintLines(constraintID, segments);
+        } else {
+          this.#removeConstraintLine(constraintID);
+        }
+      }
+
       try {
         this._labelOverlay.updateLabel(constraintID, record.text, record.position.clone(), record.data);
         const el = this._labelOverlay.getElement(constraintID);
@@ -1137,6 +1152,8 @@ _clearHighlights() {
         }
       } catch { }
     }
+
+    this._removeUnusedConstraintLines(activeIds);
   }
 
   _clearConstraintVisuals() {
@@ -1250,8 +1267,10 @@ _clearHighlights() {
   }
 
   #upsertConstraintLines(constraintID, segments) {
+
     if (!this._constraintGroup || !Array.isArray(segments) || segments.length === 0) return;
     let line = this._constraintLines.get(constraintID);
+    console.log(line, constraintID, segments);
     if (!line) {
       const geometry = new THREE.BufferGeometry();
       const material = new THREE.LineBasicMaterial({
@@ -1268,6 +1287,10 @@ _clearHighlights() {
       line.userData.excludeFromFit = true;
       try { this._constraintGroup.add(line); } catch { }
       this._constraintLines.set(constraintID, line);
+      // add the constraint group to the scene if not already added
+      if (!this._constraintGroup.parent) {
+        try { this.viewer?.scene?.add(this._constraintGroup); } catch { }
+      }
     }
 
     const vertexCount = segments.length * 2;
@@ -1291,6 +1314,8 @@ _clearHighlights() {
       this.#removeConstraintLine(constraintID);
       return;
     }
+
+    console.log(attr.count, writeIndex);
 
     attr.needsUpdate = true;
     line.geometry.setDrawRange(0, writeIndex);
