@@ -314,6 +314,7 @@
   padding-top: 10px;
   border-top: 1px dashed var(--border);
   display: flex;
+  align-items: center;
   justify-content: center;
 }
 .constraints-history .add-btn {
@@ -333,6 +334,44 @@
 .constraints-history .add-btn:hover { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
 .constraints-history .add-btn:active { transform: translateY(1px); }
 .constraints-history .add-btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+.constraints-history .update-components-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02));
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  width: 100%;
+  text-align: center;
+  align-self: stretch;
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .05s ease;
+}
+.constraints-history .update-components-btn:hover {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(59,130,246,.12);
+}
+.constraints-history .update-components-btn:active {
+  transform: translateY(1px);
+}
+.constraints-history .update-components-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  box-shadow: none;
+}
+.constraints-history .update-components-btn.needs-update {
+  background: linear-gradient(180deg, rgba(110,168,254,.25), rgba(59,130,246,.2));
+  border-color: rgba(110,168,254,.7);
+  color: #0b1220;
+  box-shadow: 0 0 12px rgba(59,130,246,.45);
+}
+.constraints-history .update-components-btn.needs-update:hover {
+  border-color: rgba(59,130,246,.95);
+  box-shadow: 0 0 16px rgba(59,130,246,.6);
+  transform: none;
+}
 .constraints-history .add-menu {
   position: absolute;
   bottom: 48px;

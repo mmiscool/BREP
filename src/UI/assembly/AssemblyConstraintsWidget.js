@@ -14,10 +14,12 @@ import { extractWorldPoint } from './constraintPointUtils.js';
 import { constraintStatusInfo } from './constraintStatusUtils.js';
 import { constraintLabelText } from './constraintLabelUtils.js';
 import { AssemblyConstraintControlsWidget } from './AssemblyConstraintControlsWidget.js';
+import { MODEL_STORAGE_PREFIX } from '../../services/componentLibrary.js';
 import './AssemblyConstraintsWidget.css';
 
 
 const ROOT_CLASS = 'constraints-history';
+const DEFAULT_CONSTRAINT_COLOR = '#ffd60a';
 
 export class AssemblyConstraintsWidget {
   constructor(viewer) {
@@ -59,6 +61,9 @@ export class AssemblyConstraintsWidget {
     this._animateEnabled = true;
     this._animateDelayMs = 10;
     this._controlsWidget = null;
+    this._updateComponentsBtn = null;
+    this._updatingComponents = false;
+    this._onStorageEvent = null;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
@@ -90,6 +95,34 @@ export class AssemblyConstraintsWidget {
     this.uiElement.appendChild(this._controlsWidget.element);
     this._setConstraintGraphicsEnabled(this._constraintGraphicsEnabled);
 
+    this._updateComponentsBtn = this._buildUpdateComponentsButton();
+    if (this._updateComponentsBtn && this._controlsWidget?.element) {
+      const target = this._controlsWidget.element;
+      const solverSection = target.querySelector('.control-panel-section.solver-controls');
+      if (solverSection) {
+        target.insertBefore(this._updateComponentsBtn, solverSection);
+      } else {
+        target.insertBefore(this._updateComponentsBtn, target.firstChild);
+      }
+    }
+    this._refreshUpdateComponentsButton();
+
+    try {
+      this._onStorageEvent = (ev) => {
+        try {
+          const key = (ev && (ev.key ?? ev.detail?.key)) || '';
+          if (typeof key === 'string' && key.startsWith(MODEL_STORAGE_PREFIX)) {
+            this._refreshUpdateComponentsButton();
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+      window.addEventListener('storage', this._onStorageEvent);
+    } catch {
+      this._onStorageEvent = null;
+    }
+
     this._accordion = document.createElement('div');
     this._accordion.className = 'accordion';
     this.uiElement.appendChild(this._accordion);
@@ -113,6 +146,12 @@ export class AssemblyConstraintsWidget {
     this._clearConstraintVisuals();
     try { this.viewer?.controls?.removeEventListener('change', this._onControlsChange); } catch { }
     try { window.removeEventListener('resize', this._onWindowResize); } catch { }
+    try {
+      if (this._onStorageEvent) window.removeEventListener('storage', this._onStorageEvent);
+    } catch {
+      /* ignore */
+    }
+    this._onStorageEvent = null;
     if (this._constraintGroup && this.viewer?.scene) {
       try { this.viewer.scene.remove(this._constraintGroup); } catch { }
     }
@@ -186,6 +225,7 @@ export class AssemblyConstraintsWidget {
 
   _syncNow() {
     this._toggleAddMenu(false);
+    this._refreshUpdateComponentsButton();
     this._clearHighlights();
 
     const entries = this.history ? this.history.list() : [];
@@ -295,6 +335,7 @@ export class AssemblyConstraintsWidget {
     status.className = 'acc-status';
     status.textContent = statusInfo.label;
     if (statusInfo.title) status.title = statusInfo.title;
+    status.style.color = statusInfo.color || '';
     headerBtn.appendChild(status);
 
     const actions = document.createElement('div');
@@ -439,6 +480,7 @@ export class AssemblyConstraintsWidget {
         section.statusEl.textContent = statusInfo.label;
         if (statusInfo.title) section.statusEl.title = statusInfo.title;
         else section.statusEl.removeAttribute('title');
+        section.statusEl.style.color = statusInfo.color || '';
       }
       if (section.root) {
         section.root.dataset.constraintId = id;
@@ -580,6 +622,8 @@ export class AssemblyConstraintsWidget {
       continueDeferred: null,
       aborted: false,
       promise: null,
+      iterationDelayMs: 0,
+      labelRefreshCounter: 0,
     };
 
     this._solverRun = run;
@@ -607,6 +651,7 @@ export class AssemblyConstraintsWidget {
         if (this._solverRun !== run) return;
         run.iterationsCompleted = Number.isFinite(iteration) ? iteration + 1 : run.iterationsCompleted;
         this._updateSolverUI();
+        this.#maybeRefreshLabelsDuringSolve(run);
         if (this._shouldPauseBetweenLoops() && !run.abortController.signal.aborted) {
           await this.#waitForIterationContinue(run);
         }
@@ -622,6 +667,7 @@ export class AssemblyConstraintsWidget {
     };
 
     const iterationDelayMs = this.#computeIterationDelay();
+    run.iterationDelayMs = Number.isFinite(iterationDelayMs) ? Math.max(0, iterationDelayMs) : 0;
 
     run.promise = (async () => {
       try {
@@ -751,6 +797,15 @@ export class AssemblyConstraintsWidget {
   _handleAnimateDelayChange() {
     this.#normalizeAnimateDelayValue();
     this._updateSolverUI();
+  }
+
+  #maybeRefreshLabelsDuringSolve(run) {
+    if (!run || run.iterationDelayMs <= 0) return;
+    run.labelRefreshCounter = (run.labelRefreshCounter || 0) + 1;
+    if (run.labelRefreshCounter < 50) return;
+    run.labelRefreshCounter = 0;
+    const entries = typeof this.history?.list === 'function' ? (this.history.list() || []) : [];
+    this._updateConstraintVisuals(entries);
   }
 
   _handleDebugCheckboxChange(checked) {
@@ -1068,11 +1123,13 @@ export class AssemblyConstraintsWidget {
       if (!entry) return;
       const constraintID = entry?.inputParams?.constraintID || `constraint-${index}`;
       const constraintClass = this._resolveConstraintClass(entry);
+      const statusInfo = constraintStatusInfo(entry);
+      const color = statusInfo?.color || DEFAULT_CONSTRAINT_COLOR;
       const segments = this.#constraintSegments(entry);
       let labelPosition = null;
 
       if (Array.isArray(segments) && segments.length > 0) {
-        this.#upsertConstraintLines(constraintID, segments);
+        this.#upsertConstraintLines(constraintID, segments, color);
         const midpoint = new THREE.Vector3();
         let midpointCount = 0;
         for (const [start, end] of segments) {
@@ -1104,6 +1161,7 @@ export class AssemblyConstraintsWidget {
             el.classList.add('constraint-label');
             el.dataset.constraintId = constraintID;
           } catch { }
+          this.#applyConstraintLabelColor(el, color);
           this.#attachLabelHoverHandlers(el, entry, constraintID);
         }
       }
@@ -1113,11 +1171,11 @@ export class AssemblyConstraintsWidget {
         text,
         data: overlayData,
         entry,
+        color,
       });
       activeIds.add(constraintID);
     });
 
-    this._removeUnusedConstraintLines(activeIds);
     this._refreshConstraintLabels();
     try { this.viewer?.render?.(); } catch { }
   }
@@ -1133,13 +1191,20 @@ export class AssemblyConstraintsWidget {
 
       activeIds.add(constraintID);
 
+      let color = record.color || DEFAULT_CONSTRAINT_COLOR;
+
       if (record.entry) {
+        const statusInfo = constraintStatusInfo(record.entry);
+        color = statusInfo?.color || color;
+        record.color = color;
         const segments = this.#constraintSegments(record.entry);
         if (Array.isArray(segments) && segments.length > 0) {
-          this.#upsertConstraintLines(constraintID, segments);
+          this.#upsertConstraintLines(constraintID, segments, color);
         } else {
           this.#removeConstraintLine(constraintID);
         }
+      } else {
+        record.color = color;
       }
 
       try {
@@ -1148,12 +1213,20 @@ export class AssemblyConstraintsWidget {
         if (el) {
           el.classList.add('constraint-label');
           el.dataset.constraintId = constraintID;
+          this.#applyConstraintLabelColor(el, color);
           this.#attachLabelHoverHandlers(el, record.entry, constraintID);
         }
       } catch { }
     }
 
     this._removeUnusedConstraintLines(activeIds);
+  }
+
+  #applyConstraintLabelColor(element, color) {
+    if (!element) return;
+    const appliedColor = color || '';
+    try { element.style.borderColor = appliedColor; } catch { }
+    try { element.style.color = appliedColor || ''; } catch { }
   }
 
   _clearConstraintVisuals() {
@@ -1266,15 +1339,17 @@ export class AssemblyConstraintsWidget {
     return points;
   }
 
-  #upsertConstraintLines(constraintID, segments) {
-
+  #upsertConstraintLines(constraintID, segments, color = DEFAULT_CONSTRAINT_COLOR) {
     if (!this._constraintGroup || !Array.isArray(segments) || segments.length === 0) return;
+    const lineColor = color || DEFAULT_CONSTRAINT_COLOR;
+    if (!this._constraintGroup.parent) {
+      try { this.viewer?.scene?.add(this._constraintGroup); } catch { }
+    }
     let line = this._constraintLines.get(constraintID);
-    console.log(line, constraintID, segments);
     if (!line) {
       const geometry = new THREE.BufferGeometry();
       const material = new THREE.LineBasicMaterial({
-        color: 0xffd60a,
+        color: new THREE.Color(lineColor).getHex(),
         linewidth: 1,
         transparent: true,
         opacity: 0.85,
@@ -1287,10 +1362,13 @@ export class AssemblyConstraintsWidget {
       line.userData.excludeFromFit = true;
       try { this._constraintGroup.add(line); } catch { }
       this._constraintLines.set(constraintID, line);
-      // add the constraint group to the scene if not already added
-      if (!this._constraintGroup.parent) {
-        try { this.viewer?.scene?.add(this._constraintGroup); } catch { }
-      }
+    } else if (line.material) {
+      try { line.material.color?.set?.(lineColor); } catch { }
+      try { line.material.needsUpdate = true; } catch { }
+    }
+    if (line) {
+      line.userData = line.userData || {};
+      line.userData.baseColor = lineColor;
     }
 
     const vertexCount = segments.length * 2;
@@ -1315,7 +1393,7 @@ export class AssemblyConstraintsWidget {
       return;
     }
 
-    console.log(attr.count, writeIndex);
+    // console.log(attr.count, writeIndex);
 
     attr.needsUpdate = true;
     line.geometry.setDrawRange(0, writeIndex);
@@ -1481,6 +1559,19 @@ export class AssemblyConstraintsWidget {
     return arrow;
   }
 
+  _buildUpdateComponentsButton() {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'update-components-btn';
+    btn.title = 'Update assembly components';
+    btn.textContent = 'Update components';
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      await this._handleUpdateComponents();
+    });
+    return btn;
+  }
+
   _buildAddConstraintFooter() {
     const footer = document.createElement('div');
     footer.className = 'footer';
@@ -1556,6 +1647,56 @@ export class AssemblyConstraintsWidget {
 
     } catch (error) {
       console.warn('[AssemblyConstraintsWidget] Failed to add constraint:', error);
+    }
+  }
+
+  _refreshUpdateComponentsButton() {
+    const btn = this._updateComponentsBtn;
+    if (!btn) return;
+
+    let count = 0;
+    try {
+      if (this.partHistory && typeof this.partHistory.getOutdatedAssemblyComponentCount === 'function') {
+        count = Number(this.partHistory.getOutdatedAssemblyComponentCount()) || 0;
+      }
+    } catch {
+      count = 0;
+    }
+
+    const busy = this._updatingComponents;
+    const baseLabel = 'Update components';
+    const hasOutdated = count > 0;
+    btn.disabled = busy || !hasOutdated;
+    btn.classList.toggle('needs-update', hasOutdated && !busy);
+    btn.textContent = hasOutdated ? `${baseLabel} (${count})` : baseLabel;
+    btn.setAttribute('data-outdated-count', String(hasOutdated ? count : 0));
+    if (busy) {
+      btn.title = 'Updating assembly components…';
+    } else if (hasOutdated) {
+      btn.title = 'Update assembly components to pull the latest saved versions.';
+    } else {
+      btn.title = 'Assembly components are up to date.';
+    }
+  }
+
+  async _handleUpdateComponents() {
+    this._toggleAddMenu(false);
+    if (this._updatingComponents) return;
+    if (!this.partHistory || typeof this.partHistory.updateAssemblyComponents !== 'function') return;
+
+    this._updatingComponents = true;
+    this._refreshUpdateComponentsButton();
+
+    try {
+      const result = await this.partHistory.updateAssemblyComponents({ rerun: true });
+      if (result?.updatedCount > 0 || result?.reran) {
+        this._scheduleSync();
+      }
+    } catch (error) {
+      console.warn('[AssemblyConstraintsWidget] Failed to update components:', error);
+    } finally {
+      this._updatingComponents = false;
+      this._refreshUpdateComponentsButton();
     }
   }
 

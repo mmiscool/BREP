@@ -1,24 +1,34 @@
 export function constraintStatusInfo(entry) {
   const pd = entry?.persistentData || {};
   const status = pd.status || 'Idle';
-  const out = { label: '', title: '', error: false };
+  const out = { label: '', title: '', error: false, color: '#ffd60a' };
 
   if (status === 'unimplemented') {
     out.label = 'Unimplemented';
     out.title = pd.message || 'Constraint solver not implemented yet.';
     out.error = true;
+    out.color = '#ff3b30';
     return out;
   }
 
   if (status === 'satisfied') {
     out.label = 'Satisfied';
     out.title = pd.message || 'Constraint satisfied within tolerance.';
+    out.color = '#30d158';
     return out;
   }
 
   if (status === 'adjusted') {
     out.label = 'Adjusting';
     out.title = pd.message || 'Constraint nudging components toward the solution.';
+    out.color = '#ffd60a';
+    return out;
+  }
+
+  if (status === 'adjusting') {
+    out.label = 'Adjusting';
+    out.title = pd.message || 'Constraint nudging components toward the solution.';
+    out.color = '#ffd60a';
     return out;
   }
 
@@ -26,6 +36,7 @@ export function constraintStatusInfo(entry) {
     out.label = 'Blocked';
     out.title = pd.message || 'Constraint cannot adjust locked components.';
     out.error = true;
+    out.color = '#ff3b30';
     return out;
   }
 
@@ -39,6 +50,7 @@ export function constraintStatusInfo(entry) {
     out.label = 'Error';
     out.title = pd.message || 'Constraint evaluation failed.';
     out.error = true;
+    out.color = '#ff3b30';
     return out;
   }
 
@@ -97,12 +109,17 @@ export function constraintStatusInfo(entry) {
     out.label = 'Failed';
     out.title = pd.error || 'Apply failed';
     out.error = true;
+    out.color = '#ff3b30';
     return out;
   }
 
   if (status && status !== 'Idle') {
     out.label = status.charAt(0).toUpperCase() + status.slice(1);
     if (pd.message) out.title = pd.message;
+  }
+
+  if (out.error && !out.color) {
+    out.color = '#ff3b30';
   }
 
   return out;

@@ -10,6 +10,8 @@ import { MetadataManager } from './metadataManager.js';
 import { AssemblyConstraintRegistry } from './assemblyConstraints/AssemblyConstraintRegistry.js';
 import { AssemblyConstraintHistory } from './assemblyConstraints/AssemblyConstraintHistory.js';
 import { add } from 'three/tsl';
+import { AssemblyComponentFeature } from './features/assemblyComponent/AssemblyComponentFeature.js';
+import { getComponentRecord, base64ToUint8Array } from './services/componentLibrary.js';
 
 
 export class PartHistory {
@@ -431,6 +433,106 @@ export class PartHistory {
       const children = Array.isArray(this.scene.children) ? this.scene.children : [];
       for (const child of children) syncOne(child);
     }
+  }
+
+  _collectAssemblyComponentUpdates() {
+    if (!Array.isArray(this.features) || this.features.length === 0) {
+      return [];
+    }
+
+    const updates = [];
+    const targetName = String(AssemblyComponentFeature?.featureName || '').trim().toUpperCase();
+
+    for (const feature of this.features) {
+      if (!feature || !feature.type) continue;
+
+      let FeatureClass = null;
+      try {
+        FeatureClass = this.featureRegistry?.getSafe?.(feature.type) || null;
+      } catch {
+        FeatureClass = null;
+      }
+
+      const isAssemblyComponent = FeatureClass === AssemblyComponentFeature
+        || (FeatureClass && String(FeatureClass?.featureName || '').trim().toUpperCase() === targetName);
+      if (!isAssemblyComponent) continue;
+
+      const componentName = feature?.inputParams?.componentName;
+      if (!componentName) continue;
+
+      const record = getComponentRecord(componentName);
+      if (!record || !record.data3mf) continue;
+
+      const prevData = feature?.persistentData?.componentData?.data3mf || null;
+      const prevSavedAt = feature?.persistentData?.componentData?.savedAt || null;
+      const nextSavedAt = record.savedAt || null;
+
+      const prevTime = prevSavedAt ? Date.parse(prevSavedAt) : NaN;
+      const nextTime = nextSavedAt ? Date.parse(nextSavedAt) : NaN;
+
+      const hasNewerTimestamp = Number.isFinite(nextTime) && (!Number.isFinite(prevTime) || nextTime > prevTime);
+      const hasDifferentData = record.data3mf !== prevData;
+
+      if (!hasNewerTimestamp && !hasDifferentData) continue;
+
+      updates.push({
+        feature,
+        componentName,
+        record,
+        nextSavedAt,
+      });
+    }
+
+    return updates;
+  }
+
+  getOutdatedAssemblyComponentCount() {
+    return this._collectAssemblyComponentUpdates().length;
+  }
+
+  async updateAssemblyComponents(options = {}) {
+    const { rerun = true } = options || {};
+    const updates = this._collectAssemblyComponentUpdates();
+    const updatedCount = updates.length;
+
+    if (updatedCount === 0) {
+      return { updatedCount: 0, reran: false };
+    }
+
+    for (const { feature, componentName, record, nextSavedAt } of updates) {
+      let featureInfo = feature?.persistentData?.componentData?.featureInfo || null;
+      try {
+        const tempFeature = new AssemblyComponentFeature();
+        if (typeof tempFeature._extractFeatureInfo === 'function') {
+          const bytes = base64ToUint8Array(record.data3mf);
+          if (bytes && bytes.length) {
+            const info = await tempFeature._extractFeatureInfo(bytes);
+            if (info) featureInfo = info;
+          }
+        }
+      } catch (error) {
+        console.warn('[PartHistory] Failed to extract feature info while updating component:', error);
+      }
+
+      feature.persistentData = feature.persistentData || {};
+      feature.persistentData.componentData = {
+        name: record.name || componentName,
+        savedAt: nextSavedAt,
+        data3mf: record.data3mf,
+        featureInfo: featureInfo || null,
+      };
+
+      feature.lastRunInputParams = null;
+      feature.timestamp = Date.now();
+    }
+
+    let reran = false;
+    if (rerun && typeof this.runHistory === 'function') {
+      await this.runHistory();
+      reran = true;
+    }
+
+    return { updatedCount, reran };
   }
 
   // PMI Views management - sync with localStorage for widget compatibility
