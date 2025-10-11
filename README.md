@@ -36,6 +36,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - [Modeling Mode](docs/modes/modeling.md)
 - [Sketch Mode](docs/modes/sketch.md)
 - [PMI Mode](docs/modes/pmi.md)
+- [Assembly Constraint Solver](docs/assembly-constraints/solver.md)
 
 ## Feature Guides
 
