@@ -288,6 +288,10 @@ export class AssemblyConstraintsWidget {
     }
   }
 
+  #requestViewerRender() {
+    try { this.viewer?.render?.(); } catch { /* ignore */ }
+  }
+
   _syncNow() {
     this._toggleAddMenu(false);
     this._refreshUpdateComponentsButton();
@@ -312,7 +316,7 @@ export class AssemblyConstraintsWidget {
       this._showEmptyState();
       this._clearConstraintVisuals();
       this._idsSignature = '';
-      try { this.viewer?.render?.(); } catch { }
+      this.#requestViewerRender();
       return;
     }
 
@@ -339,7 +343,7 @@ export class AssemblyConstraintsWidget {
 
     this._refreshSections(idToEntry);
     this._updateConstraintVisuals(list);
-    try { this.viewer?.render?.(); } catch { }
+    this.#requestViewerRender();
   }
 
   _showEmptyState() {
@@ -528,13 +532,15 @@ export class AssemblyConstraintsWidget {
   }
 
   _removeSection(id) {
-    const section = this._sections.get(String(id));
+    if (id == null) return;
+    const key = String(id);
+    const section = this._sections.get(key);
     if (!section) return;
     this.#teardownSectionForm(section);
     if (section.root?.parentNode) {
       section.root.parentNode.removeChild(section.root);
     }
-    this._sections.delete(String(id));
+    this._sections.delete(key);
   }
 
   _reorderSections(targetOrder) {
@@ -923,7 +929,7 @@ export class AssemblyConstraintsWidget {
     if (!this._debugMode) {
       this._clearNormalArrows();
     }
-    try { this.viewer?.render?.(); } catch { }
+    this.#requestViewerRender();
   }
 
   _updateSolverUI() {
@@ -1031,7 +1037,7 @@ export class AssemblyConstraintsWidget {
       this.#clearActiveHoverHighlight();
     }
 
-    try { this.viewer?.render?.(); } catch { }
+    this.#requestViewerRender();
   }
 
   onPMIModeEnter() {
@@ -1058,7 +1064,7 @@ export class AssemblyConstraintsWidget {
     restoreHighlightRecords(this._highlighted);
     this._clearNormalArrows();
     try { SelectionFilter.clearHover?.(); } catch { /* ignore */ }
-    try { this.viewer?.render?.(); } catch { /* ignore */ }
+    this.#requestViewerRender();
   }
 
   _applyConstraintHighlight(entry, ConstraintClass, options = {}) {
@@ -1116,7 +1122,7 @@ export class AssemblyConstraintsWidget {
       console.warn('[AssemblyConstraintsWidget] No face normals could be visualized for constraint:', entry?.inputParams?.constraintID);
     }
 
-    try { this.viewer?.render?.(); } catch { /* ignore */ }
+    this.#requestViewerRender();
     return foundTargets;
   }
 
@@ -1169,14 +1175,14 @@ export class AssemblyConstraintsWidget {
       emitWarnings: false,
     });
     this.#setConstraintLineHighlight(constraintID, true);
-    try { this.viewer?.render?.(); } catch { }
+    this.#requestViewerRender();
   }
 
   #handleConstraintLabelHoverEnd(constraintID) {
     if (!constraintID) return;
     if (this._activeHoverConstraintId !== constraintID) {
       this.#setConstraintLineHighlight(constraintID, false);
-      try { this.viewer?.render?.(); } catch { }
+      this.#requestViewerRender();
       return;
     }
     this.#clearActiveHoverHighlight();
@@ -1188,7 +1194,7 @@ export class AssemblyConstraintsWidget {
     this._activeHoverConstraintId = null;
     this._clearHoverHighlights();
     this.#setConstraintLineHighlight(activeId, false);
-    try { this.viewer?.render?.(); } catch { }
+    this.#requestViewerRender();
   }
 
   #setConstraintLineHighlight(constraintID, active) {
@@ -1306,7 +1312,7 @@ export class AssemblyConstraintsWidget {
     });
 
     this._refreshConstraintLabels();
-    try { this.viewer?.render?.(); } catch { }
+    this.#requestViewerRender();
   }
 
   _refreshConstraintLabels() {
@@ -1523,8 +1529,6 @@ export class AssemblyConstraintsWidget {
       this.#removeConstraintLine(constraintID);
       return;
     }
-
-    // console.log(attr.count, writeIndex);
 
     attr.needsUpdate = true;
     line.geometry.setDrawRange(0, writeIndex);

@@ -106,13 +106,14 @@ export class PartHistory {
 
     let skipFeature = false;
     let skipAllFeatures = false;
-    let nextFeatureDirty = false;
     let previouseFeatureTimestamp = this.features[0]?.timestamp || null;
     const nowMs = () => (typeof performance !== 'undefined' && performance?.now ? performance.now() : Date.now());
     for (const feature of this.features) {
       if (skipFeature || skipAllFeatures) {
         continue;
       }
+
+      const nextFeature = this.features[this.features.indexOf(feature) + 1];
 
 
 
@@ -152,23 +153,22 @@ export class PartHistory {
 
 
 
-      console.log({ previouseFeatureTimestamp, currentFeatureTimestamp: feature.timestamp });
-      console.log(previouseFeatureTimestamp > feature.timestamp)
-      // if the previous feature had a timestamp later than this feature, we need to
-      // mark this feature as dirty to ensure it gets re-run
-      if (previouseFeatureTimestamp && feature.timestamp && previouseFeatureTimestamp > feature.timestamp) {
-        console.log("previous feature timestamp is later than current feature timestamp, marking current feature dirty");
-        nextFeatureDirty = true;
-        previouseFeatureTimestamp = feature.timestamp;
-      }
+      // if the previous feature had a timestamp later than this feature, we mark this feature as dirty to ensure it gets re-run
+      if (previouseFeatureTimestamp > feature.timestamp) feature.dirty = true;
+      // if the inputParams have changed since last run, mark dirty
+      if (JSON.stringify(feature.inputParams) !== feature.lastRunInputParams) feature.dirty = true;
+
+
+
 
       console.log("this is our feature", feature);
 
-      // Only re-run the feature if its inputParams have changed since last run
+      if (feature.dirty) {
+        // if this one is dirty, next one should be too (conservative)
+        try { nextFeature.dirty = true; } catch { }
 
-      if (nextFeatureDirty || JSON.stringify(feature.inputParams) !== JSON.stringify(feature.lastRunInputParams)) {
         // Record the current input params as lastRunInputParams
-        feature.lastRunInputParams = JSON.parse(JSON.stringify(feature.inputParams));
+        feature.lastRunInputParams = JSON.stringify(feature.inputParams);
         instance.inputParams = await this.sanitizeInputParams(FeatureClass.inputParamsSchema, feature.inputParams);
 
         console.log("input params after sanitization:", instance.inputParams);
@@ -183,7 +183,7 @@ export class PartHistory {
             removed: instance.resultArtifacts.removed || []
           }
 
-          nextFeatureDirty = true;
+
           feature.timestamp = Date.now();
           previouseFeatureTimestamp = feature.timestamp;
 
@@ -191,14 +191,13 @@ export class PartHistory {
           const dur = Math.max(0, Math.round(t1 - t0));
 
           feature.lastRun = { ok: true, startedAt: t0, endedAt: t1, durationMs: dur, error: null };
+          feature.dirty = false;
 
           try { console.log(`[PartHistory] ${feature.type} #${feature.inputParams.featureID} finished in ${dur} ms`); } catch { }
         } catch (e) {
           const t1 = nowMs();
           const dur = Math.max(0, Math.round(t1 - t0));
           feature.lastRun = { ok: false, startedAt: t0, endedAt: t1, durationMs: dur, error: { message: e?.message || String(e), name: e?.name || 'Error', stack: e?.stack || null } };
-
-          nextFeatureDirty = true;
           feature.timestamp = Date.now();
 
           previouseFeatureTimestamp = feature.timestamp;
@@ -209,11 +208,6 @@ export class PartHistory {
       } else {
         console.log(`skipping feature run; input params unchanged for featureID=${feature.inputParams.featureID}`);
       }
-
-
-
-
-
 
       await this.applyFeatureEffects(feature.effects, feature.inputParams.featureID);
 
