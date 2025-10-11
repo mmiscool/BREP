@@ -64,6 +64,10 @@ export class AssemblyConstraintsWidget {
     this._updateComponentsBtn = null;
     this._updatingComponents = false;
     this._onStorageEvent = null;
+    this._fullSolveOnChange = false;
+    this._pendingFullSolve = false;
+    this._ignoreFullSolveChangeCount = 0;
+    this._fullSolveCheckbox = null;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
@@ -130,7 +134,7 @@ export class AssemblyConstraintsWidget {
     this._footer = this._buildAddConstraintFooter();
     this.uiElement.appendChild(this._footer);
 
-    this._unsubscribe = this.history?.onChange(() => this._scheduleSync()) || null;
+    this._unsubscribe = this.history?.onChange(() => this.#handleHistoryChange()) || null;
 
     this._onGlobalClick = (ev) => {
       const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
@@ -182,6 +186,10 @@ export class AssemblyConstraintsWidget {
     this._animateDelayInput = null;
     this._animateDelayContainer = null;
     this._constraintGraphicsCheckbox = null;
+    this._fullSolveCheckbox = null;
+    this._pendingFullSolve = false;
+    this._fullSolveOnChange = false;
+    this._ignoreFullSolveChangeCount = 0;
     this._controlsWidget?.dispose?.();
     this._controlsWidget = null;
     for (const section of this._sections.values()) {
@@ -200,6 +208,61 @@ export class AssemblyConstraintsWidget {
 
   render() {
     this._scheduleSync();
+  }
+
+  #handleHistoryChange() {
+    this._scheduleSync();
+    if (this._ignoreFullSolveChangeCount > 0) {
+      this._ignoreFullSolveChangeCount -= 1;
+      return;
+    }
+    if (!this._fullSolveOnChange) return;
+    this.#scheduleFullSolveOnChange();
+  }
+
+  #scheduleFullSolveOnChange() {
+    if (this._pendingFullSolve) return;
+    this._pendingFullSolve = true;
+    const trigger = () => {
+      if (!this._pendingFullSolve) return;
+      if (!this._fullSolveOnChange) {
+        this._pendingFullSolve = false;
+        return;
+      }
+      if (this._solverRun?.running) {
+        setTimeout(() => this.#attemptFullSolveOnChange(), 75);
+        return;
+      }
+      this.#attemptFullSolveOnChange();
+    };
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(trigger);
+    } else if (typeof Promise === 'function') {
+      Promise.resolve().then(trigger).catch(() => trigger());
+    } else {
+      setTimeout(trigger, 0);
+    }
+  }
+
+  #attemptFullSolveOnChange() {
+    if (!this._pendingFullSolve) return;
+    if (!this._fullSolveOnChange) {
+      this._pendingFullSolve = false;
+      return;
+    }
+    if (this._solverRun?.running) {
+      setTimeout(() => this.#attemptFullSolveOnChange(), 75);
+      return;
+    }
+    this._pendingFullSolve = false;
+    try {
+      const promise = this._handleStartClick();
+      if (promise?.catch) {
+        try { promise.catch(() => { }); } catch { /* ignore */ }
+      }
+    } catch (error) {
+      console.warn('[AssemblyConstraintsWidget] Auto solve failed:', error);
+    }
   }
 
   _scheduleSync() {
@@ -695,6 +758,8 @@ export class AssemblyConstraintsWidget {
     const iterationDelayMs = this.#computeIterationDelay();
     run.iterationDelayMs = Number.isFinite(iterationDelayMs) ? Math.max(0, iterationDelayMs) : 0;
 
+    this._ignoreFullSolveChangeCount += 1;
+
     run.promise = (async () => {
       try {
         await this.history.runAll(this.partHistory, {
@@ -716,6 +781,9 @@ export class AssemblyConstraintsWidget {
         run.running = false;
         this._resolveIterationGate(run);
         this._updateSolverUI();
+        if (this._ignoreFullSolveChangeCount > 0) {
+          this._ignoreFullSolveChangeCount -= 1;
+        }
       }
     })();
   }
@@ -813,6 +881,19 @@ export class AssemblyConstraintsWidget {
     const animate = this._animateCheckbox ? this._animateCheckbox.checked : this._animateEnabled;
     if (!animate) return 0;
     return this.#normalizeAnimateDelayValue();
+  }
+
+  _handleFullSolveToggleChange(checked) {
+    const value = !!checked;
+    this._fullSolveOnChange = value;
+    if (this._fullSolveCheckbox) {
+      this._fullSolveCheckbox.checked = value;
+    }
+    if (!value) {
+      this._pendingFullSolve = false;
+      return;
+    }
+    this.#scheduleFullSolveOnChange();
   }
 
   _handleAnimateCheckboxChange() {

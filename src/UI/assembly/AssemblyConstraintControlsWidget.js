@@ -102,6 +102,26 @@ export class AssemblyConstraintControlsWidget {
     statusRow.appendChild(loopLabel);
     statusRow.appendChild(constraintLabel);
 
+    const autoSolveRow = document.createElement('div');
+    autoSolveRow.className = 'solver-row solver-row-autosolve';
+
+    const autoSolveLabel = document.createElement('label');
+    autoSolveLabel.className = 'toggle-control solver-autosolve-toggle';
+
+    const autoSolveCheckbox = document.createElement('input');
+    autoSolveCheckbox.type = 'checkbox';
+    autoSolveCheckbox.checked = !!host?._fullSolveOnChange;
+    autoSolveCheckbox.addEventListener('change', () => {
+      host?._handleFullSolveToggleChange?.call(host, autoSolveCheckbox.checked);
+    });
+
+    const autoSolveText = document.createElement('span');
+    autoSolveText.textContent = 'Full solve on change';
+
+    autoSolveLabel.appendChild(autoSolveCheckbox);
+    autoSolveLabel.appendChild(autoSolveText);
+    autoSolveRow.appendChild(autoSolveLabel);
+
     const animateRow = document.createElement('div');
     animateRow.className = 'solver-row solver-row-animate';
 
@@ -178,6 +198,7 @@ export class AssemblyConstraintControlsWidget {
 
     wrap.appendChild(mainRow);
     wrap.appendChild(statusRow);
+    wrap.appendChild(autoSolveRow);
     wrap.appendChild(animateRow);
     wrap.appendChild(pauseRow);
 
@@ -193,6 +214,7 @@ export class AssemblyConstraintControlsWidget {
       host._animateCheckbox = animateCheckbox;
       host._animateDelayInput = delayInput;
       host._animateDelayContainer = delayContainer;
+      host._fullSolveCheckbox = autoSolveCheckbox;
       host._animateEnabled = animateCheckbox.checked !== false;
       host._updateSolverUI?.();
     }
@@ -258,4 +280,3 @@ export class AssemblyConstraintControlsWidget {
     this.element = null;
   }
 }
-
