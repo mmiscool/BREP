@@ -1,7 +1,15 @@
 export function constraintStatusInfo(entry) {
   const pd = entry?.persistentData || {};
   const status = pd.status || 'Idle';
+  const isDisabled = entry?.enabled === false || status === 'disabled';
   const out = { label: '', title: '', error: false, color: '#ffd60a' };
+
+  if (isDisabled) {
+    out.label = 'Disabled';
+    out.title = pd.message || 'Constraint disabled.';
+    out.color = '#8e8e93';
+    return out;
+  }
 
   if (status === 'unimplemented') {
     out.label = 'Unimplemented';
@@ -43,6 +51,14 @@ export function constraintStatusInfo(entry) {
   if (status === 'pending') {
     out.label = 'Pending';
     out.title = pd.message || 'Constraint awaiting convergence.';
+    return out;
+  }
+
+  if (status === 'duplicate') {
+    out.label = 'Duplicate';
+    out.title = pd.message || 'Another constraint uses the same selections.';
+    out.error = true;
+    out.color = '#ff3b30';
     return out;
   }
 

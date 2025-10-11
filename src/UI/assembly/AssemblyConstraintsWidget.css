@@ -228,13 +228,14 @@
   overflow: hidden;
 }
 .constraints-history .acc-header-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: stretch;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .constraints-history .acc-header {
   appearance: none;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   text-align: left;
   background: transparent;
   color: var(--text);
@@ -257,6 +258,7 @@
   align-items: center;
   gap: 4px;
   padding: 6px 8px 6px 0;
+  margin-left: auto;
 }
 .constraints-history .icon-btn {
   appearance: none;
@@ -307,6 +309,19 @@
   text-align: center;
   color: var(--muted);
   font-style: italic;
+}
+.constraints-history .acc-enabled-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 12px;
+  padding-right: 0;
+}
+.constraints-history .acc-enabled-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
 }
 .constraints-history .footer {
   position: relative;

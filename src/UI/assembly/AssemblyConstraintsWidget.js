@@ -312,16 +312,34 @@ export class AssemblyConstraintsWidget {
     item.className = 'acc-item';
     item.dataset.constraintId = constraintId;
     if (statusInfo.error) item.classList.add('has-error');
+    if (entry?.enabled === false) item.classList.add('constraint-disabled');
 
     const headerRow = document.createElement('div');
     headerRow.className = 'acc-header-row';
     item.appendChild(headerRow);
 
+    const toggleWrap = document.createElement('label');
+    toggleWrap.className = 'acc-enabled-toggle';
+    toggleWrap.title = 'Enable or disable this constraint';
+
+    const enabledToggle = document.createElement('input');
+    enabledToggle.type = 'checkbox';
+    enabledToggle.className = 'acc-enabled-checkbox';
+    enabledToggle.checked = entry?.enabled !== false;
+    enabledToggle.setAttribute('aria-label', 'Enable constraint');
+    enabledToggle.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+    });
+    enabledToggle.addEventListener('change', (ev) => {
+      ev.stopPropagation();
+      this.history?.setConstraintEnabled?.(constraintId, !!enabledToggle.checked);
+    });
+    toggleWrap.appendChild(enabledToggle);
+
     const headerBtn = document.createElement('button');
     headerBtn.type = 'button';
     headerBtn.className = 'acc-header';
     headerBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    headerRow.appendChild(headerBtn);
 
     const title = document.createElement('span');
     title.className = 'acc-title';
@@ -337,6 +355,9 @@ export class AssemblyConstraintsWidget {
     if (statusInfo.title) status.title = statusInfo.title;
     status.style.color = statusInfo.color || '';
     headerBtn.appendChild(status);
+
+    headerRow.appendChild(toggleWrap);
+    headerRow.appendChild(headerBtn);
 
     const actions = document.createElement('div');
     actions.className = 'acc-actions';
@@ -428,6 +449,7 @@ export class AssemblyConstraintsWidget {
       form: null,
       isOpen: false,
       constraintClass: ConstraintClass,
+      enabledCheckbox: enabledToggle,
     };
 
     headerBtn.addEventListener('click', () => {
@@ -482,9 +504,13 @@ export class AssemblyConstraintsWidget {
         else section.statusEl.removeAttribute('title');
         section.statusEl.style.color = statusInfo.color || '';
       }
+      if (section.enabledCheckbox) {
+        section.enabledCheckbox.checked = entry.enabled !== false;
+      }
       if (section.root) {
         section.root.dataset.constraintId = id;
         section.root.classList.toggle('has-error', !!statusInfo.error);
+        section.root.classList.toggle('constraint-disabled', entry.enabled === false);
       }
 
       const shouldOpen = entry.__open !== false;

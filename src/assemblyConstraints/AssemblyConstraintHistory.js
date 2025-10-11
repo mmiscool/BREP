@@ -34,10 +34,34 @@ function normalizeTypeString(type) {
   return String(type).trim();
 }
 
+const DUPLICATE_TYPE_MAP = new Map([
+  ['touch_align', 'touch_align'],
+  ['touch-align', 'touch_align'],
+  ['touchalign', 'touch_align'],
+  ['touch align', 'touch_align'],
+  ['touch align constraint', 'touch_align'],
+  ['touchalignconstraint', 'touch_align'],
+  ['touch', 'touch_align'],
+  ['distance', 'distance'],
+  ['distance constraint', 'distance'],
+  ['distanceconstraint', 'distance'],
+  ['angle', 'angle'],
+  ['angle constraint', 'angle'],
+  ['angleconstraint', 'angle'],
+]);
+
+const DUPLICATE_TYPE_LABELS = {
+  touch_align: 'Touch Align',
+  distance: 'Distance',
+  angle: 'Angle',
+};
+
 const DEFAULT_SOLVER_TOLERANCE = 1e-6;
 const DEFAULT_SOLVER_ITERATIONS = 1;
 const DEFAULT_TRANSLATION_GAIN = 0.5;
 const DEFAULT_ROTATION_GAIN = 0.5;
+const AUTO_RUN_ITERATIONS = Math.max(1, DEFAULT_SOLVER_ITERATIONS);
+const DISABLED_STATUS_MESSAGE = 'Constraint disabled.';
 
 function toFiniteNumber(value, fallback) {
   const num = Number(value);
@@ -149,10 +173,16 @@ export class AssemblyConstraintHistory {
     this.constraints = [];
     this.idCounter = 0;
     this._listeners = new Set();
+    this._autoRunScheduled = false;
+    this._autoRunActive = false;
+    this._autoRunOptions = null;
   }
 
   setPartHistory(partHistory) {
     this.partHistory = partHistory || null;
+    if (this.partHistory && this.constraints.length) {
+      this.#scheduleAutoRun();
+    }
   }
 
   setRegistry(registry) {
@@ -193,6 +223,7 @@ export class AssemblyConstraintHistory {
       inputParams: { ...defaults },
       persistentData: {},
       __open: true,
+      enabled: true,
     };
 
     Object.defineProperty(entry, 'constraintClass', {
@@ -213,6 +244,7 @@ export class AssemblyConstraintHistory {
 
     this.constraints.push(entry);
     this.#emitChange();
+    this.#scheduleAutoRun();
     return entry;
   }
 
@@ -224,6 +256,7 @@ export class AssemblyConstraintHistory {
     const changed = this.constraints.length !== prevLength;
     if (changed) {
       this.#emitChange();
+      this.#scheduleAutoRun();
     }
     return changed;
   }
@@ -238,6 +271,7 @@ export class AssemblyConstraintHistory {
     const [entry] = this.constraints.splice(index, 1);
     this.constraints.splice(target, 0, entry);
     this.#emitChange();
+    this.#scheduleAutoRun();
     return true;
   }
 
@@ -246,6 +280,49 @@ export class AssemblyConstraintHistory {
     if (!entry || typeof mutateFn !== 'function') return false;
     mutateFn(entry.inputParams);
     this.#emitChange();
+    this.#scheduleAutoRun();
+    return true;
+  }
+
+  setConstraintEnabled(constraintID, enabled) {
+    const entry = this.findById(constraintID);
+    if (!entry) return false;
+
+    const next = enabled !== false;
+    const prev = entry.enabled !== false;
+
+    if (prev === next) {
+      if (entry.enabled !== next) entry.enabled = next;
+      if (!next && entry.persistentData?.status !== 'disabled') {
+        const pd = { ...(entry.persistentData || {}) };
+        pd.status = 'disabled';
+        if (!pd.message) pd.message = DISABLED_STATUS_MESSAGE;
+        entry.persistentData = pd;
+        this.#emitChange();
+      }
+      return false;
+    }
+
+    entry.enabled = next;
+    const pd = { ...(entry.persistentData || {}) };
+
+    if (!next) {
+      pd.status = 'disabled';
+      if (!pd.message) pd.message = DISABLED_STATUS_MESSAGE;
+      entry.persistentData = pd;
+      this.#emitChange();
+      this.#scheduleAutoRun();
+      return true;
+    }
+
+    if (pd.status === 'disabled') {
+      pd.status = 'pending';
+      if (pd.message === DISABLED_STATUS_MESSAGE) delete pd.message;
+      entry.persistentData = pd;
+    }
+
+    this.#emitChange();
+    this.#scheduleAutoRun();
     return true;
   }
 
@@ -289,6 +366,7 @@ export class AssemblyConstraintHistory {
         inputParams: deepClone(entry?.inputParams) || {},
         persistentData: deepClone(entry?.persistentData) || {},
         open: entry?.__open !== false,
+        enabled: entry?.enabled !== false,
       })),
     };
   }
@@ -311,6 +389,7 @@ export class AssemblyConstraintHistory {
         inputParams: { ...defaults, ...deepClone(item.inputParams || {}) },
         persistentData: deepClone(item.persistentData || {}),
         __open: item.open !== false,
+        enabled: item.enabled !== false,
       };
 
       if (!entry.inputParams.constraintID) {
@@ -342,6 +421,9 @@ export class AssemblyConstraintHistory {
     this.idCounter = maxId;
     this.constraints = resolved;
     this.#emitChange();
+    if (this.constraints.length) {
+      this.#scheduleAutoRun();
+    }
   }
 
   async deserialize(serialized) {
@@ -496,7 +578,51 @@ export class AssemblyConstraintHistory {
 
     removeExistingDebugArrows(scene);
 
+    const duplicateInfo = this.#detectDuplicateConstraints();
+
     const runtimeEntries = this.constraints.map((entry) => {
+      if (entry?.enabled === false) {
+        const constraintID = entry?.inputParams?.constraintID || null;
+        const result = {
+          ok: true,
+          status: 'disabled',
+          message: DISABLED_STATUS_MESSAGE,
+          applied: false,
+          satisfied: false,
+          iteration: 0,
+          constraintID,
+        };
+        return {
+          entry,
+          instance: null,
+          result,
+          skipReason: 'disabled',
+        };
+      }
+
+      const duplicate = duplicateInfo.get(entry);
+      if (duplicate) {
+        const constraintID = entry?.inputParams?.constraintID || null;
+        const relatedIds = Array.isArray(duplicate.relatedIds) ? duplicate.relatedIds.slice() : [];
+        const result = {
+          ok: false,
+          status: 'duplicate',
+          message: duplicate.message,
+          applied: false,
+          satisfied: false,
+          iteration: 0,
+          constraintID,
+          duplicateConstraintIDs: relatedIds,
+          duplicateSignature: duplicate.signature,
+        };
+        return {
+          entry,
+          instance: null,
+          result,
+          skipReason: 'duplicate',
+        };
+      }
+
       const ConstraintClass = this.#resolveConstraint(entry.type);
       if (!ConstraintClass) {
         const message = `Unknown constraint type: ${entry.type}`;
@@ -519,6 +645,7 @@ export class AssemblyConstraintHistory {
             iteration: 0,
             constraintID,
           },
+          skipReason: 'unregistered',
         };
       }
 
@@ -569,7 +696,7 @@ export class AssemblyConstraintHistory {
         };
 
         if (!runtime.instance) {
-          await safeCallHook('onConstraintSkipped', hookBase);
+          await safeCallHook('onConstraintSkipped', { ...hookBase, skipReason: runtime.skipReason || null });
           continue;
         }
 
@@ -649,8 +776,11 @@ export class AssemblyConstraintHistory {
         : entry.persistentData || {};
 
       const nextPersistent = { ...sourcePD };
-      if (!nextPersistent.status) nextPersistent.status = result.status;
-      if (result.message) nextPersistent.message = result.message;
+      if (result.status) nextPersistent.status = result.status;
+      if (result.message !== undefined) {
+        if (result.message) nextPersistent.message = result.message;
+        else if (nextPersistent.message) delete nextPersistent.message;
+      }
       nextPersistent.satisfied = !!result.satisfied;
       if (typeof result.error === 'number' && Number.isFinite(result.error)) {
         nextPersistent.error = result.error;
@@ -658,6 +788,21 @@ export class AssemblyConstraintHistory {
       nextPersistent.lastRunAt = now;
       nextPersistent.lastIteration = result.iteration;
       nextPersistent.lastRequestedIterations = maxIterations;
+      if (result.status === 'duplicate') {
+        if (Array.isArray(result.duplicateConstraintIDs) && result.duplicateConstraintIDs.length) {
+          nextPersistent.duplicateConstraintIDs = result.duplicateConstraintIDs.slice();
+        } else if (nextPersistent.duplicateConstraintIDs) {
+          delete nextPersistent.duplicateConstraintIDs;
+        }
+        if (result.duplicateSignature) {
+          nextPersistent.duplicateSignature = result.duplicateSignature;
+        } else if (nextPersistent.duplicateSignature) {
+          delete nextPersistent.duplicateSignature;
+        }
+      } else {
+        if (nextPersistent.duplicateConstraintIDs) delete nextPersistent.duplicateConstraintIDs;
+        if (nextPersistent.duplicateSignature) delete nextPersistent.duplicateSignature;
+      }
 
       entry.persistentData = nextPersistent;
       entry.inputParams = { ...(instance?.inputParams || entry.inputParams || {}) };
@@ -687,6 +832,251 @@ export class AssemblyConstraintHistory {
     });
 
     return finalResults;
+  }
+
+  #detectDuplicateConstraints() {
+    const grouped = new Map();
+    for (const entry of this.constraints) {
+      if (!entry) continue;
+      const baseType = this.#normalizeDuplicateConstraintType(entry?.type);
+      if (!baseType) continue;
+      const signature = this.#buildSelectionSignature(entry?.inputParams);
+      if (!signature) continue;
+      if (!grouped.has(signature)) grouped.set(signature, []);
+      const constraintID = normalizeTypeString(entry?.inputParams?.constraintID) || null;
+      const typeLabel = DUPLICATE_TYPE_LABELS[baseType] || baseType;
+      grouped.get(signature).push({
+        entry,
+        type: baseType,
+        typeLabel,
+        id: constraintID,
+      });
+    }
+
+    const duplicates = new Map();
+    for (const [signature, list] of grouped.entries()) {
+      if (!Array.isArray(list) || list.length <= 1) continue;
+      const byType = new Map();
+      for (const item of list) {
+        if (!byType.has(item.type)) byType.set(item.type, []);
+        byType.get(item.type).push(item);
+      }
+      for (const item of list) {
+        const sameType = (byType.get(item.type) || []).filter((other) => other !== item);
+        const otherTypes = [];
+        for (const [type, entries] of byType.entries()) {
+          if (type === item.type) continue;
+          otherTypes.push({ type, entries });
+        }
+
+        const formatConstraintPhrase = (base, ids) => {
+          const unique = Array.from(new Set(
+            ids.map((id) => (id && id.trim()) ? id.trim() : null).filter(Boolean),
+          ));
+          if (unique.length === 0) {
+            return `${base} constraint`;
+          }
+          const plural = unique.length > 1 ? 'constraints' : 'constraint';
+          return `${base} ${plural} ${unique.join(', ')}`;
+        };
+
+        const parts = [];
+        if (sameType.length) {
+          const ids = sameType.map((other) => other.id);
+          parts.push(formatConstraintPhrase(`shares selections with ${item.typeLabel}`, ids));
+        }
+        for (const group of otherTypes) {
+          const label = DUPLICATE_TYPE_LABELS[group.type] || group.type;
+          const ids = group.entries.map((other) => other.id);
+          parts.push(formatConstraintPhrase(`conflicts with ${label}`, ids));
+        }
+        const message = parts.length
+          ? `Duplicate constraint selections: ${parts.join('. ')}.`
+          : 'Duplicate constraint selections.';
+
+        const otherIds = list
+          .filter((other) => other !== item)
+          .map((other) => other.id)
+          .filter(Boolean);
+        duplicates.set(item.entry, {
+          message,
+          signature,
+          relatedIds: Array.from(new Set(otherIds)),
+          type: item.type,
+        });
+      }
+    }
+
+    return duplicates;
+  }
+
+  #normalizeDuplicateConstraintType(type) {
+    const normalized = normalizeTypeString(type).toLowerCase();
+    if (!normalized) return null;
+    return DUPLICATE_TYPE_MAP.get(normalized) || null;
+  }
+
+  #scheduleAutoRun(options = null) {
+    if (!this.partHistory) return;
+    const opts = options && typeof options === 'object' ? { ...options } : null;
+    this._autoRunOptions = opts;
+    if (this._autoRunScheduled) return;
+    this._autoRunScheduled = true;
+    Promise.resolve().then(() => {
+      try { this.#executeAutoRun(); }
+      catch (error) { console.warn('[AssemblyConstraintHistory] Failed to schedule auto run:', error); }
+    });
+  }
+
+  async #executeAutoRun() {
+    if (!this._autoRunScheduled) return;
+    if (this._autoRunActive) return;
+
+    const options = this._autoRunOptions ? { ...this._autoRunOptions } : {};
+    this._autoRunOptions = null;
+    this._autoRunScheduled = false;
+
+    const iterationsRaw = Number(options.iterations);
+    const iterations = Number.isFinite(iterationsRaw) && iterationsRaw >= 1
+      ? Math.floor(iterationsRaw)
+      : AUTO_RUN_ITERATIONS;
+
+    const ph = this.partHistory;
+    if (!ph) return;
+
+    this._autoRunActive = true;
+    try {
+      await this.runAll(ph, { ...options, iterations });
+    } catch (error) {
+      console.warn('[AssemblyConstraintHistory] Auto run failed:', error);
+    } finally {
+      this._autoRunActive = false;
+      if (this._autoRunScheduled) {
+        Promise.resolve().then(() => {
+          try { this.#executeAutoRun(); }
+          catch (error) { console.warn('[AssemblyConstraintHistory] Failed to re-run auto cycle:', error); }
+        });
+      }
+    }
+  }
+
+  #buildSelectionSignature(params) {
+    if (!params || typeof params !== 'object') return null;
+    const selections = this.#extractSelectionPair(params);
+    if (!selections) return null;
+    const keys = [];
+    for (const selection of selections) {
+      const key = this.#selectionKey(selection, 0, new Set());
+      if (!key) return null;
+      keys.push(key);
+    }
+    if (keys.length !== 2) return null;
+    keys.sort();
+    return `${keys[0]}|${keys[1]}`;
+  }
+
+  #extractSelectionPair(params) {
+    const raw = Array.isArray(params?.elements) ? params.elements : [];
+    const picks = [];
+    for (const item of raw) {
+      if (item == null) continue;
+      picks.push(item);
+      if (picks.length >= 2) break;
+    }
+    return picks.length >= 2 ? picks.slice(0, 2) : null;
+  }
+
+  #selectionKey(selection, depth = 0, seen = new Set()) {
+    if (selection == null) return null;
+    if (depth > 5) return null;
+
+    if (Array.isArray(selection)) {
+      for (const item of selection) {
+        const key = this.#selectionKey(item, depth + 1, seen);
+        if (key) return key;
+      }
+      return null;
+    }
+
+    const type = typeof selection;
+    if (type === 'string' || type === 'number' || type === 'boolean') {
+      return `${type}:${String(selection)}`;
+    }
+    if (type !== 'object') return null;
+
+    if (seen.has(selection)) return null;
+    seen.add(selection);
+    try {
+      if (selection.isObject3D && typeof selection.uuid === 'string' && selection.uuid) {
+        return `uuid:${selection.uuid}`;
+      }
+
+      const preferredFields = [
+        'selectionID', 'selectionId', 'fullName', 'fullPath',
+        'pathKey', 'pathId', 'pathID', 'id', 'uuid', 'entityUUID',
+        'brepId', 'brepID', 'objectUUID', 'objectId', 'objectID',
+      ];
+      for (const field of preferredFields) {
+        const value = selection[field];
+        if (typeof value === 'string' && value.trim()) return `${field}:${value.trim()}`;
+      }
+
+      const nameFields = [
+        'name',
+        'label',
+        'displayName',
+        'componentName',
+        'faceName',
+        'edgeName',
+        'vertexName',
+        'reference',
+        'refName',
+      ];
+      for (const field of nameFields) {
+        const value = selection[field];
+        if (typeof value === 'string' && value.trim()) return `${field}:${value.trim()}`;
+      }
+
+      if (Array.isArray(selection.path) && selection.path.length) {
+        const joined = selection.path.map((part) => String(part)).join('/');
+        if (joined) return `path:${joined}`;
+      }
+
+      if (selection.component && typeof selection.component === 'object') {
+        const compKey = this.#selectionKey(selection.component, depth + 1, seen);
+        if (compKey) return `component:${compKey}`;
+      }
+
+      if (selection.object && typeof selection.object === 'object') {
+        const objKey = this.#selectionKey(selection.object, depth + 1, seen);
+        if (objKey) return `object:${objKey}`;
+      }
+
+      const keys = Object.keys(selection).filter((key) => key !== '__proto__').sort();
+      const parts = [];
+      for (const key of keys) {
+        const value = selection[key];
+        if (value == null) continue;
+        if (typeof value === 'function' || typeof value === 'symbol') continue;
+        let repr = null;
+        if (typeof value === 'object') {
+          const nested = this.#selectionKey(value, depth + 1, seen);
+          if (nested) repr = nested;
+        } else {
+          repr = `${typeof value}:${String(value)}`;
+        }
+        if (repr) {
+          parts.push(`${key}=${repr}`);
+          if (parts.length >= 8) break;
+        }
+      }
+      if (parts.length) {
+        return `obj:${parts.join(',')}`;
+      }
+      return null;
+    } finally {
+      seen.delete(selection);
+    }
   }
 
   #finalizeConstraintResult(instance, rawResult, iteration) {
