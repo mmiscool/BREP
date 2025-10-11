@@ -17,6 +17,16 @@ function deepClone(value) {
   return value;
 }
 
+function shallowArrayEqual(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 function extractDefaults(schema) {
   const result = {};
   if (!schema || typeof schema !== 'object') return result;
@@ -32,6 +42,11 @@ function extractDefaults(schema) {
 function normalizeTypeString(type) {
   if (!type && type !== 0) return '';
   return String(type).trim();
+}
+
+function formatUnknownConstraintMessage(type) {
+  const label = type != null ? String(type) : 'unknown';
+  return `Unknown constraint type: ${label}`;
 }
 
 const DUPLICATE_TYPE_MAP = new Map([
@@ -244,6 +259,7 @@ export class AssemblyConstraintHistory {
 
     this.constraints.push(entry);
     this.#emitChange();
+    this.checkConstraintErrors(this.partHistory);
     this.#scheduleAutoRun();
     return entry;
   }
@@ -256,6 +272,7 @@ export class AssemblyConstraintHistory {
     const changed = this.constraints.length !== prevLength;
     if (changed) {
       this.#emitChange();
+      this.checkConstraintErrors(this.partHistory);
       this.#scheduleAutoRun();
     }
     return changed;
@@ -280,6 +297,7 @@ export class AssemblyConstraintHistory {
     if (!entry || typeof mutateFn !== 'function') return false;
     mutateFn(entry.inputParams);
     this.#emitChange();
+    this.checkConstraintErrors(this.partHistory);
     this.#scheduleAutoRun();
     return true;
   }
@@ -311,6 +329,7 @@ export class AssemblyConstraintHistory {
       if (!pd.message) pd.message = DISABLED_STATUS_MESSAGE;
       entry.persistentData = pd;
       this.#emitChange();
+      this.checkConstraintErrors(this.partHistory);
       this.#scheduleAutoRun();
       return true;
     }
@@ -322,6 +341,7 @@ export class AssemblyConstraintHistory {
     }
 
     this.#emitChange();
+    this.checkConstraintErrors(this.partHistory);
     this.#scheduleAutoRun();
     return true;
   }
@@ -422,6 +442,7 @@ export class AssemblyConstraintHistory {
     this.constraints = resolved;
     this.#emitChange();
     if (this.constraints.length) {
+      this.checkConstraintErrors(this.partHistory);
       this.#scheduleAutoRun();
     }
   }
@@ -441,11 +462,176 @@ export class AssemblyConstraintHistory {
     return `${prefix}${this.idCounter}`;
   }
 
+  checkConstraintErrors(partHistory = this.partHistory, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const emit = opts.emit !== false;
+    const updatePersistentData = opts.updatePersistentData !== false;
+
+    const ph = partHistory || this.partHistory || null;
+    if (ph) this.partHistory = ph;
+
+    const duplicates = this.#detectDuplicateConstraints();
+    const results = [];
+    let changed = false;
+
+    const mutatePersistentData = (entry, mutator) => {
+      const previous = entry?.persistentData && typeof entry.persistentData === 'object'
+        ? entry.persistentData
+        : {};
+      const next = { ...previous };
+      let modified = false;
+
+      const set = (key, value) => {
+        const prevValue = next[key];
+        if (value === undefined) {
+          if (Object.prototype.hasOwnProperty.call(next, key)) {
+            delete next[key];
+            modified = true;
+          }
+          return;
+        }
+        if (Array.isArray(prevValue) && Array.isArray(value)) {
+          if (shallowArrayEqual(prevValue, value)) return;
+        } else if (prevValue === value) {
+          return;
+        }
+        next[key] = value;
+        modified = true;
+      };
+
+      const remove = (key) => {
+        if (Object.prototype.hasOwnProperty.call(next, key)) {
+          delete next[key];
+          modified = true;
+        }
+      };
+
+      try {
+        mutator({ set, remove, data: next, previous });
+      } catch (error) {
+        console.warn('[AssemblyConstraintHistory] Failed to update persistent data:', error);
+      }
+
+      if (modified) {
+        entry.persistentData = next;
+      }
+      return modified;
+    };
+
+    for (const entry of this.constraints) {
+      if (!entry) continue;
+
+      const constraintID = entry?.inputParams?.constraintID || null;
+      const type = entry?.type || null;
+      const result = {
+        constraintID,
+        type,
+        status: 'ok',
+        message: '',
+        duplicateConstraintIDs: null,
+        duplicateSignature: null,
+      };
+
+      if (entry.enabled === false) {
+        result.status = 'disabled';
+        result.message = DISABLED_STATUS_MESSAGE;
+        if (updatePersistentData) {
+          changed = mutatePersistentData(entry, ({ set, remove, previous }) => {
+            set('status', 'disabled');
+            if (!previous.message || previous.message === DISABLED_STATUS_MESSAGE) {
+              set('message', DISABLED_STATUS_MESSAGE);
+            }
+            set('satisfied', false);
+            remove('duplicateConstraintIDs');
+            remove('duplicateSignature');
+          }) || changed;
+        }
+        results.push(result);
+        continue;
+      }
+
+      const constraintClass = this.#resolveConstraint(type);
+      const duplicate = duplicates.get(entry);
+
+      if (!constraintClass) {
+        const message = formatUnknownConstraintMessage(type);
+        result.status = 'error';
+        result.message = message;
+        if (updatePersistentData) {
+          changed = mutatePersistentData(entry, ({ set, remove }) => {
+            set('status', 'error');
+            set('message', message);
+            set('satisfied', false);
+            remove('duplicateConstraintIDs');
+            remove('duplicateSignature');
+          }) || changed;
+        }
+        results.push(result);
+        continue;
+      }
+
+      if (duplicate) {
+        const relatedIds = Array.isArray(duplicate.relatedIds)
+          ? duplicate.relatedIds.filter(Boolean)
+          : [];
+        const signature = duplicate.signature || null;
+
+        result.status = 'duplicate';
+        result.message = duplicate.message || 'Duplicate constraint selections.';
+        result.duplicateConstraintIDs = relatedIds.length ? relatedIds : null;
+        result.duplicateSignature = signature;
+
+        if (updatePersistentData) {
+          changed = mutatePersistentData(entry, ({ set, remove }) => {
+            set('status', 'duplicate');
+            set('message', result.message);
+            set('satisfied', false);
+            if (result.duplicateConstraintIDs) set('duplicateConstraintIDs', result.duplicateConstraintIDs);
+            else remove('duplicateConstraintIDs');
+            if (signature) set('duplicateSignature', signature);
+            else remove('duplicateSignature');
+          }) || changed;
+        }
+        results.push(result);
+        continue;
+      }
+
+      if (updatePersistentData) {
+        changed = mutatePersistentData(entry, ({ set, remove, previous }) => {
+          if (previous.status === 'duplicate') {
+            set('status', 'pending');
+            if (typeof previous.message === 'string'
+              && previous.message.startsWith('Duplicate constraint selections')) {
+              remove('message');
+            }
+          }
+          if (previous.status === 'error'
+            && typeof previous.message === 'string'
+            && previous.message.startsWith('Unknown constraint type:')) {
+            set('status', 'pending');
+            remove('message');
+          }
+          remove('duplicateConstraintIDs');
+          remove('duplicateSignature');
+        }) || changed;
+      }
+
+      results.push(result);
+    }
+
+    if (updatePersistentData && changed && emit) {
+      this.#emitChange();
+    }
+
+    return results;
+  }
+
   async runAll(partHistory = this.partHistory, options = {}) {
     const ph = partHistory || this.partHistory;
     if (!ph) return [];
 
     this.partHistory = ph;
+    this.checkConstraintErrors(ph, { emit: false });
 
     const tolerance = Math.abs(toFiniteNumber(options?.tolerance, DEFAULT_SOLVER_TOLERANCE)) || DEFAULT_SOLVER_TOLERANCE;
     const maxIterations = clampIterations(options?.iterations);
@@ -625,7 +811,7 @@ export class AssemblyConstraintHistory {
 
       const ConstraintClass = this.#resolveConstraint(entry.type);
       if (!ConstraintClass) {
-        const message = `Unknown constraint type: ${entry.type}`;
+        const message = formatUnknownConstraintMessage(entry.type);
         const constraintID = entry?.inputParams?.constraintID || null;
         entry.persistentData = {
           status: 'error',

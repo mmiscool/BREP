@@ -59,7 +59,7 @@ export class AssemblyConstraintsWidget {
     this._animateDelayInput = null;
     this._animateDelayContainer = null;
     this._animateEnabled = true;
-    this._animateDelayMs = 10;
+    this._animateDelayMs = 1;
     this._controlsWidget = null;
     this._updateComponentsBtn = null;
     this._updatingComponents = false;
