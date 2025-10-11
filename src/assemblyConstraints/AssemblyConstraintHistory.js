@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { AssemblyConstraintRegistry } from './AssemblyConstraintRegistry.js';
+import { evaluateConstraintNumericValue } from './constraintExpressionUtils.js';
 
 const RESERVED_KEYS = new Set(['type', 'persistentData', '__open']);
 
@@ -835,13 +836,18 @@ export class AssemblyConstraintHistory {
         };
       }
 
+      const originalInputParams = deepClone(entry.inputParams) || {};
+      const runtimeInputParams = deepClone(entry.inputParams) || {};
+
       const instance = new ConstraintClass(ph);
-      try { Object.assign(instance.inputParams, deepClone(entry.inputParams)); }
-      catch { instance.inputParams = { ...(entry.inputParams || {}) }; }
+      this.#applyNumericExpressions(runtimeInputParams, ConstraintClass.inputParamsSchema || {});
+
+      try { instance.inputParams = runtimeInputParams; }
+      catch { instance.inputParams = { ...runtimeInputParams }; }
       try { Object.assign(instance.persistentData, deepClone(entry.persistentData)); }
       catch { instance.persistentData = { ...(entry.persistentData || {}) }; }
 
-      return { entry, instance, result: null };
+      return { entry, instance, result: null, originalInputParams };
     });
 
     for (const runtime of runtimeEntries) {
@@ -991,7 +997,20 @@ export class AssemblyConstraintHistory {
       }
 
       entry.persistentData = nextPersistent;
-      entry.inputParams = { ...(instance?.inputParams || entry.inputParams || {}) };
+      if (runtime.originalInputParams) {
+        const target = (entry.inputParams && typeof entry.inputParams === 'object')
+          ? entry.inputParams
+          : {};
+        for (const key of Object.keys(target)) {
+          if (!Object.prototype.hasOwnProperty.call(runtime.originalInputParams, key)) {
+            delete target[key];
+          }
+        }
+        Object.assign(target, runtime.originalInputParams);
+        entry.inputParams = target;
+      } else {
+        entry.inputParams = { ...(entry.inputParams || {}) };
+      }
 
       finalResults.push({
         constraintID: entry?.inputParams?.constraintID || null,
@@ -1018,6 +1037,19 @@ export class AssemblyConstraintHistory {
     });
 
     return finalResults;
+  }
+
+  #applyNumericExpressions(inputParams, schema) {
+    if (!inputParams || !schema) return;
+    for (const key in schema) {
+      if (!Object.prototype.hasOwnProperty.call(schema, key)) continue;
+      const def = schema[key];
+      if (!def || def.type !== 'number') continue;
+      const evaluated = evaluateConstraintNumericValue(this.partHistory, inputParams[key]);
+      if (evaluated != null) {
+        inputParams[key] = evaluated;
+      }
+    }
   }
 
   #detectDuplicateConstraints() {

@@ -34,6 +34,29 @@ export class PartHistory {
     }
   }
 
+  static evaluateExpression(expressionsSource, equation) {
+    const exprSource = typeof expressionsSource === 'string' ? expressionsSource : '';
+    const fnBody = `${exprSource}; return ${equation} ;`;
+    try {
+      let result = Function(fnBody)();
+      if (typeof result === 'string') {
+        const num = Number(result);
+        if (!Number.isNaN(num)) {
+          return num;
+        }
+      }
+      return result;
+    } catch (err) {
+      try { console.log(fnBody); } catch { }
+      try { console.log('Code execution failed:', err?.message || err); } catch { }
+      return null;
+    }
+  }
+
+  evaluateExpression(equation) {
+    return PartHistory.evaluateExpression(this.expressions, equation);
+  }
+
 
 
   getObjectByName(name) {
@@ -604,35 +627,6 @@ export class PartHistory {
 
   async sanitizeInputParams(schema, inputParams) {
 
-    function runCodeAndGetNumber(expressions, equation) {
-      //console.log("Running code:", equation);
-      const functionString = `${expressions}; return ${equation} ;`;
-
-      try {
-        // Wrap the code in a function so the last expression is returned
-        let result = Function(functionString)();
-
-        // If it's a string, try to convert it
-        if (typeof result === "string") {
-          const num = Number(result);
-          if (!isNaN(num)) {
-            return num; // valid number string -> return as number
-          }
-        }
-
-        //console.log("Code execution succeeded:", result);
-        return result;
-      } catch (err) {
-        console.log(functionString);
-        console.log("Code execution failed:", err.message);
-        return null;
-      }
-    }
-
-
-
-
-
     let sanitized = {};
 
     for (const key in schema) {
@@ -641,7 +635,7 @@ export class PartHistory {
         // check if the schema type is number
         if (schema[key].type === "number") {
           // if it is a string use the eval() function to do some math and return it as a number
-          sanitized[key] = runCodeAndGetNumber(this.expressions, inputParams[key]);
+          sanitized[key] = PartHistory.evaluateExpression(this.expressions, inputParams[key]);
         } else if (schema[key].type === "reference_selection") {
           // Resolve references: accept objects directly or look up by name
           const val = inputParams[key];
@@ -692,7 +686,7 @@ export class PartHistory {
           const raw = inputParams[key] || {};
           const evalOne = (v) => {
             if (typeof v === 'number' && Number.isFinite(v)) return v;
-            if (typeof v === 'string') return runCodeAndGetNumber(this.expressions, v);
+            if (typeof v === 'string') return PartHistory.evaluateExpression(this.expressions, v);
             const n = Number(v);
             return Number.isFinite(n) ? n : 0;
           };
@@ -705,7 +699,7 @@ export class PartHistory {
           const raw = inputParams[key];
           const evalOne = (v) => {
             if (typeof v === 'number' && Number.isFinite(v)) return v;
-            if (typeof v === 'string') return runCodeAndGetNumber(this.expressions, v);
+            if (typeof v === 'string') return PartHistory.evaluateExpression(this.expressions, v);
             const n = Number(v);
             return Number.isFinite(n) ? n : 0;
           };

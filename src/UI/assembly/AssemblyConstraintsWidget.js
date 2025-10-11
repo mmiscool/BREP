@@ -41,6 +41,7 @@ export class AssemblyConstraintsWidget {
     this._onControlsChange = () => this._refreshConstraintLabels();
     this._onWindowResize = () => this._refreshConstraintLabels();
     this._constraintGraphicsEnabled = true;
+    this._constraintGraphicsPreferred = this._constraintGraphicsEnabled;
     this._constraintGraphicsCheckbox = null;
     this._hoverHighlights = new Map();
     this._activeHoverConstraintId = null;
@@ -68,6 +69,7 @@ export class AssemblyConstraintsWidget {
     this._pendingFullSolve = false;
     this._ignoreFullSolveChangeCount = 0;
     this._fullSolveCheckbox = null;
+    this._pmiVisibilityLock = 0;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
@@ -1002,8 +1004,13 @@ export class AssemblyConstraintsWidget {
   }
 
 
-  _setConstraintGraphicsEnabled(enabled) {
-    const value = !!enabled;
+  _setConstraintGraphicsEnabled(enabled, options = {}) {
+    const requested = !!enabled;
+    if (options.recordPreference !== false) {
+      this._constraintGraphicsPreferred = requested;
+    }
+    const suppressed = this._pmiVisibilityLock > 0 && !options.force;
+    const value = suppressed ? false : requested;
     this._constraintGraphicsEnabled = value;
 
     if (this._constraintGroup) {
@@ -1025,6 +1032,21 @@ export class AssemblyConstraintsWidget {
     }
 
     try { this.viewer?.render?.(); } catch { }
+  }
+
+  onPMIModeEnter() {
+    this._pmiVisibilityLock = (this._pmiVisibilityLock || 0) + 1;
+    this._setConstraintGraphicsEnabled(this._constraintGraphicsPreferred, { recordPreference: false });
+  }
+
+  onPMIModeExit() {
+    if (!this._pmiVisibilityLock) return;
+    this._pmiVisibilityLock = Math.max(0, this._pmiVisibilityLock - 1);
+    if (this._pmiVisibilityLock > 0) return;
+    this._setConstraintGraphicsEnabled(this._constraintGraphicsPreferred, {
+      recordPreference: false,
+      force: true,
+    });
   }
 
   _clearHoverHighlights() {
@@ -1257,7 +1279,7 @@ export class AssemblyConstraintsWidget {
 
       if (!labelPosition) return;
 
-      const text = constraintLabelText(entry, constraintClass);
+      const text = constraintLabelText(entry, constraintClass, this.partHistory);
       const overlayData = { constraintID };
 
       if (this._constraintGraphicsEnabled) {
@@ -1304,6 +1326,8 @@ export class AssemblyConstraintsWidget {
         const statusInfo = constraintStatusInfo(record.entry);
         color = statusInfo?.color || color;
         record.color = color;
+        const constraintClass = this._resolveConstraintClass(record.entry);
+        record.text = constraintLabelText(record.entry, constraintClass, this.partHistory);
         const segments = this.#constraintSegments(record.entry);
         if (Array.isArray(segments) && segments.length > 0) {
           this.#upsertConstraintLines(constraintID, segments, color);

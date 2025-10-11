@@ -459,9 +459,21 @@ export class Viewer {
     // PMI Edit Mode API
     // ————————————————————————————————————————
     startPMIMode(viewEntry, viewIndex, widget = this.pmiViewsWidget) {
+        const alreadyActive = !!this._pmiMode;
+        if (!alreadyActive) {
+            try { this.assemblyConstraintsWidget?.onPMIModeEnter?.(); } catch { }
+        }
         try { if (this._pmiMode) this._pmiMode.dispose(); } catch { }
-        this._pmiMode = new PMIMode(this, viewEntry, viewIndex, widget);
-        this._pmiMode.open();
+        try {
+            this._pmiMode = new PMIMode(this, viewEntry, viewIndex, widget);
+            this._pmiMode.open();
+        } catch (error) {
+            this._pmiMode = null;
+            if (!alreadyActive) {
+                try { this.assemblyConstraintsWidget?.onPMIModeExit?.(); } catch { }
+            }
+            throw error;
+        }
     }
 
     onPMIFinished(_updatedView) {
@@ -473,8 +485,12 @@ export class Viewer {
     }
 
     endPMIMode() {
+        const hadMode = !!this._pmiMode;
         try { if (this._pmiMode) this._pmiMode.dispose(); } catch { }
         this._pmiMode = null;
+        if (hadMode) {
+            try { this.assemblyConstraintsWidget?.onPMIModeExit?.(); } catch { }
+        }
         // Robustly restore core UI similar to endSketchMode
         try {
             if (this.sidebar) {

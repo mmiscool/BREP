@@ -1,4 +1,6 @@
-export function constraintLabelText(entry, constraintClass) {
+import { evaluateConstraintNumericValue } from '../../assemblyConstraints/constraintExpressionUtils.js';
+
+export function constraintLabelText(entry, constraintClass, partHistory = null) {
   const cls = constraintClass || entry?.constraintClass || null;
   const rawShortName = cls?.constraintShortName;
   const shortName = rawShortName != null ? String(rawShortName).trim() : '';
@@ -10,8 +12,8 @@ export function constraintLabelText(entry, constraintClass) {
 
   let distanceSuffix = '';
   if (entry?.type === 'distance' || cls?.constraintType === 'distance') {
-    const distance = Number(entry?.inputParams?.distance);
-    if (Number.isFinite(distance)) distanceSuffix = String(distance);
+    const distance = evaluateConstraintNumericValue(partHistory, entry?.inputParams?.distance);
+    if (distance != null) distanceSuffix = String(distance);
   }
 
   const parts = [];
