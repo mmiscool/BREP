@@ -27,27 +27,6 @@ export class entityClassRegistry {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /**
  * Generic collection manager for history-style entity lists.
  * Stores concrete ListEntityBase instances, handles ID generation,
