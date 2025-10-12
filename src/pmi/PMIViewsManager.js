@@ -1,18 +1,7 @@
 // PMIViewsManager.js
 // Encapsulates storage and lifecycle for PMI views associated with a PartHistory instance.
 
-function deepClone(value) {
-  if (value == null) return value;
-  if (Array.isArray(value)) return value.map(deepClone);
-  if (typeof value === 'object') {
-    const out = {};
-    for (const key of Object.keys(value)) {
-      out[key] = deepClone(value[key]);
-    }
-    return out;
-  }
-  return value;
-}
+import { deepClone } from '../utils/deepClone.js';
 
 export class PMIViewsManager {
   constructor(partHistory) {

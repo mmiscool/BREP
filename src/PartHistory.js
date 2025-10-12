@@ -11,6 +11,7 @@ import { AssemblyConstraintHistory } from './assemblyConstraints/AssemblyConstra
 import { AssemblyComponentFeature } from './features/assemblyComponent/AssemblyComponentFeature.js';
 import { getComponentRecord, base64ToUint8Array } from './services/componentLibrary.js';
 import { PMIViewsManager } from './pmi/PMIViewsManager.js';
+import { deepClone } from './utils/deepClone.js';
 
 
 const debug = false;
@@ -712,7 +713,7 @@ export class PartHistory {
         }
       } else {
         // Clone structured defaults to avoid shared references across features
-        sanitized[key] = __deepClone(schema[key].default_value);
+        sanitized[key] = deepClone(schema[key].default_value);
       }
     }
 
@@ -720,29 +721,13 @@ export class PartHistory {
   }
 }
 
-// Shallow-safe deep clone for plain objects/arrays used in schema defaults
-function __deepClone(value) {
-  if (value == null) return value;
-  const t = typeof value;
-  if (t !== 'object') return value;
-  // Arrays
-  if (Array.isArray(value)) return value.map(v => __deepClone(v));
-  // Plain objects only; leave class instances as-is
-  const proto = Object.getPrototypeOf(value);
-  if (proto === Object.prototype || proto === null) {
-    const out = {};
-    for (const k of Object.keys(value)) out[k] = __deepClone(value[k]);
-    return out;
-  }
-  return value; // fallback: do not clone exotic instances
-}
-
+// Helper to extract default values using shared deepClone utility
 export function extractDefaultValues(schema) {
   const result = {};
   for (const key in schema) {
     if (Object.prototype.hasOwnProperty.call(schema, key)) {
       const def = schema[key] ? schema[key].default_value : undefined;
-      result[key] = __deepClone(def);
+      result[key] = deepClone(def);
     }
   }
   return result;

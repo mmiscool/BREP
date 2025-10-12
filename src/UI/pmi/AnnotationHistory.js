@@ -1,23 +1,6 @@
 import { annotationRegistry } from './AnnotationRegistry.js';
-
-function deepClone(value) {
-  if (value == null) return value;
-  if (Array.isArray(value)) return value.map(deepClone);
-  if (typeof value === 'object') {
-    const out = {};
-    for (const key in value) {
-      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
-      out[key] = deepClone(value[key]);
-    }
-    return out;
-  }
-  return value;
-}
-
-function normalizeTypeString(type) {
-  if (!type && type !== 0) return '';
-  return String(type).trim();
-}
+import { deepClone } from '../../utils/deepClone.js';
+import { normalizeTypeString } from '../../utils/normalizeTypeString.js';
 
 const RESERVED_INPUT_KEYS = new Set(['type', 'persistentData', '__open', '__legacy']);
 
