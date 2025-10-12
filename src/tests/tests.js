@@ -179,7 +179,6 @@ export async function runTests(partHistory = new PartHistory(), callbackToRunBet
                 });
             }
 
-            console.log(" ");
         }
     }
 }

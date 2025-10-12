@@ -74,9 +74,8 @@ export class expressionsManager {
         this.resultDiv.style.color = 'green';
         let succeeded = false;
         try {
-            const functionString = `return (function(){ ${this.textArea.value} ;})();`;
+            const functionString = `return (function(){ ${this.textArea.value} ;});`;
             let result = Function(functionString)();
-            console.log("Test result:", result);
             this.viewer.partHistory.expressions = this.textArea.value;
             succeeded = true;
         } catch (error) {

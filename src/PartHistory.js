@@ -13,6 +13,9 @@ import { AssemblyComponentFeature } from './features/assemblyComponent/AssemblyC
 import { getComponentRecord, base64ToUint8Array } from './services/componentLibrary.js';
 
 
+const debug = false;
+
+
 export class PartHistory {
   constructor() {
     this.features = [];
@@ -24,7 +27,6 @@ export class PartHistory {
     this.callbacks = {};
     this.currentHistoryStepId = null;
     this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
-    this._ambientLight = null;
     this.pmiViews = [];
     this.metadataManager = new MetadataManager
     if (this.assemblyConstraintHistory) {
@@ -73,11 +75,8 @@ export class PartHistory {
     this.metadataManager = new MetadataManager();
     this.currentHistoryStepId = null;
 
-
     // empty the scene without destroying it
     await this.scene.clear();
-    // Clear transient state
-    this._ambientLight = null;
     if (this.callbacks.reset) {
       await this.callbacks.reset();
     }
@@ -97,23 +96,21 @@ export class PartHistory {
     const whatStepToStopAt = this.currentHistoryStepId;
 
     await this.scene.clear();
-    const startTime = Date.now();
     // add ambient light to scene
     const ambientLight = new THREE.AmbientLight(0xffffff, 2);
     this.scene.add(ambientLight);
 
-    let skipFeature = false;
     let skipAllFeatures = false;
-    let previouseFeatureTimestamp = this.features[0]?.timestamp || null;
+    const features = Array.isArray(this.features) ? this.features : [];
+    let previousFeatureTimestamp = features.length ? (features[0]?.timestamp ?? null) : null;
     const nowMs = () => (typeof performance !== 'undefined' && performance?.now ? performance.now() : Date.now());
-    for (const feature of this.features) {
-      if (skipFeature || skipAllFeatures) {
+    for (let i = 0; i < features.length; i++) {
+      const feature = features[i];
+      if (skipAllFeatures) {
         continue;
       }
 
-      const nextFeature = this.features[this.features.indexOf(feature) + 1];
-
-
+      const nextFeature = features[i + 1];
 
       if (whatStepToStopAt && feature.inputParams.featureID === whatStepToStopAt) {
         skipAllFeatures = true; // stop after this feature
@@ -149,20 +146,77 @@ export class PartHistory {
         for (const ch of toRemoveOwned) this.scene.remove(ch);
       }
 
-
-
       // if the previous feature had a timestamp later than this feature, we mark this feature as dirty to ensure it gets re-run
-      if (previouseFeatureTimestamp > feature.timestamp) feature.dirty = true;
+      if (previousFeatureTimestamp != null && Number.isFinite(feature.timestamp) && previousFeatureTimestamp > feature.timestamp) {
+        feature.dirty = true;
+      }
       // if the inputParams have changed since last run, mark dirty
       if (JSON.stringify(feature.inputParams) !== feature.lastRunInputParams) feature.dirty = true;
 
+      instance.inputParams = await this.sanitizeInputParams(FeatureClass.inputParamsSchema, feature.inputParams);
+      // check the timestamps of any objects referenced by reference_selection inputs; if any are newer than the feature timestamp, mark dirty
+      for (const key in FeatureClass.inputParamsSchema) {
+        if (Object.prototype.hasOwnProperty.call(FeatureClass.inputParamsSchema, key)) {
+          const paramDef = FeatureClass.inputParamsSchema[key];
+          if (paramDef.type === 'reference_selection') {
+            const selected = Array.isArray(instance.inputParams[key]) ? instance.inputParams[key] : [];
+            for (const obj of selected) {
+              if (obj && typeof obj === 'object') {
+                const objTime = Number(obj.timestamp);
+                if (Number.isFinite(objTime) && (!Number.isFinite(feature.timestamp) || objTime > feature.timestamp)) {
+                  feature.dirty = true;
+                  //alert(`Marking feature ${feature.inputParams.featureID} dirty because referenced object ${obj.name || obj.id || ''} has newer timestamp.`);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // compare any numeric inputParams as evaluated by the sanitizeInputParams method and catch changes due to expressions
+      // the instance.inputParams have already been sanitized
+
+      for (const key in FeatureClass.inputParamsSchema) {
+        if (Object.prototype.hasOwnProperty.call(FeatureClass.inputParamsSchema, key)) {
+          const paramDef = FeatureClass.inputParamsSchema[key];
+          if (feature.previouseExpressions === undefined) feature.previouseExpressions = {};
+          if (paramDef.type === 'number') {
+            try {
+
+              if (feature.previouseExpressions[key] === undefined) feature.dirty = true;
+              else if (Number(feature.previouseExpressions[key]) !== Number(instance.inputParams[key])) feature.dirty = true;
+              feature.previouseExpressions[key] = instance.inputParams[key];
+            } catch {
+              feature.dirty = true;
+              feature.previouseExpressions[key] = instance.inputParams[key];
+            }
+          }
+        }
+      }
+
+
+      // manually run the sketch feature and then test if the geometry has changed
+      // if so, mark dirty
+      if (FeatureClass.featureName === 'Sketch') {
+        try {
+          instance.run(this);
+          const sketchChanged = await instance.hasSketchChanged(feature);
+          if (sketchChanged) feature.dirty = true;
+        } catch (error) {
+          console.warn('[PartHistory] Sketch change detection failed:', error);
+          feature.dirty = true;
+        }
+      }
+
       if (feature.dirty) {
+        if (debug) console.log("feature dirty");
+        if (debug) console.log(`Running feature ${i + 1}/${features.length} (${feature.inputParams.featureID}) of type ${feature.type}...`, feature);
         // if this one is dirty, next one should be too (conservative)
-        try { nextFeature.dirty = true; } catch { }
+        if (nextFeature) nextFeature.dirty = true;
 
         // Record the current input params as lastRunInputParams
         feature.lastRunInputParams = JSON.stringify(feature.inputParams);
-        instance.inputParams = await this.sanitizeInputParams(FeatureClass.inputParamsSchema, feature.inputParams);
 
 
         const t0 = nowMs();
@@ -176,7 +230,7 @@ export class PartHistory {
 
 
           feature.timestamp = Date.now();
-          previouseFeatureTimestamp = feature.timestamp;
+          previousFeatureTimestamp = feature.timestamp;
 
           const t1 = nowMs();
           const dur = Math.max(0, Math.round(t1 - t0));
@@ -189,15 +243,14 @@ export class PartHistory {
           feature.lastRun = { ok: false, startedAt: t0, endedAt: t1, durationMs: dur, error: { message: e?.message || String(e), name: e?.name || 'Error', stack: e?.stack || null } };
           feature.timestamp = Date.now();
 
-          previouseFeatureTimestamp = feature.timestamp;
+          previousFeatureTimestamp = feature.timestamp;
           instance.errorString = `Error occurred while running feature ${feature.inputParams.featureID}: ${e.message}`;
           console.error(e);
           return;
         }
-      } else {
       }
 
-      await this.applyFeatureEffects(feature.effects, feature.inputParams.featureID);
+      await this.applyFeatureEffects(feature.effects, feature.inputParams.featureID, feature);
 
 
       feature.persistentData = instance.persistentData;
@@ -209,8 +262,6 @@ export class PartHistory {
       console.warn('[PartHistory] Assembly constraints run failed:', error);
     }
 
-    const endTime = Date.now();
-    const totalDuration = endTime - startTime;
     // Do not clear currentHistoryStepId here. Keeping it preserves the UX of
     // "stop at the currently expanded feature" across subsequent runs. The
     // UI will explicitly clear it when no section is expanded.
@@ -241,7 +292,7 @@ export class PartHistory {
   }
 
 
-  async applyFeatureEffects(effects, featureID) {
+  async applyFeatureEffects(effects, featureID, feature) {
     if (!effects || typeof effects !== 'object') return;
     const added = Array.isArray(effects.added) ? effects.added : [];
     const removed = Array.isArray(effects.removed) ? effects.removed : [];
@@ -257,6 +308,25 @@ export class PartHistory {
         await this.scene.add(a);
         // make sure the flag for removal is cleared
         try { a.__removeFlag = false; } catch { }
+
+
+
+
+        const applyTimeStampToChildrenRecursively = (obj, timestamp) => {
+          if (!obj || typeof obj !== 'object') return;
+          try { obj.timestamp = timestamp || Date.now(); } catch { }
+          const children = Array.isArray(obj.children) ? obj.children : [];
+          for (const child of children) {
+            applyTimeStampToChildrenRecursively(child, timestamp);
+          }
+        };
+
+        // attach the timestamp from the feature to the object for traceability
+        try {
+          a.timestamp = feature.timestamp;
+          applyTimeStampToChildrenRecursively(a, feature.timestamp);
+        } catch { }
+
         this._attachSelectionHandlers(a);
       }
     }
@@ -266,15 +336,6 @@ export class PartHistory {
     try { for (const obj of removed) { if (obj) obj.owningFeatureID = featureID; } } catch { }
 
 
-  }
-
-  _ensureAmbientLight() {
-    if (this._ambientLight && this.scene.children.includes(this._ambientLight)) return;
-    // Remove any stray ambient lights if present
-    const strays = this.scene.children.filter(o => o?.isLight && o?.type === 'AmbientLight');
-    for (const s of strays) { try { this.scene.remove(s); } catch { } }
-    this._ambientLight = new THREE.AmbientLight(0xffffff, 2);
-    this.scene.add(this._ambientLight);
   }
 
   // Removed unused signature/canonicalization helpers
@@ -536,19 +597,7 @@ export class PartHistory {
     return { updatedCount, reran };
   }
 
-  // PMI Views management - sync with localStorage for widget compatibility
-  loadPMIViewsFromLocalStorage(modelName) {
-    try {
-      const key = '__BREP_PMI_VIEWS__:' + encodeURIComponent(modelName || '__DEFAULT__');
-      const raw = LS.getItem(key);
-      if (raw) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) {
-          this.pmiViews = arr.filter(Boolean);
-        }
-      }
-    } catch { }
-  }
+
 
   savePMIViewsToLocalStorage(modelName) {
     try {

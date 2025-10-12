@@ -51,6 +51,7 @@ export class SketchFeature {
 
         // Persisted between edits: { basis, sketch }
         this.persistentData = this.persistentData || {};
+        this._sketchChanged = null;
     }
 
     // Build (and persist) a plane basis from the selected sketchPlane.
@@ -120,6 +121,37 @@ export class SketchFeature {
         this.persistentData = this.persistentData || {};
         this.persistentData.basis = basis;
         return basis;
+    }
+
+    _sketchSignature(sketch) {
+        if (!sketch) return null;
+        try {
+            return JSON.stringify(sketch);
+        } catch {
+            return null;
+        }
+    }
+
+    _updateSketchChangeState(sketch) {
+        this.persistentData = this.persistentData || {};
+        try {
+            const currentSignature = this._sketchSignature(sketch);
+            const prevSignature = this.persistentData.lastSketchSignature;
+            const changed = prevSignature != null ? prevSignature !== currentSignature : false;
+            this.persistentData.lastSketchSignature = currentSignature;
+            this.persistentData.lastSketchChanged = changed;
+            this._sketchChanged = changed;
+        } catch {
+            this._sketchChanged = false;
+        }
+    }
+
+    hasSketchChanged() {
+        if (typeof this._sketchChanged === 'boolean') {
+            return this._sketchChanged;
+        }
+        const persisted = this.persistentData?.lastSketchChanged;
+        return Boolean(persisted);
     }
 
     // Visualize sketch curves and points as a Group for selection (type='SKETCH').
@@ -611,6 +643,7 @@ export class SketchFeature {
             }
         }
 
+        this._updateSketchChangeState(this.persistentData?.sketch || sketch);
         return { added: [sceneGroup], removed: [] };
     }
 }

@@ -317,9 +317,14 @@ function attachDimLabelEvents(inst, el, c, world) {
   // Edit on double click (value expression support preserved)
   el.addEventListener('dblclick', (e) => {
     e.preventDefault(); e.stopPropagation();
-    dbg('dblclick-edit', { cid: c.id, type: c.type, value: c.value });
-    const v = prompt('Enter value', String(c.value ?? ''));
+    dbg('dblclick-edit', { cid: c.id, type: c.type, value: c.value, expr: c.valueExpr });
+    const initial = (typeof c.valueExpr === 'string' && c.valueExpr.length)
+      ? c.valueExpr
+      : String(c.value ?? '');
+    const v = prompt('Enter value', initial);
     if (v == null) return;
+    const input = String(v?.trim?.() ?? v);
+    if (!input.length) return;
     const ph = inst?.viewer?.partHistory;
     const exprSrc = ph?.expressions || '';
     const runExpr = (expressions, equation) => {
@@ -338,13 +343,13 @@ function attachDimLabelEvents(inst, el, c, world) {
     };
     const plainNumberRe = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?\s*$/i;
     let numeric = null;
-    if (plainNumberRe.test(v)) {
-      numeric = parseFloat(v);
+    if (plainNumberRe.test(input)) {
+      numeric = parseFloat(input);
       c.valueExpr = undefined;
     } else {
-      numeric = runExpr(exprSrc, v);
+      numeric = runExpr(exprSrc, input);
       if (numeric == null || !Number.isFinite(numeric)) return;
-      c.valueExpr = String(v);
+      c.valueExpr = input;
     }
     c.value = Number(numeric);
     try { inst._solver.solveSketch('full'); } catch { }

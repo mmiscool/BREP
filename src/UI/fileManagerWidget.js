@@ -258,7 +258,7 @@ export class FileManagerWidget {
     // Load PMI views into PartHistory before serializing
     try {
       this.viewer.partHistory.loadPMIViewsFromLocalStorage(name);
-      console.log('[FileManagerWidget] Loaded PMI views for model:', name, 'found views:', this.viewer.partHistory.pmiViews?.length || 0);
+      //console.log('[FileManagerWidget] Loaded PMI views for model:', name, 'found views:', this.viewer.partHistory.pmiViews?.length || 0);
     } catch (e) {
       console.warn('[FileManagerWidget] Failed to load PMI views:', e);
     }

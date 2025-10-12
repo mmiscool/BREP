@@ -1,6 +1,6 @@
 import { Solid } from './BetterSolid.js';
 import * as THREE from 'three';
-const DEBUG = true;
+const DEBUG = false;
 
 // Debug helper for sweep/pathAlign. Enable by setting window.BREP_DEBUG_SWEEP = 1
 // or adding '?sweepDebug=1' to the URL. Keeps logs grouped and throttled.
