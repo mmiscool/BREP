@@ -43,12 +43,6 @@ export const testFunctions = [
 
 ];
 
-testFunctions.push();
-testFunctions.push();
-testFunctions.push();
-testFunctions.push();
-testFunctions.push();
-
 // Dynamically register tests to import part files from src/tests/partFiles (Node only)
 async function registerPartFileTests() {
     if (!(typeof process !== 'undefined' && process.versions && process.versions.node)) return;
@@ -125,13 +119,16 @@ export async function runTests(partHistory = new PartHistory(), callbackToRunBet
     for (const testFunction of testFunctions) {
         const isLastTest = testFunction === testFunctions[testFunctions.length - 1];
         await partHistory.reset();
-        await partHistory.reset();
 
         if (testFunction.resetHistory) partHistory.features = [];
 
         await runSingleTest(testFunction, partHistory);
 
-        if (typeof window !== "undefined") { await callbackToRunBetweenTests(partHistory, isLastTest); } else {
+        if (typeof window !== "undefined") {
+            if (typeof callbackToRunBetweenTests === 'function') {
+                await callbackToRunBetweenTests(partHistory, isLastTest);
+            }
+        } else {
             // run each test and export the results to a folder ./tests/results/<testFunction name>/
             const testName = testFunction.test.name;
             const exportPath = `./tests/results/${testName}/`;
@@ -219,7 +216,6 @@ export async function runSingleTest(testFunction, partHistory = new PartHistory(
             throw e;
         }
     }
-    console.log(partHistory);
     // sleep for 1 second to allow any async operations to complete
     await new Promise(resolve => setTimeout(resolve, 1000));
 }

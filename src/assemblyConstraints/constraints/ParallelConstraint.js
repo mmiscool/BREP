@@ -83,7 +83,7 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
       this.#updateNormalDebug(context, infoA, infoB);
     }
 
-    if (infoA && infoB) {
+    if (context.debugMode && infoA && infoB) {
       const dirA = infoA.direction;
       const dirB = infoB.direction;
       const angle = typeof result.angle === 'number' ? result.angle : null;

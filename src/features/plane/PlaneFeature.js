@@ -45,8 +45,6 @@ export class PlaneFeature {
         this.persistentData = {};
     }
     async run() {
-        console.log(this.inputParams.featureID, "is the featureID");
-
         const planeMesh = await this.createPlaneMesh();
         const added = planeMesh ? [planeMesh] : [];
         return { added, removed: [] };

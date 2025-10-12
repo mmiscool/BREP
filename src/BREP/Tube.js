@@ -4,14 +4,12 @@ import * as THREE from 'three';
 const EPS = 1e-9;
 const EPS_SQ = EPS * EPS;
 const DEFAULT_SEGMENTS = 32;
-const CORNER_STEP_RAD = Math.PI / 12; // ~15° per step
-const MIN_CORNER_ANGLE_RAD = Math.PI / 180 * 5; // ignore bends under ~5° to keep curves smooth
+const DEBUG_LOGS = false;
 
 const tmpVecA = new THREE.Vector3();
 const tmpVecB = new THREE.Vector3();
 const tmpVecC = new THREE.Vector3();
 const tmpNormal = new THREE.Vector3();
-const tmpMatrix = new THREE.Matrix4();
 
 function toVector3Array(points) {
   const out = [];
@@ -120,11 +118,11 @@ function calculateTubeIntersectionTrimming(points, tubeRadius) {
   return dedupeVectors(out, 1e-6);
 }
 
-function smoothPath(points, cornerRadius, tubeRadius) {
+function smoothPath(points, tubeRadius) {
   // Just apply intersection trimming and return - no corner "smoothing" for now
   try {
     const trimmedPoints = calculateTubeIntersectionTrimming(points, tubeRadius);
-    console.log(`smoothPath: Original ${points.length} -> Trimmed ${trimmedPoints.length}`);
+    if (DEBUG_LOGS) console.log(`smoothPath: Original ${points.length} -> Trimmed ${trimmedPoints.length}`);
     
     if (!Array.isArray(trimmedPoints) || trimmedPoints.length < 2) {
       console.warn('smoothPath: Insufficient points after trimming');
@@ -375,11 +373,6 @@ function addTriangleOriented(solid, name, a, b, c, outwardDir) {
   }
 }
 
-function addQuad(solid, name, a, b, c, d) {
-  solid.addTriangle(name, a, b, c);
-  solid.addTriangle(name, a, c, d);
-}
-
 function addQuadOriented(solid, name, a, b, c, d, outwardDir) {
   addTriangleOriented(solid, name, a, b, c, outwardDir);
   addTriangleOriented(solid, name, a, c, d, outwardDir);
@@ -423,7 +416,7 @@ export class TubeSolid extends Solid {
     const segs = Math.max(8, Math.floor(Number(resolution) || DEFAULT_SEGMENTS));
 
     const vecPoints = dedupeVectors(toVector3Array(points));
-    console.log(`Tube generation: Input points: ${points.length}, Valid points: ${vecPoints.length}`);
+    if (DEBUG_LOGS) console.log(`Tube generation: Input points: ${points.length}, Valid points: ${vecPoints.length}`);
     
     if (vecPoints.length < 2) {
       throw new Error(`Tube requires at least two distinct path points. Got ${vecPoints.length} valid points from ${points.length} input points.`);
@@ -432,8 +425,8 @@ export class TubeSolid extends Solid {
     // Apply path smoothing with proper intersection handling
     let smoothed;
     try {
-      smoothed = smoothPath(vecPoints, radius, radius);
-      console.log(`Tube generation: Smoothed points: ${smoothed.length}`);
+      smoothed = smoothPath(vecPoints, radius);
+      if (DEBUG_LOGS) console.log(`Tube generation: Smoothed points: ${smoothed.length}`);
     } catch (error) {
       console.error('Error in smoothPath:', error);
       throw new Error(`Path smoothing failed: ${error.message}`);
@@ -453,7 +446,7 @@ export class TubeSolid extends Solid {
       if (closureDistSq < tolerance * tolerance) {
         // Remove the duplicate last point
         smoothed = smoothed.slice(0, -1);
-        console.log(`Tube generation: Removed duplicate closure point, now ${smoothed.length} points`);
+        if (DEBUG_LOGS) console.log(`Tube generation: Removed duplicate closure point, now ${smoothed.length} points`);
       }
     }
 

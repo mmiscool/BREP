@@ -9,7 +9,6 @@ import { localStorage as LS } from './localStorageShim.js';
 import { MetadataManager } from './metadataManager.js';
 import { AssemblyConstraintRegistry } from './assemblyConstraints/AssemblyConstraintRegistry.js';
 import { AssemblyConstraintHistory } from './assemblyConstraints/AssemblyConstraintHistory.js';
-import { add } from 'three/tsl';
 import { AssemblyComponentFeature } from './features/assemblyComponent/AssemblyComponentFeature.js';
 import { getComponentRecord, base64ToUint8Array } from './services/componentLibrary.js';
 
@@ -47,8 +46,7 @@ export class PartHistory {
       }
       return result;
     } catch (err) {
-      try { console.log(fnBody); } catch { }
-      try { console.log('Code execution failed:', err?.message || err); } catch { }
+      try { console.warn('[PartHistory] evaluateExpression failed:', err?.message || err); } catch { }
       return null;
     }
   }
@@ -158,11 +156,6 @@ export class PartHistory {
       // if the inputParams have changed since last run, mark dirty
       if (JSON.stringify(feature.inputParams) !== feature.lastRunInputParams) feature.dirty = true;
 
-
-
-
-      console.log("this is our feature", feature);
-
       if (feature.dirty) {
         // if this one is dirty, next one should be too (conservative)
         try { nextFeature.dirty = true; } catch { }
@@ -170,8 +163,6 @@ export class PartHistory {
         // Record the current input params as lastRunInputParams
         feature.lastRunInputParams = JSON.stringify(feature.inputParams);
         instance.inputParams = await this.sanitizeInputParams(FeatureClass.inputParamsSchema, feature.inputParams);
-
-        console.log("input params after sanitization:", instance.inputParams);
 
 
         const t0 = nowMs();
@@ -192,8 +183,6 @@ export class PartHistory {
 
           feature.lastRun = { ok: true, startedAt: t0, endedAt: t1, durationMs: dur, error: null };
           feature.dirty = false;
-
-          try { console.log(`[PartHistory] ${feature.type} #${feature.inputParams.featureID} finished in ${dur} ms`); } catch { }
         } catch (e) {
           const t1 = nowMs();
           const dur = Math.max(0, Math.round(t1 - t0));
@@ -206,7 +195,6 @@ export class PartHistory {
           return;
         }
       } else {
-        console.log(`skipping feature run; input params unchanged for featureID=${feature.inputParams.featureID}`);
       }
 
       await this.applyFeatureEffects(feature.effects, feature.inputParams.featureID);
@@ -223,7 +211,6 @@ export class PartHistory {
 
     const endTime = Date.now();
     const totalDuration = endTime - startTime;
-    console.log(`[PartHistory] runHistory completed in ${totalDuration} ms for ${this.features.length} features.`);
     // Do not clear currentHistoryStepId here. Keeping it preserves the UX of
     // "stop at the currently expanded feature" across subsequent runs. The
     // UI will explicitly clear it when no section is expanded.
@@ -263,7 +250,6 @@ export class PartHistory {
       await this._safeRemove(r);
     }
 
-    console.log("effects", effects, "added:", added, "removed:", removed);
     for (const a of added) {
       if (a && typeof a === 'object') {
         try { await a.visualize(); } catch { }
@@ -271,7 +257,6 @@ export class PartHistory {
         await this.scene.add(a);
         // make sure the flag for removal is cleared
         try { a.__removeFlag = false; } catch { }
-        console.log("Added to scene:", a);
         this._attachSelectionHandlers(a);
       }
     }
@@ -369,7 +354,6 @@ export class PartHistory {
   async fromJSON(jsonString) {
     const importData = JSON.parse(jsonString);
     this.features = importData.features;
-    console.log(JSON.stringify(this.features, null, 2));
     this.idCounter = importData.idCounter;
     this.expressions = importData.expressions || "";
     this.pmiViews = importData.pmiViews || [];
@@ -715,7 +699,6 @@ export class PartHistory {
       }
     }
 
-    console.log("Sanitized input params:", sanitized);
     return sanitized;
   }
 }
