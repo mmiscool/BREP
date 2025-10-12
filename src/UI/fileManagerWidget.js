@@ -255,14 +255,6 @@ export class FileManagerWidget {
       this.nameInput.value = name;
     }
 
-    // Load PMI views into PartHistory before serializing
-    try {
-      this.viewer.partHistory.loadPMIViewsFromLocalStorage(name);
-      //console.log('[FileManagerWidget] Loaded PMI views for model:', name, 'found views:', this.viewer.partHistory.pmiViews?.length || 0);
-    } catch (e) {
-      console.warn('[FileManagerWidget] Failed to load PMI views:', e);
-    }
-
     // Get feature history JSON (now includes PMI views) and embed into a 3MF archive as Metadata/featureHistory.json
     const jsonString = await this.viewer.partHistory.toJSON();
     let additionalFiles = undefined;
@@ -328,24 +320,13 @@ export class FileManagerWidget {
             // Sync Expressions UI with imported code
             try { if (this.viewer?.expressionsManager?.textArea) this.viewer.expressionsManager.textArea.value = this.viewer.partHistory.expressions || ''; } catch {}
             
-            // Sync PMI views from PartHistory to localStorage for widget compatibility
+            // Refresh PMI views widget from PartHistory
             try {
-              this.viewer.partHistory.savePMIViewsToLocalStorage(name);
-              console.log('[FileManagerWidget] Restored', this.viewer.partHistory.pmiViews?.length || 0, 'PMI views for model:', name);
-              // Refresh PMI views UI if it exists - trigger after model name is set
-              setTimeout(() => {
-                try { 
-                  if (this.viewer?.pmiViewsWidget) {
-                    // Force refresh the PMI views widget by triggering model change
-                    this.viewer.pmiViewsWidget.currentModelName = name;
-                    this.viewer.pmiViewsWidget.views = this.viewer.pmiViewsWidget._loadViewsFor(name);
-                    this.viewer.pmiViewsWidget._renderList?.();
-                  }
-                } catch {}
-              }, 100);
-            } catch (e) {
-              console.warn('[FileManagerWidget] Failed to restore PMI views:', e);
-            }
+              if (this.viewer?.pmiViewsWidget) {
+                this.viewer.pmiViewsWidget.refreshFromHistory?.();
+                this.viewer.pmiViewsWidget._renderList?.();
+              }
+            } catch { }
 
             if (seq !== this._loadSeq) return;
             this.currentName = name;

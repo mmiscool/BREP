@@ -5,12 +5,12 @@ import * as THREE from 'three';
 // Feature classes live in their own files; registry wires them up.
 import { FeatureRegistry } from './FeatureRegistry.js';
 import { SelectionFilter } from './UI/SelectionFilter.js';
-import { localStorage as LS } from './localStorageShim.js';
 import { MetadataManager } from './metadataManager.js';
 import { AssemblyConstraintRegistry } from './assemblyConstraints/AssemblyConstraintRegistry.js';
 import { AssemblyConstraintHistory } from './assemblyConstraints/AssemblyConstraintHistory.js';
 import { AssemblyComponentFeature } from './features/assemblyComponent/AssemblyComponentFeature.js';
 import { getComponentRecord, base64ToUint8Array } from './services/componentLibrary.js';
+import { PMIViewsManager } from './pmi/PMIViewsManager.js';
 
 
 const debug = false;
@@ -27,7 +27,7 @@ export class PartHistory {
     this.callbacks = {};
     this.currentHistoryStepId = null;
     this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
-    this.pmiViews = [];
+    this.pmiViewsManager = new PMIViewsManager(this);
     this.metadataManager = new MetadataManager
     if (this.assemblyConstraintHistory) {
       this.assemblyConstraintHistory.clear();
@@ -69,7 +69,7 @@ export class PartHistory {
   async reset() {
     this.features = [];
     this.idCounter = 0;
-    this.pmiViews = [];
+    this.pmiViewsManager.reset();
     this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
     // Reset MetadataManager
     this.metadataManager = new MetadataManager();
@@ -85,7 +85,6 @@ export class PartHistory {
       this.assemblyConstraintHistory.clear();
       this.assemblyConstraintHistory.setPartHistory(this);
     }
-
 
     // sleep for a short duration to allow scene updates to complete
     //await new Promise(resolve => setTimeout(resolve, 1000));
@@ -400,12 +399,13 @@ export class PartHistory {
       persistentData: f.persistentData,
       timestamp: f.timestamp || null,
     }));
+    const pmiViews = this.pmiViewsManager.toSerializable();
 
     return JSON.stringify({
       features,
       idCounter: this.idCounter,
       expressions: this.expressions,
-      pmiViews: this.pmiViews || [],
+      pmiViews,
       metadata: this.metadataManager.metadata,
       assemblyConstraints: constraintsSnapshot.constraints,
       assemblyConstraintIdCounter: constraintsSnapshot.idCounter,
@@ -417,7 +417,7 @@ export class PartHistory {
     this.features = importData.features;
     this.idCounter = importData.idCounter;
     this.expressions = importData.expressions || "";
-    this.pmiViews = importData.pmiViews || [];
+    this.pmiViewsManager.setViews(importData.pmiViews || []);
     this.metadataManager.metadata = importData.metadata || {};
 
     if (this.assemblyConstraintHistory) {
@@ -595,38 +595,6 @@ export class PartHistory {
     }
 
     return { updatedCount, reran };
-  }
-
-
-
-  savePMIViewsToLocalStorage(modelName) {
-    try {
-      const key = '__BREP_PMI_VIEWS__:' + encodeURIComponent(modelName || '__DEFAULT__');
-      const validViews = Array.isArray(this.pmiViews) ? this.pmiViews.filter(Boolean) : [];
-      LS.setItem(key, JSON.stringify(validViews));
-
-      // Trigger storage event to notify PMI Views widget
-      try {
-        window.dispatchEvent(new StorageEvent('storage', {
-          key: key,
-          oldValue: null,
-          newValue: JSON.stringify(validViews),
-          storageArea: localStorage
-        }));
-      } catch {
-        // Fallback for browsers that don't support StorageEvent constructor
-        try {
-          const event = new CustomEvent('storage', {
-            detail: {
-              key: key,
-              oldValue: null,
-              newValue: JSON.stringify(validViews)
-            }
-          });
-          window.dispatchEvent(event);
-        } catch { }
-      }
-    } catch { }
   }
 
   async newFeature(featureType) {

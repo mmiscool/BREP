@@ -67,14 +67,6 @@ export function createSaveButton(viewer) {
     } catch { }
     // Fallback: quick autosave to localStorage shim
     try {
-      // Load PMI views into PartHistory before serializing
-      try {
-        viewer.partHistory.loadPMIViewsFromLocalStorage('autosave');
-        console.log('[SaveButton] Loaded PMI views for autosave, found views:', viewer.partHistory.pmiViews?.length || 0);
-      } catch (e) {
-        console.warn('[SaveButton] Failed to load PMI views:', e);
-      }
-
       // Produce a compact 3MF that embeds feature history (now includes PMI views) only
       const json = await viewer?.partHistory?.toJSON?.();
       let additionalFiles = undefined;

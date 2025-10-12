@@ -100,22 +100,17 @@ export function createImportButton(viewer) {
                 // Sync Expressions UI with imported code
                 try { if (viewer?.expressionsManager?.textArea) viewer.expressionsManager.textArea.value = viewer.partHistory.expressions || ''; } catch {}
 
-                // Sync PMI views from PartHistory to localStorage for widget compatibility
+                // Refresh PMI views UI if it exists
                 try {
-                  const importName = file.name.replace(/\.[^/.]+$/, '') || '__DEFAULT__';
-                  viewer.partHistory.savePMIViewsToLocalStorage(importName);
-                  console.log('[ImportButton] Restored', viewer.partHistory.pmiViews?.length || 0, 'PMI views for model:', importName);
-                  // Refresh PMI views UI if it exists
-                try { 
-                  if (viewer?.pmiViewsWidget) {
-                    viewer.pmiViewsWidget.currentModelName = importName;
-                    viewer.pmiViewsWidget.views = viewer.partHistory.pmiViews || [];
-                    viewer.pmiViewsWidget._renderList?.();
-                  }
-                } catch {}
-              } catch (e) {
-                console.warn('[ImportButton] Failed to restore PMI views:', e);
-              }
+                  setTimeout(() => {
+                    try {
+                      if (viewer?.pmiViewsWidget) {
+                        viewer.pmiViewsWidget.refreshFromHistory?.();
+                        viewer.pmiViewsWidget._renderList?.();
+                      }
+                    } catch { }
+                  }, 100);
+                } catch { }
 
               await viewer?.partHistory?.runHistory?.();
               try { viewer?.zoomToFit?.(1.1); } catch {}

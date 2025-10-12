@@ -23,7 +23,20 @@ export class PMIMode {
    */
   constructor(viewer, viewEntry, viewIndex, pmiWidget) {
     this.viewer = viewer;
-    this.viewEntry = viewEntry || { name: 'View', camera: {}, annotations: [] };
+    this.viewEntry = (viewEntry && typeof viewEntry === 'object')
+      ? viewEntry
+      : { viewName: 'View', name: 'View', camera: {}, annotations: [] };
+    if (!Array.isArray(this.viewEntry.annotations)) {
+      this.viewEntry.annotations = [];
+    }
+    const resolvedName = typeof this.viewEntry.viewName === 'string'
+      ? this.viewEntry.viewName
+      : (typeof this.viewEntry.name === 'string' ? this.viewEntry.name : 'View');
+    this.viewEntry.viewName = String(resolvedName || 'View').trim() || 'View';
+    this.viewEntry.name = this.viewEntry.viewName;
+    if (!this.viewEntry.camera || typeof this.viewEntry.camera !== 'object') {
+      this.viewEntry.camera = {};
+    }
     this.viewIndex = viewIndex;
     this.pmiWidget = pmiWidget;
 
@@ -82,7 +95,7 @@ export class PMIMode {
 
     // Build annotation group and render existing annotations
     this._annGroup = new THREE.Group();
-    this._annGroup.name = `__PMI_ANN__:${this.viewEntry?.name || 'view'}`;
+    this._annGroup.name = `__PMI_ANN__:${this.#getViewDisplayName('view')}`;
     this._annGroup.renderOrder = 9995;
     try { v.scene.add(this._annGroup); } catch { }
     this._annotationsDirty = true; // Flag to track when rebuild is needed
@@ -226,14 +239,41 @@ export class PMIMode {
         return entry;
       });
       this.viewEntry.annotations = JSON.parse(JSON.stringify(serializedAnnotations));
-      // Ensure the widget's views array references the same entry
-      if (this.pmiWidget && Number.isFinite(this.viewIndex) && Array.isArray(this.pmiWidget.views)) {
-        this.pmiWidget.views[this.viewIndex] = this.viewEntry;
-      }
-      // Save to storage
-      this.pmiWidget?._persist?.();
-      if (refreshList) this.pmiWidget?._renderList?.();
+
+      this.#notifyViewMutated(refreshList);
     } catch { /* ignore */ }
+  }
+
+  #notifyViewMutated(refreshList = false) {
+    let updated = null;
+    try {
+      const manager = this.viewer?.partHistory?.pmiViewsManager;
+      if (manager) {
+        if (Number.isFinite(this.viewIndex) && typeof manager.updateView === 'function') {
+          updated = manager.updateView(this.viewIndex, this.viewEntry);
+        }
+        if (!updated && typeof manager.notifyChanged === 'function') {
+          manager.notifyChanged();
+        }
+      }
+    } catch { }
+
+    if (!updated && this.pmiWidget && Number.isFinite(this.viewIndex) && Array.isArray(this.pmiWidget.views)) {
+      this.pmiWidget.views[this.viewIndex] = this.viewEntry;
+    }
+
+    if (refreshList) {
+      try { this.pmiWidget?.refreshFromHistory?.(); } catch { }
+      try { this.pmiWidget?._renderList?.(); } catch { }
+    }
+  }
+
+  #getViewDisplayName(fallback = 'View') {
+    const entry = this.viewEntry;
+    if (!entry || typeof entry !== 'object') return fallback;
+    const nm = typeof entry.viewName === 'string' ? entry.viewName : entry.name;
+    const trimmed = String(nm || '').trim();
+    return trimmed || fallback;
   }
 
   // --- UI construction ---
@@ -381,7 +421,7 @@ export class PMIMode {
       // Remove PMI sections from the accordion
       const sectionsToRemove = [
         'PMI Views (PMI Mode)',
-        'Annotations — ' + (this.viewEntry?.name || ''),
+        'Annotations — ' + this.#getViewDisplayName(''),
         'View Settings',
         'Tool Options'
       ];
@@ -557,7 +597,7 @@ export class PMIMode {
       this._annListEl = document.createElement('div');
       this._annListEl.className = 'pmi-ann-list';
 
-      const annotationsPromise = this._acc.addSection(`Annotations — ${this.viewEntry?.name || ''}`).then((sec) => {
+      const annotationsPromise = this._acc.addSection(`Annotations — ${this.#getViewDisplayName('')}`).then((sec) => {
         try {
           console.log('Created annotations section:', sec);
           // Container for the section content
@@ -998,7 +1038,7 @@ export class PMIMode {
     // View name input
     const nameInput = document.createElement('input');
     nameInput.type = 'text';
-    nameInput.value = this.viewEntry?.name || '';
+    nameInput.value = this.#getViewDisplayName('');
     nameInput.placeholder = 'View name';
     nameInput.style.flex = '1 1 auto';
     nameInput.style.background = '#0b0e14';
@@ -1007,11 +1047,13 @@ export class PMIMode {
     nameInput.style.borderRadius = '6px';
     nameInput.style.padding = '4px 6px';
     nameInput.addEventListener('change', () => {
-      if (this.viewEntry) {
-        this.viewEntry.name = nameInput.value.trim() || 'View';
-        // Update accordion section title
-        this.#updateAnnotationsSectionTitle();
-      }
+      if (!this.viewEntry) return;
+      const finalName = nameInput.value.trim() || 'View';
+      this.viewEntry.viewName = finalName;
+      this.viewEntry.name = finalName;
+      // Update accordion section title
+      this.#updateAnnotationsSectionTitle();
+      this.#notifyViewMutated(true);
     });
     nameInput.className = 'pmi-input';
     el.appendChild(makeVField('View Name', nameInput));
@@ -1031,7 +1073,7 @@ export class PMIMode {
         // Persist into the view entry
         if (!this.viewEntry.viewSettings) this.viewEntry.viewSettings = {};
         this.viewEntry.viewSettings.wireframe = on;
-        this.pmiWidget?._persist?.();
+        this.#notifyViewMutated(true);
       } catch { }
     });
 
@@ -1084,7 +1126,7 @@ export class PMIMode {
         sections.forEach(header => {
           const titleEl = header.querySelector('.accordion-title');
           if (titleEl && titleEl.textContent.includes('Annotations')) {
-            titleEl.textContent = `Annotations — ${this.viewEntry?.name || ''}`;
+            titleEl.textContent = `Annotations — ${this.#getViewDisplayName('')}`;
           }
         });
       }
@@ -1159,11 +1201,7 @@ export class PMIMode {
       console.log('[PMI Camera] Update Camera -> captured snapshot', JSON.stringify(snap, null, 2));
       this.#logCameraState('Update Camera -> actual camera state (pre-save)', camera, ctrls);
       this.viewEntry.camera = snap;
-
-      // Persist the changes if we have a PMI widget
-      if (this.pmiWidget?._persist) {
-        this.pmiWidget._persist();
-      }
+      this.#notifyViewMutated();
 
       // Visual feedback - briefly flash the button
       const btn = btnEl || document.querySelector('.pmi-btn');

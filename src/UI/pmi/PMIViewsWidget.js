@@ -1,9 +1,8 @@
 // PMIViewsWidget.js
 // ES6, no frameworks. Provides a simple list of saved PMI views
 // (camera snapshots) with capture, rename, apply, and delete.
-// Views are persisted per model via the localStorage shim.
+// Views are persisted with the PartHistory instance.
 
-import { localStorage as LS } from '../../localStorageShim.js';
 import { captureCameraSnapshot, applyCameraSnapshot, adjustOrthographicFrustum } from './annUtils.js';
 
 export class PMIViewsWidget {
@@ -13,76 +12,52 @@ export class PMIViewsWidget {
     this.uiElement.className = 'pmi-views-root';
     this._ensureStyles();
 
-    this._prefix = '__BREP_PMI_VIEWS__:';
-    this._lastModelKey = '__BREP_MODELS_LASTNAME__';
-    this.currentModelName = this._getCurrentModelName();
-    this.views = this._loadViewsFor(this.currentModelName);
+    this.views = [];
+    this._onHistoryViewsChanged = (views) => {
+      this.views = Array.isArray(views) ? views : this._getViewsFromHistory();
+      this._renderList();
+    };
 
     this._buildUI();
+    this.refreshFromHistory();
     this._renderList();
 
-    // Re-sync after LS shim hydrates, to reflect any persisted views
-    try { Promise.resolve(LS.ready()).then(() => { try { this.views = this._loadViewsFor(this.currentModelName); this._renderList(); } catch {} }); } catch {}
-
-    // React to model changes via storage events (FileManager updates __BREP_MODELS_LASTNAME__)
     try {
-      this._onStorage = (ev) => {
-        try {
-          const key = (ev && (ev.key ?? (ev.detail && ev.detail.key))) || '';
-          if (!key) return;
-          if (key === this._lastModelKey) {
-            const nm = this._getCurrentModelName();
-            if (nm !== this.currentModelName) {
-              this.currentModelName = nm;
-              this.views = this._loadViewsFor(this.currentModelName);
-              this._renderList();
-            }
-          } else if (key.startsWith(this._prefix)) {
-            // If current model's views changed elsewhere, refresh
-            const enc = key.slice(this._prefix.length);
-            const name = decodeURIComponent(enc);
-            if (name === (this.currentModelName || '__DEFAULT__')) {
-              this.views = this._loadViewsFor(this.currentModelName);
-              this._renderList();
-            }
-          }
-        } catch { /* ignore */ }
-      };
-      window.addEventListener('storage', this._onStorage);
-    } catch { /* ignore */ }
+      const manager = this.viewer?.partHistory?.pmiViewsManager;
+      this._removeHistoryListener = manager ? manager.addListener(this._onHistoryViewsChanged) : null;
+    } catch {
+      this._removeHistoryListener = null;
+    }
   }
 
   dispose() {
-    try { window.removeEventListener('storage', this._onStorage); } catch {}
+    if (typeof this._removeHistoryListener === 'function') {
+      try { this._removeHistoryListener(); } catch {}
+    }
+    this._removeHistoryListener = null;
   }
 
-  // ---- Storage helpers ----
-  _safeKeyName(name) {
-    const n = String(name || '').trim();
-    return n ? n : '__DEFAULT__';
+  refreshFromHistory() {
+    this.views = this._getViewsFromHistory();
   }
-  _modelKey(name) {
-    return this._prefix + encodeURIComponent(this._safeKeyName(name));
-  }
-  _getCurrentModelName() {
+
+  _getViewsFromHistory() {
     try {
-      const fmName = this.viewer?.fileManagerWidget?.currentName || '';
-      return this._safeKeyName(fmName);
-    } catch { return '__DEFAULT__'; }
+      const manager = this.viewer?.partHistory?.pmiViewsManager;
+      if (!manager || typeof manager.getViews !== 'function') return [];
+      const views = manager.getViews();
+      return Array.isArray(views) ? views : [];
+    } catch {
+      return [];
+    }
   }
-  _loadViewsFor(modelName) {
-    try {
-      const raw = LS.getItem(this._modelKey(modelName));
-      if (!raw) return [];
-      const arr = JSON.parse(raw);
-      if (!Array.isArray(arr)) return [];
-      return arr.filter(Boolean);
-    } catch { return []; }
-  }
-  _saveViewsFor(modelName, views) {
-    try {
-      LS.setItem(this._modelKey(modelName), JSON.stringify(Array.isArray(views) ? views : []));
-    } catch { /* ignore */ }
+
+  _resolveViewName(view, index) {
+    const fallback = `View ${index + 1}`;
+    if (!view || typeof view !== 'object') return fallback;
+    const name = typeof view.viewName === 'string' ? view.viewName : (typeof view.name === 'string' ? view.name : '');
+    const trimmed = String(name || '').trim();
+    return trimmed || fallback;
   }
 
   // ---- UI ----
@@ -145,7 +120,7 @@ export class PMIViewsWidget {
       row.className = 'pmi-row';
 
       // View name displayed as clickable text
-      const viewName = String(v.name || `View ${idx + 1}`);
+      const viewName = this._resolveViewName(v, idx);
       const nameButton = document.createElement('button');
       nameButton.type = 'button';
       nameButton.className = 'pmi-name pmi-name-btn pmi-grow';
@@ -187,10 +162,20 @@ export class PMIViewsWidget {
             const fallback = viewName;
             const newName = nameInput.value.trim();
             const finalName = newName || fallback;
-            if (finalName !== v.name) {
-              v.name = finalName;
+            if (finalName !== viewName) {
+              const updateFn = (entry) => {
+                if (!entry || typeof entry !== 'object') return entry;
+                entry.viewName = finalName;
+                entry.name = finalName;
+                return entry;
+              };
+              const manager = this.viewer?.partHistory?.pmiViewsManager;
+              const updated = manager?.updateView?.(idx, updateFn);
+              if (!updated) {
+                updateFn(v);
+                this.refreshFromHistory();
+              }
             }
-            this._persist();
           }
           this._renderList();
         };
@@ -215,8 +200,12 @@ export class PMIViewsWidget {
       delBtn.title = 'Delete this view';
       delBtn.textContent = '×';
       delBtn.addEventListener('click', () => {
-        this.views.splice(idx, 1);
-        this._persist();
+        const manager = this.viewer?.partHistory?.pmiViewsManager;
+        const removed = manager?.removeView?.(idx);
+        if (!removed) {
+          this.views.splice(idx, 1);
+          this.refreshFromHistory();
+        }
         this._renderList();
       });
       row.appendChild(delBtn);
@@ -242,17 +231,24 @@ export class PMIViewsWidget {
       const cameraSnap = captureCameraSnapshot(cam, { controls: this.viewer?.controls });
       if (!cameraSnap) return;
       const nameRaw = this.newNameInput?.value || '';
-      const name = String(nameRaw || '').trim() || `View ${this.views.length + 1}`;
+      const fallbackIndex = Array.isArray(this.views) ? this.views.length : 0;
+      const name = String(nameRaw || '').trim() || `View ${fallbackIndex + 1}`;
       const snap = {
+        viewName: name,
         name,
         camera: cameraSnap,
         // Persist basic view settings (extensible). Currently only wireframe render mode.
         viewSettings: {
           wireframe: this._detectWireframe(v?.scene)
-        }
+        },
+        annotations: [],
       };
-      this.views.push(snap);
-      this._persist();
+      const manager = this.viewer?.partHistory?.pmiViewsManager;
+      const added = manager?.addView?.(snap);
+      if (!added) {
+        this.views.push(snap);
+        this.refreshFromHistory();
+      }
       this.newNameInput.value = '';
       this._renderList();
     } catch { /* ignore */ }
@@ -366,7 +362,4 @@ export class PMIViewsWidget {
     } catch { /* ignore */ }
   }
 
-  _persist() {
-    this._saveViewsFor(this.currentModelName, this.views);
-  }
 }
