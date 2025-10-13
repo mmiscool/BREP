@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { BaseAnnotation } from '../BaseAnnotation.js';
 
 const inputParamsSchema = {
-  annotationID: {
+  id: {
     type: "string",
     default_value: null,
     hint: "unique identifier for the note",
@@ -27,11 +27,18 @@ const inputParamsSchema = {
 };
 
 export class NoteAnnotation extends BaseAnnotation {
+  static entityType = 'note';
   static type = 'note';
+  static shortName = 'NOTE';
+  static longName = 'Note';
   static title = 'Note';
-  static featureShortName = "note";
-  static featureName = "Note";
+  static featureShortName = 'note';
+  static featureName = 'Note';
   static inputParamsSchema = inputParamsSchema;
+
+  constructor(opts = {}) {
+    super(opts);
+  }
 
   async run(renderingContext) {
     const { pmimode, group, idx, ctx } = renderingContext;

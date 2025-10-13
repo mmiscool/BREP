@@ -1,317 +1,314 @@
 import { annotationRegistry } from './AnnotationRegistry.js';
 import { deepClone } from '../../utils/deepClone.js';
 import { normalizeTypeString } from '../../utils/normalizeTypeString.js';
+import { HistoryCollectionBase } from '../../core/entities/HistoryCollectionBase.js';
 
-const RESERVED_INPUT_KEYS = new Set(['type', 'persistentData', '__open', '__legacy']);
+const RESERVED_INPUT_KEYS = new Set(['type', 'persistentData', '__open']);
+const DEFAULT_TYPE = 'annotation';
 
-export class AnnotationHistory {
+export class AnnotationHistory extends HistoryCollectionBase {
   constructor(pmimode = null) {
-    this.pmimode = pmimode;
-    this.annotations = [];
-    this.idCounter = 0;
+    super({ viewer: pmimode?.viewer || null });
+    this.pmimode = pmimode || null;
+    this.#registerAvailableAnnotations();
   }
 
   setPMIMode(pmimode) {
-    this.pmimode = pmimode;
+    this.pmimode = pmimode || null;
+    if (pmimode?.viewer) {
+      this.viewer = pmimode.viewer;
+    }
   }
 
   load(serializedAnnotations) {
-    this.annotations = [];
-    if (!Array.isArray(serializedAnnotations)) {
-      this.idCounter = 0;
-      return;
+    this.entries = [];
+    this._idCounter = 0;
+    const list = Array.isArray(serializedAnnotations) ? serializedAnnotations : [];
+    for (const raw of list) {
+      const entity = this.#hydrateEntity(raw);
+      if (!entity) continue;
+      this.entries.push(entity);
+      this.#bumpIdCounterFrom(entity);
+      this.#linkInputParams(entity);
     }
-    for (const raw of serializedAnnotations) {
-      const entry = this.#normalizeEntry(raw);
-      this.annotations.push(entry);
-    }
-    this.#recalculateIdCounter();
+    this.notifyListeners({ reason: 'load', history: this });
+    return this.entries;
   }
 
   toSerializable() {
-    return this.annotations.map((entry) => this.#serializeEntry(entry));
+    return this.entries.map((entity) => {
+      const open = Boolean(entity.runtimeAttributes?.__open);
+      const input = deepClone(entity.inputParams || {});
+      if (input && typeof input === 'object') {
+        delete input.persistentData;
+        delete input.__open;
+        delete input.__entityRef;
+      }
+      return {
+        type: entity.type || DEFAULT_TYPE,
+        inputParams: input,
+        persistentData: deepClone(entity.persistentData || {}),
+        __open: open || undefined,
+      };
+    });
   }
 
   get size() {
-    return this.annotations.length;
+    return this.entries.length;
   }
 
   getEntries() {
-    return this.annotations.slice();
+    return this.entries.slice();
   }
 
   getEntry(index) {
-    if (index < 0 || index >= this.annotations.length) return null;
-    return this.annotations[index];
-  }
-
-  getAnnotationForUI(index) {
-    const entry = this.getEntry(index);
-    if (!entry) return null;
-    return this.#wrapLegacy(entry);
-  }
-
-  getAnnotationsForUI() {
-    return this.annotations.map((entry) => this.#wrapLegacy(entry));
-  }
-
-  findEntries(predicate) {
-    if (typeof predicate !== 'function') return [];
-    const result = [];
-    for (let i = 0; i < this.annotations.length; i++) {
-      const entry = this.annotations[i];
-      if (predicate(entry, i)) {
-        result.push(entry);
-      }
-    }
-    return result;
+    if (!Number.isInteger(index) || index < 0 || index >= this.entries.length) return null;
+    return this.entries[index] || null;
   }
 
   createAnnotation(type, initialData = null) {
-    const handler = this.#resolveHandler(type);
-    const schemaDefaults = this.#defaultsFromSchema(handler, this.pmimode);
-    let defaults = { ...schemaDefaults };
-    try {
-      if (initialData && typeof initialData === 'object') {
-        defaults = { ...defaults, ...deepClone(initialData) };
-      } else if (handler && typeof handler.create === 'function') {
-        const created = handler.create(this.pmimode) || {};
-        defaults = { ...defaults, ...created };
+    const EntityClass = this.#resolveHandler(type);
+    if (!EntityClass) return null;
+    const entity = new EntityClass({ history: this, registry: this.registry });
+    entity.type = EntityClass.entityType || EntityClass.type || normalizeTypeString(type) || DEFAULT_TYPE;
+    entity.entityType = entity.type;
+    const defaults = this.#defaultsFromSchema(EntityClass);
+    const seed = deepClone(initialData || {});
+    const params = { ...defaults, ...seed };
+    if (!params.type) params.type = entity.type;
+    entity.setParams(params);
+    entity.setPersistentData(params.persistentData || {});
+    delete entity.inputParams.persistentData;
+    this.#linkInputParams(entity);
+
+    if (typeof EntityClass.applyParams === 'function') {
+      try {
+        const res = EntityClass.applyParams(this.pmimode, entity.inputParams, entity.inputParams) || null;
+        if (res && res.paramsPatch && typeof res.paramsPatch === 'object') {
+          entity.mergeParams(res.paramsPatch);
+        }
+      } catch {
+        // ignore apply errors
       }
-    } catch {
-      defaults = { ...schemaDefaults };
     }
 
-    const normalizedType = normalizeTypeString(defaults.type || type || (handler && handler.type));
-    const entry = this.#normalizeEntry({
-      type: normalizedType,
-      inputParams: defaults,
-      persistentData: defaults?.persistentData,
-      __open: defaults?.__open,
-    });
-
-    entry.__open = true;
-
-    if (!entry.inputParams.annotationID) {
-      entry.inputParams.annotationID = this.generateId(normalizedType || 'ANN');
-    }
-
-    this.annotations.push(entry);
-    return this.#wrapLegacy(entry);
+    const id = entity.inputParams.id || this.generateId(entity.shortName || entity.type || 'ANN');
+    entity.setId(id);
+    entity.runtimeAttributes.__open = true;
+    this.entries.push(entity);
+    this.#bumpIdCounterFrom(entity);
+    this.notifyListeners({ reason: 'add', entry: entity, history: this });
+    return entity;
   }
 
   removeAt(index) {
-    if (index < 0 || index >= this.annotations.length) return null;
-    const [entry] = this.annotations.splice(index, 1);
-    if (entry) {
-      delete entry.__legacy;
-    }
-    return entry;
+    if (!Number.isInteger(index) || index < 0 || index >= this.entries.length) return null;
+    const [entity] = this.entries.splice(index, 1);
+    if (!entity) return null;
+    this.notifyListeners({ reason: 'remove', entry: entity, history: this });
+    return entity;
   }
 
   moveUp(index) {
-    if (index <= 0 || index >= this.annotations.length) return false;
-    const [entry] = this.annotations.splice(index, 1);
-    this.annotations.splice(index - 1, 0, entry);
+    if (!Number.isInteger(index) || index <= 0 || index >= this.entries.length) return false;
+    const [entity] = this.entries.splice(index, 1);
+    this.entries.splice(index - 1, 0, entity);
+    this.notifyListeners({ reason: 'reorder', entry: entity, history: this });
     return true;
   }
 
   moveDown(index) {
-    if (index < 0 || index >= this.annotations.length - 1) return false;
-    const [entry] = this.annotations.splice(index, 1);
-    this.annotations.splice(index + 1, 0, entry);
+    if (!Number.isInteger(index) || index < 0 || index >= this.entries.length - 1) return false;
+    const [entity] = this.entries.splice(index, 1);
+    this.entries.splice(index + 1, 0, entity);
+    this.notifyListeners({ reason: 'reorder', entry: entity, history: this });
     return true;
   }
 
   clear() {
-    for (const entry of this.annotations) {
-      delete entry.__legacy;
-    }
-    this.annotations = [];
-    this.idCounter = 0;
+    this.entries = [];
+    this._idCounter = 0;
+    this.notifyListeners({ reason: 'clear', history: this });
   }
 
   generateId(typeHint = 'ANN') {
-    const prefix = normalizeTypeString(typeHint).replace(/[^a-z0-9]/gi, '').toUpperCase() || 'ANN';
-    this.idCounter += 1;
-    return `${prefix}${this.idCounter}`;
+    const safeHint = normalizeTypeString(typeHint) || 'ann';
+    const prefix = safeHint.replace(/[^a-z0-9]/gi, '').toUpperCase() || 'ANN';
+    const existing = new Set(this.entries.map((entity, i) => {
+      const params = entity?.inputParams;
+      if (params?.id) return String(params.id);
+      if (entity?.id != null) return String(entity.id);
+      return `ANN${i + 1}`;
+    }));
+    let candidate = '';
+    do {
+      this._idCounter += 1;
+      candidate = `${prefix}${this._idCounter}`;
+    } while (existing.has(candidate));
+    return candidate;
   }
 
-  #resolveHandler(type) {
-    if (!type && type !== 0) return null;
-    let handler = null;
-    try {
-      if (typeof annotationRegistry.getSafe === 'function') {
-        handler = annotationRegistry.getSafe(type);
+  addListener(listener) {
+    if (typeof listener !== 'function') return () => {};
+    this._listeners.add(listener);
+    return () => {
+      try { this._listeners.delete(listener); } catch {
+        // ignore
       }
-    } catch { handler = null; }
-
-    if (!handler && typeof annotationRegistry.get === 'function') {
-      try { handler = annotationRegistry.get(type); }
-      catch { handler = null; }
-    }
-
-    return handler || null;
-  }
-
-  #normalizeEntry(raw) {
-    const fallbackType = 'annotation';
-    if (!raw || typeof raw !== 'object') {
-      return {
-        type: fallbackType,
-        inputParams: {},
-        persistentData: {},
-        __open: false,
-      };
-    }
-
-    const type = normalizeTypeString(raw.type || raw.inputParams?.type || fallbackType);
-
-    let inputParams;
-    if (raw.inputParams && typeof raw.inputParams === 'object') {
-      inputParams = this.#cloneWithoutReserved(raw.inputParams);
-    } else {
-      inputParams = this.#cloneWithoutReserved(raw);
-    }
-
-    let persistentData = {};
-    if (raw.persistentData && typeof raw.persistentData === 'object') {
-      persistentData = deepClone(raw.persistentData);
-    } else if (inputParams.persistentData && typeof inputParams.persistentData === 'object') {
-      persistentData = deepClone(inputParams.persistentData);
-      delete inputParams.persistentData;
-    }
-
-    const entry = {
-      type,
-      inputParams,
-      persistentData,
-      __open: Boolean(raw.__open),
     };
+  }
 
-    try {
-      const handler = this.#resolveHandler(type);
-      if (handler && typeof handler.applyParams === 'function') {
-        handler.applyParams(this.pmimode, entry.inputParams, entry.inputParams);
+  removeListener(listener) {
+    if (typeof listener !== 'function') return;
+    try { this._listeners.delete(listener); } catch {
+      // ignore
+    }
+  }
+
+  notifyListeners(payload = {}) {
+    if (!(this._listeners instanceof Set)) return;
+    for (const fn of Array.from(this._listeners)) {
+      try { fn(payload, this); } catch {
+        // ignore listener errors
       }
-    } catch { /* ignore sanitize errors */ }
+    }
+  }
 
-    return entry;
+  #hydrateEntity(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const type = normalizeTypeString(source.type || source.inputParams?.type || DEFAULT_TYPE) || DEFAULT_TYPE;
+    const EntityClass = this.#resolveHandler(type);
+    if (!EntityClass) return null;
+    const entity = new EntityClass({ history: this, registry: this.registry });
+    entity.type = EntityClass.entityType || EntityClass.type || type;
+    entity.entityType = entity.type;
+
+    const params = this.#cloneWithoutReserved(source.inputParams || source);
+    if (!params.type) params.type = entity.type;
+    entity.setParams(params);
+    entity.setPersistentData(deepClone(source.persistentData || {}));
+    delete entity.inputParams.persistentData;
+
+    if (typeof EntityClass.applyParams === 'function') {
+      try {
+        const res = EntityClass.applyParams(this.pmimode, entity.inputParams, entity.inputParams) || null;
+        if (res && res.paramsPatch && typeof res.paramsPatch === 'object') {
+          entity.mergeParams(res.paramsPatch);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const id = entity.inputParams.id || source.id || this.generateId(entity.shortName || entity.type);
+    entity.setId(id);
+    entity.runtimeAttributes.__open = Boolean(source.__open);
+    this.#linkInputParams(entity);
+    return entity;
+  }
+
+  #linkInputParams(entity) {
+    if (!entity) return;
+    if (!entity.runtimeAttributes || typeof entity.runtimeAttributes !== 'object') {
+      entity.runtimeAttributes = {};
+    }
+    const params = entity.inputParams || {};
+    const descriptor = { configurable: true, enumerable: false };
+
+    if (!Object.prototype.hasOwnProperty.call(params, '__entityRef')) {
+      Object.defineProperty(params, '__entityRef', { ...descriptor, value: entity });
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(params, 'persistentData')) {
+      Object.defineProperty(params, 'persistentData', {
+        ...descriptor,
+        get: () => entity.persistentData,
+        set: (value) => {
+          const next = (value && typeof value === 'object') ? value : {};
+          entity.setPersistentData(next);
+        },
+      });
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(params, '__open')) {
+      Object.defineProperty(params, '__open', {
+        ...descriptor,
+        get: () => Boolean(entity.runtimeAttributes.__open),
+        set: (value) => {
+          entity.runtimeAttributes.__open = Boolean(value);
+        },
+      });
+    }
+
+    params.type = entity.type || params.type || DEFAULT_TYPE;
+    if (params.id == null && entity.id != null) {
+      params.id = entity.id;
+    }
+  }
+
+  #defaultsFromSchema(EntityClass) {
+    const out = {};
+    const schema = EntityClass?.inputParamsSchema;
+    if (!schema || typeof schema !== 'object') return out;
+    for (const key of Object.keys(schema)) {
+      if (RESERVED_INPUT_KEYS.has(key)) continue;
+      const def = schema[key];
+      if (!def || typeof def !== 'object') continue;
+      if ('defaultResolver' in def && typeof def.defaultResolver === 'function') {
+        try {
+          const resolved = def.defaultResolver({ pmimode: this.pmimode, handler: EntityClass });
+          if (resolved !== undefined) {
+            out[key] = deepClone(resolved);
+            continue;
+          }
+        } catch {
+          // ignore resolver errors
+        }
+      }
+      if ('default_value' in def) {
+        out[key] = deepClone(def.default_value);
+      }
+    }
+    return out;
   }
 
   #cloneWithoutReserved(obj) {
     const out = {};
     if (!obj || typeof obj !== 'object') return out;
-    for (const key in obj) {
-      if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+    for (const key of Object.keys(obj)) {
       if (RESERVED_INPUT_KEYS.has(key)) continue;
       out[key] = deepClone(obj[key]);
     }
     return out;
   }
 
-  #wrapLegacy(entry) {
-    if (entry.__legacy) return entry.__legacy;
-    const target = entry.inputParams;
-    if (!target || typeof target !== 'object') {
-      entry.inputParams = {};
-      return this.#wrapLegacy(entry);
-    }
-
-    const descriptor = { configurable: true, enumerable: false };
-
-    if (!Object.prototype.hasOwnProperty.call(target, 'persistentData')) {
-      Object.defineProperty(target, 'persistentData', {
-        ...descriptor,
-        get: () => entry.persistentData,
-        set: (value) => { entry.persistentData = (value && typeof value === 'object') ? value : {}; },
-      });
-    }
-
-    if (!Object.prototype.hasOwnProperty.call(target, 'type')) {
-      Object.defineProperty(target, 'type', {
-        ...descriptor,
-        get: () => entry.type,
-        set: () => {},
-      });
-    }
-
-    Object.defineProperty(target, '__open', {
-      ...descriptor,
-      get: () => entry.__open,
-      set: (value) => { entry.__open = Boolean(value); },
-    });
-
-    Object.defineProperty(target, '__entryRef', {
-      ...descriptor,
-      value: entry,
-    });
-
-    entry.__legacy = target;
-    return target;
-  }
-
-  #defaultsFromSchema(handler, pmimode) {
-    const out = {};
-    if (!handler) return out;
-
-    const schema = handler.inputParamsSchema;
-    if (!schema || typeof schema !== 'object') {
-      out.persistentData = {};
-      return out;
-    }
-
-    for (const key of Object.keys(schema)) {
-      if (RESERVED_INPUT_KEYS.has(key)) continue;
-      const def = schema[key];
-      if (!def || typeof def !== 'object') continue;
-
-      let value;
-      if (typeof def.defaultResolver === 'function') {
-        try {
-          const resolved = def.defaultResolver({ pmimode, handler });
-          if (resolved !== undefined) value = resolved;
-        } catch (_) {
-          value = undefined;
-        }
-      }
-
-      if (value === undefined && Object.prototype.hasOwnProperty.call(def, 'default_value')) {
-        value = def.default_value;
-      }
-
-      if (value !== undefined) {
-        out[key] = deepClone(value);
+  #registerAvailableAnnotations() {
+    const list = annotationRegistry.list();
+    for (const Handler of list) {
+      try { this.registry.register(Handler); } catch {
+        // ignore duplicate registrations
       }
     }
-
-    if (!Object.prototype.hasOwnProperty.call(out, 'persistentData')) {
-      out.persistentData = {};
-    }
-
-    return out;
   }
 
-  #serializeEntry(entry) {
-    const out = {
-      type: entry.type,
-      inputParams: deepClone(entry.inputParams),
-      persistentData: deepClone(entry.persistentData),
-    };
-    if (entry.__open) out.__open = true;
-    return out;
+  #resolveHandler(type) {
+    const handler = annotationRegistry.getSafe?.(type) || null;
+    if (handler) {
+      try { this.registry.register(handler); } catch {
+        // ignore duplicate
+      }
+    }
+    return handler;
   }
 
-  #recalculateIdCounter() {
-    let maxId = 0;
-    for (const entry of this.annotations) {
-      const annId = entry?.inputParams?.annotationID;
-      if (!annId) continue;
-      const match = String(annId).match(/(\d+)$/);
-      if (!match) continue;
-      const num = parseInt(match[1], 10);
-      if (Number.isFinite(num) && num > maxId) maxId = num;
+  #bumpIdCounterFrom(entity) {
+    const id = entity?.inputParams?.id || entity?.id;
+    if (!id) return;
+    const match = String(id).match(/(\d+)$/);
+    if (!match) return;
+    const num = parseInt(match[1], 10);
+    if (Number.isFinite(num) && num > this._idCounter) {
+      this._idCounter = num;
     }
-    this.idCounter = maxId;
   }
 }

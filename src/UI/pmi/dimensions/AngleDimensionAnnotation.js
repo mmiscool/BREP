@@ -3,7 +3,7 @@ import { BaseAnnotation } from '../BaseAnnotation.js';
 import { makeOverlayLine, addArrowCone, getElementDirection, objectRepresentativePoint, screenSizeWorld } from '../annUtils.js';
 
 const inputParamsSchema = {
-  annotationID: {
+  id: {
     type: 'string',
     default_value: null,
     label: 'ID',
@@ -71,11 +71,18 @@ const inputParamsSchema = {
 };
 
 export class AngleDimensionAnnotation extends BaseAnnotation {
+  static entityType = 'angle';
   static type = 'angle';
+  static shortName = 'ANG';
+  static longName = 'Angle Dimension';
   static title = 'Angle';
   static featureShortName = 'angle';
   static featureName = 'Angle Dimension';
   static inputParamsSchema = inputParamsSchema;
+
+  constructor(opts = {}) {
+    super(opts);
+  }
 
   async run(renderingContext) {
     const { pmimode, group, idx, ctx } = renderingContext;

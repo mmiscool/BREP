@@ -3,7 +3,7 @@ import { BaseAnnotation } from '../BaseAnnotation.js';
 import { makeOverlayLine, makeOverlaySphere, addArrowCone, getElementDirection, objectRepresentativePoint, screenSizeWorld } from '../annUtils.js';
 
 const inputParamsSchema = {
-  annotationID: {
+  id: {
     type: 'string',
     default_value: null,
     label: 'ID',
@@ -71,11 +71,18 @@ const inputParamsSchema = {
 };
 
 export class RadialDimensionAnnotation extends BaseAnnotation {
+  static entityType = 'radial';
   static type = 'radial';
+  static shortName = 'RAD';
+  static longName = 'Radial Dimension';
   static title = 'Radial';
   static featureShortName = 'radial';
   static featureName = 'Radial Dimension';
   static inputParamsSchema = inputParamsSchema;
+
+  constructor(opts = {}) {
+    super(opts);
+  }
 
   async run(renderingContext) {
     const { pmimode, group, idx, ctx } = renderingContext;

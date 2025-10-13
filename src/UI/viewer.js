@@ -31,6 +31,7 @@ import { PMIViewsWidget } from './pmi/PMIViewsWidget.js';
 import { PMIMode } from './pmi/PMIMode.js';
 import { annotationRegistry } from './pmi/AnnotationRegistry.js';
 import { SchemaForm } from './featureDialogs.js';
+import { installHistoryCollectionDemo } from '../examples/historyCollectionDemo.js';
 
 export class Viewer {
     /**
@@ -276,7 +277,16 @@ export class Viewer {
         const pmiViewsSection = await this.accordion.addSection("PMI Views");
         pmiViewsSection.uiElement.appendChild(this.pmiViewsWidget.uiElement);
 
-
+        try {
+            const demo = await installHistoryCollectionDemo(this);
+            if (demo && demo.widget && demo.widget.uiElement) {
+                const demoSection = await this.accordion.addSection("History Collection Demo");
+                demoSection.uiElement.appendChild(demo.widget.uiElement);
+                this.historyCollectionDemo = demo;
+            }
+        } catch (error) {
+            console.warn('History collection demo failed:', error);
+        }
 
         // CADmaterials (Settings panel)
         this.cadMaterialsUi = await new CADmaterialWidget();

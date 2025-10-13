@@ -7,11 +7,18 @@
 // - Persists annotations back into the PMI view entry on Finish
 
 import * as THREE from 'three';
-import { genFeatureUI } from '../featureDialogs.js';
 import { annotationRegistry } from './AnnotationRegistry.js';
 import { AnnotationHistory } from './AnnotationHistory.js';
 import { LabelOverlay } from './LabelOverlay.js';
 import { captureCameraSnapshot, applyCameraSnapshot, adjustOrthographicFrustum } from './annUtils.js';
+import { AnnotationCollectionWidget } from './AnnotationCollectionWidget.js';
+
+const cssEscape = (value) => {
+  if (window.CSS && typeof window.CSS.escape === 'function') {
+    return window.CSS.escape(value);
+  }
+  return String(value).replace(/"/g, '\\"');
+};
 
 // Register built-in annotation types
 export class PMIMode {
@@ -52,21 +59,26 @@ export class PMIMode {
     this._opts = { noteText: '', leaderText: 'TEXT HERE', dimDecimals: 3 };
     this._onCanvasDown = this._handlePointerDown.bind(this);
     this._onControlsChange = this._refreshOverlays.bind(this);
-    this._gfuByIndex = new Map(); // idx -> genFeatureUI instance for dim widgets
     this._labelOverlay = null; // manages overlay labels
     this._baseMatrixSessionKey = `pmi-base-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this._hasBaseMatrices = false;
+    this._annotationWidget = null;
 
     // Annotation history stores inputParams/persistentData similar to PartHistory
     this._annotationHistory = new AnnotationHistory(this);
     const src = Array.isArray(this.viewEntry.annotations) ? this.viewEntry.annotations : [];
     this._annotationHistory.load(JSON.parse(JSON.stringify(src)));
     try {
-      const uiAnnotations = this._annotationHistory.getAnnotationsForUI();
-      uiAnnotations.forEach(ann => {
-        try { this.#normalizeAnnotation(ann); } catch { }
-        ann.__open = false;
-      });
+      for (const entity of this._annotationHistory.getEntries()) {
+        try { this.#normalizeAnnotation(entity.inputParams); } catch { }
+        if (!entity.runtimeAttributes || typeof entity.runtimeAttributes !== 'object') {
+          entity.runtimeAttributes = {};
+        }
+        entity.runtimeAttributes.__open = false;
+        if (entity.inputParams && typeof entity.inputParams === 'object') {
+          entity.inputParams.__open = false;
+        }
+      }
     } catch { }
   }
 
@@ -207,7 +219,7 @@ export class PMIMode {
     // Remove labels overlay and destroy feature UIs
     try { this._labelOverlay?.dispose?.(); } catch { }
     this._labelOverlay = null;
-    try { this._gfuByIndex && this._gfuByIndex.forEach(ui => ui?.destroy?.()); this._gfuByIndex && this._gfuByIndex.clear(); } catch { }
+    try { this._annotationWidget?.dispose?.(); } catch { }
 
     // Clear PMI base matrices once we're back in modeling mode
     this.#clearBaseSolidMatrices();
@@ -224,13 +236,14 @@ export class PMIMode {
       // Serialize annotations using annotation history (inputParams + persistentData)
       const history = this._annotationHistory;
       const baseSerialized = history ? history.toSerializable() : [];
-      const uiAnnotations = history ? history.getAnnotationsForUI() : [];
+      const entities = history ? history.getEntries() : [];
       const serializedAnnotations = baseSerialized.map((entry, idx) => {
-        const ann = uiAnnotations[idx];
+        const entity = entities[idx] || null;
+        const ann = entity?.inputParams || null;
         const handler = annotationRegistry.getSafe?.(ann?.type || entry.type) || annotationRegistry.getSafe?.(entry.type) || null;
         if (handler && typeof handler.serialize === 'function') {
           try {
-            const custom = handler.serialize(ann, entry);
+            const custom = handler.serialize(ann, entry, { entity });
             if (custom) return custom;
           } catch {
             // fall back to base entry if serialize throws
@@ -593,145 +606,28 @@ export class PMIMode {
       });
       this._sectionCreationPromises.push(pmiViewsPromise);
 
-      // Build Annotations section
-      this._annListEl = document.createElement('div');
-      this._annListEl.className = 'pmi-ann-list';
-
       const annotationsPromise = this._acc.addSection(`Annotations — ${this.#getViewDisplayName('')}`).then((sec) => {
         try {
-          console.log('Created annotations section:', sec);
-          // Container for the section content
-          const scrollableContent = document.createElement('div');
-          scrollableContent.className = 'pmi-scrollable-content';
+          const widgetWrap = document.createElement('div');
+          widgetWrap.className = 'pmi-ann-widget-wrap';
+          sec.uiElement.appendChild(widgetWrap);
 
-          // List container
-          scrollableContent.appendChild(this._annListEl);
-
-          // Inline menu for annotation types (initially hidden)
-          const inlineMenu = document.createElement('div');
-          inlineMenu.className = 'pmi-inline-menu';
-          Object.assign(inlineMenu.style, {
-            display: 'none',
-            marginTop: '8px',
-            padding: '8px',
-            background: '#1a1d23',
-            border: '1px solid #374151',
-            borderRadius: '8px'
+          this._annotationWidget = new AnnotationCollectionWidget({
+            history: this._annotationHistory,
+            pmimode: this,
+            onCollectionChange: () => {
+              this.#updateAnnotationSectionTitle();
+              this.#markAnnotationsDirty();
+            },
+            onEntryChange: () => {
+              this.#updateAnnotationSectionTitle();
+              this.#markAnnotationsDirty();
+            },
           });
+          widgetWrap.appendChild(this._annotationWidget.uiElement);
 
-          const makeItem = (label, type) => {
-            const btn = document.createElement('button');
-            btn.type = 'button'; btn.textContent = label; btn.style.display = 'block';
-            Object.assign(btn.style, {
-              width: '100%',
-              textAlign: 'left',
-              background: 'transparent',
-              color: '#e5e7eb',
-              border: '0',
-              borderRadius: '6px',
-              padding: '8px 12px',
-              cursor: 'pointer',
-              transition: 'background-color .15s ease'
-            });
-            btn.addEventListener('mouseenter', () => btn.style.background = '#374151');
-            btn.addEventListener('mouseleave', () => btn.style.background = 'transparent');
-            btn.addEventListener('click', () => {
-              this.#addNewAnnotation(type);
-              toggleMenu(false);
-            });
-            return btn;
-          };
-
-          const resolveType = (handler) => {
-            if (!handler) return '';
-            const candidates = [handler.type, handler.featureShortName, handler.featureName, handler.name];
-            for (const candidate of candidates) {
-              if (candidate === null || candidate === undefined) continue;
-              const str = String(candidate).trim();
-              if (str) return str;
-            }
-            return '';
-          };
-
-          const formatLabel = (handler, type) => {
-            if (handler?.featureName) return handler.featureName;
-            if (handler?.title) return handler.title;
-            const base = String(type || '').replace(/[-_]/g, ' ').trim();
-            if (!base) return 'Annotation';
-            return base.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
-          };
-
-          const registryHandlersRaw = typeof annotationRegistry.list === 'function'
-            ? annotationRegistry.list()
-            : [];
-          const registryHandlers = Array.isArray(registryHandlersRaw) ? registryHandlersRaw : [];
-          const seenTypes = new Set();
-          for (const handler of registryHandlers) {
-            const type = resolveType(handler);
-            if (!type) continue;
-            const key = type.toLowerCase();
-            if (seenTypes.has(key)) continue;
-            seenTypes.add(key);
-            const label = formatLabel(handler, type);
-            inlineMenu.appendChild(makeItem(label, type));
-          }
-
-          const hasMenuItems = inlineMenu.childElementCount > 0;
-
-          scrollableContent.appendChild(inlineMenu);
-
-          // Footer with add button
-          const footer = document.createElement('div');
-          footer.className = 'pmi-ann-footer';
-          Object.assign(footer.style, {
-            marginTop: '8px',
-            paddingTop: '8px',
-            borderTop: '1px dashed #1f2937',
-            display: 'flex',
-            justifyContent: 'center'
-          });
-
-          const addBtn = document.createElement('button');
-          addBtn.type = 'button'; addBtn.title = 'Add annotation'; addBtn.textContent = '+';
-          Object.assign(addBtn.style, {
-            border: '1px solid #374151',
-            background: 'rgba(255,255,255,.03)',
-            color: '#e5e7eb',
-            borderRadius: '9999px',
-            width: '36px',
-            height: '36px',
-            cursor: 'pointer'
-          });
-
-          const toggleMenu = (open) => { inlineMenu.style.display = open ? 'block' : 'none'; };
-          addBtn.addEventListener('click', (ev) => {
-            if (!hasMenuItems) return;
-            ev.stopPropagation();
-            toggleMenu(inlineMenu.style.display === 'none');
-          });
-
-          if (!hasMenuItems) {
-            addBtn.disabled = true;
-            addBtn.title = 'No annotation types available';
-            addBtn.style.opacity = '0.5';
-            addBtn.style.cursor = 'default';
-            const empty = document.createElement('div');
-            empty.textContent = 'No annotation types registered';
-            empty.style.color = '#9ca3af';
-            empty.style.fontSize = '14px';
-            empty.style.textAlign = 'center';
-            empty.style.padding = '8px 0';
-            inlineMenu.appendChild(empty);
-          }
-
-          footer.appendChild(addBtn);
-
-          // Add everything to the section
-          sec.uiElement.appendChild(scrollableContent);
-          sec.uiElement.appendChild(footer);
-
-          // Store section for later cleanup
           this._pmiAnnotationsSection = sec;
+          this.#updateAnnotationSectionTitle();
           this.#applyPMIPanelLayout();
         } catch (e) {
           console.warn('Failed to setup annotations section:', e);
@@ -771,7 +667,7 @@ export class PMIMode {
       });
       this._sectionCreationPromises.push(toolOptionsPromise);
 
-      this.#renderAnnList();
+      this._annotationWidget?.render();
     } catch (e) {
       console.warn('Failed to mount PMI sections:', e);
     }
@@ -804,170 +700,43 @@ export class PMIMode {
     }
   }
 
-  #addNewAnnotation(type) {
-    const key = String(type || 'dim');
-    const handler = annotationRegistry.getSafe?.(key) || annotationRegistry.getSafe?.(type) || null;
-    if (!handler) {
-      console.warn('PMI: unknown annotation type', key);
-      return;
-    }
+  markAnnotationsDirty() {
+    this.#markAnnotationsDirty();
+  }
 
+  normalizeAnnotation(annotation) {
+    if (!annotation) return annotation;
+    return this.#normalizeAnnotation(annotation);
+  }
+
+  handleAnnotationRemoval(entry) {
+    if (!entry) return;
     try {
-      const ann = this._annotationHistory.createAnnotation(handler.type || key);
-      try { this.#normalizeAnnotation(ann); } catch { }
-      this.#renderAnnList();
-      this.#markAnnotationsDirty();
-    } catch { }
+      const handler = annotationRegistry.getSafe?.(entry.type) || entry.constructor || null;
+      const ann = entry.inputParams || {};
+      if (handler && typeof handler._resolveSolidReferences === 'function') {
+        try { handler._resolveSolidReferences(ann, this, false); } catch { /* ignore */ }
+      }
+      if (handler && typeof handler.restoreOriginalTransforms === 'function') {
+        try { handler.restoreOriginalTransforms(ann, this); } catch { /* ignore */ }
+      }
+    } catch (error) {
+      console.warn('PMI: handleAnnotationRemoval failed:', error);
+    }
+    try { this.applyViewTransformsSequential?.(); } catch { /* ignore */ }
   }
 
-  #renderAnnList() {
-    const list = this._annListEl;
-    if (!list) return;
-    try { this._gfuByIndex && this._gfuByIndex.forEach(ui => ui?.destroy?.()); this._gfuByIndex && this._gfuByIndex.clear(); } catch { }
-    list.textContent = '';
-    const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
-    try { if (!list.classList.contains('pmi-acc')) list.classList.add('pmi-acc'); } catch { }
-
-    const helpers = {
-      formatReferenceLabel: (ann, text) => { try { return this.#formatReferenceLabel(ann, text); } catch { return text; } },
-      defaultOptions: () => ({ dimDecimals: this._opts?.dimDecimals, leaderText: this._opts?.leaderText, noteText: this._opts?.noteText }),
-    };
-
-    anns.forEach((a, i) => {
-      const handler = annotationRegistry.getSafe?.(a.type) || null;
-      const item = document.createElement('div');
-      item.className = 'pmi-acc-item acc-item';
-
-      const headerRow = document.createElement('div');
-      headerRow.className = 'pmi-acc-header pmi-acc-header-row acc-header-row';
-
-      const headBtn = document.createElement('button');
-      headBtn.type = 'button';
-      headBtn.className = 'pmi-acc-headbtn acc-header';
-
-      const rawShort = handler?.featureShortName || handler?.title || String(a.type || 'Annotation');
-      const shortName = typeof rawShort === 'string' ? rawShort.toUpperCase() : String(rawShort);
-      const annId = String(a?.annotationID || a?.inputParams?.annotationID || `ANN${i + 1}`);
-      const title = document.createElement('span');
-      title.className = 'pmi-acc-title acc-title';
-      title.textContent = `${shortName} — #${annId}`;
-      headBtn.appendChild(title);
-
-      const actions = document.createElement('div');
-      actions.className = 'acc-actions';
-
-      const makeIconBtn = (label, text, handlerFn) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'icon-btn';
-        btn.setAttribute('aria-label', label);
-        btn.title = label;
-        btn.textContent = text;
-        btn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          handlerFn();
-        });
-        return btn;
-      };
-
-      const moveUp = makeIconBtn('Move annotation up', '▲', () => {
-        if (this._annotationHistory.moveUp(i)) {
-          this.#renderAnnList();
-          this.#markAnnotationsDirty();
-          if (typeof this.applyViewTransformsSequential === 'function') {
-            this.applyViewTransformsSequential();
-          }
-        }
-      });
-
-      const moveDown = makeIconBtn('Move annotation down', '▼', () => {
-        if (this._annotationHistory.moveDown(i)) {
-          this.#renderAnnList();
-          this.#markAnnotationsDirty();
-          if (typeof this.applyViewTransformsSequential === 'function') {
-            this.applyViewTransformsSequential();
-          }
-        }
-      });
-
-      const delBtn = makeIconBtn('Delete annotation', '✕', () => {
-        try {
-          if (a?.type === 'viewTransform' && handler) {
-            try {
-              if (typeof handler._resolveSolidReferences === 'function') handler._resolveSolidReferences(a, this, false);
-            } catch { /* ignore */ }
-            try {
-              if (typeof handler.restoreOriginalTransforms === 'function') handler.restoreOriginalTransforms(a, this);
-            } catch { /* ignore restore errors */ }
-          }
-          this._annotationHistory.removeAt(i);
-          this.#renderAnnList();
-          this.#markAnnotationsDirty();
-          if (typeof this.applyViewTransformsSequential === 'function') {
-            this.applyViewTransformsSequential();
-          }
-        } catch { }
-      });
-      delBtn.classList.add('danger');
-
-      actions.appendChild(moveUp);
-      actions.appendChild(moveDown);
-      actions.appendChild(delBtn);
-
-      headerRow.appendChild(headBtn);
-      headerRow.appendChild(actions);
-      item.appendChild(headerRow);
-
-      let schema = {}; let params = {};
-      try {
-        if (handler && typeof handler.getSchema === 'function') {
-          const res = handler.getSchema(this, a, helpers) || {};
-          schema = res.schema || {};
-          params = res.params || {};
-        }
-      } catch { }
-
-      const content = document.createElement('div'); content.className = 'pmi-acc-content acc-content';
-      const ui = new genFeatureUI(schema, params, {
-        viewer: this.viewer,
-        excludeKeys: ['annotationID'],
-        onChange: () => {
-          try {
-            const p = ui.getParams();
-            let res = null;
-            if (handler && typeof handler.applyParams === 'function') {
-              res = handler.applyParams(this, a, p, helpers) || null;
-            } else {
-              Object.assign(a, p);
-            }
-            const patch = res && res.paramsPatch ? res.paramsPatch : null;
-            if (patch && typeof patch === 'object') { Object.assign(ui.params, patch); ui.refreshFromParams(); }
-            this.#markAnnotationsDirty();
-          } catch (e) {
-            console.warn('PMI onChange error:', e);
-          }
-        }
-      });
-      content.appendChild(ui.uiElement);
-      try { this._gfuByIndex.set(i, ui); } catch { }
-      item.appendChild(content);
-
-      const setCollapsed = (collapsed) => {
-        item.classList.toggle('collapsed', !!collapsed);
-        item.classList.toggle('open', !collapsed);
-        content.hidden = !!collapsed;
-        headBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      };
-      setCollapsed(!a.__open);
-      headBtn.addEventListener('click', () => {
-        a.__open = !a.__open;
-        setCollapsed(!a.__open);
-      });
-      list.appendChild(item);
-    });
-
-    try { this.viewer.render(); } catch { }
+  #updateAnnotationSectionTitle() {
+    try {
+      const sec = this._pmiAnnotationsSection;
+      if (!sec || !sec.uiElement) return;
+      const titleEl = sec.uiElement.previousElementSibling;
+      if (titleEl) {
+        titleEl.textContent = `Annotations — ${this.#getViewDisplayName('')}`;
+      }
+    } catch { /* ignore */ }
   }
+
   #renderToolOptions() {
     const el = this._toolOptsEl;
     if (!el) return;
@@ -1015,7 +784,7 @@ export class PMIMode {
     const leaderDefault = mkText('Default leader text', this._opts.leaderText, (v) => { this._opts.leaderText = v; });
     el.appendChild(makeVField('Leader text', leaderDefault));
 
-    const dimDec = mkNumber(this._opts.dimDecimals, (v) => { this._opts.dimDecimals = v | 0; this.#renderAnnList(); }, { min: 0, max: 8 });
+    const dimDec = mkNumber(this._opts.dimDecimals, (v) => { this._opts.dimDecimals = v | 0; this._annotationWidget?.render(); }, { min: 0, max: 8 });
     el.appendChild(makeVField('Dim decimals', dimDec));
   }
 
@@ -1052,7 +821,7 @@ export class PMIMode {
       this.viewEntry.viewName = finalName;
       this.viewEntry.name = finalName;
       // Update accordion section title
-      this.#updateAnnotationsSectionTitle();
+      this.#updateAnnotationSectionTitle();
       this.#notifyViewMutated(true);
     });
     nameInput.className = 'pmi-input';
@@ -1116,21 +885,6 @@ export class PMIMode {
     btnRow.appendChild(updateCameraBtn);
     btnRow.appendChild(restoreCameraBtn);
     el.appendChild(btnRow);
-  }
-
-  #updateAnnotationsSectionTitle() {
-    try {
-      // Find and update the annotations section title
-      const sections = this._acc?.uiElement?.querySelectorAll('.accordion-header');
-      if (sections) {
-        sections.forEach(header => {
-          const titleEl = header.querySelector('.accordion-title');
-          if (titleEl && titleEl.textContent.includes('Annotations')) {
-            titleEl.textContent = `Annotations — ${this.#getViewDisplayName('')}`;
-          }
-        });
-      }
-    } catch { }
   }
 
   #isWireframeMode() {
@@ -1366,8 +1120,10 @@ export class PMIMode {
       // Always return solids to their modeling positions before applying PMI offsets
       this.#resetSolidsToBaseMatrices();
 
-      const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
-      if (!Array.isArray(anns) || anns.length === 0) return;
+      const annotationEntities = this._annotationHistory ? this._annotationHistory.getEntries() : [];
+      if (!Array.isArray(annotationEntities) || annotationEntities.length === 0) return;
+
+      const anns = annotationEntities.map((entity) => entity?.inputParams || {});
 
       console.log('Applying view transforms, found', anns.length, 'annotations');
 
@@ -1451,16 +1207,16 @@ export class PMIMode {
   // Restore original transforms for all ViewTransform annotations
   #restoreViewTransforms() {
     try {
-      const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
-      if (!Array.isArray(anns) || anns.length === 0) return;
+      const entities = this._annotationHistory ? this._annotationHistory.getEntries() : [];
+      if (!Array.isArray(entities) || entities.length === 0) return;
 
       const handler = annotationRegistry.getSafe?.('viewTransform') || null;
       if (!handler) return;
 
-      for (const ann of anns) {
-        if (ann.type !== 'viewTransform' && ann.type !== 'explodeBody') continue;
+      for (const entity of entities) {
+        const ann = entity?.inputParams;
+        if (!ann || (ann.type !== 'viewTransform' && ann.type !== 'explodeBody' && ann.type !== 'exp')) continue;
 
-        // Restore original transforms
         if (typeof handler.restoreOriginalTransforms === 'function') {
           handler.restoreOriginalTransforms(ann, this);
         }
@@ -1589,7 +1345,7 @@ export class PMIMode {
 
   // Public: allow external handlers to refresh the side list and 3D objects
   refreshAnnotationsUI() {
-    try { this.#renderAnnList(); } catch { }
+    try { this._annotationWidget?.render(); } catch { }
     try {
       this.#rebuildAnnotationObjects();
       this._annotationsDirty = false;
@@ -1603,7 +1359,7 @@ export class PMIMode {
     if (!group) return;
     // Ensure overlay exists; do not clear between frames so labels remain visible even if a render is skipped
     // overlay root managed by LabelOverlay
-    const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
+    const entities = this._annotationHistory ? this._annotationHistory.getEntries() : [];
     const ctx = {
       pmimode: this,
       screenSizeWorld: (px) => { try { return this.#_screenSizeWorld(px); } catch { return 0; } },
@@ -1614,25 +1370,19 @@ export class PMIMode {
       // specific drawing/measuring handled by annotation handlers now
     };
     this.__explodeTraceState = new Map();
-    anns.forEach((a, i) => {
+    entities.forEach((entity, i) => {
       try {
-        const Handler = annotationRegistry.getSafe?.(a.type) || null;
-        if (!Handler) return;
-        const instance = new Handler();
-        instance.inputParams = a;
-        let persistent = a?.persistentData;
-        if (!persistent || typeof persistent !== 'object') {
-          persistent = {};
-          try { a.persistentData = persistent; } catch { }
+        if (!entity || typeof entity.run !== 'function') return;
+        if (!entity.persistentData || typeof entity.persistentData !== 'object') {
+          entity.setPersistentData({});
         }
-        instance.persistentData = persistent;
         const renderingContext = {
           pmimode: this,
           group,
           idx: i,
           ctx,
         };
-        const runResult = instance.run(renderingContext);
+        const runResult = entity.run(renderingContext);
         if (runResult && typeof runResult.then === 'function') {
           runResult.catch(() => {});
         }
@@ -1659,26 +1409,30 @@ export class PMIMode {
   #focusAnnotationDialog(idx, ann, e) {
     e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation();
 
-    // Find and focus the text field in the annotation dialog
     try {
-      // Find the text input for this annotation in the dialog
-      const textInput = document.querySelector(`#gfu_text_${idx}, input[data-annotation-idx="${idx}"][data-field="text"], textarea[data-annotation-idx="${idx}"][data-field="text"]`);
-      if (textInput) {
-        textInput.focus();
-        textInput.select();
-      } else {
-        // Fallback: look for any text input in the expanded annotation
-        const annotationElement = document.querySelector(`.pmi-acc-item:nth-child(${idx + 1})`);
-        if (annotationElement) {
-          const textField = annotationElement.querySelector('input[type="text"], textarea');
+      const entries = this._annotationHistory ? this._annotationHistory.getEntries() : [];
+      const entity = entries[idx];
+      if (!entity) return;
+      const entryId = entity.inputParams?.id || entity.id || idx;
+      this._annotationWidget?.render();
+      requestAnimationFrame(() => {
+        try {
+          const form = this._annotationWidget?.getFormForEntry(String(entryId));
+          const host = form?.uiElement;
+          if (!host) return;
+          const root = host.shadowRoot || host;
+          const row = root?.querySelector('[data-key="text"]');
+          const textField = row ? row.querySelector('textarea, input[type="text"], input') : null;
           if (textField) {
             textField.focus();
-            textField.select();
+            textField.select?.();
           }
+        } catch (error) {
+          console.warn('Could not focus annotation dialog text field:', error);
         }
-      }
+      });
     } catch (error) {
-      console.warn('Could not focus annotation dialog text field:', error);
+      console.warn('Failed to focus annotation dialog:', error);
     }
   }
 
@@ -1712,28 +1466,32 @@ export class PMIMode {
   }
 
   #collapseAnnotationsToIndex(targetIdx) {
-    const anns = this._annotationHistory ? this._annotationHistory.getAnnotationsForUI() : [];
-    if (!anns.length) return;
-    if (!Number.isInteger(targetIdx) || targetIdx < 0 || targetIdx >= anns.length) return;
+    const entries = this._annotationHistory ? this._annotationHistory.getEntries() : [];
+    if (!entries.length) return;
+    if (!Number.isInteger(targetIdx) || targetIdx < 0 || targetIdx >= entries.length) return;
     let changed = false;
-    anns.forEach((ann, i) => {
+    entries.forEach((entry, i) => {
       const shouldOpen = i === targetIdx;
-      if (!!ann.__open !== shouldOpen) {
-        ann.__open = shouldOpen;
+      if (!entry.runtimeAttributes || typeof entry.runtimeAttributes !== 'object') entry.runtimeAttributes = {};
+      if (entry.runtimeAttributes.__open !== shouldOpen) {
+        entry.runtimeAttributes.__open = shouldOpen;
         changed = true;
+      }
+      if (entry.inputParams && typeof entry.inputParams === 'object') {
+        entry.inputParams.__open = shouldOpen;
       }
     });
     if (!changed) return;
-    this.#renderAnnList();
+    const targetEntry = entries[targetIdx];
+    const targetId = targetEntry ? (targetEntry.inputParams?.id || targetEntry.id || targetIdx) : targetIdx;
+    this._annotationWidget?.render();
     requestAnimationFrame(() => {
       try {
-        const section = this._pmiAnnotationsSection?.uiElement;
-        if (!section) return;
-        const items = section.querySelectorAll('.pmi-acc-item');
-        const target = items && items[targetIdx];
-        if (target && typeof target.scrollIntoView === 'function') {
-          target.scrollIntoView({ block: 'nearest' });
-        }
+        const root = this._annotationWidget?._shadow;
+        if (!root) return;
+        const selector = `[data-entry-id="${cssEscape(String(targetId))}"]`;
+        const item = root.querySelector(selector);
+        if (item && typeof item.scrollIntoView === 'function') item.scrollIntoView({ block: 'nearest' });
       } catch { }
     });
   }

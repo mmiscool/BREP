@@ -9,7 +9,7 @@ import {
 } from '../annUtils.js';
 
 const inputParamsSchema = {
-  annotationID: {
+  id: {
     type: 'string',
     default_value: null,
     label: 'ID',
@@ -58,11 +58,18 @@ const inputParamsSchema = {
 };
 
 export class LeaderAnnotation extends BaseAnnotation {
+  static entityType = 'leader';
   static type = 'leader';
+  static shortName = 'LEAD';
+  static longName = 'Leader';
   static title = 'Leader';
   static featureShortName = 'leader';
   static featureName = 'Leader';
   static inputParamsSchema = inputParamsSchema;
+
+  constructor(opts = {}) {
+    super(opts);
+  }
 
   async run(renderingContext) {
     this.renderingContext = renderingContext;

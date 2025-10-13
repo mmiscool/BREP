@@ -7,7 +7,7 @@ import { makeOverlayDashedLine } from '../annUtils.js';
 
 
 const inputParamsSchema = {
-  annotationID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'unique identifier for the view transform',
@@ -34,17 +34,18 @@ const inputParamsSchema = {
 };
 
 export class ExplodeBodyAnnotation extends BaseAnnotation {
+  static entityType = 'exp';
   static type = 'exp';
+  static shortName = 'EXP';
+  static longName = 'Explode Body';
   static title = 'Explode Body';
   static featureShortName = 'exp';
   static featureName = 'Explode Body';
   static inputParamsSchema = inputParamsSchema;
   static aliases = ['viewTransform'];
 
-  constructor() {
-    super();
-    this.inputParams = {};
-    this.persistentData = {};
+  constructor(opts = {}) {
+    super(opts);
   }
 
   async run(renderingContext) {

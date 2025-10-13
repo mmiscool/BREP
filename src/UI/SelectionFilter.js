@@ -245,7 +245,10 @@ export class SelectionFilter {
 
         // Check if a reference selection is active
         try {
-            const activeRefInput = document.querySelector('[active-reference-selection="true"],[active-reference-selection=true]');
+            let activeRefInput = document.querySelector('[active-reference-selection="true"],[active-reference-selection=true]');
+            if (!activeRefInput) {
+                try { activeRefInput = window.__BREP_activeRefInput || null; } catch (_) { /* ignore */ }
+            }
             if (activeRefInput) {
                 const dataset = activeRefInput.dataset || {};
                 const isMultiRef = dataset.multiple === 'true';
@@ -365,6 +368,7 @@ export class SelectionFilter {
                     } catch (_) { }
                     // Restore selection filter
                     SelectionFilter.restoreAllowedSelectionTypes();
+                    try { if (window.__BREP_activeRefInput === activeRefInput) window.__BREP_activeRefInput = null; } catch (_) { }
                 } else {
                     activeRefInput.setAttribute('active-reference-selection', 'true');
                     activeRefInput.style.filter = 'invert(1)';
@@ -372,6 +376,7 @@ export class SelectionFilter {
                         const wrap = activeRefInput.closest('.ref-single-wrap, .ref-multi-wrap');
                         if (wrap) wrap.classList.add('ref-active');
                     } catch (_) { }
+                    try { window.__BREP_activeRefInput = activeRefInput; } catch (_) { }
                 }
                 return true; // handled as a reference selection
             }

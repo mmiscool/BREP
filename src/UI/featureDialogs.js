@@ -477,6 +477,7 @@ export class SchemaForm {
         // Apply selection filter from schema
         SelectionFilter.stashAllowedSelectionTypes();
         SelectionFilter.SetSelectionTypes(def.selectionFilter);
+        try { window.__BREP_activeRefInput = inputEl; } catch (_) { }
     }
 
     // Activate a TransformControls session for a transform widget
@@ -944,6 +945,7 @@ export class SchemaForm {
             }
         } catch (_) { }
         SchemaForm.__activeRefInput = null;
+        try { if (window.__BREP_activeRefInput === undefined || window.__BREP_activeRefInput === SchemaForm.__activeRefInput) window.__BREP_activeRefInput = null; } catch (_) { }
         SelectionFilter.restoreAllowedSelectionTypes();
     }
 

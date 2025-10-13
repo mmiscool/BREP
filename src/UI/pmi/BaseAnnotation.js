@@ -1,20 +1,18 @@
 // BaseAnnotation.js
-// Base class for all PMI annotations following the feature pattern
+// Base class for all PMI annotations built on the shared list entity foundation.
 
-export class BaseAnnotation {
-  static featureShortName = "ANN";
-  static featureName = "Annotation";
-  static inputParamsSchema = {
-    annotationID: {
-      type: "string",
-      default_value: null,
-      hint: "unique identifier for the annotation",
-    }
-  };
+import { ListEntityBase } from '../../core/entities/ListEntityBase.js';
 
-  constructor() {
-    this.inputParams = {};
-    this.persistentData = {};
+export class BaseAnnotation extends ListEntityBase {
+  static entityType = 'annotation';
+  static shortName = 'ANN';
+  static longName = 'Annotation';
+  static featureShortName = 'ANN';
+  static featureName = 'Annotation';
+  static inputParamsSchema = {}; 
+
+  constructor(opts = {}) {
+    super({ history: opts.history || null, registry: opts.registry || null });
     this.resultArtifacts = [];
   }
 
@@ -63,6 +61,32 @@ export class BaseAnnotation {
     const sanitized = sanitizeAnnotationParams(this.inputParamsSchema, params, ann);
     Object.assign(ann, sanitized);
     return { paramsPatch: {} };
+  }
+
+  onIdChanged() {
+    if (!this.inputParams || typeof this.inputParams !== 'object') {
+      this.inputParams = {};
+    }
+    this.inputParams.id = this.id;
+  }
+
+  onParamsChanged() {
+    if (!this.inputParams || typeof this.inputParams !== 'object') {
+      this.inputParams = {};
+    }
+    if (!this.inputParams.id) {
+      this.inputParams.id = this.id;
+    }
+    if (!this.inputParams.type) {
+      this.inputParams.type = this.type || this.entityType || 'annotation';
+    }
+  }
+
+  onPersistentDataChanged() {
+    // Ensure persistentData is always an object for UI bindings
+    if (!this.persistentData || typeof this.persistentData !== 'object') {
+      this.persistentData = {};
+    }
   }
 }
 

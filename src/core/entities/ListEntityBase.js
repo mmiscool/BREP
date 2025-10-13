@@ -28,7 +28,7 @@ export class ListEntityBase {
     this.registry = registry || null;
 
     this.id = null;
-    this.inputParams = {};
+    this.inputParams = { id };
     this.persistentData = {};
     this.runtimeAttributes = {};
 

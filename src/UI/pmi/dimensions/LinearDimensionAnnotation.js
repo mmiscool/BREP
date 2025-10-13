@@ -3,7 +3,7 @@ import { BaseAnnotation } from '../BaseAnnotation.js';
 import { makeOverlayLine, addArrowCone, objectRepresentativePoint } from '../annUtils.js';
 
 const inputParamsSchema = {
-  annotationID: {
+  id: {
     type: 'string',
     default_value: null,
     label: 'ID',
@@ -78,11 +78,18 @@ const inputParamsSchema = {
 };
 
 export class LinearDimensionAnnotation extends BaseAnnotation {
+  static entityType = 'linear';
   static type = 'linear';
+  static shortName = 'DIM';
+  static longName = 'Linear Dimension';
   static title = 'Linear';
   static featureShortName = 'linear';
   static featureName = 'Linear Dimension';
   static inputParamsSchema = inputParamsSchema;
+
+  constructor(opts = {}) {
+    super(opts);
+  }
 
   async run(renderingContext) {
     const { pmimode, group, idx, ctx } = renderingContext;
