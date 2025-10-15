@@ -106,7 +106,15 @@ export class FilletFeature {
             return { added: [], removed: [] };
         }
 
-        const targetSolid = edgeObjs[0].parentSolid || edgeObjs[0].parent;
+        const targetSolidOriginal = edgeObjs[0].parentSolid || edgeObjs[0].parent;
+
+        const targetSolid = targetSolidOriginal.clone();
+        targetSolid.name = targetSolidOriginal.name;
+
+        targetSolid.visualize();
+
+
+
 
         // Pre-remesh the target solid for more regular triangles before
         // constructing fillet tools. Use max edge length = radius / 2.
@@ -247,6 +255,8 @@ export class FilletFeature {
         // Apply booleans sequentially using shared helper; supports robust nudge behavior
         let finalSolid = targetSolid;
         const toRemove = new Set();
+        toRemove.add(targetSolidOriginal);
+        
         for (let idx = 0; idx < objectsForBoolean.length; idx++) {
             const tool = objectsForBoolean[idx];
             const dir = String(this.inputParams.direction || 'INSET').toUpperCase();
@@ -321,7 +331,7 @@ export class FilletFeature {
             console.warn('[FilletFeature] Face-name check failed:', e?.message || e);
         }
         // Replace original target solid
-        toRemove.add(targetSolid);
+        toRemove.add(targetSolid, targetSolidOriginal);
 
         // Mark removals via flag for PartHistory to collect
         try { for (const r of toRemove) { if (r) r.__removeFlag = true; } } catch { }
