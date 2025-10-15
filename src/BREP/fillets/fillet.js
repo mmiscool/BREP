@@ -12,7 +12,6 @@ import {
     localFaceNormalAtPoint,
     projectPointOntoFaceTriangles,
     batchProjectPointsOntoFace,
-    arrToV,
     vToArr,
     clamp,
     isFiniteVec3,
@@ -209,20 +208,20 @@ export class FilletSolid extends Solid {
             const out = [];
             for (let i = 0; i < src.length; i++) {
                 const a = src[i];
-                out.push(a);
+                out.push(new THREE.Vector3(a[0], a[1], a[2]));
                 const j = (i + 1);
                 if (isClosed) {
                     const b = src[(i + 1) % src.length];
                     const mx = 0.5 * (a[0] + b[0]);
                     const my = 0.5 * (a[1] + b[1]);
                     const mz = 0.5 * (a[2] + b[2]);
-                    out.push([mx, my, mz]);
+                    out.push(new THREE.Vector3(mx, my, mz));
                 } else if (j < src.length) {
                     const b = src[j];
                     const mx = 0.5 * (a[0] + b[0]);
                     const my = 0.5 * (a[1] + b[1]);
                     const mz = 0.5 * (a[2] + b[2]);
-                    out.push([mx, my, mz]);
+                    out.push(new THREE.Vector3(mx, my, mz));
                 }
             }
             samples = out;
@@ -232,6 +231,23 @@ export class FilletSolid extends Solid {
         // (nA·C = nA·p - r, nB·C = nB·p - r) with the cross-section plane (t·C = t·p)
         // Build per-sample definitions for the arc sectors and the rails used
         // to assemble the wedge; no need to retain additional rings/centers.
+        const sampleCount = samples.length;
+        const qAList = batchProjectPointsOntoFace(trisA, samples, faceDataA, faceA.name);
+        const qBList = batchProjectPointsOntoFace(trisB, samples, faceDataB, faceB.name);
+        const normalsA = new Array(sampleCount);
+        const normalsB = new Array(sampleCount);
+        for (let i = 0; i < sampleCount; i++) {
+            normalsA[i] = localFaceNormalAtPoint(solid, faceA.name, qAList[i], faceDataA, faceA.name) || nAavg;
+            normalsB[i] = localFaceNormalAtPoint(solid, faceB.name, qBList[i], faceDataB, faceB.name) || nBavg;
+        }
+
+        const tangent = new THREE.Vector3();
+        const tempU = new THREE.Vector3();
+        const tempV = new THREE.Vector3();
+        const fallbackDir = new THREE.Vector3();
+        const bisector3 = new THREE.Vector3();
+        const avgNormalScratch = new THREE.Vector3();
+
         const railP = [];   // original edge samples p[i]
         const railA = [];   // tangency along faceA direction
         const railB = [];   // tangency along faceB direction
@@ -240,45 +256,45 @@ export class FilletSolid extends Solid {
         // Inflation is applied later as a uniform offset of the entire solid.
         const rEff = Math.max(this.eps, this.radius);
 
-        for (let i = 0; i < samples.length; i++) {
-            const p = arrToV(samples[i]);
+        for (let i = 0; i < sampleCount; i++) {
+            const p = samples[i];
             // Use wrap-around neighbors for closed loops to get a consistent
             // central-difference tangent at the seam. Without this the first
             // and last sections use one-sided tangents, which causes the
             // ring at the seam to twist and create crossing triangles.
             const pPrev = isClosed
-                ? arrToV(samples[(i - 1 + samples.length) % samples.length])
-                : arrToV(samples[Math.max(0, i - 1)]);
+                ? samples[(i - 1 + sampleCount) % sampleCount]
+                : samples[Math.max(0, i - 1)];
             const pNext = isClosed
-                ? arrToV(samples[(i + 1) % samples.length])
-                : arrToV(samples[Math.min(samples.length - 1, i + 1)]);
+                ? samples[(i + 1) % sampleCount]
+                : samples[Math.min(sampleCount - 1, i + 1)];
             // Cross‑section plane normal: average of the two adjacent segment
             // directions at this point (central difference) to stabilize
             // the frame through corners of a polyline.
-            const t = new THREE.Vector3().subVectors(pNext, pPrev);
-            if (t.lengthSq() < this.vecLengthTol) continue;
-            t.normalize();
+            tangent.copy(pNext).sub(pPrev);
+            if (tangent.lengthSq() < this.vecLengthTol) continue;
+            tangent.normalize();
             // No tangent reversal toggle (was unused in UI)
 
             // Per-sample local normals from each adjacent face (handles curved faces)
             // Use per-face normals near the projected points on each face to
             // better approximate analytic curvature (important for cones).
-            const qA = projectPointOntoFaceTriangles(trisA, p, faceDataA);
-            const qB = projectPointOntoFaceTriangles(trisB, p, faceDataB);
-            const nA = localFaceNormalAtPoint(solid, faceA.name, qA, faceDataA) || nAavg;
-            const nB = localFaceNormalAtPoint(solid, faceB.name, qB, faceDataB) || nBavg;
+            const qA = qAList[i];
+            const qB = qBList[i];
+            const nA = normalsA[i] || nAavg;
+            const nB = normalsB[i] || nBavg;
 
             // Section frame and face trace directions ensure exact tangency
             // Face traces in the section plane: vA3 = normalize(nA x t), vB3 = normalize(nB x t)
-            let vA3 = nA.clone().cross(t);
-            let vB3 = nB.clone().cross(t);
+            const vA3 = tempU.copy(nA).cross(tangent);
+            const vB3 = tempV.copy(nB).cross(tangent);
             if (vA3.lengthSq() < this.eps || vB3.lengthSq() < this.eps) continue;
             vA3.normalize(); vB3.normalize();
             // No face-swap toggle (was unused in UI)
 
             // Orthonormal basis (u,v) with u aligned to vA3 for stable 2D mapping
             let u = vA3.clone();
-            const v = new THREE.Vector3().crossVectors(t, u).normalize();
+            const v = new THREE.Vector3().crossVectors(tangent, u).normalize();
 
             // 2D unit directions of face traces in the section
             const d0_2 = new THREE.Vector2(1, 0); // vA3 == +u
@@ -293,8 +309,8 @@ export class FilletSolid extends Solid {
             const expectDist = rEff / Math.abs(sinHalf);
 
             // For debug: inward projected normals and their bisector in 2D
-            const inA3 = t.clone().cross(vA3).negate(); // == projection of (−nA) into section plane
-            const inB3 = t.clone().cross(vB3).negate(); // == projection of (−nB) into section plane
+            const inA3 = tangent.clone().cross(vA3).negate(); // == projection of (−nA) into section plane
+            const inB3 = tangent.clone().cross(vB3).negate(); // == projection of (−nB) into section plane
             const n0_2 = new THREE.Vector2(inA3.dot(u), inA3.dot(v)).normalize();
             const n1_2 = new THREE.Vector2(inB3.dot(u), inB3.dot(v)).normalize();
             let bis2 = new THREE.Vector2(n0_2.x + n1_2.x, n0_2.y + n1_2.y);
@@ -303,8 +319,8 @@ export class FilletSolid extends Solid {
 
             // Choose side using true 3D offset-plane intersection for exact tangency
             // Solve with offset planes anchored to the face triangles (n·x = n·q ± r)
-            const C_in = solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, -1, nB, qB, -1, rEff); // inside
-            const C_out = solveCenterFromOffsetPlanesAnchored(p, t, nA, qA, +1, nB, qB, +1, rEff); // outside
+            const C_in = solveCenterFromOffsetPlanesAnchored(p, tangent, nA, qA, -1, nB, qB, -1, rEff); // inside
+            const C_out = solveCenterFromOffsetPlanesAnchored(p, tangent, nA, qA, +1, nB, qB, +1, rEff); // outside
 
             // Determine preferred side
             let pick = (this.sideMode === 'OUTSET') ? 'out' : 'in';
@@ -316,14 +332,14 @@ export class FilletSolid extends Solid {
                 console.warn(`FilletSolid: offset plane intersection failed at sample ${i}, using bisector fallback`);
                 // Use 2D bisector method as fallback
                 if (bis2.lengthSq() > this.eps) {
-                    const dir3 = __tmp4.set(0, 0, 0).addScaledVector(u, bis2.x).addScaledVector(v, bis2.y);
+                    const dir3 = fallbackDir.set(0, 0, 0).addScaledVector(u, bis2.x).addScaledVector(v, bis2.y);
                     if (pick === 'out') dir3.negate();
                     dir3.normalize();
                     center = p.clone().addScaledVector(dir3, expectDist);
                 } else {
                     // Last resort: use average normal direction
                     console.warn(`FilletSolid: bisector also failed at sample ${i}, using average normal fallback`);
-                    const avgNormal = nA.clone().add(nB).normalize();
+                    const avgNormal = avgNormalScratch.copy(nA).add(nB).normalize();
                     const sign = (pick === 'in') ? -1 : 1;
                     center = p.clone().addScaledVector(avgNormal, sign * expectDist);
                 }
@@ -346,9 +362,9 @@ export class FilletSolid extends Solid {
                 try {
                     const qA1 = projectPointOntoFaceTriangles(trisA, tA, faceDataA);
                     const qB1 = projectPointOntoFaceTriangles(trisB, tB, faceDataB);
-                    const nA1 = localFaceNormalAtPoint(solid, faceA.name, qA1, faceDataA) || nAavg;
-                    const nB1 = localFaceNormalAtPoint(solid, faceB.name, qB1, faceDataB) || nBavg;
-                    const C_ref = solveCenterFromOffsetPlanesAnchored(p, t, nA1, qA1, sA, nB1, qB1, sB, rEff);
+                    const nA1 = localFaceNormalAtPoint(solid, faceA.name, qA1, faceDataA, faceA.name) || nAavg;
+                    const nB1 = localFaceNormalAtPoint(solid, faceB.name, qB1, faceDataB, faceB.name) || nBavg;
+                    const C_ref = solveCenterFromOffsetPlanesAnchored(p, tangent, nA1, qA1, sA, nB1, qB1, sB, rEff);
                     if (C_ref) {
                         center = C_ref;
                         tA = center.clone().addScaledVector(nA1, -sA * rEff);
@@ -372,7 +388,7 @@ export class FilletSolid extends Solid {
                     if (pick === 'out') dir2.multiplyScalar(-1);
                     if (dir2.lengthSq() > 1e-16) {
                         dir2.normalize();
-                        const dir3 = new THREE.Vector3().addScaledVector(u, dir2.x).addScaledVector(v, dir2.y).normalize();
+                        const dir3 = bisector3.set(0, 0, 0).addScaledVector(u, dir2.x).addScaledVector(v, dir2.y).normalize();
                         center = p.clone().addScaledVector(dir3, expectDist);
                         tA = center.clone().addScaledVector(nA, -sA * rEff);
                         tB = center.clone().addScaledVector(nB, -sB * rEff);
@@ -398,7 +414,7 @@ export class FilletSolid extends Solid {
             if (axisLen < 1e-12) {
                 // Nearly colinear (faces almost parallel in section) —
                 // fall back to using section axis `t` for rotation.
-                axis = t.clone();
+                axis = tangent.clone();
                 axisLen = axis.length();
             }
             axis.normalize();
@@ -510,7 +526,12 @@ export class FilletSolid extends Solid {
             }
             if (moveDist > 0) {
                 try {
-                    railPBuild = displaceRailPForInflate(railP, trisA, trisB, moveDist, this.sideMode);
+                    railPBuild = displaceRailPForInflate(railP, trisA, trisB, moveDist, this.sideMode, {
+                        faceKeyA: faceA.name,
+                        faceKeyB: faceB.name,
+                        faceDataA,
+                        faceDataB,
+                    });
                 } catch { railPBuild = railP; }
             }
         }
@@ -542,8 +563,8 @@ export class FilletSolid extends Solid {
         // seams (P→seamA, P→seamB) are actual triangle edges shared between
         // the side strips and the cap, preventing tiny gaps.
         const widthSubdiv = (!isClosed && this.sideMode === 'INSET') ? 1 : this.sideStripSubdiv;
-        const sideRowsA = computeSideStripRows(railPBuild, seamA, isClosed, trisA, widthSubdiv, seamInset, sideOffsetSigned, projectSide);
-        const sideRowsB = computeSideStripRows(railPBuild, seamB, isClosed, trisB, widthSubdiv, seamInset, sideOffsetSigned, projectSide);
+        const sideRowsA = computeSideStripRows(railPBuild, seamA, isClosed, trisA, widthSubdiv, seamInset, sideOffsetSigned, projectSide, faceA.name, faceDataA);
+        const sideRowsB = computeSideStripRows(railPBuild, seamB, isClosed, trisB, widthSubdiv, seamInset, sideOffsetSigned, projectSide, faceB.name, faceDataB);
 
         buildWedgeDirect(this, baseName,
             railPBuild, sectorDefs, rEff, radialSegments, isClosed, seamA, seamB,
@@ -653,6 +674,9 @@ export class FilletSolid extends Solid {
             return this;
         }
 
+        // Track whether we have already proven that Manifold can build this mesh
+        let manifoldProbeSucceeded = false;
+
         // Proactive manifold check for OUTSET on open edges with face‑projected strips
         // (conical or highly slanted faces can occasionally produce foldovers
         // during projection). If the authored mesh fails to manifoldize, rebuild
@@ -660,6 +684,7 @@ export class FilletSolid extends Solid {
         try {
             // Quick probe; throws on failure
             const __m = this.getMesh();
+            manifoldProbeSucceeded = true;
             try { /* probe */ } finally { try { if (__m && typeof __m.delete === 'function') __m.delete(); } catch { } }
         } catch (e) {
             const isClosed = !!(this.edgeToFillet?.closedLoop || this.edgeToFillet?.userData?.closedLoop);
@@ -726,10 +751,13 @@ export class FilletSolid extends Solid {
             let nonManifold = false;
             try { if (!this._isCoherentlyOrientedManifold()) nonManifold = true; } catch { nonManifold = true; }
             if (!nonManifold) {
-                try {
-                    const __m2 = this.getMesh();
-                    try { /* probe */ } finally { try { if (__m2 && typeof __m2.delete === 'function') __m2.delete(); } catch { } }
-                } catch { nonManifold = true; }
+                if (!manifoldProbeSucceeded) {
+                    try {
+                        const __m2 = this.getMesh();
+                        manifoldProbeSucceeded = true;
+                        try { /* probe */ } finally { try { if (__m2 && typeof __m2.delete === 'function') __m2.delete(); } catch { } }
+                    } catch { nonManifold = true; }
+                }
             }
             if (nonManifold) {
                 const msg = `Fillet tool is non-manifold. Boolean may fail.\n` +

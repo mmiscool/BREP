@@ -22,7 +22,7 @@ export function renderNumberField({ ui, key, def, id }) {
     const numericPattern = /^-?\d*\.?\d*$/;
 
     function isNumericLike(value) {
-        console.log('isNumericLike:', value);
+        //console.log('isNumericLike:', value);
         return numericPattern.test(value);
     }
 

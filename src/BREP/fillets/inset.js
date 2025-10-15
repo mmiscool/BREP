@@ -550,12 +550,16 @@ function insetPolylineAlongFaceNormals(tris, points, amount) {
 // Sample a grid of points spanning the side strip between the original edge
 // rail and the projected fillet seam on a face. Returns an array of rows, each
 // containing `widthSubdiv+1` vertices ordered from rail (k=0) to seam (k=W).
-function computeSideStripRows(railP, seam, closeLoop, tris, widthSubdiv = 8, inset = 0, extraOffset = 0, project = true) {
-    const faceData = getCachedFaceDataForTris(tris);
+// Optional faceKey/faceData let callers reuse cached data and normals.
+function computeSideStripRows(railP, seam, closeLoop, tris, widthSubdiv = 8, inset = 0, extraOffset = 0, project = true, faceKey = null, faceDataOverride = null) {
+    const faceData = faceDataOverride || getCachedFaceDataForTris(tris, faceKey);
     const n = Math.min(railP.length, seam.length);
     if (n < 2) return null;
     const W = Math.max(1, widthSubdiv);
     const rows = new Array(n);
+    const toProject = [];
+    const targetRow = [];
+    const targetCol = [];
 
     for (let i = 0; i < n; i++) {
         const Pi = railP[i];
@@ -571,24 +575,40 @@ function computeSideStripRows(railP, seam, closeLoop, tris, widthSubdiv = 8, ins
                 row[k] = Si.clone();
                 continue;
             }
-            const v = new THREE.Vector3(
+            const candidate = new THREE.Vector3(
                 Pi.x + (Si.x - Pi.x) * t,
                 Pi.y + (Si.y - Pi.y) * t,
                 Pi.z + (Si.z - Pi.z) * t,
             );
             if (project) {
-                let q = projectPointOntoFaceTriangles(tris, v, faceData);
-                const nrm = normalFromFaceTriangles(tris, q);
-                let move = 0;
-                if (Number.isFinite(extraOffset) && extraOffset !== 0) move += extraOffset;
-                if (inset > 0) move -= inset;
-                if (move !== 0 && nrm) q = q.addScaledVector(nrm, move);
-                row[k] = q;
+                toProject.push(candidate);
+                targetRow.push(i);
+                targetCol.push(k);
+                row[k] = null;
             } else {
-                row[k] = v;
+                row[k] = candidate;
             }
         }
         rows[i] = row;
+    }
+
+    if (project && toProject.length > 0) {
+        const projected = batchProjectPointsOntoFace(tris, toProject, faceData, faceKey);
+        for (let idx = 0; idx < projected.length; idx++) {
+            const r = targetRow[idx];
+            const c = targetCol[idx];
+            let q = projected[idx];
+            let move = 0;
+            if (Number.isFinite(extraOffset) && extraOffset !== 0) move += extraOffset;
+            if (inset > 0) move -= inset;
+            if (move !== 0) {
+                const nrm = localFaceNormalAtPoint(null, faceKey, q, faceData, faceKey);
+                if (nrm && nrm.lengthSq() > 1e-20) {
+                    q = q.clone().addScaledVector(nrm, move);
+                }
+            }
+            rows[r][c] = q;
+        }
     }
 
     return rows;
@@ -750,21 +770,36 @@ function validateCapStripSeam(solid, sideFaceName, boundaryRow, capFaceName) {
 
 // Displace the input P-rail along the average normals of the adjacent faces.
 // Positive distance moves outward for INSET; OUTSET flips the sign.
-function displaceRailPForInflate(railP, trisA, trisB, distance, sideMode = 'INSET') {
-    const faceDataA = getCachedFaceDataForTris(trisA);
-    const faceDataB = getCachedFaceDataForTris(trisB);
+function displaceRailPForInflate(railP, trisA, trisB, distance, sideMode = 'INSET', options = {}) {
+    const {
+        faceKeyA = null,
+        faceKeyB = null,
+        faceDataA: faceDataOverrideA = null,
+        faceDataB: faceDataOverrideB = null,
+    } = options || {};
+    const faceDataA = faceDataOverrideA || getCachedFaceDataForTris(trisA, faceKeyA);
+    const faceDataB = faceDataOverrideB || getCachedFaceDataForTris(trisB, faceKeyB);
+    const projA = batchProjectPointsOntoFace(trisA, railP, faceDataA, faceKeyA);
+    const projB = batchProjectPointsOntoFace(trisB, railP, faceDataB, faceKeyB);
     const out = new Array(railP.length);
     const sign = (String(sideMode).toUpperCase() === 'INSET') ? +1 : -1;
     const d = Math.abs(Number(distance) || 0) * sign;
+    const combined = new THREE.Vector3();
     for (let i = 0; i < railP.length; i++) {
         const p = railP[i];
-        const qA = projectPointOntoFaceTriangles(trisA, p, faceDataA);
-        const qB = projectPointOntoFaceTriangles(trisB, p, faceDataB);
-        const nA = normalFromFaceTriangles(trisA, qA);
-        const nB = normalFromFaceTriangles(trisB, qB);
-        const n = new THREE.Vector3(nA.x + nB.x, nA.y + nB.y, nA.z + nB.z);
-        if (n.lengthSq() > 1e-20) n.normalize(); else n.set(0, 0, 0);
-        out[i] = p.clone().addScaledVector(n, d);
+        const qA = projA[i];
+        const qB = projB[i];
+        const nA = qA ? localFaceNormalAtPoint(null, faceKeyA, qA, faceDataA, faceKeyA) : null;
+        const nB = qB ? localFaceNormalAtPoint(null, faceKeyB, qB, faceDataB, faceKeyB) : null;
+        combined.set(0, 0, 0);
+        if (nA) combined.add(nA);
+        if (nB) combined.add(nB);
+        if (combined.lengthSq() > 1e-20) {
+            combined.normalize();
+            out[i] = p.clone().addScaledVector(combined, d);
+        } else {
+            out[i] = p.clone();
+        }
     }
     return out;
 }
@@ -788,49 +823,77 @@ function averageFaceNormalObjectSpace(solid, faceName) {
     return accum.normalize();
 }
 
-function localFaceNormalAtPoint(solid, faceName, p, faceData = null) {
-    if (faceData) {
-        // Use precomputed face data
-        let best = null;
-        for (const data of faceData) {
-            const d = Math.abs(data.normal.dot(new THREE.Vector3().subVectors(p, new THREE.Vector3(data.cx, data.cy, data.cz))));
-            if (!best || d < best.d) best = { d, n: data.normal };
+function localFaceNormalAtPoint(solid, faceName, p, faceData = null, faceKey = null) {
+    const point = (p && typeof p.x === 'number')
+        ? p
+        : __tmp5.set(p?.[0] || 0, p?.[1] || 0, p?.[2] || 0);
+
+    let data = (Array.isArray(faceData) && faceData.length)
+        ? faceData
+        : null;
+
+    if (!data) {
+        const tris = solid?.getFace ? solid.getFace(faceName) : null;
+        if (!Array.isArray(tris) || tris.length === 0) return null;
+        data = getCachedFaceDataForTris(tris, faceKey || faceName);
+    }
+    if (!data || data.length === 0) return null;
+
+    const cacheKey = faceKey || faceName || null;
+    const spatialIndex = getCachedSpatialIndex(data, cacheKey);
+    let bestNormal = null;
+    let bestDist = Infinity;
+
+    const evaluate = (idx) => {
+        const entry = data[idx];
+        if (!entry) return;
+        const dx = point.x - entry.cx;
+        const dy = point.y - entry.cy;
+        const dz = point.z - entry.cz;
+        const dist = Math.abs(entry.normal.x * dx + entry.normal.y * dy + entry.normal.z * dz);
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestNormal = entry.normal;
         }
-        return best ? best.n : null;
+    };
+
+    if (spatialIndex) {
+        const searchRadius = Number.isFinite(spatialIndex.cellSize) ? spatialIndex.cellSize * 1.5 : Infinity;
+        const nearby = spatialIndex.getNearbyTriangles(point, searchRadius);
+        if (Array.isArray(nearby)) {
+            for (let i = 0; i < nearby.length; i++) {
+                evaluate(nearby[i]);
+            }
+        }
     }
 
-    // Fallback to original implementation
-    const tris = solid.getFace(faceName);
-    if (!tris || !tris.length) return null;
-    let best = null;
-    const pa = new THREE.Vector3(), pb = new THREE.Vector3(), pc = new THREE.Vector3();
-    const n = new THREE.Vector3();
-    const centroid = new THREE.Vector3();
-
-    // Precompute triangle data for faster processing
-    const triangleData = tris.map(t => {
-        pa.set(t.p1[0], t.p1[1], t.p1[2]);
-        pb.set(t.p2[0], t.p2[1], t.p2[2]);
-        pc.set(t.p3[0], t.p3[1], t.p3[2]);
-
-        const ab = new THREE.Vector3().subVectors(pb, pa);
-        const ac = new THREE.Vector3().subVectors(pc, pa);
-        n.copy(ab).cross(ac);
-        if (n.lengthSq() < 1e-14) return null;
-
-        n.normalize();
-        centroid.copy(pa).add(pb).add(pc).multiplyScalar(1 / 3);
-
-        return { centroid: centroid.clone(), normal: n.clone(), triangle: t };
-    }).filter(Boolean);
-
-    // Find the triangle whose centroid is closest to the point
-    for (const data of triangleData) {
-        const d = Math.abs(data.normal.dot(new THREE.Vector3().subVectors(p, data.centroid)));
-        if (!best || d < best.d) best = { d, n: data.normal };
+    if (!bestNormal) {
+        // Fallback: sample a small set of closest centroids to avoid a full scan.
+        const pickCount = Math.min(16, data.length);
+        const candidates = [];
+        for (let i = 0; i < data.length; i++) {
+            const entry = data[i];
+            if (!entry) continue;
+            const dx = point.x - entry.cx;
+            const dy = point.y - entry.cy;
+            const dz = point.z - entry.cz;
+            const d2 = dx * dx + dy * dy + dz * dz;
+            if (candidates.length < pickCount) {
+                candidates.push({ idx: i, d2 });
+                if (candidates.length === pickCount) {
+                    candidates.sort((a, b) => a.d2 - b.d2);
+                }
+            } else if (d2 < candidates[candidates.length - 1].d2) {
+                candidates[candidates.length - 1] = { idx: i, d2 };
+                candidates.sort((a, b) => a.d2 - b.d2);
+            }
+        }
+        for (let i = 0; i < candidates.length; i++) {
+            evaluate(candidates[i].idx);
+        }
     }
 
-    return best ? best.n : null;
+    return bestNormal || null;
 }
 
 // (removed unused triangulateCapFan / triangulateCapToPoint)
