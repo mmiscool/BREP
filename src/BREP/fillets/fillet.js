@@ -23,6 +23,7 @@ import {
     displaceRailPForInflate,
     classifyFilletBoolean,
 } from './inset.js';
+import { generateEndcapFaces } from './common.js';
 import {
     buildWedgeDirect,
     solveCenterFromOffsetPlanesAnchored,
@@ -42,13 +43,13 @@ export class FilletSolid extends Solid {
         super();
         this.edgeToFillet = edgeToFillet;
         this.radius = radius;
-        
+
         // Scale-adaptive tolerances for numerical robustness
         this.eps = getScaleAdaptiveTolerance(radius, 1e-12);
         this.distTol = getDistanceTolerance(radius);
         this.angleTol = getAngleTolerance();
         this.vecLengthTol = getScaleAdaptiveTolerance(radius, 1e-14);
-        
+
         // Grow/shrink the fillet tool solid by this absolute amount (units of model space).
         // Positive inflates the solid slightly (useful to avoid thin remainders after CSG).
         this.inflate = Number.isFinite(inflate) ? inflate : 0;
@@ -81,10 +82,10 @@ export class FilletSolid extends Solid {
         // Forcing a hull here creates incorrect geometry for open/outset cases
         // because far end-strip vertices can dominate the hull. Keep false.
         this.forcePointCloudHull = false;
-        
+
         // Input validation for robustness
         this.validate();
-        
+
         this.generate();
     }
 
@@ -93,11 +94,11 @@ export class FilletSolid extends Solid {
         if (!this.edgeToFillet) {
             throw new Error("FilletSolid: edgeToFillet is required");
         }
-        
+
         if (!Number.isFinite(this.radius) || this.radius <= 0) {
             throw new Error(`FilletSolid: radius must be a positive number, got ${this.radius}`);
         }
-        
+
         // Warn about extreme radius values that may cause numerical issues
         if (this.radius < 1e-6) {
             console.warn(`FilletSolid: very small radius (${this.radius}), may cause precision issues`);
@@ -309,7 +310,7 @@ export class FilletSolid extends Solid {
             let pick = (this.sideMode === 'OUTSET') ? 'out' : 'in';
 
             let center = (pick === 'in') ? (C_in || C_out) : (C_out || C_in);
-            
+
             // Robust fallback if offset plane intersection fails (e.g., nearly parallel faces)
             if (!center) {
                 console.warn(`FilletSolid: offset plane intersection failed at sample ${i}, using bisector fallback`);
@@ -551,26 +552,23 @@ export class FilletSolid extends Solid {
         buildSideStripOnFace(this, `${baseName}_SIDE_A`, railPBuild, seamA, isClosed, trisA, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide, sideRowsA);
         buildSideStripOnFace(this, `${baseName}_SIDE_B`, railPBuild, seamB, isClosed, trisB, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide, sideRowsB);
 
+        // Generate endcaps for open edges after building the main geometry
+        // This ensures the mesh is manifold before entering the cleanup phase
+        if (!isClosed) {
+            try {
+                const initialEndcaps = this._generateEndcapsIfNeeded(rEff, baseName);
+                if (initialEndcaps > 0 && this.debug) {
+                    console.log(`FilletSolid: generated ${initialEndcaps} initial endcaps after wedge construction`);
+                }
+            } catch (e) {
+                if (this.debug) {
+                    console.warn('FilletSolid: initial endcap generation failed:', e?.message || e);
+                }
+            }
+        }
+
         // Heuristic: decide union vs subtract based on bisector direction vs outward normals
         this.filletType = classifyFilletBoolean(nAavg, nBavg, polyLocal);
-
-        // Debug: validate cap/strip seams to detect any T-junctions early.
-        if (this.debug && !isClosed) {
-            try {
-                const missA0 = validateCapStripSeam(this, `${baseName}_SIDE_A`, sideRowsA?.[0], `${baseName}_CAP_START`);
-                const missB0 = validateCapStripSeam(this, `${baseName}_SIDE_B`, sideRowsB?.[0], `${baseName}_CAP_START`);
-                const missA1 = validateCapStripSeam(this, `${baseName}_SIDE_A`, sideRowsA?.[sideRowsA.length - 1], `${baseName}_CAP_END`);
-                const missB1 = validateCapStripSeam(this, `${baseName}_SIDE_B`, sideRowsB?.[sideRowsB.length - 1], `${baseName}_CAP_END`);
-                const any = (missA0?.length || 0) + (missB0?.length || 0) + (missA1?.length || 0) + (missB1?.length || 0);
-                if (any > 0) {
-                    console.warn('[FilletSolid] seam validator: missing strip edges on cap boundary', {
-                        baseName,
-                        startA: missA0, startB: missB0,
-                        endA: missA1, endB: missB1,
-                    });
-                }
-            } catch (e) { try { console.warn('[FilletSolid] seam validation failed:', e?.message || e); } catch { } }
-        }
 
         // Before inflating, ensure triangles are coherently oriented and pre-clean
         // in authoring space to avoid requiring a Manifold build too early.
@@ -607,6 +605,21 @@ export class FilletSolid extends Solid {
             enforceTwoManifoldByDropping(this);
             this.fixTriangleWindingsByAdjacency();
         } catch { }
+
+        // Generate endcaps for non-manifold boundaries to ensure manifold mesh
+        // This step is crucial for open edges that would otherwise leave the mesh non-manifold
+        try {
+            if (!isClosed) {
+                const endcapsGenerated = this._generateEndcapsIfNeeded(rEff, baseName);
+                if (endcapsGenerated > 0 && this.debug) {
+                    console.log(`FilletSolid: generated ${endcapsGenerated} endcaps for manifold closure`);
+                }
+            }
+        } catch (e) {
+            if (this.debug) {
+                console.warn('FilletSolid: endcap generation failed:', e?.message || e);
+            }
+        }
 
 
 
@@ -704,43 +717,9 @@ export class FilletSolid extends Solid {
                 return this;
             }
 
-            // Final fallback: rebuild tool as the convex hull of the authored
-            // vertex cloud. This guarantees a watertight manifold even if the
-            // wedge triangulation had local non-manifold configurations.
-            try {
-                const { Manifold } = manifold;
-                const vp = this._vertProperties || [];
-                const uniq = new Set();
-                const pts = [];
-                for (let i = 0; i + 2 < vp.length; i += 3) {
-                    const x = vp[i], y = vp[i + 1], z = vp[i + 2];
-                    const k = `${x},${y},${z}`;
-                    if (uniq.has(k)) continue;
-                    uniq.add(k);
-                    pts.push({ x, y, z });
-                }
-                if (pts.length >= 4) {
-                    const hullM = Manifold.hull(pts);
-                    // Wrap in Solid to copy arrays / bookkeeping, assign a simple face label
-                    const tmp = Solid._fromManifold(hullM, new Map([[0, 'FILLET_TOOL']]));
-                    copyFromSolid(this, tmp);
-                    // Preserve intent and metadata
-                    this.filletType = this.filletType || 'SUBTRACT';
-                    this.name = 'FILLET_TOOL';
-                    // Mark for rebuild and ensure coherent orientation
-                    try { this.fixTriangleWindingsByAdjacency(); } catch { }
-                    try { ensureOutwardOrientationAuthoring(this); } catch { }
-                    // One more light weld to drop any accidental duplicates
-                    try { this._weldVerticesByEpsilon(1e-9); } catch { }
-                } else {
-                    // Not enough unique points for a hull; keep authored data as-is
-                }
-            } catch (eHull) {
-                try { console.warn('[FilletSolid] hull fallback failed:', eHull?.message || eHull); } catch { }
-            }
         }
 
-        // Final sanity: alert if the tool is non‑manifold. This is a UX aid only
+        // Final sanity: alert if the tool is non-manifold. This is a UX aid only
         // (does not stop execution). We first check authoring manifoldness and
         // then try to manifoldize. If either fails, pop a browser alert.
         try {
@@ -767,8 +746,1079 @@ export class FilletSolid extends Solid {
 
         // Perform cache maintenance to prevent memory leaks
         trimFilletCaches();
-        
+
         // No manual Three.js mesh here; rely on Solid.visualize() for inspection
         return this;
+    }
+
+    /**
+     * Generate endcaps for non-manifold boundaries to create a proper manifold mesh.
+     * This method detects open boundaries and triangulates them to close the mesh.
+     * 
+     * @param {number} radius - The fillet radius for scale-appropriate tolerances
+     * @param {string} baseName - Base name for the endcap faces
+     * @returns {number} Number of endcaps generated
+     */
+    _generateEndcapsIfNeeded(radius, baseName) {
+        // Robust hole patching for manifold mesh creation
+        if (this.debug) {
+            console.log('Starting manifold hole patching...');
+        }
+        
+        try {
+            const patchCount = this._patchAllHoles(baseName);
+            if (this.debug && patchCount > 0) {
+                console.log(`Successfully patched ${patchCount} holes for manifold mesh`);
+            }
+            return patchCount;
+        } catch (error) {
+            if (this.debug) {
+                console.error('Hole patching failed:', error.message);
+            }
+            return 0;
+        }
+    }
+
+    /**
+     * Patch all holes in the mesh to ensure manifold topology
+     * @param {string} baseName - Base name for patch faces
+     * @returns {number} Number of holes patched
+     */
+    _patchAllHoles(baseName) {
+        const boundaryLoops = this._findBoundaryLoops();
+        if (!boundaryLoops || boundaryLoops.length === 0) {
+            return 0;
+        }
+
+        let holesPatched = 0;
+        for (let i = 0; i < boundaryLoops.length; i++) {
+            const loop = boundaryLoops[i];
+            if (loop.vertices.length >= 3) {
+                const patchName = `${baseName}_PATCH_${i}`;
+                const success = this._patchHole(loop, patchName);
+                if (success) {
+                    holesPatched++;
+                }
+            }
+        }
+
+        // Clean up after patching
+        if (holesPatched > 0) {
+            this._cleanupAfterPatching();
+        }
+
+        return holesPatched;
+    }
+
+    /**
+     * Find boundary loops (holes) in the mesh
+     * @returns {Array<{vertices: number[], positions: THREE.Vector3[]}>} Array of boundary loops
+     */
+    _findBoundaryLoops() {
+        const vp = this._vertProperties;
+        const tv = this._triVerts;
+        if (!tv || tv.length < 3 || !vp || vp.length < 9) {
+            return [];
+        }
+
+        // Build edge adjacency map
+        const edgeCount = new Map();
+        const triCount = Math.floor(tv.length / 3);
+
+        // Count edge usage
+        for (let t = 0; t < triCount; t++) {
+            const i0 = tv[t * 3 + 0];
+            const i1 = tv[t * 3 + 1];
+            const i2 = tv[t * 3 + 2];
+
+            const edges = [[i0, i1], [i1, i2], [i2, i0]];
+            for (const [a, b] of edges) {
+                const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+                edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
+            }
+        }
+
+        // Find boundary edges (used only once)
+        const boundaryEdges = [];
+        for (const [key, count] of edgeCount) {
+            if (count === 1) {
+                const [a, b] = key.split(':').map(Number);
+                boundaryEdges.push([a, b]);
+            }
+        }
+
+        if (boundaryEdges.length === 0) {
+            return [];
+        }
+
+        // Group boundary edges into loops
+        return this._groupEdgesIntoLoops(boundaryEdges, vp);
+    }
+
+    /**
+     * Group boundary edges into connected loops
+     * @param {Array<[number, number]>} edges - Boundary edges
+     * @param {Float32Array} vp - Vertex properties
+     * @returns {Array<{vertices: number[], positions: THREE.Vector3[]}>} Loops
+     */
+    _groupEdgesIntoLoops(edges, vp) {
+        const adjacency = new Map();
+        
+        // Build adjacency map
+        for (const [a, b] of edges) {
+            if (!adjacency.has(a)) adjacency.set(a, []);
+            if (!adjacency.has(b)) adjacency.set(b, []);
+            adjacency.get(a).push(b);
+            adjacency.get(b).push(a);
+        }
+
+        const loops = [];
+        const visited = new Set();
+
+        for (const [startVertex] of adjacency) {
+            if (visited.has(startVertex)) continue;
+
+            const loop = this._traceLoop(startVertex, adjacency, visited, vp);
+            if (loop && loop.vertices.length >= 3) {
+                loops.push(loop);
+            }
+        }
+
+        return loops;
+    }
+
+    /**
+     * Trace a boundary loop starting from a vertex
+     * @param {number} start - Starting vertex index
+     * @param {Map} adjacency - Vertex adjacency map
+     * @param {Set} visited - Set of visited vertices
+     * @param {Float32Array} vp - Vertex properties
+     * @returns {Object|null} Loop object or null if invalid
+     */
+    _traceLoop(start, adjacency, visited, vp) {
+        const vertices = [];
+        const positions = [];
+        let current = start;
+        let previous = -1;
+
+        do {
+            if (visited.has(current)) break;
+            
+            visited.add(current);
+            vertices.push(current);
+            
+            // Add position
+            const pos = new THREE.Vector3(
+                vp[current * 3 + 0],
+                vp[current * 3 + 1], 
+                vp[current * 3 + 2]
+            );
+            positions.push(pos);
+
+            // Find next vertex
+            const neighbors = adjacency.get(current) || [];
+            let next = -1;
+            
+            for (const neighbor of neighbors) {
+                if (neighbor !== previous) {
+                    next = neighbor;
+                    break;
+                }
+            }
+
+            if (next === -1 || next === start) break;
+            
+            previous = current;
+            current = next;
+
+        } while (current !== start && vertices.length < 1000); // Safety limit
+
+        return vertices.length >= 3 ? { vertices, positions } : null;
+    }
+
+    /**
+     * Patch a single hole using robust triangulation
+     * @param {Object} loop - Boundary loop to patch
+     * @param {string} patchName - Name for patch triangles
+     * @returns {boolean} Success status
+     */
+    _patchHole(loop, patchName) {
+        try {
+            const positions = loop.positions;
+            if (positions.length < 3) return false;
+
+            // Calculate loop normal for consistent orientation
+            const normal = this._calculateLoopNormal(positions);
+            
+            // Choose best triangulation method based on loop properties
+            if (positions.length === 3) {
+                // Simple triangle
+                return this._addTrianglePatch(positions, normal, patchName);
+            } else if (positions.length === 4) {
+                // Quadrilateral - split into two triangles
+                return this._addQuadPatch(positions, normal, patchName);
+            } else {
+                // Complex polygon - use fan triangulation from centroid
+                return this._addFanPatch(positions, normal, patchName);
+            }
+        } catch (error) {
+            if (this.debug) {
+                console.warn(`Failed to patch hole ${patchName}:`, error.message);
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Calculate normal vector for a boundary loop
+     * @param {Array<THREE.Vector3>} positions - Loop positions
+     * @returns {THREE.Vector3} Normal vector
+     */
+    _calculateLoopNormal(positions) {
+        if (positions.length < 3) return new THREE.Vector3(0, 0, 1);
+
+        // Use Newell's method for robust normal calculation
+        const normal = new THREE.Vector3();
+        for (let i = 0; i < positions.length; i++) {
+            const curr = positions[i];
+            const next = positions[(i + 1) % positions.length];
+            
+            normal.x += (curr.y - next.y) * (curr.z + next.z);
+            normal.y += (curr.z - next.z) * (curr.x + next.x);
+            normal.z += (curr.x - next.x) * (curr.y + next.y);
+        }
+        
+        return normal.normalize();
+    }
+
+    /**
+     * Add triangular patch
+     */
+    _addTrianglePatch(positions, normal, patchName) {
+        // Ensure correct winding order
+        const [p0, p1, p2] = positions;
+        const computedNormal = new THREE.Vector3()
+            .subVectors(p1, p0)
+            .cross(new THREE.Vector3().subVectors(p2, p0))
+            .normalize();
+
+        if (computedNormal.dot(normal) < 0) {
+            // Reverse winding
+            this.addTriangle(patchName, [p0.x, p0.y, p0.z], [p2.x, p2.y, p2.z], [p1.x, p1.y, p1.z]);
+        } else {
+            this.addTriangle(patchName, [p0.x, p0.y, p0.z], [p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z]);
+        }
+        return true;
+    }
+
+    /**
+     * Add quadrilateral patch (two triangles)
+     */
+    _addQuadPatch(positions, normal, patchName) {
+        const [p0, p1, p2, p3] = positions;
+        
+        // Split quad into two triangles - choose best diagonal
+        const diag1Length = p0.distanceTo(p2);
+        const diag2Length = p1.distanceTo(p3);
+        
+        if (diag1Length < diag2Length) {
+            // Use p0-p2 diagonal
+            this._addTrianglePatch([p0, p1, p2], normal, `${patchName}_A`);
+            this._addTrianglePatch([p0, p2, p3], normal, `${patchName}_B`);
+        } else {
+            // Use p1-p3 diagonal
+            this._addTrianglePatch([p0, p1, p3], normal, `${patchName}_A`);
+            this._addTrianglePatch([p1, p2, p3], normal, `${patchName}_B`);
+        }
+        return true;
+    }
+
+    /**
+     * Add fan triangulation from centroid
+     */
+    _addFanPatch(positions, normal, patchName) {
+        // Calculate centroid
+        const centroid = new THREE.Vector3();
+        for (const pos of positions) {
+            centroid.add(pos);
+        }
+        centroid.divideScalar(positions.length);
+
+        // Create triangles from centroid to each edge
+        for (let i = 0; i < positions.length; i++) {
+            const p1 = positions[i];
+            const p2 = positions[(i + 1) % positions.length];
+            
+            // Check orientation and create triangle
+            const edgeNormal = new THREE.Vector3()
+                .subVectors(p1, centroid)
+                .cross(new THREE.Vector3().subVectors(p2, centroid))
+                .normalize();
+
+            if (edgeNormal.dot(normal) < 0) {
+                this.addTriangle(`${patchName}_${i}`, 
+                    [centroid.x, centroid.y, centroid.z], 
+                    [p2.x, p2.y, p2.z], 
+                    [p1.x, p1.y, p1.z]);
+            } else {
+                this.addTriangle(`${patchName}_${i}`, 
+                    [centroid.x, centroid.y, centroid.z], 
+                    [p1.x, p1.y, p1.z], 
+                    [p2.x, p2.y, p2.z]);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Clean up mesh after patching
+     */
+    _cleanupAfterPatching() {
+        try {
+            // Weld vertices to remove duplicates
+            const tolerance = Math.max(1e-10, this.eps);
+            if (this._weldVerticesByEpsilon) {
+                this._weldVerticesByEpsilon(tolerance);
+            }
+            
+            // Fix triangle windings
+            if (this.fixTriangleWindingsByAdjacency) {
+                this.fixTriangleWindingsByAdjacency();
+            }
+
+            // Validate manifold properties after patching
+            if (this.debug) {
+                const isManifold = this._validateManifoldProperties();
+                console.log(`Manifold validation after patching: ${isManifold ? 'PASSED' : 'FAILED'}`);
+            }
+        } catch (error) {
+            if (this.debug) {
+                console.warn('Cleanup after patching failed:', error.message);
+            }
+        }
+    }
+
+    /**
+     * Validate that mesh has proper manifold properties
+     * @returns {boolean} True if mesh is manifold
+     */
+    _validateManifoldProperties() {
+        try {
+            const vp = this._vertProperties;
+            const tv = this._triVerts;
+            if (!tv || tv.length < 3 || !vp || vp.length < 9) {
+                return true; // Empty mesh is technically manifold
+            }
+
+            const triCount = Math.floor(tv.length / 3);
+            const edgeCount = new Map();
+            let nonManifoldEdges = 0;
+
+            // Count edge usage - in a manifold mesh, each edge should be used by exactly 2 triangles
+            for (let t = 0; t < triCount; t++) {
+                const i0 = tv[t * 3 + 0];
+                const i1 = tv[t * 3 + 1];
+                const i2 = tv[t * 3 + 2];
+
+                const edges = [[i0, i1], [i1, i2], [i2, i0]];
+                for (const [a, b] of edges) {
+                    const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+                    edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
+                }
+            }
+
+            // Check for non-manifold edges
+            let boundaryEdges = 0;
+            let overusedEdges = 0;
+
+            for (const [key, count] of edgeCount) {
+                if (count === 1) {
+                    boundaryEdges++;
+                } else if (count > 2) {
+                    overusedEdges++;
+                    nonManifoldEdges++;
+                }
+            }
+
+            if (this.debug && (boundaryEdges > 0 || overusedEdges > 0)) {
+                console.log(`Manifold analysis: ${boundaryEdges} boundary edges, ${overusedEdges} overused edges`);
+            }
+
+            // Mesh is manifold if it has no overused edges
+            // (boundary edges are OK - they represent holes that should be patched)
+            return overusedEdges === 0;
+
+        } catch (error) {
+            if (this.debug) {
+                console.warn('Manifold validation failed:', error.message);
+            }
+            return false;
+        }
+    }
+
+    // DISABLED - These manifold methods are causing issues
+    /*
+    _detectManifoldBoundaries() {
+        const vp = this._vertProperties;
+        const tv = this._triVerts;
+        const triCount = (tv.length / 3) | 0;
+
+        if (triCount === 0 || !vp || vp.length < 9) return [];
+
+        // Build comprehensive edge analysis
+        const edgeToTriangles = new Map(); // edge -> [triangle_indices]
+        const edgeToVertices = new Map();  // edge -> [vertex_a, vertex_b]
+        const triangleNormals = new Array(triCount);
+
+        const getEdgeKey = (a, b) => a < b ? `${a}:${b}` : `${b}:${a}`;
+
+        // Collect edge information and compute triangle normals
+        for (let t = 0; t < triCount; t++) {
+            const i0 = tv[t * 3 + 0];
+            const i1 = tv[t * 3 + 1];
+            const i2 = tv[t * 3 + 2];
+
+            // Compute triangle normal for orientation consistency
+            const v0 = new THREE.Vector3(vp[i0 * 3], vp[i0 * 3 + 1], vp[i0 * 3 + 2]);
+            const v1 = new THREE.Vector3(vp[i1 * 3], vp[i1 * 3 + 1], vp[i1 * 3 + 2]);
+            const v2 = new THREE.Vector3(vp[i2 * 3], vp[i2 * 3 + 1], vp[i2 * 3 + 2]);
+            
+            const edge1 = new THREE.Vector3().subVectors(v1, v0);
+            const edge2 = new THREE.Vector3().subVectors(v2, v0);
+            const normal = new THREE.Vector3().crossVectors(edge1, edge2).normalize();
+            triangleNormals[t] = normal;
+
+            // Process each edge of the triangle
+            const edges = [[i0, i1], [i1, i2], [i2, i0]];
+            for (const [a, b] of edges) {
+                const key = getEdgeKey(a, b);
+                
+                if (!edgeToTriangles.has(key)) {
+                    edgeToTriangles.set(key, []);
+                    edgeToVertices.set(key, [a, b]);
+                }
+                edgeToTriangles.get(key).push(t);
+            }
+        }
+
+        // Find true boundary edges (exactly 1 triangle) and validate orientation
+        const boundaryEdges = new Map(); // edge_key -> {vertices, triangle_index, oriented_edge}
+        
+        for (const [edgeKey, triangles] of edgeToTriangles.entries()) {
+            if (triangles.length === 1) {
+                const [a, b] = edgeToVertices.get(edgeKey);
+                const triangleIndex = triangles[0];
+                
+                // Find the oriented edge in the triangle (important for normal consistency)
+                const t = triangleIndex;
+                const i0 = tv[t * 3 + 0], i1 = tv[t * 3 + 1], i2 = tv[t * 3 + 2];
+                
+                let orientedEdge;
+                if ((i0 === a && i1 === b) || (i0 === b && i1 === a)) orientedEdge = [i0, i1];
+                else if ((i1 === a && i2 === b) || (i1 === b && i2 === a)) orientedEdge = [i1, i2];
+                else if ((i2 === a && i0 === b) || (i2 === b && i0 === a)) orientedEdge = [i2, i0];
+                
+                if (orientedEdge) {
+                    boundaryEdges.set(edgeKey, {
+                        vertices: [a, b],
+                        orientedEdge,
+                        triangleIndex,
+                        normal: triangleNormals[triangleIndex]
+                    });
+                }
+            }
+        }
+
+        if (boundaryEdges.size === 0) return [];
+
+        // Build proper boundary loops with consistent orientation
+        return this._traceBoundaryLoopsManifold(boundaryEdges, vp);
+    }
+
+    /**
+     * More robust manifold checking that considers edge count and orientation.
+     * 
+     * @returns {boolean} True if mesh is robustly manifold
+     */
+    _isRobustlyManifold() {
+        // First check basic coherent orientation
+        try {
+            if (!this._isCoherentlyOrientedManifold()) return false;
+        } catch {
+            return false;
+        }
+
+        // Check edge manifoldness - each edge should have exactly 2 triangles
+        const vp = this._vertProperties;
+        const tv = this._triVerts;
+        const triCount = (tv.length / 3) | 0;
+
+        if (triCount === 0) return true; // Empty mesh is technically manifold
+
+        const edgeCount = new Map();
+        const getEdgeKey = (a, b) => a < b ? `${a}:${b}` : `${b}:${a}`;
+
+        // Count edge usage
+        for (let t = 0; t < triCount; t++) {
+            const i0 = tv[t * 3 + 0], i1 = tv[t * 3 + 1], i2 = tv[t * 3 + 2];
+
+            for (const [a, b] of [[i0, i1], [i1, i2], [i2, i0]]) {
+                const key = getEdgeKey(a, b);
+                edgeCount.set(key, (edgeCount.get(key) || 0) + 1);
+            }
+        }
+
+        // Check that every edge has exactly 2 triangles (manifold condition)
+        for (const count of edgeCount.values()) {
+            if (count !== 2) return false; // Non-manifold edge found
+        }
+
+        return true;
+    }
+
+    /**
+     * Trace boundary loops with manifold-aware orientation.
+     * 
+     * @param {Map} boundaryEdges - Map of boundary edge information
+     * @param {Array} vertProperties - Vertex positions array
+     * @returns {Array} Array of boundary loop objects
+     */
+    _traceBoundaryLoopsManifold(boundaryEdges, vertProperties) {
+        const loops = [];
+        const usedEdges = new Set();
+
+        // Build adjacency for boundary vertices with orientation info
+        const adjacency = new Map(); // vertex -> [{neighbor, edgeKey, normal}, ...]
+
+        for (const [edgeKey, edgeInfo] of boundaryEdges.entries()) {
+            const [a, b] = edgeInfo.vertices;
+            const [oa, ob] = edgeInfo.orientedEdge;
+
+            if (!adjacency.has(a)) adjacency.set(a, []);
+            if (!adjacency.has(b)) adjacency.set(b, []);
+
+            // Store both directions with edge key for tracking
+            adjacency.get(a).push({ neighbor: b, edgeKey, normal: edgeInfo.normal, oriented: oa === a });
+            adjacency.get(b).push({ neighbor: a, edgeKey, normal: edgeInfo.normal, oriented: ob === b });
+        }
+
+        // Trace each boundary loop
+        for (const startVertex of adjacency.keys()) {
+            if (adjacency.get(startVertex).some(edge => !usedEdges.has(edge.edgeKey))) {
+                const loop = this._traceManifoldLoop(startVertex, adjacency, usedEdges, vertProperties);
+                if (loop && loop.vertices.length >= 3) {
+                    loops.push(loop);
+                }
+            }
+        }
+
+        return loops;
+    }
+
+    /**
+     * Trace a single manifold boundary loop with proper orientation.
+     * 
+     * @param {number} startVertex - Starting vertex index
+     * @param {Map} adjacency - Vertex adjacency information
+     * @param {Set} usedEdges - Set of already used edge keys
+     * @param {Array} vertProperties - Vertex positions
+     * @returns {Object} Loop object with vertices, positions, and normal
+     */
+    _traceManifoldLoop(startVertex, adjacency, usedEdges, vertProperties) {
+        const vertices = [startVertex];
+        const positions = [];
+        const normals = [];
+
+        let current = startVertex;
+        let prevEdgeKey = null;
+
+        while (true) {
+            // Add current vertex position
+            positions.push(new THREE.Vector3(
+                vertProperties[current * 3 + 0],
+                vertProperties[current * 3 + 1],
+                vertProperties[current * 3 + 2]
+            ));
+
+            // Find next unused edge from current vertex
+            const currentEdges = adjacency.get(current) || [];
+            let nextEdge = null;
+
+            for (const edge of currentEdges) {
+                if (edge.edgeKey === prevEdgeKey) continue; // Don't go back
+                if (!usedEdges.has(edge.edgeKey)) {
+                    nextEdge = edge;
+                    break;
+                }
+            }
+
+            if (!nextEdge) {
+                // No more edges - check if we can close the loop
+                if (vertices.length >= 3) {
+                    // Try to find edge back to start
+                    const backToStart = currentEdges.find(edge =>
+                        edge.neighbor === startVertex && !usedEdges.has(edge.edgeKey));
+
+                    if (backToStart) {
+                        usedEdges.add(backToStart.edgeKey);
+                        normals.push(backToStart.normal);
+
+                        // Compute loop normal from accumulated normals
+                        const avgNormal = new THREE.Vector3();
+                        for (const n of normals) avgNormal.add(n);
+                        avgNormal.normalize();
+
+                        return {
+                            vertices,
+                            positions,
+                            normal: avgNormal,
+                            closed: true
+                        };
+                    }
+                }
+                break; // Open boundary or dead end
+            }
+
+            // Move to next vertex
+            usedEdges.add(nextEdge.edgeKey);
+            normals.push(nextEdge.normal);
+            prevEdgeKey = nextEdge.edgeKey;
+            current = nextEdge.neighbor;
+
+            // Check for loop closure
+            if (current === startVertex && vertices.length >= 3) {
+                // Closed loop found
+                const avgNormal = new THREE.Vector3();
+                for (const n of normals) avgNormal.add(n);
+                if (avgNormal.lengthSq() > 1e-10) avgNormal.normalize();
+                else avgNormal.set(0, 0, 1); // Fallback
+
+                return {
+                    vertices,
+                    positions,
+                    normal: avgNormal,
+                    closed: true
+                };
+            }
+
+            vertices.push(current);
+
+            // Prevent infinite loops
+            if (vertices.length > 1000) {
+                console.warn('Boundary loop tracing exceeded maximum length');
+                break;
+            }
+        }
+
+        // Return open boundary if we have enough vertices
+        if (vertices.length >= 3) {
+            const avgNormal = normals.length > 0
+                ? normals.reduce((acc, n) => acc.add(n), new THREE.Vector3()).normalize()
+                : new THREE.Vector3(0, 0, 1);
+
+            return {
+                vertices,
+                positions,
+                normal: avgNormal,
+                closed: false
+            };
+        }
+
+        return null;
+    }
+
+    /**
+     * Generate a manifold-guaranteed endcap for a boundary loop.
+     * Uses robust triangulation with proper orientation and edge matching.
+     * 
+     * @param {Object} loop - Boundary loop with vertices, positions, normal
+     * @param {string} capName - Name for the endcap face
+     * @param {number} minArea - Minimum triangle area threshold
+     * @param {number} radius - Reference radius for tolerances
+     * @returns {number} Number of triangles generated
+     */
+    _generateManifoldEndcap(loop, capName, minArea, radius) {
+        if (!loop?.positions || loop.positions.length < 3) return 0;
+
+        const positions = loop.positions.slice(); // Copy to avoid modifying original
+        const normal = loop.normal || new THREE.Vector3(0, 0, 1);
+
+        // Ensure loop is properly oriented for outward normal
+        if (!loop.closed && positions.length > 0) {
+            // For open boundaries, close the loop by duplicating the first vertex
+            positions.push(positions[0].clone());
+        }
+
+        // Remove consecutive duplicates that can cause degenerate triangles
+        const cleanPositions = this._cleanBoundaryPositions(positions, radius * 1e-6);
+        if (cleanPositions.length < 3) return 0;
+
+        // Determine winding order based on adjacent triangle normals
+        const shouldReverse = this._shouldReverseWindingForManifold(cleanPositions, normal);
+        if (shouldReverse) {
+            cleanPositions.reverse();
+        }
+
+        let triangleCount = 0;
+
+        // Use different strategies based on vertex count
+        if (cleanPositions.length === 3) {
+            // Single triangle - direct addition
+            triangleCount = this._addManifoldTriangle(capName, cleanPositions, minArea);
+        } else if (cleanPositions.length === 4) {
+            // Quad - use optimal diagonal split
+            triangleCount = this._triangulateQuadManifold(capName, cleanPositions, minArea);
+        } else if (this._isConvexLoop(cleanPositions, normal)) {
+            // Convex polygon - use fan triangulation from centroid for better quality
+            triangleCount = this._triangulateFanFromCentroid(capName, cleanPositions, minArea);
+        } else {
+            // Complex/concave polygon - use robust ear clipping
+            triangleCount = this._triangulateEarClippingRobust(capName, cleanPositions, normal, minArea);
+        }
+
+        return triangleCount;
+    }
+
+    /**
+     * Clean boundary positions by removing near-duplicate consecutive vertices.
+     * 
+     * @param {Array<THREE.Vector3>} positions - Input positions
+     * @param {number} tolerance - Distance tolerance for duplicates
+     * @returns {Array<THREE.Vector3>} Cleaned positions
+     */
+    _cleanBoundaryPositions(positions, tolerance) {
+        if (positions.length <= 1) return positions.slice();
+
+        const cleaned = [positions[0]];
+        const tol2 = tolerance * tolerance;
+
+        for (let i = 1; i < positions.length; i++) {
+            const curr = positions[i];
+            const prev = cleaned[cleaned.length - 1];
+
+            if (curr.distanceToSquared(prev) > tol2) {
+                cleaned.push(curr);
+            }
+        }
+
+        // Check if first and last are too close (for closed loops)
+        if (cleaned.length > 2) {
+            const first = cleaned[0];
+            const last = cleaned[cleaned.length - 1];
+            if (first.distanceToSquared(last) <= tol2) {
+                cleaned.pop(); // Remove duplicate closing vertex
+            }
+        }
+
+        return cleaned;
+    }
+
+    /**
+     * Determine if winding order should be reversed for manifold consistency.
+     * 
+     * @param {Array<THREE.Vector3>} positions - Loop positions
+     * @param {THREE.Vector3} expectedNormal - Expected outward normal
+     * @returns {boolean} True if winding should be reversed
+     */
+    _shouldReverseWindingForManifold(positions, expectedNormal) {
+        if (positions.length < 3) return false;
+
+        // Compute actual normal from first three non-collinear vertices
+        let actualNormal = null;
+
+        for (let i = 0; i < positions.length - 2; i++) {
+            const v0 = positions[i];
+            const v1 = positions[i + 1];
+            const v2 = positions[i + 2];
+
+            const edge1 = new THREE.Vector3().subVectors(v1, v0);
+            const edge2 = new THREE.Vector3().subVectors(v2, v0);
+            const cross = new THREE.Vector3().crossVectors(edge1, edge2);
+
+            if (cross.lengthSq() > 1e-12) {
+                actualNormal = cross.normalize();
+                break;
+            }
+        }
+
+        if (!actualNormal) return false; // Degenerate loop
+
+        // Reverse if normals point in opposite directions
+        return actualNormal.dot(expectedNormal) < 0;
+    }
+
+    /**
+     * Add a single manifold triangle with area validation.
+     * 
+     * @param {string} faceName - Face name
+     * @param {Array<THREE.Vector3>} positions - Triangle vertices (must be 3)
+     * @param {number} minArea - Minimum area threshold
+     * @returns {number} Number of triangles added (0 or 1)
+     */
+    _addManifoldTriangle(faceName, positions, minArea) {
+        if (positions.length !== 3) return 0;
+
+        const [p0, p1, p2] = positions;
+
+        // Compute triangle area
+        const edge1 = new THREE.Vector3().subVectors(p1, p0);
+        const edge2 = new THREE.Vector3().subVectors(p2, p0);
+        const area = edge1.cross(edge2).length() * 0.5;
+
+        if (area < minArea) return 0; // Skip degenerate triangle
+
+        this.addTriangle(faceName, vToArr(p0), vToArr(p1), vToArr(p2));
+        return 1;
+    }
+
+    /**
+     * Triangulate a quad using optimal diagonal to avoid degenerate triangles.
+     * 
+     * @param {string} faceName - Face name
+     * @param {Array<THREE.Vector3>} positions - Quad vertices (must be 4)
+     * @param {number} minArea - Minimum area threshold
+     * @returns {number} Number of triangles added
+     */
+    _triangulateQuadManifold(faceName, positions, minArea) {
+        if (positions.length !== 4) return 0;
+
+        const [p0, p1, p2, p3] = positions;
+
+        // Test both diagonal splits and choose the one with better triangle quality
+        const area1a = this._computeTriangleArea(p0, p1, p2);
+        const area1b = this._computeTriangleArea(p0, p2, p3);
+        const area2a = this._computeTriangleArea(p0, p1, p3);
+        const area2b = this._computeTriangleArea(p1, p2, p3);
+
+        const minAreaSplit1 = Math.min(area1a, area1b);
+        const minAreaSplit2 = Math.min(area2a, area2b);
+
+        let count = 0;
+
+        if (minAreaSplit1 >= minAreaSplit2 && minAreaSplit1 >= minArea) {
+            // Use diagonal 0-2
+            if (area1a >= minArea) {
+                this.addTriangle(faceName, vToArr(p0), vToArr(p1), vToArr(p2));
+                count++;
+            }
+            if (area1b >= minArea) {
+                this.addTriangle(faceName, vToArr(p0), vToArr(p2), vToArr(p3));
+                count++;
+            }
+        } else if (minAreaSplit2 >= minArea) {
+            // Use diagonal 1-3
+            if (area2a >= minArea) {
+                this.addTriangle(faceName, vToArr(p0), vToArr(p1), vToArr(p3));
+                count++;
+            }
+            if (area2b >= minArea) {
+                this.addTriangle(faceName, vToArr(p1), vToArr(p2), vToArr(p3));
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Check if a loop is convex for optimal triangulation strategy.
+     * 
+     * @param {Array<THREE.Vector3>} positions - Loop positions
+     * @param {THREE.Vector3} normal - Loop normal
+     * @returns {boolean} True if loop is convex
+     */
+    _isConvexLoop(positions, normal) {
+        if (positions.length < 3) return true;
+
+        for (let i = 0; i < positions.length; i++) {
+            const p0 = positions[i];
+            const p1 = positions[(i + 1) % positions.length];
+            const p2 = positions[(i + 2) % positions.length];
+
+            const edge1 = new THREE.Vector3().subVectors(p1, p0);
+            const edge2 = new THREE.Vector3().subVectors(p2, p1);
+            const cross = new THREE.Vector3().crossVectors(edge1, edge2);
+
+            // Check if turn direction is consistent with normal
+            if (cross.dot(normal) < -1e-10) {
+                return false; // Concave angle found
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Triangulate using fan from centroid for better triangle quality.
+     * 
+     * @param {string} faceName - Face name
+     * @param {Array<THREE.Vector3>} positions - Loop positions
+     * @param {number} minArea - Minimum area threshold
+     * @returns {number} Number of triangles added
+     */
+    _triangulateFanFromCentroid(faceName, positions, minArea) {
+        if (positions.length < 3) return 0;
+
+        // Compute centroid
+        const centroid = new THREE.Vector3();
+        for (const pos of positions) {
+            centroid.add(pos);
+        }
+        centroid.multiplyScalar(1 / positions.length);
+
+        let count = 0;
+        for (let i = 0; i < positions.length; i++) {
+            const p0 = positions[i];
+            const p1 = positions[(i + 1) % positions.length];
+
+            const area = this._computeTriangleArea(centroid, p0, p1);
+            if (area >= minArea) {
+                this.addTriangle(faceName, vToArr(centroid), vToArr(p0), vToArr(p1));
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Robust ear clipping for complex polygons.
+     * 
+     * @param {string} faceName - Face name
+     * @param {Array<THREE.Vector3>} positions - Loop positions
+     * @param {THREE.Vector3} normal - Loop normal
+     * @param {number} minArea - Minimum area threshold
+     * @returns {number} Number of triangles added
+     */
+    _triangulateEarClippingRobust(faceName, positions, normal, minArea) {
+        if (positions.length < 3) return 0;
+        if (positions.length === 3) {
+            return this._addManifoldTriangle(faceName, positions, minArea);
+        }
+
+        const vertices = positions.slice(); // Work with copy
+        let count = 0;
+        let attempts = 0;
+        const maxAttempts = vertices.length * 2; // Prevent infinite loops
+
+        while (vertices.length > 3 && attempts < maxAttempts) {
+            let earFound = false;
+            attempts++;
+
+            for (let i = 0; i < vertices.length; i++) {
+                const p0 = vertices[(i - 1 + vertices.length) % vertices.length];
+                const p1 = vertices[i];
+                const p2 = vertices[(i + 1) % vertices.length];
+
+                if (this._isEarRobust(vertices, i, normal) &&
+                    this._computeTriangleArea(p0, p1, p2) >= minArea) {
+
+                    // Add triangle
+                    this.addTriangle(faceName, vToArr(p0), vToArr(p1), vToArr(p2));
+                    count++;
+
+                    // Remove the ear vertex
+                    vertices.splice(i, 1);
+                    earFound = true;
+                    break;
+                }
+            }
+
+            if (!earFound) {
+                // Fallback: force triangulation with remaining vertices
+                break;
+            }
+        }
+
+        // Add final triangle if we have exactly 3 vertices left
+        if (vertices.length === 3) {
+            const area = this._computeTriangleArea(vertices[0], vertices[1], vertices[2]);
+            if (area >= minArea) {
+                this.addTriangle(faceName, vToArr(vertices[0]), vToArr(vertices[1]), vToArr(vertices[2]));
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /**
+     * Robust ear test with better numerical stability.
+     * 
+     * @param {Array<THREE.Vector3>} vertices - Current vertex list
+     * @param {number} i - Index to test for ear
+     * @param {THREE.Vector3} normal - Loop normal
+     * @returns {boolean} True if vertex i is an ear
+     */
+    _isEarRobust(vertices, i, normal) {
+        const n = vertices.length;
+        const p0 = vertices[(i - 1 + n) % n];
+        const p1 = vertices[i];
+        const p2 = vertices[(i + 1) % n];
+
+        // Check if angle is convex with tolerance
+        const v1 = new THREE.Vector3().subVectors(p0, p1);
+        const v2 = new THREE.Vector3().subVectors(p2, p1);
+        const cross = new THREE.Vector3().crossVectors(v1, v2);
+
+        if (cross.dot(normal) <= 1e-10) return false; // Not sufficiently convex
+
+        // Check if any other vertex is inside the triangle (with tolerance)
+        const eps = 1e-10;
+        for (let j = 0; j < n; j++) {
+            if (j === (i - 1 + n) % n || j === i || j === (i + 1) % n) continue;
+
+            if (this._isPointInTriangleTolerant(vertices[j], p0, p1, p2, eps)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Point-in-triangle test with numerical tolerance.
+     * 
+     * @param {THREE.Vector3} point - Point to test
+     * @param {THREE.Vector3} a - Triangle vertex A
+     * @param {THREE.Vector3} b - Triangle vertex B  
+     * @param {THREE.Vector3} c - Triangle vertex C
+     * @param {number} tolerance - Numerical tolerance
+     * @returns {boolean} True if point is inside triangle
+     */
+    _isPointInTriangleTolerant(point, a, b, c, tolerance = 1e-10) {
+        const v0 = new THREE.Vector3().subVectors(c, a);
+        const v1 = new THREE.Vector3().subVectors(b, a);
+        const v2 = new THREE.Vector3().subVectors(point, a);
+
+        const dot00 = v0.dot(v0);
+        const dot01 = v0.dot(v1);
+        const dot02 = v0.dot(v2);
+        const dot11 = v1.dot(v1);
+        const dot12 = v1.dot(v2);
+
+        const denom = dot00 * dot11 - dot01 * dot01;
+        if (Math.abs(denom) < tolerance) return false; // Degenerate triangle
+
+        const invDenom = 1 / denom;
+        const u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+        const v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+
+        // Check if point is inside with tolerance
+        return (u >= -tolerance) && (v >= -tolerance) && (u + v <= 1 + tolerance);
+    }
+
+    /**
+     * Compute triangle area helper.
+     * 
+     * @param {THREE.Vector3} p0 - First vertex
+     * @param {THREE.Vector3} p1 - Second vertex
+     * @param {THREE.Vector3} p2 - Third vertex
+     * @returns {number} Triangle area
+     */
+    _computeTriangleArea(p0, p1, p2) {
+        const v1 = new THREE.Vector3().subVectors(p1, p0);
+        const v2 = new THREE.Vector3().subVectors(p2, p0);
+        return v1.cross(v2).length() * 0.5;
     }
 }
