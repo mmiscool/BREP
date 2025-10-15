@@ -1,4 +1,5 @@
 import { BREP } from "../../BREP/BREP.js";
+import { clearFilletCaches } from "../../BREP/fillets/fillet.js";
 
 
 const inputParamsSchema = {
@@ -58,6 +59,9 @@ export class FilletFeature {
         this.persistentData = {};
     }
     async run(partHistory) {
+        // Geometry in earlier features can rename faces while keeping the same IDs,
+        // so clear cached face data between runs to avoid stale projections.
+        try { clearFilletCaches(); } catch {}
         const dbg = !!this.inputParams.debug;
         const fjson = (tag, obj) => { if (!dbg) return; try { console.log(`[FilletDBG-JSON] ${tag} ` + JSON.stringify(obj)); } catch { console.log(`[FilletDBG-JSON] ${tag}`, obj); } };
         const safeVolume = (s) => { try { return s.volume(); } catch { return 0; } };
@@ -79,7 +83,6 @@ export class FilletFeature {
             if (obj.type === "FACE") {
                 // if the object is a face, it might have multiple edges selected
                 for (const edge of obj.edges) {
-                    if (edgeObjs.includes(edge)) return;
                     edgeObjs.push(edge);
 
                 }
@@ -87,6 +90,13 @@ export class FilletFeature {
 
         });
 
+
+        // Deduplicate edges
+        edgeObjs = Array.from(new Set(edgeObjs));
+        
+        // Filter out edges that don't belong to any solid
+        edgeObjs = edgeObjs.filter(e => (e && (e.parentSolid || e.parent)));
+        
 
 
 
@@ -256,7 +266,7 @@ export class FilletFeature {
         let finalSolid = targetSolid;
         const toRemove = new Set();
         toRemove.add(targetSolidOriginal);
-        
+
         for (let idx = 0; idx < objectsForBoolean.length; idx++) {
             const tool = objectsForBoolean[idx];
             const dir = String(this.inputParams.direction || 'INSET').toUpperCase();
