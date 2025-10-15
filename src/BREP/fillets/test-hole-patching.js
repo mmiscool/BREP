@@ -14,17 +14,13 @@ class MockFilletSolidWithPatching {
         this.patchedTriangles = [];
     }
 
-    // Mock the addTriangleFromPoints method
-    addTriangleFromPoints(faceName, p0, p1, p2) {
+    // Mock the addTriangle method (correct method name)
+    addTriangle(faceName, v1, v2, v3) {
         this.patchedTriangles.push({
             face: faceName,
-            vertices: [
-                [p0.x, p0.y, p0.z],
-                [p1.x, p1.y, p1.z],
-                [p2.x, p2.y, p2.z]
-            ]
+            vertices: [v1, v2, v3]
         });
-        console.log(`Added patch triangle ${faceName}: [${p0.x.toFixed(2)},${p0.y.toFixed(2)},${p0.z.toFixed(2)}] -> [${p1.x.toFixed(2)},${p1.y.toFixed(2)},${p1.z.toFixed(2)}] -> [${p2.x.toFixed(2)},${p2.y.toFixed(2)},${p2.z.toFixed(2)}]`);
+        console.log(`Added triangle to face ${faceName}: [${v1.join(',')}] -> [${v2.join(',')}] -> [${v3.join(',')}]`);
     }
 
     // Mock cleanup methods
@@ -258,9 +254,9 @@ class MockFilletSolidWithPatching {
             .normalize();
 
         if (computedNormal.dot(normal) < 0) {
-            this.addTriangleFromPoints(patchName, p0, p2, p1);
+            this.addTriangle(patchName, [p0.x, p0.y, p0.z], [p2.x, p2.y, p2.z], [p1.x, p1.y, p1.z]);
         } else {
-            this.addTriangleFromPoints(patchName, p0, p1, p2);
+            this.addTriangle(patchName, [p0.x, p0.y, p0.z], [p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z]);
         }
         return true;
     }
@@ -272,11 +268,13 @@ class MockFilletSolidWithPatching {
         const diag2Length = p1.distanceTo(p3);
         
         if (diag1Length < diag2Length) {
-            this._addTrianglePatch([p0, p1, p2], normal, `${patchName}_A`);
-            this._addTrianglePatch([p0, p2, p3], normal, `${patchName}_B`);
+            // Both triangles use the same face name for unified face
+            this._addTrianglePatch([p0, p1, p2], normal, patchName);
+            this._addTrianglePatch([p0, p2, p3], normal, patchName);
         } else {
-            this._addTrianglePatch([p0, p1, p3], normal, `${patchName}_A`);
-            this._addTrianglePatch([p1, p2, p3], normal, `${patchName}_B`);
+            // Both triangles use the same face name for unified face
+            this._addTrianglePatch([p0, p1, p3], normal, patchName);
+            this._addTrianglePatch([p1, p2, p3], normal, patchName);
         }
         return true;
     }
@@ -288,6 +286,7 @@ class MockFilletSolidWithPatching {
         }
         centroid.divideScalar(positions.length);
 
+        // All triangles use the same face name for unified face
         for (let i = 0; i < positions.length; i++) {
             const p1 = positions[i];
             const p2 = positions[(i + 1) % positions.length];
@@ -298,9 +297,15 @@ class MockFilletSolidWithPatching {
                 .normalize();
 
             if (edgeNormal.dot(normal) < 0) {
-                this.addTriangleFromPoints(`${patchName}_${i}`, centroid, p2, p1);
+                this.addTriangle(patchName, 
+                    [centroid.x, centroid.y, centroid.z], 
+                    [p2.x, p2.y, p2.z], 
+                    [p1.x, p1.y, p1.z]);
             } else {
-                this.addTriangleFromPoints(`${patchName}_${i}`, centroid, p1, p2);
+                this.addTriangle(patchName, 
+                    [centroid.x, centroid.y, centroid.z], 
+                    [p1.x, p1.y, p1.z], 
+                    [p2.x, p2.y, p2.z]);
             }
         }
         return true;
@@ -329,9 +334,18 @@ function testHolePatching() {
     console.log(`✓ Added ${solid.patchedTriangles.length} patch triangles`);
     
     if (solid.patchedTriangles.length > 0) {
-        console.log('\nPatch triangles created:');
+        console.log('\nPatch faces created:');
+        // Group triangles by face name
+        const faceGroups = {};
         for (const tri of solid.patchedTriangles) {
-            console.log(`  ${tri.face}: triangle with 3 vertices`);
+            if (!faceGroups[tri.face]) {
+                faceGroups[tri.face] = [];
+            }
+            faceGroups[tri.face].push(tri);
+        }
+        
+        for (const [faceName, triangles] of Object.entries(faceGroups)) {
+            console.log(`  ${faceName}: ${triangles.length} triangles (unified face)`);
         }
     }
     

@@ -760,20 +760,41 @@ export class FilletSolid extends Solid {
      * @returns {number} Number of endcaps generated
      */
     _generateEndcapsIfNeeded(radius, baseName) {
-        // Robust hole patching for manifold mesh creation
+        // Generate endcaps for manifold mesh creation
         if (this.debug) {
-            console.log('Starting manifold hole patching...');
+            console.log('Starting endcap generation for manifold mesh...');
         }
         
         try {
+            // Check if we actually need endcaps
+            const boundaryLoops = this._findBoundaryLoops();
+            if (!boundaryLoops || boundaryLoops.length === 0) {
+                if (this.debug) {
+                    console.log('No boundary loops found - mesh already manifold');
+                }
+                return 0;
+            }
+            
+            if (this.debug) {
+                console.log(`Found ${boundaryLoops.length} boundary loops to patch:`);
+                for (let i = 0; i < boundaryLoops.length; i++) {
+                    const loop = boundaryLoops[i];
+                    console.log(`  Loop ${i}: ${loop.vertices.length} vertices`);
+                }
+            }
+            
             const patchCount = this._patchAllHoles(baseName);
-            if (this.debug && patchCount > 0) {
-                console.log(`Successfully patched ${patchCount} holes for manifold mesh`);
+            if (this.debug) {
+                if (patchCount > 0) {
+                    console.log(`✓ Successfully patched ${patchCount} holes for manifold mesh`);
+                } else {
+                    console.log(`⚠ No holes were patched - check boundary loop detection`);
+                }
             }
             return patchCount;
         } catch (error) {
             if (this.debug) {
-                console.error('Hole patching failed:', error.message);
+                console.error('Endcap generation failed:', error.message);
             }
             return 0;
         }
@@ -793,12 +814,30 @@ export class FilletSolid extends Solid {
         let holesPatched = 0;
         for (let i = 0; i < boundaryLoops.length; i++) {
             const loop = boundaryLoops[i];
-            if (loop.vertices.length >= 3) {
+            if (loop.vertices && loop.vertices.length >= 3) {
                 const patchName = `${baseName}_PATCH_${i}`;
-                const success = this._patchHole(loop, patchName);
-                if (success) {
-                    holesPatched++;
+                
+                if (this.debug) {
+                    console.log(`Attempting to patch hole ${patchName} with ${loop.vertices.length} vertices`);
                 }
+                
+                try {
+                    const triangleCount = this._patchHole(loop, patchName);
+                    if (triangleCount > 0) {
+                        holesPatched++;
+                        if (this.debug) {
+                            console.log(`✓ Generated endcap face ${patchName} with ${triangleCount} triangles`);
+                        }
+                    } else if (this.debug) {
+                        console.log(`⚠ Failed to generate triangles for ${patchName}`);
+                    }
+                } catch (error) {
+                    if (this.debug) {
+                        console.error(`✗ Error patching ${patchName}:`, error.message);
+                    }
+                }
+            } else if (this.debug) {
+                console.log(`Skipping invalid loop ${i}: ${loop.vertices ? loop.vertices.length : 'no vertices'} vertices`);
             }
         }
 
@@ -945,28 +984,663 @@ export class FilletSolid extends Solid {
     _patchHole(loop, patchName) {
         try {
             const positions = loop.positions;
-            if (positions.length < 3) return false;
-
-            // Calculate loop normal for consistent orientation
-            const normal = this._calculateLoopNormal(positions);
-            
-            // Choose best triangulation method based on loop properties
-            if (positions.length === 3) {
-                // Simple triangle
-                return this._addTrianglePatch(positions, normal, patchName);
-            } else if (positions.length === 4) {
-                // Quadrilateral - split into two triangles
-                return this._addQuadPatch(positions, normal, patchName);
-            } else {
-                // Complex polygon - use fan triangulation from centroid
-                return this._addFanPatch(positions, normal, patchName);
+            if (!positions || positions.length < 3) {
+                if (this.debug) {
+                    console.log(`Invalid loop for ${patchName}: ${positions ? positions.length : 0} positions`);
+                }
+                return 0;
             }
+
+            if (this.debug) {
+                console.log(`Patching hole ${patchName} with ${positions.length} vertices using robust triangulation`);
+            }
+
+            return this._robustTriangulateLoop(positions, patchName);
+            
         } catch (error) {
             if (this.debug) {
                 console.warn(`Failed to patch hole ${patchName}:`, error.message);
             }
+            return 0;
+        }
+    }
+
+    /**
+     * Boundary-respecting triangulation that ONLY connects consecutive boundary vertices
+     * This ensures no triangle spans across multiple boundary edge segments
+     * @param {Array<THREE.Vector3>} positions - Loop positions  
+     * @param {string} faceName - Name for triangles
+     * @returns {number} Number of triangles created
+     */
+    _robustTriangulateLoop(positions, faceName) {
+        if (positions.length < 3) return 0;
+
+        // For triangles, add directly
+        if (positions.length === 3) {
+            this.addTriangle(faceName,
+                [positions[0].x, positions[0].y, positions[0].z],
+                [positions[1].x, positions[1].y, positions[1].z],
+                [positions[2].x, positions[2].y, positions[2].z]);
+            if (this.debug) {
+                console.log(`Added direct triangle for ${faceName}`);
+            }
+            return 1;
+        }
+
+        if (positions.length === 4) {
+            // For quads, use optimal diagonal to avoid long edges
+            return this._triangulateQuadOptimal(positions, faceName);
+        }
+
+        // For larger polygons, use boundary-constrained approach
+        return this._boundaryConstrainedTriangulation(positions, faceName);
+    }
+
+    /**
+     * Triangulate a quad using the shorter diagonal to avoid long edges
+     * @param {Array<THREE.Vector3>} positions - Quad vertices (4 positions)
+     * @param {string} faceName - Face name
+     * @returns {number} Number of triangles created
+     */
+    _triangulateQuadOptimal(positions, faceName) {
+        const [p0, p1, p2, p3] = positions;
+        
+        // Calculate both diagonal lengths
+        const diag1 = p0.distanceTo(p2); // 0-2 diagonal
+        const diag2 = p1.distanceTo(p3); // 1-3 diagonal
+        
+        let triangleCount = 0;
+        
+        if (diag1 <= diag2) {
+            // Use 0-2 diagonal (shorter or equal)
+            const area1 = this._calculateTriangleArea(p0, p1, p2);
+            const area2 = this._calculateTriangleArea(p0, p2, p3);
+            
+            if (area1 > 1e-12) {
+                this.addTriangle(faceName, [p0.x, p0.y, p0.z], [p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z]);
+                triangleCount++;
+            }
+            if (area2 > 1e-12) {
+                this.addTriangle(faceName, [p0.x, p0.y, p0.z], [p2.x, p2.y, p2.z], [p3.x, p3.y, p3.z]);
+                triangleCount++;
+            }
+        } else {
+            // Use 1-3 diagonal (shorter)
+            const area1 = this._calculateTriangleArea(p1, p2, p3);
+            const area2 = this._calculateTriangleArea(p1, p3, p0);
+            
+            if (area1 > 1e-12) {
+                this.addTriangle(faceName, [p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z], [p3.x, p3.y, p3.z]);
+                triangleCount++;
+            }
+            if (area2 > 1e-12) {
+                this.addTriangle(faceName, [p1.x, p1.y, p1.z], [p3.x, p3.y, p3.z], [p0.x, p0.y, p0.z]);
+                triangleCount++;
+            }
+        }
+        
+        if (this.debug) {
+            console.log(`Quad triangulation created ${triangleCount} triangles for ${faceName} using ${diag1 <= diag2 ? '0-2' : '1-3'} diagonal`);
+        }
+        
+        return triangleCount;
+    }
+
+    /**
+     * Boundary-constrained triangulation that respects original edge segments
+     * Only creates interior triangulation points, never spans across boundary segments
+     * @param {Array<THREE.Vector3>} positions - Loop positions
+     * @param {string} faceName - Face name
+     * @returns {number} Number of triangles created
+     */
+    _boundaryConstrainedTriangulation(positions, faceName) {
+        if (positions.length < 5) {
+            // Fallback to fan for small polygons
+            return this._fallbackFanTriangulation(positions, faceName);
+        }
+
+        try {
+            // Calculate a safe interior point for triangulation
+            const interiorPoint = this._calculateSafeInteriorPoint(positions);
+            if (!interiorPoint) {
+                if (this.debug) {
+                    console.warn(`Could not find safe interior point for ${faceName}, using fallback`);
+                }
+                return this._fallbackFanTriangulation(positions, faceName);
+            }
+
+            // Create triangles from interior point to each boundary edge
+            let triangleCount = 0;
+            for (let i = 0; i < positions.length; i++) {
+                const p1 = positions[i];
+                const p2 = positions[(i + 1) % positions.length];
+                
+                // Each triangle connects: interior_point -> edge_vertex_1 -> edge_vertex_2
+                // This ensures we only connect consecutive boundary vertices
+                const area = this._calculateTriangleArea(interiorPoint, p1, p2);
+                if (area > 1e-12) {
+                    this.addTriangle(faceName,
+                        [interiorPoint.x, interiorPoint.y, interiorPoint.z],
+                        [p1.x, p1.y, p1.z],
+                        [p2.x, p2.y, p2.z]);
+                    triangleCount++;
+                }
+            }
+
+            if (this.debug) {
+                console.log(`Boundary-constrained triangulation created ${triangleCount} triangles for ${faceName}`);
+            }
+            
+            return triangleCount;
+
+        } catch (error) {
+            if (this.debug) {
+                console.warn(`Boundary-constrained triangulation failed for ${faceName}:`, error.message);
+            }
+            return this._fallbackFanTriangulation(positions, faceName);
+        }
+    }
+
+    /**
+     * Calculate a safe interior point that doesn't create long edges
+     * @param {Array<THREE.Vector3>} positions - Boundary positions
+     * @returns {THREE.Vector3|null} Interior point or null if none found
+     */
+    _calculateSafeInteriorPoint(positions) {
+        // Start with the centroid
+        const centroid = new THREE.Vector3();
+        for (const pos of positions) {
+            centroid.add(pos);
+        }
+        centroid.multiplyScalar(1 / positions.length);
+
+        // Check if centroid is actually inside the polygon
+        if (this._isPointInsidePolygon3D(centroid, positions)) {
+            // Verify all triangles from centroid to boundary edges are reasonable
+            let maxEdgeLength = 0;
+            for (let i = 0; i < positions.length; i++) {
+                const p1 = positions[i];
+                const p2 = positions[(i + 1) % positions.length];
+                
+                const edge1 = centroid.distanceTo(p1);
+                const edge2 = centroid.distanceTo(p2);
+                const boundary = p1.distanceTo(p2);
+                
+                maxEdgeLength = Math.max(maxEdgeLength, edge1, edge2, boundary);
+            }
+            
+            // If centroid creates reasonable triangles, use it
+            if (maxEdgeLength < this._calculateBoundaryBounds(positions).maxDimension * 2) {
+                return centroid;
+            }
+        }
+
+        // If centroid doesn't work, try finding a point closer to the boundary
+        return this._findConstrainedInteriorPoint(positions);
+    }
+
+    /**
+     * Find an interior point by moving inward from boundary
+     * @param {Array<THREE.Vector3>} positions - Boundary positions
+     * @returns {THREE.Vector3|null} Interior point or null
+     */
+    _findConstrainedInteriorPoint(positions) {
+        // Calculate boundary bounds
+        const bounds = this._calculateBoundaryBounds(positions);
+        const normal = this._calculateNewellNormal(positions);
+        
+        // Try several candidate points along the boundary inward direction
+        for (let i = 0; i < positions.length; i++) {
+            const p1 = positions[i];
+            const p2 = positions[(i + 1) % positions.length];
+            const p3 = positions[(i + 2) % positions.length];
+            
+            // Calculate inward direction at this edge
+            const edge = new THREE.Vector3().subVectors(p2, p1);
+            const edgeNormal = new THREE.Vector3().crossVectors(edge, normal).normalize();
+            
+            // Try points at various inward distances
+            for (const inwardFactor of [0.1, 0.2, 0.3]) {
+                const inwardDist = bounds.maxDimension * inwardFactor;
+                const candidate = new THREE.Vector3()
+                    .addVectors(p1, p2)
+                    .multiplyScalar(0.5) // Midpoint of edge
+                    .addScaledVector(edgeNormal, inwardDist);
+                
+                if (this._isPointInsidePolygon3D(candidate, positions)) {
+                    return candidate;
+                }
+            }
+        }
+        
+        return null; // No suitable interior point found
+    }
+
+    /**
+     * Calculate boundary bounds for size reference
+     * @param {Array<THREE.Vector3>} positions - Boundary positions
+     * @returns {Object} Bounds information
+     */
+    _calculateBoundaryBounds(positions) {
+        const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+        const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+        
+        for (const pos of positions) {
+            min.min(pos);
+            max.max(pos);
+        }
+        
+        const size = new THREE.Vector3().subVectors(max, min);
+        return {
+            min, max, size,
+            maxDimension: Math.max(size.x, size.y, size.z)
+        };
+    }
+
+    /**
+     * Test if point is inside 3D polygon using winding number
+     * @param {THREE.Vector3} point - Point to test
+     * @param {Array<THREE.Vector3>} positions - Polygon vertices
+     * @returns {boolean} True if inside
+     */
+    _isPointInsidePolygon3D(point, positions) {
+        // Project to 2D for point-in-polygon test
+        const normal = this._calculateNewellNormal(positions);
+        const absNormal = new THREE.Vector3(Math.abs(normal.x), Math.abs(normal.y), Math.abs(normal.z));
+        
+        let projectionPlane = 2; // Default to XY
+        if (absNormal.x > absNormal.y && absNormal.x > absNormal.z) projectionPlane = 0;
+        else if (absNormal.y > absNormal.z) projectionPlane = 1;
+        
+        // Project point and polygon to 2D
+        const point2D = this._projectTo2D(point, projectionPlane);
+        const polygon2D = positions.map(p => this._projectTo2D(p, projectionPlane));
+        
+        return this._pointInPolygon2D(point2D, polygon2D);
+    }
+
+    /**
+     * Project 3D point to 2D based on plane
+     * @param {THREE.Vector3} point - 3D point
+     * @param {number} plane - Projection plane (0=YZ, 1=XZ, 2=XY)
+     * @returns {Object} 2D point {x, y}
+     */
+    _projectTo2D(point, plane) {
+        switch (plane) {
+            case 0: return { x: point.y, y: point.z };
+            case 1: return { x: point.x, y: point.z };
+            default: return { x: point.x, y: point.y };
+        }
+    }
+
+    /**
+     * 2D point-in-polygon test using winding number
+     * @param {Object} point - 2D point {x, y}
+     * @param {Array<Object>} polygon - 2D polygon vertices
+     * @returns {boolean} True if inside
+     */
+    _pointInPolygon2D(point, polygon) {
+        let wn = 0; // Winding number
+        
+        for (let i = 0; i < polygon.length; i++) {
+            const p1 = polygon[i];
+            const p2 = polygon[(i + 1) % polygon.length];
+            
+            if (p1.y <= point.y) {
+                if (p2.y > point.y && this._isLeft2D(p1, p2, point) > 0) {
+                    wn++;
+                }
+            } else {
+                if (p2.y <= point.y && this._isLeft2D(p1, p2, point) < 0) {
+                    wn--;
+                }
+            }
+        }
+        
+        return wn !== 0;
+    }
+
+    /**
+     * Test if point is left of line in 2D
+     * @param {Object} p0 - Line start {x, y}
+     * @param {Object} p1 - Line end {x, y}
+     * @param {Object} p2 - Test point {x, y}
+     * @returns {number} >0 if left, <0 if right, 0 if on line
+     */
+    _isLeft2D(p0, p1, p2) {
+        return (p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y);
+    }
+
+    /**
+     * Legacy constrained ear clipping (kept for fallback)
+     * @param {Array<THREE.Vector3>} positions - Loop positions
+     * @param {string} faceName - Face name
+     * @returns {number} Number of triangles created
+     */
+    _constrainedEarClipping(positions, faceName) {
+        if (positions.length < 3) return 0;
+
+        // Calculate loop normal using Newell's method
+        const normal = this._calculateNewellNormal(positions);
+        
+        // Find best projection plane (largest component of normal)
+        const absNormal = new THREE.Vector3(Math.abs(normal.x), Math.abs(normal.y), Math.abs(normal.z));
+        let projectionPlane = 2; // Default to XY (Z normal)
+        if (absNormal.x > absNormal.y && absNormal.x > absNormal.z) projectionPlane = 0; // YZ plane
+        else if (absNormal.y > absNormal.z) projectionPlane = 1; // XZ plane
+
+        // Project to 2D for calculations
+        const points2D = positions.map(p => {
+            switch (projectionPlane) {
+                case 0: return { x: p.y, y: p.z }; // YZ plane
+                case 1: return { x: p.x, y: p.z }; // XZ plane
+                default: return { x: p.x, y: p.y }; // XY plane
+            }
+        });
+
+        // Clean up duplicate consecutive points but preserve original indices
+        const { cleanPositions, indexMapping } = this._cleanupWithMapping(positions, points2D);
+        if (cleanPositions.length < 3) {
+            if (this.debug) {
+                console.warn(`Too few unique points after cleaning for ${faceName}`);
+            }
+            return 0;
+        }
+
+        if (this.debug) {
+            console.log(`Constrained ear clipping for ${faceName}: ${cleanPositions.length} vertices`);
+        }
+
+        // Perform constrained ear clipping
+        const vertices = cleanPositions.slice(); // Work with copies
+        const indices = Array.from({ length: vertices.length }, (_, i) => i);
+        let triangleCount = 0;
+        let attempts = 0;
+        const maxAttempts = vertices.length * 2;
+
+        while (vertices.length > 3 && attempts < maxAttempts) {
+            let earFound = false;
+            
+            for (let i = 0; i < vertices.length; i++) {
+                if (this._isValidConstrainedEar(vertices, indices, i, projectionPlane)) {
+                    // Create triangle from ear
+                    const prevIdx = (i - 1 + vertices.length) % vertices.length;
+                    const nextIdx = (i + 1) % vertices.length;
+                    
+                    const p0 = vertices[prevIdx];
+                    const p1 = vertices[i];
+                    const p2 = vertices[nextIdx];
+                    
+                    const area = this._calculateTriangleArea(p0, p1, p2);
+                    if (area > 1e-12) {
+                        this.addTriangle(faceName,
+                            [p0.x, p0.y, p0.z],
+                            [p1.x, p1.y, p1.z],
+                            [p2.x, p2.y, p2.z]);
+                        triangleCount++;
+                        
+                        if (this.debug) {
+                            console.log(`Added constrained ear triangle ${triangleCount} for ${faceName}`);
+                        }
+                    }
+
+                    // Remove the ear vertex
+                    vertices.splice(i, 1);
+                    indices.splice(i, 1);
+                    earFound = true;
+                    break;
+                }
+            }
+            
+            if (!earFound) {
+                if (this.debug) {
+                    console.warn(`No ear found, switching to fallback for ${faceName}`);
+                }
+                break;
+            }
+            attempts++;
+        }
+
+        // Add the final triangle if we have exactly 3 vertices left
+        if (vertices.length === 3) {
+            const area = this._calculateTriangleArea(vertices[0], vertices[1], vertices[2]);
+            if (area > 1e-12) {
+                this.addTriangle(faceName,
+                    [vertices[0].x, vertices[0].y, vertices[0].z],
+                    [vertices[1].x, vertices[1].y, vertices[1].z],
+                    [vertices[2].x, vertices[2].y, vertices[2].z]);
+                triangleCount++;
+                
+                if (this.debug) {
+                    console.log(`Added final triangle for ${faceName}`);
+                }
+            }
+        }
+
+        if (this.debug) {
+            console.log(`Constrained ear clipping created ${triangleCount} triangles for ${faceName}`);
+        }
+        
+        return triangleCount;
+    }
+
+    /**
+     * Clean up positions while maintaining index mapping
+     * @param {Array<THREE.Vector3>} positions3D - Original 3D positions
+     * @param {Array<Object>} points2D - Projected 2D points
+     * @returns {Object} - { cleanPositions, indexMapping }
+     */
+    _cleanupWithMapping(positions3D, points2D, eps = 1e-10) {
+        const cleanPositions = [];
+        const indexMapping = [];
+        let prev2D = null;
+        
+        for (let i = 0; i < positions3D.length; i++) {
+            const curr2D = points2D[i];
+            if (!prev2D || Math.abs(curr2D.x - prev2D.x) > eps || Math.abs(curr2D.y - prev2D.y) > eps) {
+                cleanPositions.push(positions3D[i]);
+                indexMapping.push(i);
+                prev2D = curr2D;
+            }
+        }
+        
+        return { cleanPositions, indexMapping };
+    }
+
+    /**
+     * Check if vertex forms a valid constrained ear (respects boundary edges)
+     * @param {Array<THREE.Vector3>} vertices - Current vertices
+     * @param {Array<number>} indices - Current indices
+     * @param {number} i - Index to test
+     * @param {number} projectionPlane - Projection plane (0=YZ, 1=XZ, 2=XY)
+     * @returns {boolean} True if valid ear
+     */
+    _isValidConstrainedEar(vertices, indices, i, projectionPlane) {
+        const n = vertices.length;
+        const prev = vertices[(i - 1 + n) % n];
+        const curr = vertices[i];
+        const next = vertices[(i + 1) % n];
+        
+        // Check if angle is convex in 2D projection
+        const prevIdx = (i - 1 + n) % n;
+        const nextIdx = (i + 1) % n;
+        
+        if (!this._isConvexVertex2D(vertices, prevIdx, i, nextIdx, projectionPlane)) {
             return false;
         }
+        
+        // Check that no other vertex lies inside the triangle
+        for (let j = 0; j < n; j++) {
+            if (j === prevIdx || j === i || j === nextIdx) continue;
+            
+            if (this._isPointInTriangle2D(vertices[j], prev, curr, next, projectionPlane)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    /**
+     * Check if vertex is convex in 2D projection
+     * @param {Array<THREE.Vector3>} vertices - Vertices
+     * @param {number} prevIdx - Previous vertex index
+     * @param {number} currIdx - Current vertex index  
+     * @param {number} nextIdx - Next vertex index
+     * @param {number} projectionPlane - Projection plane
+     * @returns {boolean} True if convex
+     */
+    _isConvexVertex2D(vertices, prevIdx, currIdx, nextIdx, projectionPlane) {
+        const prev = vertices[prevIdx];
+        const curr = vertices[currIdx];
+        const next = vertices[nextIdx];
+        
+        // Get 2D coordinates based on projection plane
+        let px, py, cx, cy, nx, ny;
+        switch (projectionPlane) {
+            case 0: // YZ plane
+                px = prev.y; py = prev.z;
+                cx = curr.y; cy = curr.z;
+                nx = next.y; ny = next.z;
+                break;
+            case 1: // XZ plane
+                px = prev.x; py = prev.z;
+                cx = curr.x; cy = curr.z;
+                nx = next.x; ny = next.z;
+                break;
+            default: // XY plane
+                px = prev.x; py = prev.y;
+                cx = curr.x; cy = curr.y;
+                nx = next.x; ny = next.y;
+                break;
+        }
+        
+        // Calculate cross product to determine convexity
+        const cross = (cx - px) * (ny - cy) - (cy - py) * (nx - cx);
+        return cross > 0; // Counter-clockwise is convex
+    }
+
+    /**
+     * Point-in-triangle test in 2D projection
+     * @param {THREE.Vector3} point - Point to test
+     * @param {THREE.Vector3} a - Triangle vertex A
+     * @param {THREE.Vector3} b - Triangle vertex B
+     * @param {THREE.Vector3} c - Triangle vertex C
+     * @param {number} projectionPlane - Projection plane
+     * @returns {boolean} True if inside triangle
+     */
+    _isPointInTriangle2D(point, a, b, c, projectionPlane) {
+        // Get 2D coordinates
+        let px, py, ax, ay, bx, by, cx, cy;
+        switch (projectionPlane) {
+            case 0: // YZ plane
+                px = point.y; py = point.z;
+                ax = a.y; ay = a.z;
+                bx = b.y; by = b.z;
+                cx = c.y; cy = c.z;
+                break;
+            case 1: // XZ plane
+                px = point.x; py = point.z;
+                ax = a.x; ay = a.z;
+                bx = b.x; by = b.z;
+                cx = c.x; cy = c.z;
+                break;
+            default: // XY plane
+                px = point.x; py = point.y;
+                ax = a.x; ay = a.y;
+                bx = b.x; by = b.y;
+                cx = c.x; cy = c.y;
+                break;
+        }
+        
+        // Barycentric coordinates test
+        const denom = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+        if (Math.abs(denom) < 1e-10) return false; // Degenerate triangle
+        
+        const alpha = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / denom;
+        const beta = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / denom;
+        const gamma = 1 - alpha - beta;
+        
+        return alpha > 1e-10 && beta > 1e-10 && gamma > 1e-10;
+    }
+
+    /**
+     * Calculate normal using Newell's method (robust for non-planar polygons)
+     * @param {Array<THREE.Vector3>} positions - Loop positions
+     * @returns {THREE.Vector3} Normal vector
+     */
+    _calculateNewellNormal(positions) {
+        const normal = new THREE.Vector3();
+        const n = positions.length;
+        
+        for (let i = 0; i < n; i++) {
+            const p0 = positions[i];
+            const p1 = positions[(i + 1) % n];
+            
+            normal.x += (p0.y - p1.y) * (p0.z + p1.z);
+            normal.y += (p0.z - p1.z) * (p0.x + p1.x);
+            normal.z += (p0.x - p1.x) * (p0.y + p1.y);
+        }
+        
+        return normal.normalize();
+    }
+
+    /**
+     * Remove consecutive duplicate points in 2D
+     * @param {Array<THREE.Vector2>} points - 2D points
+     * @returns {Array<THREE.Vector2>} Cleaned points
+     */
+    _removeDuplicatePoints2D(points, eps = 1e-10) {
+        const cleaned = [];
+        let prev = null;
+        
+        for (const point of points) {
+            if (!prev || prev.distanceTo(point) > eps) {
+                cleaned.push(point);
+                prev = point;
+            }
+        }
+        
+        return cleaned;
+    }
+
+    /**
+     * Fallback fan triangulation when robust method fails
+     * @param {Array<THREE.Vector3>} positions - Loop positions
+     * @param {string} faceName - Face name
+     * @returns {number} Number of triangles created
+     */
+    _fallbackFanTriangulation(positions, faceName) {
+        let triangleCount = 0;
+        
+        for (let i = 1; i < positions.length - 1; i++) {
+            const area = this._calculateTriangleArea(positions[0], positions[i], positions[i + 1]);
+            if (area > 1e-12) {
+                this.addTriangle(faceName,
+                    [positions[0].x, positions[0].y, positions[0].z],
+                    [positions[i].x, positions[i].y, positions[i].z],
+                    [positions[i + 1].x, positions[i + 1].y, positions[i + 1].z]);
+                triangleCount++;
+            }
+        }
+        
+        if (this.debug) {
+            console.log(`Fallback fan triangulation created ${triangleCount} triangles for ${faceName}`);
+        }
+        return triangleCount;
+    }
+
+    /**
+     * Calculate triangle area
+     * @param {THREE.Vector3} p0 - First vertex
+     * @param {THREE.Vector3} p1 - Second vertex  
+     * @param {THREE.Vector3} p2 - Third vertex
+     * @returns {number} Triangle area
+     */
+    _calculateTriangleArea(p0, p1, p2) {
+        const v1 = new THREE.Vector3().subVectors(p1, p0);
+        const v2 = new THREE.Vector3().subVectors(p2, p0);
+        return v1.cross(v2).length() * 0.5;
     }
 
     /**
@@ -976,19 +1650,7 @@ export class FilletSolid extends Solid {
      */
     _calculateLoopNormal(positions) {
         if (positions.length < 3) return new THREE.Vector3(0, 0, 1);
-
-        // Use Newell's method for robust normal calculation
-        const normal = new THREE.Vector3();
-        for (let i = 0; i < positions.length; i++) {
-            const curr = positions[i];
-            const next = positions[(i + 1) % positions.length];
-            
-            normal.x += (curr.y - next.y) * (curr.z + next.z);
-            normal.y += (curr.z - next.z) * (curr.x + next.x);
-            normal.z += (curr.x - next.x) * (curr.y + next.y);
-        }
-        
-        return normal.normalize();
+        return this._calculateNewellNormal(positions);
     }
 
     /**
@@ -1003,7 +1665,7 @@ export class FilletSolid extends Solid {
             .normalize();
 
         if (computedNormal.dot(normal) < 0) {
-            // Reverse winding
+            // Reverse winding - all triangles use the same face name
             this.addTriangle(patchName, [p0.x, p0.y, p0.z], [p2.x, p2.y, p2.z], [p1.x, p1.y, p1.z]);
         } else {
             this.addTriangle(patchName, [p0.x, p0.y, p0.z], [p1.x, p1.y, p1.z], [p2.x, p2.y, p2.z]);
@@ -1022,52 +1684,170 @@ export class FilletSolid extends Solid {
         const diag2Length = p1.distanceTo(p3);
         
         if (diag1Length < diag2Length) {
-            // Use p0-p2 diagonal
-            this._addTrianglePatch([p0, p1, p2], normal, `${patchName}_A`);
-            this._addTrianglePatch([p0, p2, p3], normal, `${patchName}_B`);
+            // Use p0-p2 diagonal - both triangles use the same face name
+            this._addTrianglePatch([p0, p1, p2], normal, patchName);
+            this._addTrianglePatch([p0, p2, p3], normal, patchName);
         } else {
-            // Use p1-p3 diagonal
-            this._addTrianglePatch([p0, p1, p3], normal, `${patchName}_A`);
-            this._addTrianglePatch([p1, p2, p3], normal, `${patchName}_B`);
+            // Use p1-p3 diagonal - both triangles use the same face name
+            this._addTrianglePatch([p0, p1, p3], normal, patchName);
+            this._addTrianglePatch([p1, p2, p3], normal, patchName);
         }
         return true;
     }
 
+
+
+    // Simple triangulation helper methods
+
     /**
-     * Add fan triangulation from centroid
+     * Calculate loop normal for consistent orientation  
      */
-    _addFanPatch(positions, normal, patchName) {
-        // Calculate centroid
-        const centroid = new THREE.Vector3();
-        for (const pos of positions) {
-            centroid.add(pos);
+    _calculateLoopNormal(positions) {
+        if (positions.length < 3) return false;
+        if (positions.length === 3) {
+            return this._addTrianglePatch(positions, normal, patchName);
         }
-        centroid.divideScalar(positions.length);
 
-        // Create triangles from centroid to each edge
-        for (let i = 0; i < positions.length; i++) {
-            const p1 = positions[i];
-            const p2 = positions[(i + 1) % positions.length];
-            
-            // Check orientation and create triangle
-            const edgeNormal = new THREE.Vector3()
-                .subVectors(p1, centroid)
-                .cross(new THREE.Vector3().subVectors(p2, centroid))
-                .normalize();
+        if (this.debug) {
+            console.log(`Ear clipping triangulation for ${patchName} with ${positions.length} vertices`);
+        }
 
-            if (edgeNormal.dot(normal) < 0) {
-                this.addTriangle(`${patchName}_${i}`, 
-                    [centroid.x, centroid.y, centroid.z], 
-                    [p2.x, p2.y, p2.z], 
-                    [p1.x, p1.y, p1.z]);
-            } else {
-                this.addTriangle(`${patchName}_${i}`, 
-                    [centroid.x, centroid.y, centroid.z], 
-                    [p1.x, p1.y, p1.z], 
-                    [p2.x, p2.y, p2.z]);
+        // Create a working copy of vertices
+        const vertices = [...positions];
+        let triangleCount = 0;
+
+        // Simple ear clipping - find and remove ears until only 3 vertices remain
+        while (vertices.length > 3) {
+            let earRemoved = false;
+
+            // Look for an ear (convex vertex with no other vertices inside the triangle)
+            for (let i = 0; i < vertices.length; i++) {
+                const prev = vertices[(i - 1 + vertices.length) % vertices.length];
+                const curr = vertices[i];
+                const next = vertices[(i + 1) % vertices.length];
+
+                // Check if this vertex forms a convex angle
+                if (this._isConvexVertex(prev, curr, next, normal)) {
+                    // Check if any other vertex is inside this triangle
+                    let hasVertexInside = false;
+                    for (let j = 0; j < vertices.length; j++) {
+                        if (j === i || j === (i - 1 + vertices.length) % vertices.length || j === (i + 1) % vertices.length) {
+                            continue; // Skip the triangle vertices themselves
+                        }
+                        
+                        if (this._isPointInTriangle(vertices[j], prev, curr, next)) {
+                            hasVertexInside = true;
+                            break;
+                        }
+                    }
+
+                    // If no vertex is inside, this is an ear - triangulate it
+                    if (!hasVertexInside) {
+                        this._addTrianglePatch([prev, curr, next], normal, patchName);
+                        vertices.splice(i, 1); // Remove the ear vertex
+                        earRemoved = true;
+                        triangleCount++;
+                        break;
+                    }
+                }
+            }
+
+            // Safety fallback - if no ear found, force triangulation
+            if (!earRemoved) {
+                if (this.debug) {
+                    console.log(`No ear found, using conservative triangulation for remaining ${vertices.length} vertices`);
+                }
+                
+                // Find a vertex that creates the most "inward" triangles
+                let bestCenter = 0;
+                let maxInwardness = -Infinity;
+                
+                for (let centerIdx = 0; centerIdx < vertices.length; centerIdx++) {
+                    let inwardness = 0;
+                    for (let i = 0; i < vertices.length - 2; i++) {
+                        const nextIdx = (centerIdx + 1 + i) % vertices.length;
+                        const afterIdx = (centerIdx + 2 + i) % vertices.length;
+                        
+                        // Skip if indices are the same
+                        if (nextIdx === centerIdx || afterIdx === centerIdx || nextIdx === afterIdx) continue;
+                        
+                        const center = vertices[centerIdx];
+                        const next = vertices[nextIdx];
+                        const after = vertices[afterIdx];
+                        
+                        // Measure how "inward" this triangle is
+                        const v1 = new THREE.Vector3().subVectors(next, center);
+                        const v2 = new THREE.Vector3().subVectors(after, center);
+                        const cross = new THREE.Vector3().crossVectors(v1, v2);
+                        inwardness += cross.dot(normal);
+                    }
+                    
+                    if (inwardness > maxInwardness) {
+                        maxInwardness = inwardness;
+                        bestCenter = centerIdx;
+                    }
+                }
+                
+                // Create fan from best center vertex
+                for (let i = 1; i < vertices.length - 1; i++) {
+                    const nextIdx = (bestCenter + i) % vertices.length;
+                    const afterIdx = (bestCenter + i + 1) % vertices.length;
+                    
+                    if (nextIdx !== bestCenter && afterIdx !== bestCenter) {
+                        this._addTrianglePatch([vertices[bestCenter], vertices[nextIdx], vertices[afterIdx]], normal, patchName);
+                        triangleCount++;
+                    }
+                }
+                break;
             }
         }
-        return true;
+
+        // Add the final triangle
+        if (vertices.length === 3) {
+            this._addTrianglePatch(vertices, normal, patchName);
+            triangleCount++;
+        }
+
+        if (this.debug) {
+            console.log(`Generated ${triangleCount} triangles for endcap ${patchName}`);
+        }
+
+        return triangleCount > 0;
+    }
+
+    /**
+     * Check if vertex forms a convex angle
+     */
+    _isConvexVertex(prev, curr, next, normal) {
+        const v1 = new THREE.Vector3().subVectors(prev, curr);
+        const v2 = new THREE.Vector3().subVectors(next, curr);
+        const cross = new THREE.Vector3().crossVectors(v1, v2);
+        
+        // Check if angle is convex relative to the surface normal
+        return cross.dot(normal) > 0;
+    }
+
+
+
+    /**
+     * Check if point is inside triangle
+     */
+    _isPointInTriangle(point, a, b, c) {
+        const v0 = new THREE.Vector3().subVectors(c, a);
+        const v1 = new THREE.Vector3().subVectors(b, a);
+        const v2 = new THREE.Vector3().subVectors(point, a);
+
+        const dot00 = v0.dot(v0);
+        const dot01 = v0.dot(v1);
+        const dot02 = v0.dot(v2);
+        const dot11 = v1.dot(v1);
+        const dot12 = v1.dot(v2);
+
+        const invDenom = 1 / (dot00 * dot11 - dot01 * dot01);
+        const u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+        const v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+
+        return (u >= 0) && (v >= 0) && (u + v <= 1);
     }
 
     /**
