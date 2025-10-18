@@ -68,6 +68,7 @@ export class OffsetShellSolid extends Solid {
     try {
       const positions = new Float32Array(positionsRaw);
       const triVerts = new Uint32Array(indicesRaw);
+      const triVertsOriginal = triVerts.slice();
 
       geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -108,15 +109,15 @@ export class OffsetShellSolid extends Solid {
       }
 
       const faceCount = triVerts.length / 3;
-      const faceNormals = new Float32Array(faceCount * 3);
+      let faceNormals = new Float32Array(faceCount * 3);
       const vA = new THREE.Vector3();
       const vB = new THREE.Vector3();
       const vC = new THREE.Vector3();
       const tmp = new THREE.Vector3();
       for (let f = 0; f < faceCount; f++) {
-        const ia = triVerts[f * 3] * 3;
-        const ib = triVerts[f * 3 + 1] * 3;
-        const ic = triVerts[f * 3 + 2] * 3;
+        const ia = triVertsOriginal[f * 3] * 3;
+        const ib = triVertsOriginal[f * 3 + 1] * 3;
+        const ic = triVertsOriginal[f * 3 + 2] * 3;
         vA.set(positions[ia], positions[ia + 1], positions[ia + 2]);
         vB.set(positions[ib], positions[ib + 1], positions[ib + 2]);
         vC.set(positions[ic], positions[ic + 1], positions[ic + 2]);
@@ -141,12 +142,54 @@ export class OffsetShellSolid extends Solid {
       const rayTmp = new THREE.Vector3();
       const triangle = new THREE.Triangle();
 
-      const triFaceNames = new Array(faceCount);
+      let triFaceNames = new Array(faceCount);
       for (let t = 0; t < faceCount; t++) {
         const id = triIDsRaw[t] ?? 0;
         const faceName = idToFaceName.get(id) || `${sourceSolid.name || 'Solid'}_FACE_${id}`;
         triFaceNames[t] = faceName;
       }
+      try {
+        const indexAttr = geometry.getIndex();
+        const mutatedIndex = indexAttr?.array;
+        if (mutatedIndex && mutatedIndex !== triVertsOriginal) {
+          const keyFor = (a, b, c) => {
+            const arr = [a, b, c];
+            arr.sort((x, y) => x - y);
+            return `${arr[0]}/${arr[1]}/${arr[2]}`;
+          };
+          const originalKeyToIndex = new Map();
+          for (let t = 0; t < faceCount; t++) {
+            const i0 = triVertsOriginal[t * 3 + 0];
+            const i1 = triVertsOriginal[t * 3 + 1];
+            const i2 = triVertsOriginal[t * 3 + 2];
+            originalKeyToIndex.set(keyFor(i0, i1, i2), t);
+          }
+          const remap = new Uint32Array(faceCount);
+          let remapNeeded = false;
+          for (let t = 0; t < faceCount; t++) {
+            const i0 = mutatedIndex[t * 3 + 0];
+            const i1 = mutatedIndex[t * 3 + 1];
+            const i2 = mutatedIndex[t * 3 + 2];
+            const key = keyFor(i0, i1, i2);
+            const orig = originalKeyToIndex.get(key);
+            remap[t] = (orig != null) ? orig : t;
+            if (remap[t] !== t) remapNeeded = true;
+          }
+          if (remapNeeded) {
+            const remappedNormals = new Float32Array(faceCount * 3);
+            const remappedNames = new Array(faceCount);
+            for (let t = 0; t < faceCount; t++) {
+              const src = remap[t];
+              remappedNormals[t * 3 + 0] = faceNormals[src * 3 + 0];
+              remappedNormals[t * 3 + 1] = faceNormals[src * 3 + 1];
+              remappedNormals[t * 3 + 2] = faceNormals[src * 3 + 2];
+              remappedNames[t] = triFaceNames[src];
+            }
+            faceNormals = remappedNormals;
+            triFaceNames = remappedNames;
+          }
+        }
+      } catch (_) { /* remap best-effort */ }
 
       const tupleToXYZ = (vec) => {
         if (vec && typeof vec === 'object') {
@@ -227,19 +270,58 @@ export class OffsetShellSolid extends Solid {
       const vert = new THREE.Vector3();
       const centroid = new THREE.Vector3();
 
+      const closestInfo = { point: new THREE.Vector3(), faceIndex: -1, distance: 0 };
+      const faceNormalTmp = new THREE.Vector3();
+      const offsetTmp = new THREE.Vector3();
+
       const getFaceInfoForPoint = (point) => {
-        const closest = bvh.closestPointToPoint(point);
+        const closest = bvh.closestPointToPoint(point, closestInfo);
         if (!closest || closest.faceIndex == null || closest.faceIndex < 0) return null;
-        const name = triFaceNames[closest.faceIndex] || null;
+        const faceIndex = closest.faceIndex;
+        const name = triFaceNames[faceIndex] || null;
         if (!name) return null;
+
+        const idx = faceIndex * 3;
+        faceNormalTmp.set(
+          faceNormals[idx],
+          faceNormals[idx + 1],
+          faceNormals[idx + 2]
+        );
+        if (faceNormalTmp.lengthSq() === 0) {
+          const ia = triVerts[idx] * 3;
+          const ib = triVerts[idx + 1] * 3;
+          const ic = triVerts[idx + 2] * 3;
+          vA.set(positions[ia], positions[ia + 1], positions[ia + 2]);
+          vB.set(positions[ib], positions[ib + 1], positions[ib + 2]);
+          vC.set(positions[ic], positions[ic + 1], positions[ic + 2]);
+          faceNormalTmp.subVectors(vB, vA).cross(vC.clone().sub(vA));
+        }
+        if (faceNormalTmp.lengthSq() > 0) faceNormalTmp.normalize();
+
+        let offsetAlignment = 0;
+        if (closest.point) {
+          offsetTmp.copy(point).sub(closest.point);
+          const len = offsetTmp.length();
+          if (len > 1e-9) {
+            offsetAlignment = offsetTmp.multiplyScalar(1 / len).dot(faceNormalTmp);
+          }
+        }
+
         return {
           name,
           distance: closest.distance ?? 0,
+          faceIndex,
+          offsetAlignment,
         };
       };
 
       const faceBuckets = new Map();
       const getFaceKey = (names) => names.join('+');
+
+      const triNormal = new THREE.Vector3();
+      const triNormalUnit = new THREE.Vector3();
+      const closestNormal = new THREE.Vector3();
+      const probePoint = new THREE.Vector3();
 
       for (let t = 0; t < triOutCount; t++) {
         const i0 = tTriVerts[t * 3 + 0] * 3;
@@ -256,24 +338,59 @@ export class OffsetShellSolid extends Solid {
           (p0[2] + p1[2] + p2[2]) / 3
         );
 
-        const faceSet = new Set();
+        triNormal.set(
+          (p1[1] - p0[1]) * (p2[2] - p0[2]) - (p1[2] - p0[2]) * (p2[1] - p0[1]),
+          (p1[2] - p0[2]) * (p2[0] - p0[0]) - (p1[0] - p0[0]) * (p2[2] - p0[2]),
+          (p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0])
+        );
+        const triNormalLenSq = triNormal.lengthSq();
+        const triNormalHasDirection = triNormalLenSq > 1e-18;
+        if (triNormalHasDirection) {
+          const triNormalLen = Math.sqrt(triNormalLenSq);
+          if (triNormalLen > 0) {
+            triNormalUnit.copy(triNormal).multiplyScalar(1 / triNormalLen);
+          } else {
+            triNormalUnit.set(0, 0, 0);
+          }
+        } else {
+          triNormalUnit.set(0, 0, 0);
+        }
+
         const contributions = [];
+        let centroidInfo = null;
         const addContribution = (info) => {
           if (!info || !info.name) return;
           contributions.push(info);
-          faceSet.add(info.name);
         };
 
         vert.set(p0[0], p0[1], p0[2]); addContribution(getFaceInfoForPoint(vert));
         vert.set(p1[0], p1[1], p1[2]); addContribution(getFaceInfoForPoint(vert));
         vert.set(p2[0], p2[1], p2[2]); addContribution(getFaceInfoForPoint(vert));
-        addContribution(getFaceInfoForPoint(centroid));
+        centroidInfo = getFaceInfoForPoint(centroid);
+        addContribution(centroidInfo);
 
         const counts = new Map();
         for (const info of contributions) {
-          const entry = counts.get(info.name) || { count: 0, minDist: Infinity };
-          entry.count++;
-          entry.minDist = Math.min(entry.minDist, info.distance ?? Infinity);
+          if (!info || !info.name) continue;
+          const entry = counts.get(info.name) || {
+            count: 0,
+            minDist: Infinity,
+            faceIndex: null,
+            offsetAlignSum: 0,
+            offsetAlignSamples: 0
+          };
+          entry.count += 1;
+          const distance = info.distance ?? Infinity;
+          if (distance < entry.minDist) {
+            entry.minDist = distance;
+            if (typeof info.faceIndex === 'number') entry.faceIndex = info.faceIndex;
+          } else if (entry.faceIndex == null && typeof info.faceIndex === 'number') {
+            entry.faceIndex = info.faceIndex;
+          }
+          if (Number.isFinite(info.offsetAlignment)) {
+            entry.offsetAlignSum += info.offsetAlignment;
+            entry.offsetAlignSamples += 1;
+          }
           counts.set(info.name, entry);
         }
 
@@ -281,35 +398,177 @@ export class OffsetShellSolid extends Solid {
           name,
           count: entry.count,
           minDist: entry.minDist,
+          faceIndex: entry.faceIndex,
+          triAlign: (() => {
+            if (!triNormalHasDirection || entry.faceIndex == null || entry.faceIndex < 0) return 0;
+            const idx = entry.faceIndex * 3;
+            closestNormal.set(
+              faceNormals[idx],
+              faceNormals[idx + 1],
+              faceNormals[idx + 2]
+            );
+            if (closestNormal.lengthSq() === 0) return 0;
+            closestNormal.normalize();
+            return triNormalUnit.dot(closestNormal);
+          })(),
+          offsetAlign: (() => {
+            if (!entry || !entry.offsetAlignSamples) return 0;
+            return entry.offsetAlignSum / entry.offsetAlignSamples;
+          })(),
         }));
 
-        if (entries.length === 0) entries = [{ name: 'OFFSET', count: 1, minDist: 0 }];
+        if (entries.length === 0) entries = [{
+          name: 'OFFSET',
+          count: 1,
+          minDist: 0,
+          faceIndex: null,
+          triAlign: 0,
+          offsetAlign: 0
+        }];
 
-        entries.sort((a, b) => {
-          if (b.count !== a.count) return b.count - a.count;
-          return a.minDist - b.minDist;
-        });
-
-        const selected = [];
-        const primaryCount = entries[0].count;
-        const countThreshold = Math.max(2, primaryCount);
-
+        const distSign = dist >= 0 ? 1 : -1;
         for (const entry of entries) {
-          if (entry.count >= countThreshold) {
-            selected.push(entry.name);
-          }
+          entry.triAlignScore = entry.triAlign;
+          entry.triAlignAbs = Math.abs(entry.triAlign);
+          entry.offsetAlignScore = entry.offsetAlign * distSign;
         }
 
-        if (selected.length === 0) {
-          selected.push(entries[0].name);
-          for (let i = 1; i < entries.length && selected.length < 3; i++) {
-            if (entries[i].minDist <= entries[0].minDist + 1e-4) {
-              selected.push(entries[i].name);
+        let selected = [];
+        let raySelected = null;
+        if (triNormalHasDirection) {
+          probePoint.copy(centroid);
+          const rayOrigin = probePoint;
+          const rayLength = Math.abs(dist) + diag * 0.1;
+          const hitFaces = [];
+          const raycast = ray.clone();
+          raycast.origin.copy(rayOrigin);
+          raycast.direction.copy(triNormalUnit).negate();
+          bvh.shapecast({
+            intersectsBounds: (box) => (box && box.min && box.max) ? raycast.intersectsBox(box) : true,
+            intersectsTriangle: (tri) => {
+              const hitPoint = raycast.intersectTriangle(tri.a, tri.b, tri.c, true, rayTmp);
+              if (!hitPoint) return false;
+              const hitDist = hitPoint.distanceTo(rayOrigin);
+              if (hitDist > rayLength) return false;
+              const idx = tri.faceIndex ?? tri.face;
+              const fname = (idx != null && idx >= 0) ? triFaceNames[idx] : null;
+              if (!fname) return false;
+              let alignScore = -Infinity;
+              if (idx != null && idx >= 0) {
+                const nIdx = idx * 3;
+                closestNormal.set(
+                  faceNormals[nIdx],
+                  faceNormals[nIdx + 1],
+                  faceNormals[nIdx + 2]
+                );
+                if (closestNormal.lengthSq() === 0) {
+                  closestNormal.subVectors(tri.b, tri.a).cross(tri.c.clone().sub(tri.a));
+                }
+                if (closestNormal.lengthSq() > 0) {
+                  closestNormal.normalize();
+                  alignScore = triNormalUnit.dot(closestNormal);
+                }
+              }
+              hitFaces.push({ name: fname, distance: hitDist, alignScore });
+              return true;
+            }
+          });
+          if (hitFaces.length) {
+            hitFaces.sort((a, b) => {
+              const distDelta = Math.abs(a.distance - Math.abs(dist)) - Math.abs(b.distance - Math.abs(dist));
+              if (Math.abs(distDelta) > 1e-6) return distDelta;
+              return (b.alignScore ?? -Infinity) - (a.alignScore ?? -Infinity);
+            });
+            const bestHit = hitFaces.find((hit) => (hit.alignScore ?? -Infinity) > 0.05) || hitFaces[0];
+            if (bestHit && (bestHit.alignScore ?? 0) > -0.2) {
+              raySelected = bestHit.name;
+              selected = [bestHit.name];
             }
           }
         }
 
-        const sortedFaces = selected.sort();
+        if (selected.length) {
+          const matching = entries.find((entry) => entry.name === selected[0]);
+          if (matching && matching.triAlignScore < -0.15) {
+            selected.length = 0;
+          }
+        }
+
+        const entriesByName = new Map(entries.map((entry) => [entry.name, entry]));
+        if (centroidInfo && centroidInfo.name) {
+          const centroidEntry = entriesByName.get(centroidInfo.name);
+          if (centroidEntry) {
+            selected = [centroidEntry.name];
+          }
+        }
+
+        if (selected.length === 0 && entries.length) {
+          entries.sort((a, b) => {
+            if (b.count !== a.count) return b.count - a.count;
+            if (b.triAlignScore !== a.triAlignScore) return b.triAlignScore - a.triAlignScore;
+            if (b.triAlignAbs !== a.triAlignAbs) return b.triAlignAbs - a.triAlignAbs;
+            if (b.offsetAlignScore !== a.offsetAlignScore) return b.offsetAlignScore - a.offsetAlignScore;
+            if (a.minDist !== b.minDist) return a.minDist - b.minDist;
+            return a.name.localeCompare(b.name);
+          });
+
+          const primary = entries[0];
+          const alignmentThreshold = 0.35;
+          if (primary && primary.triAlignScore >= alignmentThreshold) {
+            selected.push(primary.name);
+          } else {
+            for (const entry of entries) {
+              if (!entry || !entry.name) continue;
+              if (selected.includes(entry.name)) continue;
+              if (entry.triAlignScore < -0.2) continue;
+              selected.push(entry.name);
+              if (selected.length >= 2) break;
+            }
+            if (!selected.length && primary && primary.triAlignAbs >= 0.25) {
+              selected.push(primary.name);
+            }
+          }
+        }
+
+        if (!selected.length) selected.push('OFFSET');
+
+        const uniqueSelected = [];
+        for (const name of selected) {
+          if (!name) continue;
+          if (!uniqueSelected.includes(name)) uniqueSelected.push(name);
+        }
+
+        const hasNamedFace = uniqueSelected.some((name) => name && name !== 'OFFSET');
+        if (hasNamedFace) {
+          const offsetIndex = uniqueSelected.indexOf('OFFSET');
+          if (offsetIndex >= 0) uniqueSelected.splice(offsetIndex, 1);
+        }
+
+        if (uniqueSelected.length > 2) {
+          const ranked = uniqueSelected
+            .map((name) => entries.find((e) => e.name === name) || {
+              name,
+              count: 0,
+              triAlignScore: -Infinity,
+              triAlignAbs: 0,
+              offsetAlignScore: -Infinity,
+              minDist: Infinity
+            })
+            .sort((a, b) => {
+              if (b.count !== a.count) return b.count - a.count;
+              if (b.triAlignScore !== a.triAlignScore) return b.triAlignScore - a.triAlignScore;
+              if (b.triAlignAbs !== a.triAlignAbs) return b.triAlignAbs - a.triAlignAbs;
+              if (b.offsetAlignScore !== a.offsetAlignScore) return b.offsetAlignScore - a.offsetAlignScore;
+              if (a.minDist !== b.minDist) return a.minDist - b.minDist;
+              return a.name.localeCompare(b.name);
+            });
+          uniqueSelected.length = 0;
+          for (let i = 0; i < ranked.length && uniqueSelected.length < 2; i++) {
+            uniqueSelected.push(ranked[i].name);
+          }
+        }
+
+        const sortedFaces = (uniqueSelected.length ? uniqueSelected : ['OFFSET']).sort();
         const key = getFaceKey(sortedFaces.length ? sortedFaces : ['OFFSET']);
         let bucket = faceBuckets.get(key);
         if (!bucket) {
