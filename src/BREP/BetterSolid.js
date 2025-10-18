@@ -173,9 +173,9 @@ export class Vertex extends THREE.Object3D {
                 try {
                     if (this._point && this._point.material && CADmaterials?.VERTEX) {
                         this._point.material = nv ? (CADmaterials.VERTEX.SELECTED || this._point.material)
-                                                  : (CADmaterials.VERTEX.BASE || this._point.material);
+                            : (CADmaterials.VERTEX.BASE || this._point.material);
                     }
-                } catch {}
+                } catch { }
             },
             configurable: true,
             enumerable: true,
@@ -322,7 +322,7 @@ export class Solid extends THREE.Group {
         // Face name <-> Manifold ID
         this._faceNameToID = new Map();
         this._idToFaceName = new Map();
-        
+
         // Face metadata storage (e.g., radius for cylindrical faces)
         this._faceMetadata = new Map(); // faceName -> metadata object
 
@@ -356,8 +356,8 @@ export class Solid extends THREE.Group {
             // Inline mat4 multiply for speed
             for (let i = 0; i < vp.length; i += 3) {
                 const x = vp[i + 0], y = vp[i + 1], z = vp[i + 2];
-                const nx = e[0] * x + e[4] * y + e[8]  * z + e[12];
-                const ny = e[1] * x + e[5] * y + e[9]  * z + e[13];
+                const nx = e[0] * x + e[4] * y + e[8] * z + e[12];
+                const ny = e[1] * x + e[5] * y + e[9] * z + e[13];
                 const nz = e[2] * x + e[6] * y + e[10] * z + e[14];
                 vp[i + 0] = nx; vp[i + 1] = ny; vp[i + 2] = nz;
             }
@@ -385,28 +385,28 @@ export class Solid extends THREE.Group {
                     }
                 }
             } catch { /* ignore aux bake errors */ }
-            
+
             // Bake the same transform into face metadata (center and axis vectors)
             try {
                 if (this._faceMetadata && this._faceMetadata.size > 0) {
                     const tmp = new THREE.Vector3();
                     for (const [faceName, metadata] of this._faceMetadata.entries()) {
                         if (!metadata || typeof metadata !== 'object') continue;
-                        
+
                         // Transform center point if present
                         if (Array.isArray(metadata.center) && metadata.center.length === 3) {
                             tmp.set(metadata.center[0], metadata.center[1], metadata.center[2]);
                             tmp.applyMatrix4(m);
                             metadata.center = [tmp.x, tmp.y, tmp.z];
                         }
-                        
+
                         // Transform axis direction if present (use transformDirection for vectors)
                         if (Array.isArray(metadata.axis) && metadata.axis.length === 3) {
                             tmp.set(metadata.axis[0], metadata.axis[1], metadata.axis[2]);
                             tmp.transformDirection(m).normalize();
                             metadata.axis = [tmp.x, tmp.y, tmp.z];
                         }
-                        
+
                         // Note: radius doesn't need transformation for uniform scaling,
                         // but we could handle non-uniform scaling here if needed
                     }
@@ -749,7 +749,7 @@ export class Solid extends THREE.Group {
             const i0 = tv[b + 0] >>> 0;
             const i1 = tv[b + 1] >>> 0;
             const i2 = tv[b + 2] >>> 0;
-            const edges = [ [i0, i1], [i1, i2], [i2, i0] ];
+            const edges = [[i0, i1], [i1, i2], [i2, i0]];
             for (let k = 0; k < 3; k++) {
                 const a = edges[k][0], c = edges[k][1];
                 const key = eKey(a, c);
@@ -967,45 +967,45 @@ export class Solid extends THREE.Group {
             const tv = mesh.triVerts;       // Uint32Array
             const faceIDs = mesh.faceID && mesh.faceID.length ? Array.from(mesh.faceID) : [];
 
-        const mirrored = new Solid();
-        mirrored._numProp = mesh.numProp || 3;
+            const mirrored = new Solid();
+            mirrored._numProp = mesh.numProp || 3;
 
-        // Reflect vertices across plane
-        const outVP = new Array(vp.length);
-        const X = new THREE.Vector3();
-        for (let i = 0; i < vp.length; i += 3) {
-            X.set(vp[i + 0], vp[i + 1], vp[i + 2]);
-            const d = X.clone().sub(P0);
-            const t = 2 * d.dot(n);
-            const Xp = X.sub(n.clone().multiplyScalar(t));
-            outVP[i + 0] = Xp.x;
-            outVP[i + 1] = Xp.y;
-            outVP[i + 2] = Xp.z;
-        }
-        mirrored._vertProperties = outVP;
+            // Reflect vertices across plane
+            const outVP = new Array(vp.length);
+            const X = new THREE.Vector3();
+            for (let i = 0; i < vp.length; i += 3) {
+                X.set(vp[i + 0], vp[i + 1], vp[i + 2]);
+                const d = X.clone().sub(P0);
+                const t = 2 * d.dot(n);
+                const Xp = X.sub(n.clone().multiplyScalar(t));
+                outVP[i + 0] = Xp.x;
+                outVP[i + 1] = Xp.y;
+                outVP[i + 2] = Xp.z;
+            }
+            mirrored._vertProperties = outVP;
 
-        // Copy triangles and face IDs
-        mirrored._triVerts = Array.from(tv);
-        mirrored._triIDs = faceIDs.length ? faceIDs : new Array((tv.length / 3) | 0).fill(0);
+            // Copy triangles and face IDs
+            mirrored._triVerts = Array.from(tv);
+            mirrored._triIDs = faceIDs.length ? faceIDs : new Array((tv.length / 3) | 0).fill(0);
 
-        // Restore face name maps
-        try {
-            mirrored._idToFaceName = new Map(this._idToFaceName);
-            mirrored._faceNameToID = new Map(this._faceNameToID);
-        } catch (_) {}
+            // Restore face name maps
+            try {
+                mirrored._idToFaceName = new Map(this._idToFaceName);
+                mirrored._faceNameToID = new Map(this._faceNameToID);
+            } catch (_) { }
 
-        // Rebuild vertex key map for exact-key lookup consistency
-        mirrored._vertKeyToIndex = new Map();
-        for (let i = 0; i < mirrored._vertProperties.length; i += 3) {
-            const x = mirrored._vertProperties[i], y = mirrored._vertProperties[i + 1], z = mirrored._vertProperties[i + 2];
-            mirrored._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
-        }
+            // Rebuild vertex key map for exact-key lookup consistency
+            mirrored._vertKeyToIndex = new Map();
+            for (let i = 0; i < mirrored._vertProperties.length; i += 3) {
+                const x = mirrored._vertProperties[i], y = mirrored._vertProperties[i + 1], z = mirrored._vertProperties[i + 2];
+                mirrored._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
+            }
 
-        mirrored._dirty = true;  // manifold must rebuild on demand
-        mirrored._faceIndex = null;
-        mirrored._manifold = null;
-        return mirrored;
-        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+            mirrored._dirty = true;  // manifold must rebuild on demand
+            mirrored._faceIndex = null;
+            mirrored._manifold = null;
+            return mirrored;
+        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
     }
 
 
@@ -1084,7 +1084,7 @@ export class Solid extends THREE.Group {
             for (let t = 0; t < triCount; t++) {
                 const [i0, i1, i2] = tris[t];
                 const face = ids[t];
-                const edges = [ [i0, i1], [i1, i2], [i2, i0] ];
+                const edges = [[i0, i1], [i1, i2], [i2, i0]];
                 for (let k = 0; k < 3; k++) {
                     const a = edges[k][0], b = edges[k][1];
                     const key = eKey(a, b);
@@ -1400,7 +1400,7 @@ export class Solid extends THREE.Group {
         try {
             s._idToFaceName = new Map(this._idToFaceName);
             s._faceNameToID = new Map(this._faceNameToID);
-        } catch (_) {}
+        } catch (_) { }
         // Copy auxiliary edges (deep copy points)
         try {
             s._auxEdges = Array.isArray(this._auxEdges)
@@ -1544,100 +1544,100 @@ export class Solid extends THREE.Group {
             } catch { }
         };
         try {
-        // Ensure consistent orientation before building a Manifold
-        this.fixTriangleWindingsByAdjacency();
-        // Ensure outward orientation (positive signed volume). If negative, flip all tris.
-        const signedVolume = (() => {
-            const vp = this._vertProperties;
-            let vol6 = 0; // 6 * volume
-            for (let t = 0; t < this._triVerts.length; t += 3) {
-                const i0 = this._triVerts[t], i1 = this._triVerts[t + 1], i2 = this._triVerts[t + 2];
-                const x0 = vp[i0 * 3], y0 = vp[i0 * 3 + 1], z0 = vp[i0 * 3 + 2];
-                const x1 = vp[i1 * 3], y1 = vp[i1 * 3 + 1], z1 = vp[i1 * 3 + 2];
-                const x2 = vp[i2 * 3], y2 = vp[i2 * 3 + 1], z2 = vp[i2 * 3 + 2];
-                // triple product p0 · (p1 × p2)
-                vol6 += x0 * (y1 * z2 - z1 * y2) - y0 * (x1 * z2 - z1 * x2) + z0 * (x1 * y2 - y1 * x2);
-            }
-            return vol6 / 6.0;
-        })();
-        if (signedVolume < 0) {
-            for (let t = 0; t < this._triVerts.length; t += 3) {
-                // swap indices 1 and 2 to flip triangle
-                const tmp = this._triVerts[t + 1];
-                this._triVerts[t + 1] = this._triVerts[t + 2];
-                this._triVerts[t + 2] = tmp;
-            }
-        }
-
-        const triCount = (this._triVerts.length / 3) | 0;
-        const triVerts = new Uint32Array(this._triVerts);
-        const faceID = new Uint32Array(triCount);
-        for (let t = 0; t < triCount; t++) faceID[t] = this._triIDs[t];
-
-        const mesh = new ManifoldMesh({
-            numProp: this._numProp,
-            vertProperties: new Float32Array(this._vertProperties),
-            triVerts,
-            faceID,
-        });
-
-        // Fill mergeFromVert/mergeToVert; positions and indices stay intact.
-        mesh.merge();
-
-        try {
-            this._manifold = new Manifold(mesh);
-        } catch (err) {
-            // If this Solid is a FilletSolid (identified by presence of edgeToFillet),
-            // emit a structured JSON log with diagnostic context for debugging.
-            try {
-                if (this && Object.prototype.hasOwnProperty.call(this, 'edgeToFillet')) {
-                    const triCount = (this._triVerts?.length || 0) / 3 | 0;
-                    const vertCount = (this._vertProperties?.length || 0) / 3 | 0;
-                    const faces = [];
-                    try {
-                        if (this.edgeToFillet && Array.isArray(this.edgeToFillet.faces)) {
-                            for (const f of this.edgeToFillet.faces) if (f && f.name) faces.push(f.name);
-                        }
-                    } catch {}
-                    const failure = {
-                        type: 'FilletSolidManifoldFailure',
-                        message: (err && (err.message || String(err))) || 'unknown',
-                        params: {
-                            radius: this.radius,
-                            arcSegments: this.arcSegments,
-                            sampleCount: this.sampleCount,
-                            sideMode: this.sideMode,
-                            inflate: this.inflate,
-                            sideStripSubdiv: this.sideStripSubdiv,
-                            seamInsetScale: this.seamInsetScale,
-                            projectStripsOpenEdges: this.projectStripsOpenEdges,
-                            forceSeamInset: this.forceSeamInset,
-                        },
-                        edge: {
-                            name: this.edgeToFillet?.name || null,
-                            closedLoop: !!(this.edgeToFillet?.closedLoop || this.edgeToFillet?.userData?.closedLoop),
-                            faces,
-                        },
-                        counts: {
-                            vertices: vertCount,
-                            triangles: triCount,
-                            faceLabels: (this._faceNameToID && typeof this._faceNameToID.size === 'number') ? this._faceNameToID.size : undefined,
-                        },
-                    };
-                    // Use console.error to surface in dev tools; JSON.stringify ensures strict JSON format
-                    try { console.error(JSON.stringify(failure)); } catch { console.error('[FilletSolidManifoldFailure]', failure.message); }
+            // Ensure consistent orientation before building a Manifold
+            this.fixTriangleWindingsByAdjacency();
+            // Ensure outward orientation (positive signed volume). If negative, flip all tris.
+            const signedVolume = (() => {
+                const vp = this._vertProperties;
+                let vol6 = 0; // 6 * volume
+                for (let t = 0; t < this._triVerts.length; t += 3) {
+                    const i0 = this._triVerts[t], i1 = this._triVerts[t + 1], i2 = this._triVerts[t + 2];
+                    const x0 = vp[i0 * 3], y0 = vp[i0 * 3 + 1], z0 = vp[i0 * 3 + 2];
+                    const x1 = vp[i1 * 3], y1 = vp[i1 * 3 + 1], z1 = vp[i1 * 3 + 2];
+                    const x2 = vp[i2 * 3], y2 = vp[i2 * 3 + 1], z2 = vp[i2 * 3 + 2];
+                    // triple product p0 · (p1 × p2)
+                    vol6 += x0 * (y1 * z2 - z1 * y2) - y0 * (x1 * z2 - z1 * x2) + z0 * (x1 * y2 - y1 * x2);
                 }
-            } catch {}
-            __logDone(false);
-            throw err;
-        }
-        finally {
-            try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { }
-        }
-        this._dirty = false;
-        this._faceIndex = null; // will rebuild on demand
-        __logDone(true);
-        return this._manifold;
+                return vol6 / 6.0;
+            })();
+            if (signedVolume < 0) {
+                for (let t = 0; t < this._triVerts.length; t += 3) {
+                    // swap indices 1 and 2 to flip triangle
+                    const tmp = this._triVerts[t + 1];
+                    this._triVerts[t + 1] = this._triVerts[t + 2];
+                    this._triVerts[t + 2] = tmp;
+                }
+            }
+
+            const triCount = (this._triVerts.length / 3) | 0;
+            const triVerts = new Uint32Array(this._triVerts);
+            const faceID = new Uint32Array(triCount);
+            for (let t = 0; t < triCount; t++) faceID[t] = this._triIDs[t];
+
+            const mesh = new ManifoldMesh({
+                numProp: this._numProp,
+                vertProperties: new Float32Array(this._vertProperties),
+                triVerts,
+                faceID,
+            });
+
+            // Fill mergeFromVert/mergeToVert; positions and indices stay intact.
+            mesh.merge();
+
+            try {
+                this._manifold = new Manifold(mesh);
+            } catch (err) {
+                // If this Solid is a FilletSolid (identified by presence of edgeToFillet),
+                // emit a structured JSON log with diagnostic context for debugging.
+                try {
+                    if (this && Object.prototype.hasOwnProperty.call(this, 'edgeToFillet')) {
+                        const triCount = (this._triVerts?.length || 0) / 3 | 0;
+                        const vertCount = (this._vertProperties?.length || 0) / 3 | 0;
+                        const faces = [];
+                        try {
+                            if (this.edgeToFillet && Array.isArray(this.edgeToFillet.faces)) {
+                                for (const f of this.edgeToFillet.faces) if (f && f.name) faces.push(f.name);
+                            }
+                        } catch { }
+                        const failure = {
+                            type: 'FilletSolidManifoldFailure',
+                            message: (err && (err.message || String(err))) || 'unknown',
+                            params: {
+                                radius: this.radius,
+                                arcSegments: this.arcSegments,
+                                sampleCount: this.sampleCount,
+                                sideMode: this.sideMode,
+                                inflate: this.inflate,
+                                sideStripSubdiv: this.sideStripSubdiv,
+                                seamInsetScale: this.seamInsetScale,
+                                projectStripsOpenEdges: this.projectStripsOpenEdges,
+                                forceSeamInset: this.forceSeamInset,
+                            },
+                            edge: {
+                                name: this.edgeToFillet?.name || null,
+                                closedLoop: !!(this.edgeToFillet?.closedLoop || this.edgeToFillet?.userData?.closedLoop),
+                                faces,
+                            },
+                            counts: {
+                                vertices: vertCount,
+                                triangles: triCount,
+                                faceLabels: (this._faceNameToID && typeof this._faceNameToID.size === 'number') ? this._faceNameToID.size : undefined,
+                            },
+                        };
+                        // Use console.error to surface in dev tools; JSON.stringify ensures strict JSON format
+                        try { console.error(JSON.stringify(failure)); } catch { console.error('[FilletSolidManifoldFailure]', failure.message); }
+                    }
+                } catch { }
+                __logDone(false);
+                throw err;
+            }
+            finally {
+                try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { }
+            }
+            this._dirty = false;
+            this._faceIndex = null; // will rebuild on demand
+            __logDone(true);
+            return this._manifold;
         } finally {
             // In case of unexpected control flow, ensure we log once with best-effort status.
             const ok = !!(this && this._manifold) && this._dirty === false;
@@ -1669,10 +1669,10 @@ export class Solid extends THREE.Group {
     free() {
         try {
             // Clear any pending auto-free timer first
-            try { if (this._freeTimer) { clearTimeout(this._freeTimer); } } catch (_) {}
+            try { if (this._freeTimer) { clearTimeout(this._freeTimer); } } catch (_) { }
             this._freeTimer = null;
             if (this._manifold) {
-                try { if (typeof this._manifold.delete === 'function') this._manifold.delete(); } catch (_) {}
+                try { if (typeof this._manifold.delete === 'function') this._manifold.delete(); } catch (_) { }
                 this._manifold = null;
             }
             this._dirty = true;
@@ -1754,7 +1754,7 @@ export class Solid extends THREE.Group {
         }
         this._dirty = true;
         this._faceIndex = null;
-        try { return this; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+        try { return this; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
     }
 
     // Build a cache: faceID -> array of triangle indices
@@ -1773,7 +1773,7 @@ export class Solid extends THREE.Group {
             }
         }
         this._faceIndex = map;
-        try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
+        try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { }
     }
 
     /**
@@ -1816,7 +1816,7 @@ export class Solid extends THREE.Group {
 
             out.push({ faceName: name, indices: [i0, i1, i2], p1: p0, p2: p1, p3: p2 });
         }
-        try { return out; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+        try { return out; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
     }
 
     /** Convenience: list all face names present in this solid (known to the wrapper). */
@@ -1882,7 +1882,7 @@ export class Solid extends THREE.Group {
         }
 
         parts.push(`endsolid ${name}`);
-        try { return parts.join("\n"); } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+        try { return parts.join("\n"); } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
     }
 
     /**
@@ -2051,7 +2051,7 @@ export class Solid extends THREE.Group {
                 // Safety net: if manifold-based extraction yielded no edges (e.g., faceID missing),
                 // fall back to authoring-based boundary extraction so we still visualize edges.
                 if (!Array.isArray(polylines) || polylines.length === 0) {
-                    try { usedFallback = true; } catch {}
+                    try { usedFallback = true; } catch { }
                 }
                 for (const e of polylines) {
                     const positions = new Float32Array(e.positions.length * 3);
@@ -2062,7 +2062,7 @@ export class Solid extends THREE.Group {
                     }
                     const g = new LineGeometry();
                     g.setPositions(Array.from(positions));
-                    try { g.computeBoundingSphere(); } catch {}
+                    try { g.computeBoundingSphere(); } catch { }
 
                     const edgeObj = new Edge(g);
                     edgeObj.name = e.name;
@@ -2088,16 +2088,16 @@ export class Solid extends THREE.Group {
                     const nv = (vp.length / 3) | 0;
                     const triCount = (tv.length / 3) | 0;
                     const NV = BigInt(Math.max(1, nv));
-                    const ukey = (a,b) => { const A=BigInt(a), B=BigInt(b); return A<B ? A*NV+B : B*NV+A; };
+                    const ukey = (a, b) => { const A = BigInt(a), B = BigInt(b); return A < B ? A * NV + B : B * NV + A; };
                     const e2t = new Map(); // key -> [{id,a,b,tri}...]
                     for (let t = 0; t < triCount; t++) {
                         const id = ids[t];
                         const base = t * 3;
-                        const i0 = tv[base + 0]>>>0, i1 = tv[base + 1]>>>0, i2 = tv[base + 2]>>>0;
-                        const edges = [ [i0,i1], [i1,i2], [i2,i0] ];
+                        const i0 = tv[base + 0] >>> 0, i1 = tv[base + 1] >>> 0, i2 = tv[base + 2] >>> 0;
+                        const edges = [[i0, i1], [i1, i2], [i2, i0]];
                         for (let k = 0; k < 3; k++) {
                             const a = edges[k][0], b = edges[k][1];
-                            const key = ukey(a,b);
+                            const key = ukey(a, b);
                             let arr = e2t.get(key);
                             if (!arr) { arr = []; e2t.set(key, arr); }
                             arr.push({ id, a, b, tri: t });
@@ -2116,19 +2116,19 @@ export class Solid extends THREE.Group {
                         let list = pairToEdges.get(pairKey);
                         if (!list) { list = []; pairToEdges.set(pairKey, list); }
                         const u = Math.min(a.a, a.b), v = Math.max(a.a, a.b);
-                        list.push([u,v]);
+                        list.push([u, v]);
                     }
 
                     const addPolyline = (nameA, nameB, indices) => {
                         const visited = new Set();
                         const adj = new Map();
-                        const ek = (u,v)=> (u<v?`${u},${v}`:`${v},${u}`);
-                        for (const [u,v] of indices) {
-                            if (!adj.has(u)) adj.set(u,new Set());
-                            if (!adj.has(v)) adj.set(v,new Set());
+                        const ek = (u, v) => (u < v ? `${u},${v}` : `${v},${u}`);
+                        for (const [u, v] of indices) {
+                            if (!adj.has(u)) adj.set(u, new Set());
+                            if (!adj.has(v)) adj.set(v, new Set());
                             adj.get(u).add(v); adj.get(v).add(u);
                         }
-                        const verts = (idx)=> [vp[idx*3+0], vp[idx*3+1], vp[idx*3+2]];
+                        const verts = (idx) => [vp[idx * 3 + 0], vp[idx * 3 + 1], vp[idx * 3 + 2]];
                         for (const [u0] of adj.entries()) {
                             // find start (degree 1) or any if loop
                             if ([...adj.get(u0)].length !== 1) continue;
@@ -2137,9 +2137,9 @@ export class Solid extends THREE.Group {
                             while (true) {
                                 const nbrs = [...adj.get(u)];
                                 let v = nbrs[0];
-                                if (v === prev && nbrs.length>1) v = nbrs[1];
+                                if (v === prev && nbrs.length > 1) v = nbrs[1];
                                 if (v === undefined) break;
-                                const key = ek(u,v);
+                                const key = ek(u, v);
                                 if (visited.has(key)) break;
                                 visited.add(key);
                                 poly.push(verts(u));
@@ -2150,7 +2150,7 @@ export class Solid extends THREE.Group {
                             if (poly.length >= 2) {
                                 const g = new LineGeometry();
                                 g.setPositions(poly.flat());
-                                try { g.computeBoundingSphere(); } catch {}
+                                try { g.computeBoundingSphere(); } catch { }
                                 const edgeObj = new Edge(g);
                                 edgeObj.name = `${nameA}|${nameB}`;
                                 edgeObj.closedLoop = false;
@@ -2164,8 +2164,8 @@ export class Solid extends THREE.Group {
                         }
                     };
                     for (const [pairKey, edgeList] of pairToEdges.entries()) {
-                        const [a,b] = JSON.parse(pairKey);
-                        addPolyline(a,b, edgeList);
+                        const [a, b] = JSON.parse(pairKey);
+                        addPolyline(a, b, edgeList);
                     }
                 } catch (_) { /* ignore fallback edge errors */ }
             }
@@ -2181,11 +2181,11 @@ export class Solid extends THREE.Group {
                     for (const p of pts) { flat.push(p[0], p[1], p[2]); }
                     const g = new LineGeometry();
                     g.setPositions(flat);
-                    try { g.computeBoundingSphere(); } catch {}
+                    try { g.computeBoundingSphere(); } catch { }
                     const edgeObj = new Edge(g);
                     edgeObj.name = aux?.name || 'CENTERLINE';
                     edgeObj.closedLoop = !!aux?.closedLoop;
-                    edgeObj.userData = { ...(edgeObj.userData||{}), polylineLocal: pts, polylineWorld: !!aux?.polylineWorld };
+                    edgeObj.userData = { ...(edgeObj.userData || {}), polylineLocal: pts, polylineWorld: !!aux?.polylineWorld };
                     edgeObj.parentSolid = this;
                     try {
                         const useOverlay = (aux?.materialKey || 'OVERLAY').toUpperCase() === 'OVERLAY';
@@ -2193,7 +2193,7 @@ export class Solid extends THREE.Group {
                         if (mat) edgeObj.material = mat;
                         if (useOverlay && edgeObj.material) { edgeObj.material.depthTest = false; edgeObj.material.depthWrite = false; }
                         edgeObj.renderOrder = 10020;
-                    } catch {}
+                    } catch { }
                     this.add(edgeObj);
                 }
             }
@@ -2214,33 +2214,33 @@ export class Solid extends THREE.Group {
             const endpoints = new Map();
             const vertexToEdges = new Map(); // Track which edges meet at each vertex
             const usedVertexNames = new Set();
-            
+
             // First pass: collect all endpoint positions and track which edges meet at each vertex
             for (const ch of this.children) {
                 if (!ch || ch.type !== 'EDGE') continue;
                 const poly = ch.userData && Array.isArray(ch.userData.polylineLocal) ? ch.userData.polylineLocal : null;
                 if (!poly || poly.length === 0) continue;
-                
+
                 const edgeName = ch.name || 'UNNAMED_EDGE';
                 const first = poly[0];
                 const last = poly[poly.length - 1];
-                
+
                 const addEP = (p) => {
                     if (!p || p.length !== 3) return;
                     const k = `${p[0]},${p[1]},${p[2]}`;
                     if (!endpoints.has(k)) endpoints.set(k, p);
-                    
+
                     // Track which edges meet at this vertex position
                     if (!vertexToEdges.has(k)) {
                         vertexToEdges.set(k, new Set());
                     }
                     vertexToEdges.get(k).add(edgeName);
                 };
-                
+
                 addEP(first);
                 addEP(last);
             }
-            
+
             // Second pass: create vertices with deterministic names based on meeting edges
             if (endpoints.size) {
                 for (const [positionKey, position] of endpoints.entries()) {
@@ -2256,7 +2256,7 @@ export class Solid extends THREE.Group {
                         }
                         usedVertexNames.add(vertexName);
                         this.add(new Vertex(position, { name: vertexName }));
-                    } catch {}
+                    } catch { }
                 }
             }
         } catch { /* best-effort vertices */ }
@@ -2271,158 +2271,158 @@ export class Solid extends THREE.Group {
     getBoundaryEdgePolylines() {
         const mesh = this.getMesh();
         try {
-        const { vertProperties, triVerts, faceID } = mesh;
-        const triCount = (triVerts.length / 3) | 0;
-        const nv = (vertProperties.length / 3) | 0;
-        const NV = BigInt(nv);
-        const ukey = (a, b) => {
-            const A = BigInt(a); const B = BigInt(b);
-            return A < B ? A * NV + B : B * NV + A;
-        };
-
-        // Build undirected edge map -> triangles using it with their faceIDs
-        const e2t = new Map(); // key -> [{id, a, b, tri}...]
-        for (let t = 0; t < triCount; t++) {
-            const id = faceID ? faceID[t] : undefined;
-            const base = t * 3;
-            const i0 = triVerts[base + 0], i1 = triVerts[base + 1], i2 = triVerts[base + 2];
-            const edges = [ [i0, i1], [i1, i2], [i2, i0] ];
-            for (let k = 0; k < 3; k++) {
-                const a = edges[k][0], b = edges[k][1];
-                const key = ukey(a, b);
-                let arr = e2t.get(key);
-                if (!arr) { arr = []; e2t.set(key, arr); }
-                arr.push({ id, a, b, tri: t });
-            }
-        }
-
-        // Collect boundary edges between distinct face IDs, grouped by face-name pairs.
-        // IMPORTANT: Face names may themselves contain the character '|'
-        // (e.g. sweep side faces based on original edge names). Using a raw
-        // string with '|' as a delimiter would break when we later split it.
-        // To avoid ambiguity, we serialize the pair as JSON.
-        const pairToEdges = new Map(); // pairKey(JSON '[nameA,nameB]') -> array of [u,v]
-        for (const [key, arr] of e2t.entries()) {
-            if (arr.length !== 2) continue; // boundary or non-manifold; skip
-            const a = arr[0], b = arr[1];
-            if (a.id === b.id) continue; // same face label; not a boundary between labels
-            const nameA = this._idToFaceName.get(a.id) || `FACE_${a.id}`;
-            const nameB = this._idToFaceName.get(b.id) || `FACE_${b.id}`;
-            const pair = nameA < nameB ? [nameA, nameB] : [nameB, nameA];
-            const pairKey = JSON.stringify(pair);
-            let list = pairToEdges.get(pairKey);
-            if (!list) { list = []; pairToEdges.set(pairKey, list); }
-            // Store undirected as canonical [min,max]
-            // recompute min/max from endpoints (avoid BigInt to number pitfalls)
-            const v0 = Math.min(a.a, a.b);
-            const v1 = Math.max(a.a, a.b);
-            list.push([v0, v1]);
-        }
-
-        // Turn disjoint edges into connected polylines per pair
-        const polylines = [];
-        for (const [pairKey, edges] of pairToEdges.entries()) {
-            // Build adjacency map
-            const adj = new Map(); // v -> Set(neighbors)
-            const edgeVisited = new Set(); // canonical key `${min},${max}`
-            const ek = (u, v) => (u < v ? `${u},${v}` : `${v},${u}`);
-            for (const [u, v] of edges) {
-                if (!adj.has(u)) adj.set(u, new Set());
-                if (!adj.has(v)) adj.set(v, new Set());
-                adj.get(u).add(v);
-                adj.get(v).add(u);
-            }
-
-            const [faceA, faceB] = JSON.parse(pairKey);
-            let idx = 0;
-
-            const visitChainFrom = (start) => {
-                const chain = [];
-                let prev = -1;
-                let curr = start;
-                chain.push(curr);
-                while (true) {
-                    const nbrs = adj.get(curr) || new Set();
-                    let next = undefined;
-                    for (const n of nbrs) {
-                        const key = ek(curr, n);
-                        if (edgeVisited.has(key)) continue;
-                        if (n === prev) continue;
-                        next = n; edgeVisited.add(key); break;
-                    }
-                    if (next === undefined) break;
-                    prev = curr; curr = next; chain.push(curr);
-                }
-                return chain;
+            const { vertProperties, triVerts, faceID } = mesh;
+            const triCount = (triVerts.length / 3) | 0;
+            const nv = (vertProperties.length / 3) | 0;
+            const NV = BigInt(nv);
+            const ukey = (a, b) => {
+                const A = BigInt(a); const B = BigInt(b);
+                return A < B ? A * NV + B : B * NV + A;
             };
 
-            // Find open chains (degree 1 endpoints) first
-            for (const [v, nbrs] of adj.entries()) {
-                if ((nbrs.size | 0) === 1) {
-                    // ensure its sole edge not yet visited
-                    const n = [...nbrs][0];
-                    const key = ek(v, n);
-                    if (edgeVisited.has(key)) continue;
-                    const chain = visitChainFrom(v);
-                    const positions = chain.map(vi => [
-                        vertProperties[vi * 3 + 0],
-                        vertProperties[vi * 3 + 1],
-                        vertProperties[vi * 3 + 2],
-                    ]);
-                    polylines.push({ name: `${faceA}|${faceB}[${idx++}]`, faceA, faceB, indices: chain, positions, closedLoop: false });
+            // Build undirected edge map -> triangles using it with their faceIDs
+            const e2t = new Map(); // key -> [{id, a, b, tri}...]
+            for (let t = 0; t < triCount; t++) {
+                const id = faceID ? faceID[t] : undefined;
+                const base = t * 3;
+                const i0 = triVerts[base + 0], i1 = triVerts[base + 1], i2 = triVerts[base + 2];
+                const edges = [[i0, i1], [i1, i2], [i2, i0]];
+                for (let k = 0; k < 3; k++) {
+                    const a = edges[k][0], b = edges[k][1];
+                    const key = ukey(a, b);
+                    let arr = e2t.get(key);
+                    if (!arr) { arr = []; e2t.set(key, arr); }
+                    arr.push({ id, a, b, tri: t });
                 }
             }
 
-            // Remaining are loops; walk an unvisited edge and close back to start
-            const buildLoopFromEdge = (startU, startV) => {
-                const chain = [startU, startV];
-                let prev = startU;
-                let curr = startV;
-                edgeVisited.add(ek(startU, startV));
-                while (true) {
-                    const nbrs = adj.get(curr) || new Set();
-                    let next = undefined;
-                    for (const n of nbrs) {
-                        if (n === prev) continue;
-                        const key = ek(curr, n);
+            // Collect boundary edges between distinct face IDs, grouped by face-name pairs.
+            // IMPORTANT: Face names may themselves contain the character '|'
+            // (e.g. sweep side faces based on original edge names). Using a raw
+            // string with '|' as a delimiter would break when we later split it.
+            // To avoid ambiguity, we serialize the pair as JSON.
+            const pairToEdges = new Map(); // pairKey(JSON '[nameA,nameB]') -> array of [u,v]
+            for (const [key, arr] of e2t.entries()) {
+                if (arr.length !== 2) continue; // boundary or non-manifold; skip
+                const a = arr[0], b = arr[1];
+                if (a.id === b.id) continue; // same face label; not a boundary between labels
+                const nameA = this._idToFaceName.get(a.id) || `FACE_${a.id}`;
+                const nameB = this._idToFaceName.get(b.id) || `FACE_${b.id}`;
+                const pair = nameA < nameB ? [nameA, nameB] : [nameB, nameA];
+                const pairKey = JSON.stringify(pair);
+                let list = pairToEdges.get(pairKey);
+                if (!list) { list = []; pairToEdges.set(pairKey, list); }
+                // Store undirected as canonical [min,max]
+                // recompute min/max from endpoints (avoid BigInt to number pitfalls)
+                const v0 = Math.min(a.a, a.b);
+                const v1 = Math.max(a.a, a.b);
+                list.push([v0, v1]);
+            }
+
+            // Turn disjoint edges into connected polylines per pair
+            const polylines = [];
+            for (const [pairKey, edges] of pairToEdges.entries()) {
+                // Build adjacency map
+                const adj = new Map(); // v -> Set(neighbors)
+                const edgeVisited = new Set(); // canonical key `${min},${max}`
+                const ek = (u, v) => (u < v ? `${u},${v}` : `${v},${u}`);
+                for (const [u, v] of edges) {
+                    if (!adj.has(u)) adj.set(u, new Set());
+                    if (!adj.has(v)) adj.set(v, new Set());
+                    adj.get(u).add(v);
+                    adj.get(v).add(u);
+                }
+
+                const [faceA, faceB] = JSON.parse(pairKey);
+                let idx = 0;
+
+                const visitChainFrom = (start) => {
+                    const chain = [];
+                    let prev = -1;
+                    let curr = start;
+                    chain.push(curr);
+                    while (true) {
+                        const nbrs = adj.get(curr) || new Set();
+                        let next = undefined;
+                        for (const n of nbrs) {
+                            const key = ek(curr, n);
+                            if (edgeVisited.has(key)) continue;
+                            if (n === prev) continue;
+                            next = n; edgeVisited.add(key); break;
+                        }
+                        if (next === undefined) break;
+                        prev = curr; curr = next; chain.push(curr);
+                    }
+                    return chain;
+                };
+
+                // Find open chains (degree 1 endpoints) first
+                for (const [v, nbrs] of adj.entries()) {
+                    if ((nbrs.size | 0) === 1) {
+                        // ensure its sole edge not yet visited
+                        const n = [...nbrs][0];
+                        const key = ek(v, n);
                         if (edgeVisited.has(key)) continue;
-                        next = n; break;
+                        const chain = visitChainFrom(v);
+                        const positions = chain.map(vi => [
+                            vertProperties[vi * 3 + 0],
+                            vertProperties[vi * 3 + 1],
+                            vertProperties[vi * 3 + 2],
+                        ]);
+                        polylines.push({ name: `${faceA}|${faceB}[${idx++}]`, faceA, faceB, indices: chain, positions, closedLoop: false });
                     }
-                    if (next === undefined) break;
-                    edgeVisited.add(ek(curr, next));
-                    chain.push(next);
-                    prev = curr; curr = next;
                 }
-                // Close the loop geometrically if possible
-                const start = chain[0];
-                const last = chain[chain.length - 1];
-                const nbrsLast = adj.get(last) || new Set();
-                if (nbrsLast.has(start)) {
-                    // Mark the closing edge visited (ok if already visited)
-                    edgeVisited.add(ek(last, start));
-                    chain.push(start);
-                }
-                return chain;
-            };
 
-            for (const [u, nbrs] of adj.entries()) {
-                for (const v of nbrs) {
-                    const key = ek(u, v);
-                    if (edgeVisited.has(key)) continue;
-                    const chain = buildLoopFromEdge(u, v);
-                    const positions = chain.map(vi => [
-                        vertProperties[vi * 3 + 0],
-                        vertProperties[vi * 3 + 1],
-                        vertProperties[vi * 3 + 2],
-                    ]);
-                    const closed = chain.length >= 3 && chain[0] === chain[chain.length - 1];
-                    polylines.push({ name: `${faceA}|${faceB}[${idx++}]`, faceA, faceB, indices: chain, positions, closedLoop: closed });
+                // Remaining are loops; walk an unvisited edge and close back to start
+                const buildLoopFromEdge = (startU, startV) => {
+                    const chain = [startU, startV];
+                    let prev = startU;
+                    let curr = startV;
+                    edgeVisited.add(ek(startU, startV));
+                    while (true) {
+                        const nbrs = adj.get(curr) || new Set();
+                        let next = undefined;
+                        for (const n of nbrs) {
+                            if (n === prev) continue;
+                            const key = ek(curr, n);
+                            if (edgeVisited.has(key)) continue;
+                            next = n; break;
+                        }
+                        if (next === undefined) break;
+                        edgeVisited.add(ek(curr, next));
+                        chain.push(next);
+                        prev = curr; curr = next;
                     }
+                    // Close the loop geometrically if possible
+                    const start = chain[0];
+                    const last = chain[chain.length - 1];
+                    const nbrsLast = adj.get(last) || new Set();
+                    if (nbrsLast.has(start)) {
+                        // Mark the closing edge visited (ok if already visited)
+                        edgeVisited.add(ek(last, start));
+                        chain.push(start);
+                    }
+                    return chain;
+                };
+
+                for (const [u, nbrs] of adj.entries()) {
+                    for (const v of nbrs) {
+                        const key = ek(u, v);
+                        if (edgeVisited.has(key)) continue;
+                        const chain = buildLoopFromEdge(u, v);
+                        const positions = chain.map(vi => [
+                            vertProperties[vi * 3 + 0],
+                            vertProperties[vi * 3 + 1],
+                            vertProperties[vi * 3 + 2],
+                        ]);
+                        const closed = chain.length >= 3 && chain[0] === chain[chain.length - 1];
+                        polylines.push({ name: `${faceA}|${faceB}[${idx++}]`, faceA, faceB, indices: chain, positions, closedLoop: closed });
+                    }
+                }
             }
-        }
 
-        return polylines;
-        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+            return polylines;
+        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
     }
 
 
@@ -2501,7 +2501,7 @@ export class Solid extends THREE.Group {
 
         solid._manifold = manifoldObj;
         solid._dirty = false;
-        try { return solid; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+        try { return solid; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
     }
 
     union(other) {
@@ -2509,7 +2509,7 @@ export class Solid extends THREE.Group {
         const outManifold = Manifold.union(this._manifoldize(), other._manifoldize());
         const mergedMap = this._combineIdMaps(other);
         const out = Solid._fromManifold(outManifold, mergedMap);
-        try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
         try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
         return out;
     }
@@ -2519,7 +2519,7 @@ export class Solid extends THREE.Group {
         const outManifold = this._manifoldize().subtract(other._manifoldize());
         const mergedMap = this._combineIdMaps(other);
         const out = Solid._fromManifold(outManifold, mergedMap);
-        try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
         try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
         return out;
     }
@@ -2530,7 +2530,7 @@ export class Solid extends THREE.Group {
         const outManifold = Manifold.intersection(this._manifoldize(), other._manifoldize());
         const mergedMap = this._combineIdMaps(other);
         const out = Solid._fromManifold(outManifold, mergedMap);
-        try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
         try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
         return out;
     }
@@ -2545,7 +2545,7 @@ export class Solid extends THREE.Group {
         const outManifold = Manifold.difference(this._manifoldize(), other._manifoldize());
         const mergedMap = this._combineIdMaps(other);
         const out = Solid._fromManifold(outManifold, mergedMap);
-        try { out._auxEdges = [ ...(this._auxEdges || []), ...(other?._auxEdges || []) ]; } catch { }
+        try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
         try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
         return out;
     }
@@ -2566,7 +2566,7 @@ export class Solid extends THREE.Group {
         // Face IDs are preserved by Manifold, so we can reuse the existing id->name map
         const mapCopy = new Map(this._idToFaceName);
         const out = Solid._fromManifold(outM, mapCopy);
-        try { out._auxEdges = Array.isArray(this._auxEdges) ? this._auxEdges.slice() : []; } catch {}
+        try { out._auxEdges = Array.isArray(this._auxEdges) ? this._auxEdges.slice() : []; } catch { }
         return out;
     }
 
@@ -2582,7 +2582,7 @@ export class Solid extends THREE.Group {
         const outM = m.setTolerance(tolerance);
         const mapCopy = new Map(this._idToFaceName);
         const out = Solid._fromManifold(outM, mapCopy);
-        try { out._auxEdges = Array.isArray(this._auxEdges) ? this._auxEdges.slice() : []; } catch {}
+        try { out._auxEdges = Array.isArray(this._auxEdges) ? this._auxEdges.slice() : []; } catch { }
         return out;
     }
 
@@ -2590,44 +2590,47 @@ export class Solid extends THREE.Group {
     volume() {
         const mesh = this.getMesh();
         try {
-        const vp = mesh.vertProperties;
-        const tv = mesh.triVerts;
-        let vol6 = 0;
-        for (let t = 0; t < tv.length; t += 3) {
-            const i0 = tv[t] * 3, i1 = tv[t + 1] * 3, i2 = tv[t + 2] * 3;
-            const x0 = vp[i0], y0 = vp[i0 + 1], z0 = vp[i0 + 2];
-            const x1 = vp[i1], y1 = vp[i1 + 1], z1 = vp[i1 + 2];
-            const x2 = vp[i2], y2 = vp[i2 + 1], z2 = vp[i2 + 2];
-            vol6 += x0 * (y1 * z2 - z1 * y2)
-                  - y0 * (x1 * z2 - z1 * x2)
-                  + z0 * (x1 * y2 - y1 * x2);
-        }
-        return Math.abs(vol6) / 6.0;
-        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+            const vp = mesh.vertProperties;
+            const tv = mesh.triVerts;
+            let vol6 = 0;
+            for (let t = 0; t < tv.length; t += 3) {
+                const i0 = tv[t] * 3, i1 = tv[t + 1] * 3, i2 = tv[t + 2] * 3;
+                const x0 = vp[i0], y0 = vp[i0 + 1], z0 = vp[i0 + 2];
+                const x1 = vp[i1], y1 = vp[i1 + 1], z1 = vp[i1 + 2];
+                const x2 = vp[i2], y2 = vp[i2 + 1], z2 = vp[i2 + 2];
+                vol6 += x0 * (y1 * z2 - z1 * y2)
+                    - y0 * (x1 * z2 - z1 * x2)
+                    + z0 * (x1 * y2 - y1 * x2);
+            }
+            return Math.abs(vol6) / 6.0;
+        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
     }
 
     // Sum of triangle areas on the surface
     surfaceArea() {
         const mesh = this.getMesh();
         try {
-        const vp = mesh.vertProperties;
-        const tv = mesh.triVerts;
-        let area = 0;
-        for (let t = 0; t < tv.length; t += 3) {
-            const i0 = tv[t] * 3, i1 = tv[t + 1] * 3, i2 = tv[t + 2] * 3;
-            const ax = vp[i0], ay = vp[i0 + 1], az = vp[i0 + 2];
-            const bx = vp[i1], by = vp[i1 + 1], bz = vp[i1 + 2];
-            const cx = vp[i2], cy = vp[i2 + 1], cz = vp[i2 + 2];
-            const ux = bx - ax, uy = by - ay, uz = bz - az;
-            const vx = cx - ax, vy = cy - ay, vz = cz - az;
-            const nx = uy * vz - uz * vy;
-            const ny = uz * vx - ux * vz;
-            const nz = ux * vy - uy * vx;
-            area += 0.5 * Math.hypot(nx, ny, nz);
-        }
-        return area;
-        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {} }
+            const vp = mesh.vertProperties;
+            const tv = mesh.triVerts;
+            let area = 0;
+            for (let t = 0; t < tv.length; t += 3) {
+                const i0 = tv[t] * 3, i1 = tv[t + 1] * 3, i2 = tv[t + 2] * 3;
+                const ax = vp[i0], ay = vp[i0 + 1], az = vp[i0 + 2];
+                const bx = vp[i1], by = vp[i1 + 1], bz = vp[i1 + 2];
+                const cx = vp[i2], cy = vp[i2 + 1], cz = vp[i2 + 2];
+                const ux = bx - ax, uy = by - ay, uz = bz - az;
+                const vx = cx - ax, vy = cy - ay, vz = cz - az;
+                const nx = uy * vz - uz * vy;
+                const ny = uz * vx - ux * vz;
+                const nz = ux * vy - uy * vx;
+                area += 0.5 * Math.hypot(nx, ny, nz);
+            }
+            return area;
+        } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
     }
+
+
+
 }
 
 // --- Method-level time profiling for Solid -----------------------------------
@@ -2652,18 +2655,18 @@ export class Solid extends THREE.Group {
                     const ret = fn.apply(this, args);
                     if (ret && typeof ret.then === 'function') {
                         return ret.then(
-                            (val) => { try { if (debugMode) console.log(`[Solid] ${name} resolved in ${Math.round(nowMs() - t0)} ms`); } catch {} return val; },
-                            (err) => { try { if (debugMode) console.log(`[Solid] ${name} rejected in ${Math.round(nowMs() - t0)} ms`); } catch {} throw err; }
+                            (val) => { try { if (debugMode) console.log(`[Solid] ${name} resolved in ${Math.round(nowMs() - t0)} ms`); } catch { } return val; },
+                            (err) => { try { if (debugMode) console.log(`[Solid] ${name} rejected in ${Math.round(nowMs() - t0)} ms`); } catch { } throw err; }
                         );
                     }
-                    try { if (debugMode) console.log(`[Solid] ${name} in ${Math.round(nowMs() - t0)} ms`); } catch {}
+                    try { if (debugMode) console.log(`[Solid] ${name} in ${Math.round(nowMs() - t0)} ms`); } catch { }
                     return ret;
                 } catch (e) {
-                    try { if (debugMode) console.log(`[Solid] ${name} threw in ${Math.round(nowMs() - t0)} ms`); } catch {}
+                    try { if (debugMode) console.log(`[Solid] ${name} threw in ${Math.round(nowMs() - t0)} ms`); } catch { }
                     throw e;
                 }
             };
-            try { Object.defineProperty(wrapped, 'name', { value: name, configurable: true }); } catch {}
+            try { Object.defineProperty(wrapped, 'name', { value: name, configurable: true }); } catch { }
             Object.defineProperty(proto, name, { ...desc, value: wrapped });
         }
     } catch { }

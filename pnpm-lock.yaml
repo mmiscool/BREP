@@ -14,6 +14,9 @@ importers:
       manifold-3d:
         specifier: ^3.2.1
         version: 3.2.1
+      tess2:
+        specifier: ^1.0.0
+        version: 1.0.0
       three:
         specifier: ^0.180.0
         version: 0.180.0
@@ -500,6 +503,9 @@ packages:
     resolution: {integrity: sha512-QjVjwdXIt408MIiAqCX4oUKsgU2EqAGzs2Ppkm4aQYbjm+ZEWEcW4SfFNTr4uMNZma0ey4f5lgLrkB0aX0QMow==}
     engines: {node: '>=4'}
 
+  tess2@1.0.0:
+    resolution: {integrity: sha512-iSWBSOUoPn3cCT26L5Wi6mvVgL11RV4kReSnVIIPdMN7qNpkL5SLKen5BJcWj+ZTN7kK6JrHBdqTV7vvL8g+9w==}
+
   three-mesh-bvh@0.9.1:
     resolution: {integrity: sha512-WNT+m9jGQgtp4YdtwEnl4oFylNVifRf7iphlwWdJ4bJu7oNkY0xHIyntep9OzHuR1hpe/pyAP840gB/EsYDJfg==}
     peerDependencies:
@@ -951,6 +957,8 @@ snapshots:
   supports-color@5.5.0:
     dependencies:
       has-flag: 3.0.0
+
+  tess2@1.0.0: {}
 
   three-mesh-bvh@0.9.1(three@0.180.0):
     dependencies:

@@ -17,6 +17,7 @@
   "dependencies": {
     "jszip": "^3.10.1",
     "manifold-3d": "^3.2.1",
+    "tess2": "^1.0.0",
     "three": "^0.180.0",
     "three-mesh-bvh": "^0.9.1"
   },
