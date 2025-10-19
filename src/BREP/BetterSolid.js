@@ -751,8 +751,9 @@ export class Solid extends THREE.Group {
             const i2 = tv[b + 2] >>> 0;
             const edges = [[i0, i1], [i1, i2], [i2, i0]];
             for (let k = 0; k < 3; k++) {
-                const a = edges[k][0], c = edges[k][1];
-                const key = eKey(a, c);
+                const a = edges[k][0];
+                const b2 = edges[k][1];
+                const key = eKey(a, b2);
                 let arr = edgeToTris.get(key);
                 if (!arr) { arr = []; edgeToTris.set(key, arr); }
                 arr.push(t);
@@ -1035,7 +1036,7 @@ export class Solid extends THREE.Group {
      */
     removeTinyBoundaryTriangles(areaThreshold, maxIterations = 1) {
         const thr = Number(areaThreshold);
-        if (!Number.isFinite(thr) || thr <= 0) return 0;
+        if (!Number.isFinite(thr) || thr === 0) return 0;
         const vp = this._vertProperties;
         if (!vp || vp.length < 9 || this._triVerts.length < 3) return 0;
 
@@ -1075,7 +1076,7 @@ export class Solid extends THREE.Group {
 
             // Build undirected edge -> [uses] map, each use with tri index and face id and oriented endpoints
             const nv = (vp.length / 3) | 0;
-            const NV = BigInt(nv);
+            const NV = BigInt(vv);
             const eKey = (a, b) => {
                 const A = BigInt(a), B = BigInt(b);
                 return A < B ? A * NV + B : B * NV + A;
@@ -1090,11 +1091,11 @@ export class Solid extends THREE.Group {
                     const key = eKey(a, b);
                     let arr = e2t.get(key);
                     if (!arr) { arr = []; e2t.set(key, arr); }
-                    arr.push({ tri: t, id: face, a, b });
+                    arr.push({ tri: t, id, a, b });
                 }
             }
 
-            // Collect boundary edges between different faceIDs and rank by min-area
+            // Collect boundary edges between different face IDs and rank by min-area
             const candidates = [];
             for (const [key, arr] of e2t.entries()) {
                 if (arr.length !== 2) continue; // non-manifold or open boundary; skip
@@ -1495,7 +1496,7 @@ export class Solid extends THREE.Group {
         this._vertProperties = newVerts;
         this._triVerts = newTriVerts;
         this._triIDs = newTriIDs;
-        // Rebuild vertex key map
+        // Rebuild vertex key map for exact-key lookups
         this._vertKeyToIndex = new Map();
         for (let i = 0; i < this._vertProperties.length; i += 3) {
             const x = this._vertProperties[i], y = this._vertProperties[i + 1], z = this._vertProperties[i + 2];
@@ -1505,13 +1506,104 @@ export class Solid extends THREE.Group {
         this._faceIndex = null;
     }
 
+    /**
+     * Calculate perpendicular distance from a 3D point to a 3D line segment.
+     * @param {Array} point - [x, y, z]
+     * @param {Array} lineStart - [x, y, z]
+     * @param {Array} lineEnd - [x, y, z]
+     * @returns {number} perpendicular distance
+     */
+    pointToLineDistance3D(point, lineStart, lineEnd) {
+        const lineX = lineEnd[0] - lineStart[0];
+        const lineY = lineEnd[1] - lineStart[1];
+        const lineZ = lineEnd[2] - lineStart[2];
+        
+        const lineLength = Math.sqrt(lineX * lineX + lineY * lineY + lineZ * lineZ);
+        
+        // Degenerate case: zero-length line segment
+        if (lineLength === 0) {
+            const dx = point[0] - lineStart[0];
+            const dy = point[1] - lineStart[1];
+            const dz = point[2] - lineStart[2];
+            return Math.sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        
+        const toPointX = point[0] - lineStart[0];
+        const toPointY = point[1] - lineStart[1];
+        const toPointZ = point[2] - lineStart[2];
+        
+        // Cross product
+        const crossX = toPointY * lineZ - toPointZ * lineY;
+        const crossY = toPointZ * lineX - toPointX * lineZ;
+        const crossZ = toPointX * lineY - toPointY * lineX;
+        
+        const crossMagnitude = Math.sqrt(crossX * crossX + crossY * crossY + crossZ * crossZ);
+        
+        return crossMagnitude / lineLength;
+    }
 
+    /**
+     * Simplify a polyline using Douglas-Peucker algorithm.
+     * @param {Array} points - Array of [x, y, z] arrays
+     * @param {number} tolerance - Maximum allowed distance for point removal
+     * @param {boolean} closedLoop - Whether this is a closed loop
+     * @returns {Array} Simplified array of [x, y, z] arrays
+     */
+    simplifyPolyline(points, tolerance, closedLoop) {
+        if (points.length <= 2) {
+            return [...points];
+        }
+        
+        if (tolerance <= 0) {
+            return [...points];
+        }
+        
+        if (closedLoop) {
+            // Remove duplicate last point temporarily
+            const openPoints = points.slice(0, -1);
+            const simplified = this._douglasPeucker(openPoints, tolerance);
+            // Re-close the loop by appending first point
+            return [...simplified, simplified[0]];
+        } else {
+            return this._douglasPeucker(points, tolerance);
+        }
+    }
 
-
-
-
-
-
+    /**
+     * Internal Douglas-Peucker recursive implementation.
+     * @private
+     */
+    _douglasPeucker(points, tolerance) {
+        if (points.length <= 2) {
+            return [...points];
+        }
+        
+        const first = points[0];
+        const last = points[points.length - 1];
+        
+        let maxDist = 0;
+        let maxIndex = -1;
+        
+        // Find point with maximum distance from line (first to last)
+        for (let i = 1; i < points.length - 1; i++) {
+            const dist = this.pointToLineDistance3D(points[i], first, last);
+            if (dist > maxDist) {
+                maxDist = dist;
+                maxIndex = i;
+            }
+        }
+        
+        if (maxDist > tolerance) {
+            // Recursively simplify both segments
+            const leftSegment = this._douglasPeucker(points.slice(0, maxIndex + 1), tolerance);
+            const rightSegment = this._douglasPeucker(points.slice(maxIndex), tolerance);
+            // Concatenate, removing duplicate middle point
+            return [...leftSegment.slice(0, -1), ...rightSegment];
+        } else {
+            // All intermediate points within tolerance - return just endpoints
+            return [first, last];
+        }
+    }
 
     /**
      * Build (or rebuild) the Manifold from our MeshGL arrays.
@@ -2154,7 +2246,7 @@ export class Solid extends THREE.Group {
                                 const edgeObj = new Edge(g);
                                 edgeObj.name = `${nameA}|${nameB}`;
                                 edgeObj.closedLoop = false;
-                                edgeObj.userData = { faceA: nameA, faceB: nameB, polylineLocal: poly, closedLoop: false };
+                                edgeObj.userData = { faceA: nameA, faceB: nameB, polylineLocal: poly, polylineWorld: false };
                                 edgeObj.parentSolid = this;
                                 const fa = faceMap.get(nameA); const fb = faceMap.get(nameB);
                                 if (fa) fa.edges.push(edgeObj); if (fb) fb.edges.push(edgeObj);
