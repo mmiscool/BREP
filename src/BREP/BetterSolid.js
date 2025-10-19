@@ -1579,18 +1579,30 @@ export class Solid extends THREE.Group {
             return [...points];
         }
         
-        if (tolerance <= 0) {
-            return [...points];
+        const first = points[0];
+        const last = points[points.length - 1];
+        
+        let maxDist = 0;
+        let maxIndex = -1;
+        
+        // Find point with maximum distance from line (first to last)
+        for (let i = 1; i < points.length - 1; i++) {
+            const dist = this.pointToLineDistance3D(points[i], first, last);
+            if (dist > maxDist) {
+                maxDist = dist;
+                maxIndex = i;
+            }
         }
         
-        if (closedLoop) {
-            // Remove duplicate last point temporarily
-            const openPoints = points.slice(0, -1);
-            const simplified = this._douglasPeucker(openPoints, tolerance);
-            // Re-close the loop by appending first point
-            return [...simplified, simplified[0]];
+        if (maxDist > tolerance) {
+            // Recursively simplify both segments
+            const leftSegment = this._douglasPeucker(points.slice(0, maxIndex + 1), tolerance);
+            const rightSegment = this._douglasPeucker(points.slice(maxIndex), tolerance);
+            // Concatenate, removing duplicate middle point
+            return [...leftSegment.slice(0, -1), ...rightSegment];
         } else {
-            return this._douglasPeucker(points, tolerance);
+            // All intermediate points within tolerance - return just endpoints
+            return [first, last];
         }
     }
 
@@ -2201,12 +2213,6 @@ export class Solid extends THREE.Group {
                         const visited = new Set();
                         const adj = new Map();
                         const ek = (u, v) => (u < v ? `${u},${v}` : `${v},${u}`);
-                        for (const [u, v] of indices) {
-                            if (!adj.has(u)) adj.set(u, new Set());
-                            if (!adj.has(v)) adj.set(v, new Set());
-                            adj.get(u).add(v); adj.get(v).add(u);
-                        }
-                        const verts = (idx) => [vp[idx * 3 + 0], vp[idx * 3 + 1], vp[idx * 3 + 2]];
                         for (const [u0] of adj.entries()) {
                             // find start (degree 1) or any if loop
                             if ([...adj.get(u0)].length !== 1) continue;
