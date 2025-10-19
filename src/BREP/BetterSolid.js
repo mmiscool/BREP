@@ -1355,7 +1355,7 @@ export class Solid extends THREE.Group {
                 const key = ukey(a, b2);
                 let arr = edgeMap.get(key);
                 if (!arr) { arr = []; edgeMap.set(key, arr); }
-                arr.push({ a, b: b2 });
+                arr.push({ a, b: b2 }); // oriented edge as appears in the triangle
             }
         }
         for (const arr of edgeMap.values()) {
@@ -1579,30 +1579,18 @@ export class Solid extends THREE.Group {
             return [...points];
         }
         
-        const first = points[0];
-        const last = points[points.length - 1];
-        
-        let maxDist = 0;
-        let maxIndex = -1;
-        
-        // Find point with maximum distance from line (first to last)
-        for (let i = 1; i < points.length - 1; i++) {
-            const dist = this.pointToLineDistance3D(points[i], first, last);
-            if (dist > maxDist) {
-                maxDist = dist;
-                maxIndex = i;
-            }
+        if (tolerance <= 0) {
+            return [...points];
         }
         
-        if (maxDist > tolerance) {
-            // Recursively simplify both segments
-            const leftSegment = this._douglasPeucker(points.slice(0, maxIndex + 1), tolerance);
-            const rightSegment = this._douglasPeucker(points.slice(maxIndex), tolerance);
-            // Concatenate, removing duplicate middle point
-            return [...leftSegment.slice(0, -1), ...rightSegment];
+        if (closedLoop) {
+            // Remove duplicate last point temporarily
+            const openPoints = points.slice(0, -1);
+            const simplified = this._douglasPeucker(openPoints, tolerance);
+            // Re-close the loop by appending first point
+            return [...simplified, simplified[0]];
         } else {
-            // All intermediate points within tolerance - return just endpoints
-            return [first, last];
+            return this._douglasPeucker(points, tolerance);
         }
     }
 
@@ -1854,7 +1842,7 @@ export class Solid extends THREE.Group {
     _ensureFaceIndex() {
         if (this._faceIndex) return;
         const mesh = this.getMesh();
-        const { triVerts, faceID } = mesh;
+        const { vertProperties, triVerts } = mesh;
         const triCount = (triVerts.length / 3) | 0;
         const map = new Map();
         if (faceID && faceID.length === triCount) {
@@ -2166,8 +2154,6 @@ export class Solid extends THREE.Group {
                     const fb = faceMap.get(e.faceB);
                     if (fa) fa.edges.push(edgeObj);
                     if (fb) fb.edges.push(edgeObj);
-                    if (fa) edgeObj.faces.push(fa);
-                    if (fb) edgeObj.faces.push(fb);
                     this.add(edgeObj);
                 }
             }
@@ -2505,7 +2491,8 @@ export class Solid extends THREE.Group {
                             vertProperties[vi * 3 + 1],
                             vertProperties[vi * 3 + 2],
                         ]);
-                        polylines.push({ name: `${faceA}|${faceB}[${idx++}]`, faceA, faceB, indices: chain, positions, closedLoop: false });
+                        const simplifiedPositions = this.simplifyPolyline(positions, tolerance, false);
+                        polylines.push({ name: `${faceA}|${faceB}[${idx++}]`, faceA, faceB, indices: chain, positions: simplifiedPositions, closedLoop: false });
                     }
                 }
 
@@ -2552,7 +2539,8 @@ export class Solid extends THREE.Group {
                             vertProperties[vi * 3 + 2],
                         ]);
                         const closed = chain.length >= 3 && chain[0] === chain[chain.length - 1];
-                        polylines.push({ name: `${faceA}|${faceB}[${idx++}]`, faceA, faceB, indices: chain, positions, closedLoop: closed });
+                        const simplifiedPositions = this.simplifyPolyline(positions, tolerance, closed);
+                        polylines.push({ name: `${faceA}|${faceB}[${idx++}]`, faceA, faceB, indices: chain, positions: simplifiedPositions, closedLoop: closed });
                     }
                 }
             }
