@@ -735,12 +735,13 @@ export class Solid extends THREE.Group {
         const triCount = (tv.length / 3) | 0;
         if (triCount === 0) return 0;
 
-        // Build undirected edge -> triangle uses to define adjacency
+        // Build undirected edge map: key = min*NV + max (BigInt) -> [{tri, a, b}...]
         const nv = (vp.length / 3) | 0;
         const NV = BigInt(Math.max(1, nv));
         const eKey = (a, b) => {
-            const A = BigInt(a), B = BigInt(b);
-            return (A < B) ? (A * NV + B) : (B * NV + A);
+            const A = BigInt(a);
+            const B = BigInt(b);
+            return A < B ? A * NV + B : B * NV + A;
         };
 
         const edgeToTris = new Map(); // key -> [tri indices]
@@ -756,7 +757,7 @@ export class Solid extends THREE.Group {
                 const key = eKey(a, b2);
                 let arr = edgeToTris.get(key);
                 if (!arr) { arr = []; edgeToTris.set(key, arr); }
-                arr.push(t);
+                arr.push({ tri: t, a, b }); // oriented edge as appears in the triangle
             }
         }
 
@@ -766,8 +767,8 @@ export class Solid extends THREE.Group {
         for (const [, arr] of edgeToTris.entries()) {
             if (arr.length === 2) {
                 const a = arr[0], b = arr[1];
-                adj[a].push(b);
-                adj[b].push(a);
+                adj[a.tri].push(b.tri);
+                adj[b.tri].push(a.tri);
             }
         }
 
@@ -1042,9 +1043,9 @@ export class Solid extends THREE.Group {
 
         // Helper: area of triangle given indices
         const triArea = (i0, i1, i2) => {
-            const x0 = vp[i0 * 3 + 0], y0 = vp[i0 * 3 + 1], z0 = vp[i0 * 3 + 2];
-            const x1 = vp[i1 * 3 + 0], y1 = vp[i1 * 3 + 1], z1 = vp[i1 * 3 + 2];
-            const x2 = vp[i2 * 3 + 0], y2 = vp[i2 * 3 + 1], z2 = vp[i2 * 3 + 2];
+            const x0 = vp[i0 * 3], y0 = vp[i0 * 3 + 1], z0 = vp[i0 * 3 + 2];
+            const x1 = vp[i1 * 3], y1 = vp[i1 * 3 + 1], z1 = vp[i1 * 3 + 2];
+            const x2 = vp[i2 * 3], y2 = vp[i2 * 3 + 1], z2 = vp[i2 * 3 + 2];
             const ux = x1 - x0, uy = y1 - y0, uz = z1 - z0;
             const vx = x2 - x0, vy = y2 - y0, vz = z2 - z0;
             const cx = uy * vz - uz * vy;
@@ -2089,12 +2090,11 @@ export class Solid extends THREE.Group {
             // This enables visualization even if manifoldization failed, which helps debugging.
             const vp = this._vertProperties || [];
             const tv = this._triVerts || [];
-            const ids = this._triIDs || [];
             const nameOf = (id) => this._idToFaceName && this._idToFaceName.get ? this._idToFaceName.get(id) : String(id);
             const nameToTris = new Map();
             const triCount = (tv.length / 3) | 0;
             for (let t = 0; t < triCount; t++) {
-                const id = ids[t];
+                const id = this._triIDs[t];
                 const name = nameOf(id);
                 if (!name) continue;
                 let arr = nameToTris.get(name);
@@ -2366,10 +2366,54 @@ export class Solid extends THREE.Group {
             const { vertProperties, triVerts, faceID } = mesh;
             const triCount = (triVerts.length / 3) | 0;
             const nv = (vertProperties.length / 3) | 0;
+            
+            // Calculate tolerance based on mesh resolution
+            let tolerance = 0.01; // default fallback
+            if (triCount > 0) {
+                try {
+                    const sampleSize = Math.min(1000, triCount);
+                    const step = Math.max(1, Math.floor(triCount / sampleSize));
+                    let totalEdgeLength = 0;
+                    let edgeCount = 0;
+                    
+                    for (let t = 0; t < triCount; t += step) {
+                        const base = t * 3;
+                        const i0 = triVerts[base + 0];
+                        const i1 = triVerts[base + 1];
+                        const i2 = triVerts[base + 2];
+                        
+                        // Get vertex positions
+                        const v0 = [vertProperties[i0 * 3 + 0], vertProperties[i0 * 3 + 1], vertProperties[i0 * 3 + 2]];
+                        const v1 = [vertProperties[i1 * 3 + 0], vertProperties[i1 * 3 + 1], vertProperties[i1 * 3 + 2]];
+                        const v2 = [vertProperties[i2 * 3 + 0], vertProperties[i2 * 3 + 1], vertProperties[i2 * 3 + 2]];
+                        
+                        // Calculate edge lengths
+                        const edge01 = Math.sqrt(
+                            (v1[0] - v0[0]) ** 2 + (v1[1] - v0[1]) ** 2 + (v1[2] - v0[2]) ** 2
+                        );
+                        const edge12 = Math.sqrt(
+                            (v2[0] - v1[0]) ** 2 + (v2[1] - v1[1]) ** 2 + (v2[2] - v1[2]) ** 2
+                        );
+                        const edge20 = Math.sqrt(
+                            (v0[0] - v2[0]) ** 2 + (v0[1] - v2[1]) ** 2 + (v0[2] - v2[2]) ** 2
+                        );
+                        
+                        totalEdgeLength += edge01 + edge12 + edge20;
+                        edgeCount += 3;
+                    }
+                    
+                    const avgEdgeLength = totalEdgeLength / edgeCount;
+                    if (avgEdgeLength > 0 && !isNaN(avgEdgeLength)) {
+                        tolerance = 0.5 * avgEdgeLength;
+                    }
+                } catch {
+                    // Use default tolerance on calculation error
+                }
+            }
+            
             const NV = BigInt(nv);
             const ukey = (a, b) => {
-                const A = BigInt(a); const B = BigInt(b);
-                return A < B ? A * NV + B : B * NV + A;
+                const A = BigInt(a); const B = BigInt(b); return A < B ? A * NV + B : B * NV + A;
             };
 
             // Build undirected edge map -> triangles using it with their faceIDs
