@@ -75,17 +75,10 @@ export async function importGithubPlugin(repoUrl) {
   entryUrls.push(`${jsdBase}/plugin.js?t=${t}`);
   baseUrls.push(jsdBase);
 
-  try { console.log('[PluginLoader] Candidates:', entryUrls); } catch { }
   // Web worker fetch + rewrite to absolute imports for the chosen base
   const { code, usedUrl, usedBase, __worker, __cleanup } = await fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, t);
-  try { console.log('[PluginLoader] Fetched from:', usedUrl, ' (base:', usedBase, ')'); } catch { }
-  try {
-    console.log('[PluginLoader] Downloaded code length:', (code && code.length) || 0);
-    console.log('[PluginLoader] Downloaded code:\n' + String(code || ''));
-  } catch { }
   const blob = new Blob([code], { type: 'application/javascript' });
   const url = URL.createObjectURL(blob);
-  try { console.log('[PluginLoader] Importing module from blob:', url); } catch { }
   try {
     const mod = await import(/* webpackIgnore: true */ /* @vite-ignore */ url);
     return mod;

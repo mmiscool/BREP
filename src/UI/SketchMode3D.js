@@ -11,7 +11,6 @@ export class SketchMode3D {
     this.viewer = viewer;
     this.featureID = featureID;
     this._ui = null;
-    this._saved = null; // (unused) legacy snapshot
     this._lock = null; // { basis:{x,y,z,origin} }
     // Editing state
     this._solver = null;
@@ -44,7 +43,6 @@ export class SketchMode3D {
       sy: 0,
       start: { dx: 0, dy: 0 },
     };
-    this._controlsPrev = null; // legacy controls state (unused)
     // Track SKETCH groups we hide while editing so we can restore visibility
     this._hiddenSketches = [];
     // No clipping plane; orientation must do the work
@@ -80,7 +78,6 @@ export class SketchMode3D {
         origin: new THREE.Vector3().fromArray(saved.origin),
       };
 
-      console.log("[SketchMode3D] Reusing saved basis for", refName);
     } else {
       basis = this.#basisFromReference(refObj);
       // Persist freshly computed basis tagged with refName so future edits reuse it
@@ -171,7 +168,6 @@ export class SketchMode3D {
       updateCanvas: () => this.#rebuildSketchGraphics(),
       notifyUser: (m) => {
         try {
-          console.log("[Sketch]", m);
         } catch { }
       },
     });

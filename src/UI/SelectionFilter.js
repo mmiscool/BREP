@@ -391,8 +391,7 @@ export class SelectionFilter {
             objectToToggleSelectionOn.selected = !objectToToggleSelectionOn.selected;
             // change the material on the object to indicate it is selected or not.
             //if (objectToToggleSelectionOn.type === ""
-            console.log("toggling selection on object:", objectToToggleSelectionOn.type);
-        if (objectToToggleSelectionOn.selected) {
+            if (objectToToggleSelectionOn.selected) {
                 if (objectToToggleSelectionOn.type === SelectionFilter.FACE) {
                     objectToToggleSelectionOn.material = CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.PLANE) {
