@@ -416,7 +416,6 @@ export class Viewer {
         this.endSketchMode();
         const f = Array.isArray(ph.features) ? ph.features.find(x => x?.inputParams?.featureID === featureID) : null;
         if (!f) return;
-        console.log(`Sketch feature ${featureID} finished; updating persistentData.sketch`, f);
         f.lastRunInputParams = {};
         f.timestamp = 0;
         f.dirty = true;
