@@ -121,7 +121,6 @@ export class PatternFeature {
         try { src.__removeFlag = true; } catch {}
         out.push(acc);
       }
-      try { console.log('[PatternFeature] Union complete for', sources.length, 'source(s).'); } catch {}
       const removedSources = sources.filter(Boolean);
       return { added: out, removed: removedSources };
     }
@@ -134,7 +133,6 @@ export class PatternFeature {
         : this.#circularPattern(src, count, this.inputParams.axisRef, Number(this.inputParams.totalAngleDeg) || 360, Number(this.inputParams.centerOffset) || 0);
       for (const c of clones) instances.push(c);
     }
-    try { console.log(`[PatternFeature] Created ${instances.length} instances (no union).`); } catch {}
     return { added: instances, removed: [] };
   }
 

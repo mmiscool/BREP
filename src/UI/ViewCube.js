@@ -379,37 +379,6 @@ export class ViewCube {
     cam.lookAt(pivot);
     cam.updateMatrixWorld(true);
 
-    // Debug: Log detailed camera state after snapping
-    try {
-      const p = cam.position.clone();
-      const q = cam.quaternion.clone();
-      const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
-      const fwd = new THREE.Vector3();
-      cam.getWorldDirection(fwd); // normalized, points toward -Z of camera
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize();
-      const upWorldFromQuat = new THREE.Vector3(0, 1, 0).applyQuaternion(q).normalize();
-      // eslint-disable-next-line no-console
-      console.log('[ViewCube] Camera snap', {
-        face: faceName,
-        targetDir: { x: dir.x, y: dir.y, z: dir.z },
-        distanceToPivot: cam.position.distanceTo(pivot),
-        pivot: { x: +pivot.x.toFixed(6), y: +pivot.y.toFixed(6), z: +pivot.z.toFixed(6) },
-        position: { x: +p.x.toFixed(6), y: +p.y.toFixed(6), z: +p.z.toFixed(6) },
-        quaternion: { x: +q.x.toFixed(6), y: +q.y.toFixed(6), z: +q.z.toFixed(6), w: +q.w.toFixed(6) },
-        eulerXYZdeg: {
-          x: +(e.x * 180 / Math.PI).toFixed(3),
-          y: +(e.y * 180 / Math.PI).toFixed(3),
-          z: +(e.z * 180 / Math.PI).toFixed(3),
-        },
-        worldForward: { x: +fwd.x.toFixed(6), y: +fwd.y.toFixed(6), z: +fwd.z.toFixed(6) },
-        worldRight: { x: +right.x.toFixed(6), y: +right.y.toFixed(6), z: +right.z.toFixed(6) },
-        worldUpFromQuat: { x: +upWorldFromQuat.x.toFixed(6), y: +upWorldFromQuat.y.toFixed(6), z: +upWorldFromQuat.z.toFixed(6) },
-        cameraUpProperty: { x: +cam.up.x.toFixed(6), y: +cam.up.y.toFixed(6), z: +cam.up.z.toFixed(6) },
-        zoom: cam.zoom,
-        frustum: cam.isOrthographicCamera ? { left: cam.left, right: cam.right, top: cam.top, bottom: cam.bottom } : null,
-      });
-    } catch { }
-
     // Sync controls to the new absolute state
     const controls = this.controls;
     if (controls && controls.updateMatrixState) {

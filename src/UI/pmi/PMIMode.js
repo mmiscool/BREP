@@ -185,7 +185,6 @@ export class PMIMode {
   }
 
   async dispose() {
-    console.log('PMI dispose started');
     const v = this.viewer;
 
     // Restore original transforms when exiting PMI mode
@@ -203,12 +202,10 @@ export class PMIMode {
     // Remove overlay UI
     try { this._uiTopRight?.remove(); } catch { }
 
-    console.log('About to remove PMI sections');
     // IMPORTANT: Remove PMI-specific accordion sections FIRST, then restore original sections
     // This prevents visual glitches where both sets of sections are visible simultaneously
     await this.#removePMISections();
 
-    console.log('About to restore original sections');
     // Now restore original sidebar sections after PMI sections are completely removed
     this.#restoreOriginalSidebarSections();
 
@@ -391,25 +388,21 @@ export class PMIMode {
   #restoreOriginalSidebarSections() {
     try {
       if (!this._originalSections) {
-        console.log('No original sections to restore');
         return;
       }
 
-      console.log('Restoring original sections:', this._originalSections.length);
 
       // Restore all original sections
       this._originalSections.forEach(({ element, display, visibility }, index) => {
         if (element && element.parentNode) {
           element.style.display = display;
           element.style.visibility = visibility;
-          console.log(`Restored section ${index}: ${element.className || element.tagName}`);
         } else {
           console.warn(`Section ${index} element no longer exists in DOM`);
         }
       });
 
       this._originalSections = null;
-      console.log('Original sections restoration complete');
     } catch (e) {
       console.warn('Failed to restore original sidebar sections:', e);
     }
@@ -429,7 +422,6 @@ export class PMIMode {
         }
       }
 
-      console.log('Removing PMI sections...');
 
       // Remove PMI sections from the accordion
       const sectionsToRemove = [
@@ -439,7 +431,6 @@ export class PMIMode {
         'Tool Options'
       ];
 
-      console.log('Sections to remove:', sectionsToRemove);
 
       if (this._pmiViewsDomRestore && this.pmiWidget?.uiElement) {
         try {
@@ -470,7 +461,6 @@ export class PMIMode {
             }
             // Remove the content element
             section.uiElement.remove();
-            console.log(`Removed stored section ${index}`);
           } catch (e) {
             console.warn(`Failed to remove stored section ${index}:`, e);
           }
@@ -485,17 +475,14 @@ export class PMIMode {
         const allTitles = Array.from(accordion.querySelectorAll('.accordion-title'));
         const allContents = Array.from(accordion.querySelectorAll('.accordion-content'));
 
-        console.log(`Found ${allTitles.length} titles and ${allContents.length} contents in accordion`);
 
         // Remove elements that match PMI section patterns
         allTitles.forEach(titleEl => {
           const text = titleEl.textContent || '';
           if (text.includes('Annotations') || text === 'View Settings' || text === 'Tool Options') {
-            console.log('Removing title:', text);
             // Find and remove the associated content element as well
             const nextEl = titleEl.nextElementSibling;
             if (nextEl && nextEl.classList.contains('accordion-content')) {
-              console.log('Also removing associated content');
               nextEl.remove();
             }
             titleEl.remove();
@@ -509,7 +496,6 @@ export class PMIMode {
           const name = contentEl.getAttribute('name') || '';
           if (name.includes('Annotations') || name === 'accordion-content-View Settings' || name === 'accordion-content-Tool Options' ||
             id.includes('Annotations') || id === 'accordion-content-View Settings' || id === 'accordion-content-Tool Options') {
-            console.log('Removing content:', name || id);
             contentEl.remove();
           }
         });
@@ -517,7 +503,6 @@ export class PMIMode {
         // Additional cleanup: remove any elements that contain PMI-specific classes or content
         const pmiElements = accordion.querySelectorAll('.pmi-ann-list, .pmi-scrollable-content, .pmi-inline-menu, .pmi-ann-footer, .pmi-vfield');
         pmiElements.forEach(el => {
-          console.log('Removing PMI element:', el.className);
           // Remove the entire parent accordion section if this is PMI content
           let parent = el.parentNode;
           while (parent && !parent.classList.contains('accordion-content')) {
@@ -526,7 +511,6 @@ export class PMIMode {
           if (parent && parent.classList.contains('accordion-content')) {
             const titleEl = parent.previousElementSibling;
             if (titleEl && titleEl.classList.contains('accordion-title')) {
-              console.log('Removing parent title too');
               titleEl.remove();
             }
             parent.remove();
@@ -539,7 +523,6 @@ export class PMIMode {
         // This is a bit aggressive but ensures complete cleanup
         const remainingTitles = Array.from(accordion.querySelectorAll('.accordion-title'));
         const originalSectionCount = this._originalSections ? Math.floor(this._originalSections.length / 2) : 0;
-        console.log(`After cleanup: ${remainingTitles.length} titles remain, originally had ${originalSectionCount} sections`);
 
       } catch (e) {
         console.warn('Failed to manually clean up PMI section elements:', e);
@@ -550,7 +533,6 @@ export class PMIMode {
         try {
           if (v.accordion && typeof v.accordion.removeSection === 'function') {
             await v.accordion.removeSection(title);
-            console.log('Removed section via API:', title);
           }
         } catch (e) {
           console.warn(`Failed to remove section "${title}" via API:`, e);
@@ -564,7 +546,6 @@ export class PMIMode {
       this._pmiToolOptionsSection = null;
       this._sectionCreationPromises = [];
 
-      console.log('PMI sections removal complete');
 
     } catch (e) {
       console.warn('Failed to remove PMI sections:', e);
@@ -640,7 +621,6 @@ export class PMIMode {
       this._viewSettingsEl.style.padding = '6px';
       const viewSettingsPromise = this._acc.addSection('View Settings').then((sec) => {
         try {
-          console.log('Created view settings section:', sec);
           sec.uiElement.appendChild(this._viewSettingsEl);
           this.#renderViewSettings();
           this._pmiViewSettingsSection = sec;
@@ -656,7 +636,6 @@ export class PMIMode {
       this._toolOptsEl.style.padding = '6px';
       const toolOptionsPromise = this._acc.addSection('Tool Options').then((sec) => {
         try {
-          console.log('Created tool options section:', sec);
           sec.uiElement.appendChild(this._toolOptsEl);
           this.#renderToolOptions();
           this._pmiToolOptionsSection = sec;
@@ -934,11 +913,9 @@ export class PMIMode {
   #logCameraState(label, camera, controls) {
     try {
       if (!camera) {
-        console.log(`[PMI Camera] ${label}: no camera instance`);
         return;
       }
       const snapshot = captureCameraSnapshot(camera, { controls });
-      console.log(`[PMI Camera] ${label}`, JSON.stringify(snapshot, null, 2));
     } catch (err) {
       console.warn(`[PMI Camera] Failed to log camera for ${label}`, err);
     }
@@ -952,7 +929,6 @@ export class PMIMode {
       const ctrls = this.viewer?.controls;
       const snap = captureCameraSnapshot(camera, { controls: ctrls });
       if (!snap) return;
-      console.log('[PMI Camera] Update Camera -> captured snapshot', JSON.stringify(snap, null, 2));
       this.#logCameraState('Update Camera -> actual camera state (pre-save)', camera, ctrls);
       this.viewEntry.camera = snap;
       this.#notifyViewMutated();
@@ -992,7 +968,6 @@ export class PMIMode {
         return;
       }
 
-      console.log('[PMI Camera] Restore Camera -> stored snapshot', JSON.stringify(storedCamera, null, 2));
 
       const dom = this.viewer?.renderer?.domElement;
       const rect = dom?.getBoundingClientRect?.();
@@ -1125,7 +1100,6 @@ export class PMIMode {
 
       const anns = annotationEntities.map((entity) => entity?.inputParams || {});
 
-      console.log('Applying view transforms, found', anns.length, 'annotations');
 
       const handler = annotationRegistry.getSafe?.('viewTransform') || null;
       if (!handler) {
@@ -1141,7 +1115,6 @@ export class PMIMode {
       const cumulativeState = new Map();
 
       for (const ann of viewAnns) {
-        console.log('Processing ViewTransform annotation:', ann);
 
         if (typeof handler._resolveSolidReferences === 'function') {
           handler._resolveSolidReferences(ann, this, false);

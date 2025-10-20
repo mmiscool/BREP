@@ -159,6 +159,10 @@ export class SketchFeature {
     async run(partHistory) {
         const sceneGroup = new THREE.Group();
         sceneGroup.name = this.inputParams.featureID || 'Sketch';
+        const featureId = (typeof sceneGroup.name === 'string' && sceneGroup.name.length)
+            ? sceneGroup.name
+            : (this.inputParams?.featureID ? String(this.inputParams.featureID) : 'Sketch');
+        const edgeNamePrefix = featureId ? `${featureId}:` : '';
         sceneGroup.type = 'SKETCH';
         // Provide a harmless onClick so Scene Manager rows don't error
         sceneGroup.onClick = () => {};
@@ -308,19 +312,23 @@ export class SketchFeature {
 
         // Add vertex visuals in 3D for every sketch point (including isolated points)
         try {
-            const worldPts = [];
             if (Array.isArray(sketch?.points)) {
+                let autoId = 0;
                 for (const p of sketch.points) {
                     if (p == null) continue;
                     const u = Number(p.x); const v = Number(p.y);
                     if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
                     const w = to3D(u, v);
-                    worldPts.push([w.x, w.y, w.z]);
-                }
-            }
-            if (worldPts.length) {
-                for (const p of worldPts) {
-                    try { sceneGroup.add(new BREP.Vertex(p)); } catch {}
+                    const hasExplicitId = p.id !== undefined && p.id !== null && `${p.id}` !== '';
+                    const pointLabel = hasExplicitId ? p.id : autoId++;
+                    const vertexName = featureId ? `${featureId}:P${pointLabel}` : `P${pointLabel}`;
+                    try {
+                        const vertex = new BREP.Vertex([w.x, w.y, w.z], { name: vertexName });
+                        vertex.userData = vertex.userData || {};
+                        vertex.userData.sketchPointId = hasExplicitId ? p.id : pointLabel;
+                        vertex.userData.sketchFeatureId = featureId;
+                        sceneGroup.add(vertex);
+                    } catch {}
                 }
             }
         } catch {}
@@ -343,7 +351,8 @@ export class SketchFeature {
                 const aw = toWorld(a.x,a.y); const bw = toWorld(b.x,b.y);
                 const lg = new LineGeometry();
                 lg.setPositions([aw.x, aw.y, aw.z, bw.x, bw.y, bw.z]);
-                const e = new BREP.Edge(lg); e.name = `G${g.id}`; e.userData = { polylineLocal:[[aw.x,aw.y,aw.z],[bw.x,bw.y,bw.z]], polylineWorld:true }; edges.push(e); edgeBySegId.set(g.id, e);
+                const edgeName = `${edgeNamePrefix}G${g.id}`;
+                const e = new BREP.Edge(lg); e.name = edgeName; e.userData = { polylineLocal:[[aw.x,aw.y,aw.z],[bw.x,bw.y,bw.z]], polylineWorld:true, sketchFeatureId: featureId, sketchGeometryId: g.id }; edges.push(e); edgeBySegId.set(g.id, e);
             } else if (g.type==='arc' && g.points?.length===3) {
                 const c = pointById.get(g.points[0]); const sa=pointById.get(g.points[1]); const sb=pointById.get(g.points[2]); if(!c||!sa||!sb) continue;
                 const cx=c.x, cy=c.y; const r=Math.hypot(sa.x-cx, sa.y-cy);
@@ -355,9 +364,10 @@ export class SketchFeature {
                 segs.push({ id:g.id, pts });
                 const flat=[]; const worldPts=[]; for(const p of pts){ const v=toWorld(p[0],p[1]); flat.push(v.x,v.y,v.z); worldPts.push([v.x,v.y,v.z]); }
                 const lg = new LineGeometry(); lg.setPositions(flat);
-                const e = new BREP.Edge(lg); e.name = `G${g.id}`; 
+                const edgeName = `${edgeNamePrefix}G${g.id}`;
+                const e = new BREP.Edge(lg); e.name = edgeName; 
                 const cw = toWorld(cx, cy);
-                e.userData = { polylineLocal: worldPts, polylineWorld:true, sketchGeomType:'arc', arcCenter:[cw.x, cw.y, cw.z], arcRadius:r };
+                e.userData = { polylineLocal: worldPts, polylineWorld:true, sketchGeomType:'arc', arcCenter:[cw.x, cw.y, cw.z], arcRadius:r, sketchFeatureId: featureId, sketchGeometryId: g.id };
                 edges.push(e); edgeBySegId.set(g.id, e);
             } else if (g.type==='circle' && g.points?.length===2) {
                 const c = pointById.get(g.points[0]); const rp=pointById.get(g.points[1]); if(!c||!rp) continue;
@@ -365,9 +375,10 @@ export class SketchFeature {
                 segs.push({ id:g.id, pts });
                 const flat=[]; const worldPts=[]; for(const p of pts){ const v=toWorld(p[0],p[1]); flat.push(v.x,v.y,v.z); worldPts.push([v.x,v.y,v.z]); }
                 const lg = new LineGeometry(); lg.setPositions(flat);
-                const e = new BREP.Edge(lg); e.name = `G${g.id}`; 
+                const edgeName = `${edgeNamePrefix}G${g.id}`;
+                const e = new BREP.Edge(lg); e.name = edgeName; 
                 const cw = toWorld(cx, cy);
-                e.userData = { polylineLocal: worldPts, polylineWorld:true, sketchGeomType:'circle', circleCenter:[cw.x,cw.y,cw.z], circleRadius:r };
+                e.userData = { polylineLocal: worldPts, polylineWorld:true, sketchGeomType:'circle', circleCenter:[cw.x,cw.y,cw.z], circleRadius:r, sketchFeatureId: featureId, sketchGeometryId: g.id };
                 edges.push(e); edgeBySegId.set(g.id, e);
             } else if (g.type==='bezier' && g.points?.length===4) {
                 const p0 = pointById.get(g.points[0]);
@@ -386,7 +397,8 @@ export class SketchFeature {
                 segs.push({ id:g.id, pts });
                 const flat=[]; const worldPts=[]; for(const p of pts){ const v=toWorld(p[0],p[1]); flat.push(v.x,v.y,v.z); worldPts.push([v.x,v.y,v.z]); }
                 const lg = new LineGeometry(); lg.setPositions(flat);
-                const e = new BREP.Edge(lg); e.name = `G${g.id}`; e.userData = { polylineLocal: worldPts, polylineWorld:true }; edges.push(e); edgeBySegId.set(g.id, e);
+                const edgeName = `${edgeNamePrefix}G${g.id}`;
+                const e = new BREP.Edge(lg); e.name = edgeName; e.userData = { polylineLocal: worldPts, polylineWorld:true, sketchFeatureId: featureId, sketchGeometryId: g.id }; edges.push(e); edgeBySegId.set(g.id, e);
             }
         }
 
