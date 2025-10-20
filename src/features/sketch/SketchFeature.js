@@ -3,6 +3,7 @@ import { ConstraintEngine } from './sketchSolver2D/ConstraintEngine.js';
 import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 import { LineGeometry } from 'three/examples/jsm/Addons.js';
+import { deepClone } from '../../utils/deepClone.js';
 
 const inputParamsSchema = {
     featureID: {
@@ -31,6 +32,40 @@ const inputParamsSchema = {
                 }
             } catch (e) {
                 console.warn('[SketchFeature] Failed to start sketch mode:', e?.message || e);
+            }
+        }
+    },
+    dumpSketchDiagnostics: {
+        type: "button",
+        label: "Dump Diagnostics",
+        default_value: null,
+        hint: "Download the current sketch and triangulation data for debugging",
+        actionFunction: (ctx) => {
+            try {
+                const ph = ctx?.partHistory || null;
+                const fid = ctx?.featureID ?? ctx?.feature?.inputParams?.featureID ?? null;
+                let featureData = (ctx && typeof ctx === 'object') ? ctx.feature : null;
+                if ((!featureData || typeof featureData !== 'object') && ph && fid != null) {
+                    const arr = Array.isArray(ph?.features) ? ph.features : [];
+                    featureData = arr.find((f) => f && f.inputParams && String(f.inputParams.featureID) === String(fid)) || featureData;
+                }
+                if (!featureData || typeof featureData !== 'object') {
+                    console.warn('[SketchFeature] Unable to locate sketch feature data for diagnostics');
+                    return;
+                }
+                const instance = new SketchFeature(ph);
+                instance.inputParams = deepClone(featureData.inputParams || {});
+                if (fid != null && (instance.inputParams == null || instance.inputParams.featureID == null)) {
+                    instance.inputParams = instance.inputParams || {};
+                    instance.inputParams.featureID = fid;
+                }
+                instance.persistentData = deepClone(featureData.persistentData || {});
+                const payload = instance.dumpDiagnostics({ partHistory: ph, download: true });
+                if (!payload) {
+                    console.warn('[SketchFeature] Diagnostics export produced no payload');
+                }
+            } catch (e) {
+                console.error('[SketchFeature] Failed to dump diagnostics:', e);
             }
         }
     },
@@ -154,6 +189,123 @@ export class SketchFeature {
         return Boolean(persisted);
     }
 
+    _cloneForDump(data) {
+        if (data == null) return null;
+        try {
+            return JSON.parse(JSON.stringify(data));
+        } catch {
+            return data;
+        }
+    }
+
+    _basisToWorldFn(basis) {
+        if (!basis || typeof basis !== 'object') return null;
+        const origin = Array.isArray(basis.origin) ? basis.origin : [0, 0, 0];
+        const bx = Array.isArray(basis.x) ? basis.x : [1, 0, 0];
+        const by = Array.isArray(basis.y) ? basis.y : [0, 1, 0];
+        let bz = Array.isArray(basis.z) ? basis.z : null;
+        if (!bz) {
+            const [bx0, bx1, bx2] = bx;
+            const [by0, by1, by2] = by;
+            const cx = bx1 * by2 - bx2 * by1;
+            const cy = bx2 * by0 - bx0 * by2;
+            const cz = bx0 * by1 - bx1 * by0;
+            const len = Math.hypot(cx, cy, cz) || 1;
+            bz = [cx / len, cy / len, cz / len];
+        }
+        return (u, v, w = 0) => ([
+            origin[0] + u * bx[0] + v * by[0] + w * bz[0],
+            origin[1] + u * bx[1] + v * by[1] + w * bz[1],
+            origin[2] + u * bx[2] + v * by[2] + w * bz[2],
+        ]);
+    }
+
+    _buildDiagnosticsFilename(featureID) {
+        const safeId = featureID != null && featureID !== ''
+            ? String(featureID).replace(/[^a-z0-9_-]/gi, '_')
+            : 'sketch';
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        return `${safeId}-diagnostics-${stamp}.json`;
+    }
+
+    _downloadDiagnosticsFile(fileName, payload) {
+        if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof Blob === 'undefined') {
+            console.warn('[SketchFeature] Browser file APIs unavailable; cannot download diagnostics');
+            return;
+        }
+        try {
+            const json = JSON.stringify(payload, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            try {
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = fileName;
+                link.rel = 'noopener';
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } finally {
+                setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* noop */ } }, 0);
+            }
+        } catch (err) {
+            console.error('[SketchFeature] Failed to prepare diagnostics download:', err);
+        }
+    }
+
+    dumpDiagnostics({ partHistory, download = false, fileName } = {}) {
+        try {
+            const featureID = this.inputParams?.featureID ?? null;
+            const basis = this.persistentData?.basis || (partHistory ? this._getOrCreateBasis(partHistory) : null);
+            const sketch = this._cloneForDump(this.persistentData?.sketch);
+            const profile = this._cloneForDump(this.persistentData?.lastProfileDiagnostics);
+            const payload = {
+                featureID,
+                timestamp: new Date().toISOString(),
+                sketchSignature: this._sketchSignature(this.persistentData?.sketch || null),
+                sketch,
+                profile,
+                basis: this._cloneForDump(basis),
+            };
+            if (payload.profile && payload.profile.triangles2D && !payload.profile.trianglesWorld && basis) {
+                try {
+                    const toWorld = this._basisToWorldFn(basis);
+                    if (typeof toWorld === 'function') {
+                        payload.profile.trianglesWorld = payload.profile.triangles2D.map((tri) => tri.map((pt) => {
+                            if (!Array.isArray(pt)) return pt;
+                            const u = Number(pt[0]) || 0;
+                            const v = Number(pt[1]) || 0;
+                            const w = Number(pt[2]) || 0;
+                            return toWorld(u, v, w);
+                        }));
+                    }
+                } catch (e) {
+                    payload.profile.trianglesWorldError = e?.message || String(e);
+                }
+            }
+            const label = featureID ? `[SketchFeature] Diagnostics (${featureID})` : '[SketchFeature] Diagnostics';
+            try {
+                console.groupCollapsed(label);
+            } catch {
+                console.log(label);
+            }
+            console.log(payload);
+            try { console.groupEnd(); } catch {}
+            if (download) {
+                const name = fileName || this._buildDiagnosticsFilename(featureID);
+                this._downloadDiagnosticsFile(name, payload);
+                try {
+                    console.info(`[SketchFeature] Diagnostics saved as ${name}`);
+                } catch { /* noop */ }
+            }
+            return payload;
+        } catch (e) {
+            console.error('[SketchFeature] Diagnostic dump failed:', e);
+            return null;
+        }
+    }
+
     // Visualize sketch curves and points as a Group for selection (type='SKETCH').
     // Returns [group]
     async run(partHistory) {
@@ -174,6 +326,8 @@ export class SketchFeature {
 
         // Start from persisted sketch
         let sketch = this.persistentData?.sketch || { points: [{ id:0, x:0, y:0, fixed:true }], geometries: [], constraints: [{ id:0, type:"⏚", points:[0]}] };
+        this.persistentData = this.persistentData || {};
+        this.persistentData.lastProfileDiagnostics = null;
 
         // Evaluate any expression-backed values on points/constraints using global expressions
         try {
@@ -590,6 +744,8 @@ export class SketchFeature {
             const boundaryEdges = new Set();
             const boundaryLoopsWorld = [];
             const profileGroups = [];
+            const diagTriangles2D = [];
+            const diagTrianglesWorld = [];
             for (const grp of groups){
                 // Prepare contour and holes (remove duplicate last point for API)
                 let contour = normalizedLoops[grp.outer].slice(); contour.pop();
@@ -626,6 +782,13 @@ export class SketchFeature {
                 for (const t of tris){
                     const a = allPts[t[0]], b = allPts[t[1]], c = allPts[t[2]];
                     triPositions.push(a[0],a[1],0, b[0],b[1],0, c[0],c[1],0);
+                    diagTriangles2D.push([[a[0], a[1], 0], [b[0], b[1], 0], [c[0], c[1], 0]]);
+                    try {
+                        const wa = toWorld(a[0], a[1]);
+                        const wb = toWorld(b[0], b[1]);
+                        const wc = toWorld(c[0], c[1]);
+                        diagTrianglesWorld.push([[wa.x, wa.y, wa.z], [wb.x, wb.y, wb.z], [wc.x, wc.y, wc.z]]);
+                    } catch {}
                 }
 
                 // Save world-space loops for robust sweep side construction
@@ -636,6 +799,25 @@ export class SketchFeature {
                 for (const h of worldHoles) boundaryLoopsWorld.push({ pts: h, isHole: true });
                 profileGroups.push({ contour2D: contour.slice(), holes2D: holes.map(h=>h.slice()), contourW: worldOuter.slice(), holesW: worldHoles.map(h=>h.slice()) });
             }
+
+            const diagEdges = edges.map((e) => {
+                const ud = e?.userData || {};
+                const safePts = Array.isArray(ud.polylineLocal)
+                    ? ud.polylineLocal.map((pt) => Array.isArray(pt) ? [Number(pt[0]) || 0, Number(pt[1]) || 0, Number(pt[2]) || 0] : pt)
+                    : null;
+                return {
+                    name: e?.name || null,
+                    sketchGeometryId: ud.sketchGeometryId ?? null,
+                    sketchFeatureId: ud.sketchFeatureId ?? null,
+                    isHole: Boolean(ud.isHole),
+                    sketchGeomType: ud.sketchGeomType || null,
+                    arcCenter: Array.isArray(ud.arcCenter) ? ud.arcCenter.slice() : null,
+                    arcRadius: typeof ud.arcRadius === 'number' ? ud.arcRadius : null,
+                    circleCenter: Array.isArray(ud.circleCenter) ? ud.circleCenter.slice() : null,
+                    circleRadius: typeof ud.circleRadius === 'number' ? ud.circleRadius : null,
+                    polyline: safePts,
+                };
+            });
 
             if (triPositions.length){
                 const geom2D = new THREE.BufferGeometry();
@@ -652,7 +834,63 @@ export class SketchFeature {
                 sceneGroup.add(face);
                 for (const e of edges) { sceneGroup.add(e); }
                 profileFace = face;
+                this.persistentData.lastProfileDiagnostics = {
+                    status: 'ok',
+                    loops2D: normalizedLoops.map((loop) => loop.map((pt) => [Number(pt[0]) || 0, Number(pt[1]) || 0])),
+                    loopDepth: depth.slice(),
+                    loopSegmentIds: loopSegIDs.map((ids) => ids.slice()),
+                    groups: groups.map((g) => ({ outer: g.outer, holes: g.holes.slice() })),
+                    triangles2D: diagTriangles2D.map((tri) => tri.map((pt) => pt.slice())),
+                    trianglesWorld: diagTrianglesWorld.map((tri) => tri.map((pt) => pt.slice())),
+                    boundaryLoopsWorld: boundaryLoopsWorld.map((loop) => ({ isHole: Boolean(loop.isHole), pts: loop.pts.map((pt) => pt.slice()) })),
+                    profileGroups: profileGroups.map((grp) => ({
+                        contour2D: grp.contour2D.map((pt) => pt.slice()),
+                        holes2D: grp.holes2D.map((hole) => hole.map((pt) => pt.slice())),
+                        contourW: grp.contourW.map((pt) => pt.slice()),
+                        holesW: grp.holesW.map((hole) => hole.map((pt) => pt.slice())),
+                    })),
+                    boundaryEdges: Array.from(boundaryEdges).map((edge) => edge?.name || null),
+                    edges: diagEdges,
+                    triangleCount: diagTriangles2D.length,
+                };
+            } else {
+                this.persistentData.lastProfileDiagnostics = {
+                    status: 'no-triangulation',
+                    reason: 'Triangulation did not return any triangles',
+                    loops2D: normalizedLoops.map((loop) => loop.map((pt) => [Number(pt[0]) || 0, Number(pt[1]) || 0])),
+                    loopDepth: depth.slice(),
+                    loopSegmentIds: loopSegIDs.map((ids) => ids.slice()),
+                    groups: groups.map((g) => ({ outer: g.outer, holes: g.holes.slice() })),
+                    triangles2D: [],
+                    trianglesWorld: [],
+                    boundaryLoopsWorld: boundaryLoopsWorld.map((loop) => ({ isHole: Boolean(loop.isHole), pts: loop.pts.map((pt) => pt.slice()) })),
+                    profileGroups: profileGroups.map((grp) => ({
+                        contour2D: grp.contour2D.map((pt) => pt.slice()),
+                        holes2D: grp.holes2D.map((hole) => hole.map((pt) => pt.slice())),
+                        contourW: grp.contourW.map((pt) => pt.slice()),
+                        holesW: grp.holesW.map((hole) => hole.map((pt) => pt.slice())),
+                    })),
+                    boundaryEdges: Array.from(boundaryEdges).map((edge) => edge?.name || null),
+                    edges: diagEdges,
+                    triangleCount: 0,
+                };
             }
+        } else {
+            this.persistentData.lastProfileDiagnostics = {
+                status: 'no-profile',
+                reason: 'No closed sketch loops available for triangulation',
+                loops2D: normalizedLoops.map((loop) => loop.map((pt) => [Number(pt[0]) || 0, Number(pt[1]) || 0])),
+                loopDepth: [],
+                loopSegmentIds: [],
+                groups: [],
+                triangles2D: [],
+                trianglesWorld: [],
+                boundaryLoopsWorld: [],
+                profileGroups: [],
+                boundaryEdges: [],
+                edges: [],
+                triangleCount: 0,
+            };
         }
 
         this._updateSketchChangeState(this.persistentData?.sketch || sketch);
