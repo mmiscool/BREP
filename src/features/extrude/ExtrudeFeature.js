@@ -60,21 +60,22 @@ export class ExtrudeFeature {
 
     // Create the extrude using the robust Sweep implementation (handles holes and per-edge side faces)
     // If user requests a UNION with the same solid the profile came from,
-    // skip the cap that lies on the original face plane to avoid coplanar
-    // overlaps (which can leave an internal seam after CSG).
+    // bias both directions slightly so the sweep fully overlaps the parent
+    // instead of leaving a coplanar cap on the source face.
     const op = String(this.inputParams?.boolean?.operation || 'NONE').toUpperCase();
     const targets = Array.isArray(this.inputParams?.boolean?.targets) ? this.inputParams.boolean.targets : [];
     const parentSolid = faceObj && faceObj.parent && typeof faceObj.parent.getFaceNames === 'function' ? faceObj.parent : null;
     const unionTargetsIncludeParent = op === 'UNION' && parentSolid && targets && targets.some(t => t === parentSolid || (typeof t === 'string' && t === parentSolid.name));
-    const omitBaseCap = !!unionTargetsIncludeParent;
+    const forwardBias = (op === 'SUBTRACT' ? 0.00001 : 0) + (op === 'UNION' ? 0.00001 : 0);
+    const backwardBias = unionTargetsIncludeParent ? 0.00001 : 0;
 
     const extrude = new BREP.Sweep({
       face: faceObj,
-      distance: distance + (op === 'SUBTRACT' ? 0.00001 : 0) + (op === 'UNION' ? 0.00001 : 0), // small nudge to avoid z-fighting with original face when subtracting
-      distanceBack: distanceBack,
+      distance: distance + forwardBias, // small forward nudge helps avoid z-fighting for boolean ops
+      distanceBack: distanceBack + backwardBias,
       mode: 'translate',
       name: this.inputParams.featureID,
-      omitBaseCap,
+      omitBaseCap: false,
     });
     // Attach centerlines for any circular/arc sketch edges in the profile
     try {

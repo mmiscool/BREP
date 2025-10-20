@@ -1,0 +1,957 @@
+{
+  "features": [
+    {
+      "type": "S",
+      "inputParams": {
+        "featureID": "S1",
+        "sketchPlane": null,
+        "editSketch": null,
+        "curveResolution": "32"
+      },
+      "persistentData": {
+        "basis": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "x": [
+            1,
+            0,
+            0
+          ],
+          "y": [
+            0,
+            1,
+            0
+          ],
+          "z": [
+            0,
+            0,
+            1
+          ]
+        },
+        "sketch": {
+          "points": [
+            {
+              "id": 0,
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 1,
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 2,
+              "x": -10.000027,
+              "y": 0,
+              "fixed": false
+            },
+            {
+              "id": 3,
+              "x": 9.99999,
+              "y": 0,
+              "fixed": false
+            },
+            {
+              "id": 5,
+              "x": -20.000068,
+              "y": 0,
+              "fixed": false
+            },
+            {
+              "id": 6,
+              "x": 9.99999,
+              "y": -0.000001,
+              "fixed": false
+            },
+            {
+              "id": 7,
+              "x": 19.99994,
+              "y": -0.000001,
+              "fixed": false
+            },
+            {
+              "id": 8,
+              "x": -20.000068,
+              "y": -30.000045,
+              "fixed": false
+            },
+            {
+              "id": 9,
+              "x": -30.871409,
+              "y": -30.000045,
+              "fixed": false
+            },
+            {
+              "id": 10,
+              "x": -40.000113,
+              "y": -39.128751,
+              "fixed": false
+            },
+            {
+              "id": 11,
+              "x": 39.999916,
+              "y": -39.128751,
+              "fixed": false
+            },
+            {
+              "id": 12,
+              "x": 30.871254,
+              "y": -30.000044,
+              "fixed": false
+            },
+            {
+              "id": 13,
+              "x": 19.99994,
+              "y": -30.000044,
+              "fixed": false
+            },
+            {
+              "id": 14,
+              "x": 19.99994,
+              "y": -0.000001,
+              "fixed": false
+            }
+          ],
+          "geometries": [
+            {
+              "id": 1,
+              "type": "arc",
+              "points": [
+                1,
+                2,
+                3
+              ],
+              "construction": false
+            },
+            {
+              "id": 2,
+              "type": "line",
+              "points": [
+                2,
+                5
+              ],
+              "construction": false
+            },
+            {
+              "id": 3,
+              "type": "line",
+              "points": [
+                6,
+                7
+              ],
+              "construction": false
+            },
+            {
+              "id": 4,
+              "type": "line",
+              "points": [
+                5,
+                8
+              ],
+              "construction": false
+            },
+            {
+              "id": 5,
+              "type": "line",
+              "points": [
+                8,
+                9
+              ],
+              "construction": false
+            },
+            {
+              "id": 6,
+              "type": "line",
+              "points": [
+                9,
+                10
+              ],
+              "construction": false
+            },
+            {
+              "id": 7,
+              "type": "line",
+              "points": [
+                10,
+                11
+              ],
+              "construction": false
+            },
+            {
+              "id": 8,
+              "type": "line",
+              "points": [
+                11,
+                12
+              ],
+              "construction": false
+            },
+            {
+              "id": 9,
+              "type": "line",
+              "points": [
+                12,
+                13
+              ],
+              "construction": false
+            },
+            {
+              "id": 10,
+              "type": "line",
+              "points": [
+                13,
+                14
+              ],
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": 0,
+              "type": "⏚",
+              "points": [
+                0
+              ],
+              "status": "solved",
+              "previousPointValues": "[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true}]"
+            },
+            {
+              "id": 1,
+              "type": "≡",
+              "points": [
+                1,
+                0
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "previousPointValues": "[{\"id\":1,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true}]",
+              "error": null
+            },
+            {
+              "id": 2,
+              "type": "⟺",
+              "points": [
+                1,
+                2
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "radius",
+              "value": 10,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":1,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":2,\"x\":-10.000027,\"y\":0,\"fixed\":false}]"
+            },
+            {
+              "id": 3,
+              "type": "━",
+              "points": [
+                2,
+                0
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":2,\"x\":-10.000027,\"y\":0,\"fixed\":false},{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true}]"
+            },
+            {
+              "id": 4,
+              "type": "━",
+              "points": [
+                0,
+                3
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":3,\"x\":9.99999,\"y\":0,\"fixed\":false}]"
+            },
+            {
+              "id": 5,
+              "type": "━",
+              "points": [
+                2,
+                5
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":2,\"x\":-10.000027,\"y\":0,\"fixed\":false},{\"id\":5,\"x\":-20.000068,\"y\":0,\"fixed\":false}]"
+            },
+            {
+              "id": 6,
+              "type": "≡",
+              "points": [
+                3,
+                6
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "",
+              "error": null,
+              "previousPointValues": "[{\"id\":3,\"x\":10.00724,\"y\":0,\"fixed\":false},{\"id\":6,\"x\":10.00724,\"y\":0,\"fixed\":false}]"
+            },
+            {
+              "id": 7,
+              "type": "━",
+              "points": [
+                6,
+                7
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":6,\"x\":9.99999,\"y\":-0.000001,\"fixed\":false},{\"id\":7,\"x\":19.99994,\"y\":-0.000001,\"fixed\":false}]"
+            },
+            {
+              "id": 8,
+              "type": "⇌",
+              "points": [
+                2,
+                5,
+                6,
+                7
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":2,\"x\":-10.000027,\"y\":0,\"fixed\":false},{\"id\":5,\"x\":-20.000068,\"y\":0,\"fixed\":false},{\"id\":6,\"x\":9.99999,\"y\":-0.000001,\"fixed\":false},{\"id\":7,\"x\":19.99994,\"y\":-0.000001,\"fixed\":false}]"
+            },
+            {
+              "id": 9,
+              "type": "⟺",
+              "points": [
+                5,
+                7
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": 40,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":5,\"x\":-20.000068,\"y\":0,\"fixed\":false},{\"id\":7,\"x\":19.99994,\"y\":-0.000001,\"fixed\":false}]"
+            },
+            {
+              "id": 10,
+              "type": "≡",
+              "points": [
+                14,
+                7
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":14,\"x\":19.99994,\"y\":-0.000001,\"fixed\":false},{\"id\":7,\"x\":19.99994,\"y\":-0.000001,\"fixed\":false}]"
+            },
+            {
+              "id": 11,
+              "type": "│",
+              "points": [
+                13,
+                14
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":13,\"x\":19.99994,\"y\":-30.000044,\"fixed\":false},{\"id\":14,\"x\":19.99994,\"y\":-0.000001,\"fixed\":false}]"
+            },
+            {
+              "id": 12,
+              "type": "│",
+              "points": [
+                5,
+                8
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":5,\"x\":-20.000068,\"y\":0,\"fixed\":false},{\"id\":8,\"x\":-20.000068,\"y\":-30.000045,\"fixed\":false}]"
+            },
+            {
+              "id": 13,
+              "type": "━",
+              "points": [
+                10,
+                11
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":10,\"x\":-40.000113,\"y\":-39.128751,\"fixed\":false},{\"id\":11,\"x\":39.999916,\"y\":-39.128751,\"fixed\":false}]"
+            },
+            {
+              "id": 14,
+              "type": "⇌",
+              "points": [
+                8,
+                9,
+                12,
+                13
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":8,\"x\":-20.000068,\"y\":-30.000045,\"fixed\":false},{\"id\":9,\"x\":-30.871409,\"y\":-30.000045,\"fixed\":false},{\"id\":12,\"x\":30.871254,\"y\":-30.000044,\"fixed\":false},{\"id\":13,\"x\":19.99994,\"y\":-30.000044,\"fixed\":false}]"
+            },
+            {
+              "id": 15,
+              "type": "━",
+              "points": [
+                8,
+                13
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "",
+              "error": null,
+              "previousPointValues": "[{\"id\":8,\"x\":-20.000068,\"y\":-30.000044,\"fixed\":false},{\"id\":13,\"x\":19.999937,\"y\":-30.000044,\"fixed\":false}]"
+            },
+            {
+              "id": 16,
+              "type": "━",
+              "points": [
+                8,
+                9
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "",
+              "error": null,
+              "previousPointValues": "[{\"id\":8,\"x\":-20.000068,\"y\":-30.000044,\"fixed\":false},{\"id\":9,\"x\":-30.871412,\"y\":-30.000044,\"fixed\":false}]"
+            },
+            {
+              "id": 17,
+              "type": "━",
+              "points": [
+                12,
+                13
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "",
+              "error": null,
+              "previousPointValues": "[{\"id\":12,\"x\":30.871254,\"y\":-30.000044,\"fixed\":false},{\"id\":13,\"x\":19.999937,\"y\":-30.000044,\"fixed\":false}]"
+            },
+            {
+              "id": 18,
+              "type": "⇌",
+              "points": [
+                8,
+                9,
+                12,
+                13
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":8,\"x\":-20.000068,\"y\":-30.000045,\"fixed\":false},{\"id\":9,\"x\":-30.871409,\"y\":-30.000045,\"fixed\":false},{\"id\":12,\"x\":30.871254,\"y\":-30.000044,\"fixed\":false},{\"id\":13,\"x\":19.99994,\"y\":-30.000044,\"fixed\":false}]"
+            },
+            {
+              "id": 19,
+              "type": "∠",
+              "points": [
+                10,
+                9,
+                10,
+                11
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": 45,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "previousPointValues": "[{\"id\":10,\"x\":-40.000113,\"y\":-39.128751,\"fixed\":false},{\"id\":9,\"x\":-30.871409,\"y\":-30.000045,\"fixed\":false},{\"id\":10,\"x\":-40.000113,\"y\":-39.128751,\"fixed\":false},{\"id\":11,\"x\":39.999916,\"y\":-39.128751,\"fixed\":false}]",
+              "error": null
+            },
+            {
+              "id": 20,
+              "type": "⇌",
+              "points": [
+                9,
+                10,
+                11,
+                12
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":9,\"x\":-30.871409,\"y\":-30.000045,\"fixed\":false},{\"id\":10,\"x\":-40.000113,\"y\":-39.128751,\"fixed\":false},{\"id\":11,\"x\":39.999916,\"y\":-39.128751,\"fixed\":false},{\"id\":12,\"x\":30.871254,\"y\":-30.000044,\"fixed\":false}]"
+            },
+            {
+              "id": 21,
+              "type": "⟺",
+              "points": [
+                10,
+                11
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": 80,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":10,\"x\":-40.000113,\"y\":-39.128751,\"fixed\":false},{\"id\":11,\"x\":39.999916,\"y\":-39.128751,\"fixed\":false}]"
+            },
+            {
+              "id": 22,
+              "type": "⟺",
+              "points": [
+                5,
+                8
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": 30,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "error": null,
+              "previousPointValues": "[{\"id\":5,\"x\":-20.000068,\"y\":0,\"fixed\":false},{\"id\":8,\"x\":-20.000068,\"y\":-30.000045,\"fixed\":false}]"
+            }
+          ]
+        },
+        "lastSketchSignature": "{\"points\":[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":1,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":2,\"x\":-10.000027,\"y\":0,\"fixed\":false},{\"id\":3,\"x\":9.99999,\"y\":0,\"fixed\":false},{\"id\":5,\"x\":-20.000068,\"y\":0,\"fixed\":false},{\"id\":6,\"x\":9.99999,\"y\":-0.000001,\"fixed\":false},{\"id\":7,\"x\":19.99994,\"y\":-0.000001,\"fixed\":false},{\"id\":8,\"x\":-20.000068,\"y\":-30.000045,\"fixed\":false},{\"id\":9,\"x\":-30.871409,\"y\":-30.000045,\"fixed\":false},{\"id\":10,\"x\":-40.000113,\"y\":-39.128751,\"fixed\":false},{\"id\":11,\"x\":39.999916,\"y\":-39.128751,\"fixed\":false},{\"id\":12,\"x\":30.871254,\"y\":-30.000044,\"fixed\":false},{\"id\":13,\"x\":19.99994,\"y\":-30.000044,\"fixed\":false},{\"id\":14,\"x\":19.99994,\"y\":-0.000001,\"fixed\":false}],\"geometries\":[{\"id\":1,\"type\":\"arc\",\"points\":[1,2,3],\"construction\":false},{\"id\":2,\"type\":\"line\",\"points\":[2,5],\"construction\":false},{\"id\":3,\"type\":\"line\",\"points\":[6,7],\"construction\":false},{\"id\":4,\"type\":\"line\",\"points\":[5,8],\"construction\":false},{\"id\":5,\"type\":\"line\",\"points\":[8,9],\"construction\":false},{\"id\":6,\"type\":\"line\",\"points\":[9,10],\"construction\":false},{\"id\":7,\"type\":\"line\",\"points\":[10,11],\"construction\":false},{\"id\":8,\"type\":\"line\",\"points\":[11,12],\"construction\":false},{\"id\":9,\"type\":\"line\",\"points\":[12,13],\"construction\":false},{\"id\":10,\"type\":\"line\",\"points\":[13,14],\"construction\":false}],\"constraints\":[{\"id\":0,\"type\":\"⏚\",\"points\":[0],\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":0,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true}]\"},{\"id\":1,\"type\":\"≡\",\"points\":[1,0],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":1,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true},{\\\"id\\\":0,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true}]\",\"error\":null},{\"id\":2,\"type\":\"⟺\",\"points\":[1,2],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"radius\",\"value\":10,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":1,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true},{\\\"id\\\":2,\\\"x\\\":-10.000027,\\\"y\\\":0,\\\"fixed\\\":false}]\"},{\"id\":3,\"type\":\"━\",\"points\":[2,0],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":2,\\\"x\\\":-10.000027,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":0,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true}]\"},{\"id\":4,\"type\":\"━\",\"points\":[0,3],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":0,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true},{\\\"id\\\":3,\\\"x\\\":9.99999,\\\"y\\\":0,\\\"fixed\\\":false}]\"},{\"id\":5,\"type\":\"━\",\"points\":[2,5],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":2,\\\"x\\\":-10.000027,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":5,\\\"x\\\":-20.000068,\\\"y\\\":0,\\\"fixed\\\":false}]\"},{\"id\":6,\"type\":\"≡\",\"points\":[3,6],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":3,\\\"x\\\":10.00724,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":6,\\\"x\\\":10.00724,\\\"y\\\":0,\\\"fixed\\\":false}]\"},{\"id\":7,\"type\":\"━\",\"points\":[6,7],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":6,\\\"x\\\":9.99999,\\\"y\\\":-0.000001,\\\"fixed\\\":false},{\\\"id\\\":7,\\\"x\\\":19.99994,\\\"y\\\":-0.000001,\\\"fixed\\\":false}]\"},{\"id\":8,\"type\":\"⇌\",\"points\":[2,5,6,7],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":2,\\\"x\\\":-10.000027,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":5,\\\"x\\\":-20.000068,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":6,\\\"x\\\":9.99999,\\\"y\\\":-0.000001,\\\"fixed\\\":false},{\\\"id\\\":7,\\\"x\\\":19.99994,\\\"y\\\":-0.000001,\\\"fixed\\\":false}]\"},{\"id\":9,\"type\":\"⟺\",\"points\":[5,7],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":40,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":5,\\\"x\\\":-20.000068,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":7,\\\"x\\\":19.99994,\\\"y\\\":-0.000001,\\\"fixed\\\":false}]\"},{\"id\":10,\"type\":\"≡\",\"points\":[14,7],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":14,\\\"x\\\":19.99994,\\\"y\\\":-0.000001,\\\"fixed\\\":false},{\\\"id\\\":7,\\\"x\\\":19.99994,\\\"y\\\":-0.000001,\\\"fixed\\\":false}]\"},{\"id\":11,\"type\":\"│\",\"points\":[13,14],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":13,\\\"x\\\":19.99994,\\\"y\\\":-30.000044,\\\"fixed\\\":false},{\\\"id\\\":14,\\\"x\\\":19.99994,\\\"y\\\":-0.000001,\\\"fixed\\\":false}]\"},{\"id\":12,\"type\":\"│\",\"points\":[5,8],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":5,\\\"x\\\":-20.000068,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":8,\\\"x\\\":-20.000068,\\\"y\\\":-30.000045,\\\"fixed\\\":false}]\"},{\"id\":13,\"type\":\"━\",\"points\":[10,11],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":10,\\\"x\\\":-40.000113,\\\"y\\\":-39.128751,\\\"fixed\\\":false},{\\\"id\\\":11,\\\"x\\\":39.999916,\\\"y\\\":-39.128751,\\\"fixed\\\":false}]\"},{\"id\":14,\"type\":\"⇌\",\"points\":[8,9,12,13],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":8,\\\"x\\\":-20.000068,\\\"y\\\":-30.000045,\\\"fixed\\\":false},{\\\"id\\\":9,\\\"x\\\":-30.871409,\\\"y\\\":-30.000045,\\\"fixed\\\":false},{\\\"id\\\":12,\\\"x\\\":30.871254,\\\"y\\\":-30.000044,\\\"fixed\\\":false},{\\\"id\\\":13,\\\"x\\\":19.99994,\\\"y\\\":-30.000044,\\\"fixed\\\":false}]\"},{\"id\":15,\"type\":\"━\",\"points\":[8,13],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":8,\\\"x\\\":-20.000068,\\\"y\\\":-30.000044,\\\"fixed\\\":false},{\\\"id\\\":13,\\\"x\\\":19.999937,\\\"y\\\":-30.000044,\\\"fixed\\\":false}]\"},{\"id\":16,\"type\":\"━\",\"points\":[8,9],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":8,\\\"x\\\":-20.000068,\\\"y\\\":-30.000044,\\\"fixed\\\":false},{\\\"id\\\":9,\\\"x\\\":-30.871412,\\\"y\\\":-30.000044,\\\"fixed\\\":false}]\"},{\"id\":17,\"type\":\"━\",\"points\":[12,13],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":12,\\\"x\\\":30.871254,\\\"y\\\":-30.000044,\\\"fixed\\\":false},{\\\"id\\\":13,\\\"x\\\":19.999937,\\\"y\\\":-30.000044,\\\"fixed\\\":false}]\"},{\"id\":18,\"type\":\"⇌\",\"points\":[8,9,12,13],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":8,\\\"x\\\":-20.000068,\\\"y\\\":-30.000045,\\\"fixed\\\":false},{\\\"id\\\":9,\\\"x\\\":-30.871409,\\\"y\\\":-30.000045,\\\"fixed\\\":false},{\\\"id\\\":12,\\\"x\\\":30.871254,\\\"y\\\":-30.000044,\\\"fixed\\\":false},{\\\"id\\\":13,\\\"x\\\":19.99994,\\\"y\\\":-30.000044,\\\"fixed\\\":false}]\"},{\"id\":19,\"type\":\"∠\",\"points\":[10,9,10,11],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":45,\"valueNeedsSetup\":true,\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":10,\\\"x\\\":-40.000113,\\\"y\\\":-39.128751,\\\"fixed\\\":false},{\\\"id\\\":9,\\\"x\\\":-30.871409,\\\"y\\\":-30.000045,\\\"fixed\\\":false},{\\\"id\\\":10,\\\"x\\\":-40.000113,\\\"y\\\":-39.128751,\\\"fixed\\\":false},{\\\"id\\\":11,\\\"x\\\":39.999916,\\\"y\\\":-39.128751,\\\"fixed\\\":false}]\",\"error\":null},{\"id\":20,\"type\":\"⇌\",\"points\":[9,10,11,12],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":9,\\\"x\\\":-30.871409,\\\"y\\\":-30.000045,\\\"fixed\\\":false},{\\\"id\\\":10,\\\"x\\\":-40.000113,\\\"y\\\":-39.128751,\\\"fixed\\\":false},{\\\"id\\\":11,\\\"x\\\":39.999916,\\\"y\\\":-39.128751,\\\"fixed\\\":false},{\\\"id\\\":12,\\\"x\\\":30.871254,\\\"y\\\":-30.000044,\\\"fixed\\\":false}]\"},{\"id\":21,\"type\":\"⟺\",\"points\":[10,11],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":80,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":10,\\\"x\\\":-40.000113,\\\"y\\\":-39.128751,\\\"fixed\\\":false},{\\\"id\\\":11,\\\"x\\\":39.999916,\\\"y\\\":-39.128751,\\\"fixed\\\":false}]\"},{\"id\":22,\"type\":\"⟺\",\"points\":[5,8],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":30,\"valueNeedsSetup\":true,\"status\":\"solved\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":5,\\\"x\\\":-20.000068,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":8,\\\"x\\\":-20.000068,\\\"y\\\":-30.000045,\\\"fixed\\\":false}]\"}]}",
+        "lastSketchChanged": false,
+        "sketchDimOffsets": {
+          "2": {
+            "dr": 2.067394656809347,
+            "dp": -1.0771143089827064
+          },
+          "9": {
+            "d": 10.551639871621566
+          },
+          "19": {
+            "du": 4.95715655619077,
+            "dv": 3.324995762141285
+          },
+          "21": {
+            "d": -5.925098074068657
+          },
+          "22": {
+            "d": -14.725122638448056
+          }
+        }
+      },
+      "timestamp": 1760835766770
+    },
+    {
+      "type": "E",
+      "inputParams": {
+        "featureID": "E2",
+        "profile": "S1:PROFILE",
+        "distance": "30",
+        "distanceBack": 0,
+        "boolean": {
+          "targets": [],
+          "operation": "NONE"
+        }
+      },
+      "persistentData": {},
+      "timestamp": 1760835766909
+    },
+    {
+      "type": "S",
+      "inputParams": {
+        "featureID": "S3",
+        "sketchPlane": null,
+        "editSketch": null,
+        "curveResolution": "32"
+      },
+      "persistentData": {
+        "basis": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "x": [
+            1,
+            0,
+            0
+          ],
+          "y": [
+            0,
+            1,
+            0
+          ],
+          "z": [
+            0,
+            0,
+            1
+          ]
+        },
+        "sketch": {
+          "points": [
+            {
+              "id": 0,
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 1,
+              "x": -20.000068,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 2,
+              "x": -10.000027,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 3,
+              "x": 9.99999,
+              "y": -0.000001,
+              "fixed": true
+            },
+            {
+              "id": 4,
+              "x": 19.99994,
+              "y": -0.000001,
+              "fixed": true
+            },
+            {
+              "id": 5,
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 6,
+              "x": -20.000068,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 7,
+              "x": 19.99994,
+              "y": -0.000001,
+              "fixed": true
+            },
+            {
+              "id": 8,
+              "x": 0,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 9,
+              "x": -10.000027,
+              "y": 0,
+              "fixed": true
+            },
+            {
+              "id": 10,
+              "x": 9.99999,
+              "y": -0.000001,
+              "fixed": true
+            }
+          ],
+          "geometries": [
+            {
+              "id": 1,
+              "type": "arc",
+              "points": [
+                5,
+                6,
+                7
+              ],
+              "construction": false
+            },
+            {
+              "id": 2,
+              "type": "arc",
+              "points": [
+                8,
+                9,
+                10
+              ],
+              "construction": false
+            },
+            {
+              "id": 3,
+              "type": "line",
+              "points": [
+                1,
+                2
+              ],
+              "construction": false
+            },
+            {
+              "id": 4,
+              "type": "line",
+              "points": [
+                3,
+                4
+              ],
+              "construction": false
+            }
+          ],
+          "constraints": [
+            {
+              "id": 0,
+              "type": "⏚",
+              "points": [
+                0
+              ],
+              "status": "solved",
+              "previousPointValues": "[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true}]"
+            },
+            {
+              "id": 1,
+              "type": "⏚",
+              "points": [
+                1
+              ],
+              "status": "solved",
+              "previousPointValues": "[{\"id\":1,\"x\":-20.000068,\"y\":0,\"fixed\":true}]"
+            },
+            {
+              "id": 2,
+              "type": "⏚",
+              "points": [
+                2
+              ],
+              "status": "solved",
+              "previousPointValues": "[{\"id\":2,\"x\":-10.000027,\"y\":0,\"fixed\":true}]"
+            },
+            {
+              "id": 3,
+              "type": "⏚",
+              "points": [
+                3
+              ],
+              "status": "solved",
+              "previousPointValues": "[{\"id\":3,\"x\":9.99999,\"y\":-0.000001,\"fixed\":true}]"
+            },
+            {
+              "id": 4,
+              "type": "⏚",
+              "points": [
+                4
+              ],
+              "status": "solved",
+              "previousPointValues": "[{\"id\":4,\"x\":19.99994,\"y\":-0.000001,\"fixed\":true}]"
+            },
+            {
+              "id": 5,
+              "type": "≡",
+              "points": [
+                5,
+                0
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "previousPointValues": "[{\"id\":5,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true}]",
+              "error": null
+            },
+            {
+              "id": 6,
+              "type": "≡",
+              "points": [
+                6,
+                1
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "previousPointValues": "[{\"id\":6,\"x\":-20.000068,\"y\":0,\"fixed\":true},{\"id\":1,\"x\":-20.000068,\"y\":0,\"fixed\":true}]",
+              "error": null
+            },
+            {
+              "id": 7,
+              "type": "≡",
+              "points": [
+                7,
+                4
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "previousPointValues": "[{\"id\":7,\"x\":19.99994,\"y\":-0.000001,\"fixed\":true},{\"id\":4,\"x\":19.99994,\"y\":-0.000001,\"fixed\":true}]",
+              "error": null
+            },
+            {
+              "id": 8,
+              "type": "≡",
+              "points": [
+                8,
+                0
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "previousPointValues": "[{\"id\":8,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true}]",
+              "error": null
+            },
+            {
+              "id": 9,
+              "type": "≡",
+              "points": [
+                10,
+                3
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "previousPointValues": "[{\"id\":10,\"x\":9.99999,\"y\":-0.000001,\"fixed\":true},{\"id\":3,\"x\":9.99999,\"y\":-0.000001,\"fixed\":true}]",
+              "error": null
+            },
+            {
+              "id": 10,
+              "type": "≡",
+              "points": [
+                9,
+                2
+              ],
+              "labelX": 0,
+              "labelY": 0,
+              "displayStyle": "",
+              "value": null,
+              "valueNeedsSetup": true,
+              "status": "solved",
+              "previousPointValues": "[{\"id\":9,\"x\":-10.000027,\"y\":0,\"fixed\":true},{\"id\":2,\"x\":-10.000027,\"y\":0,\"fixed\":true}]",
+              "error": null
+            }
+          ]
+        },
+        "lastSketchSignature": "{\"points\":[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":1,\"x\":-20.000068,\"y\":0,\"fixed\":true},{\"id\":2,\"x\":-10.000027,\"y\":0,\"fixed\":true},{\"id\":3,\"x\":9.99999,\"y\":-0.000001,\"fixed\":true},{\"id\":4,\"x\":19.99994,\"y\":-0.000001,\"fixed\":true},{\"id\":5,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":6,\"x\":-20.000068,\"y\":0,\"fixed\":true},{\"id\":7,\"x\":19.99994,\"y\":-0.000001,\"fixed\":true},{\"id\":8,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":9,\"x\":-10.000027,\"y\":0,\"fixed\":true},{\"id\":10,\"x\":9.99999,\"y\":-0.000001,\"fixed\":true}],\"geometries\":[{\"id\":1,\"type\":\"arc\",\"points\":[5,6,7],\"construction\":false},{\"id\":2,\"type\":\"arc\",\"points\":[8,9,10],\"construction\":false},{\"id\":3,\"type\":\"line\",\"points\":[1,2],\"construction\":false},{\"id\":4,\"type\":\"line\",\"points\":[3,4],\"construction\":false}],\"constraints\":[{\"id\":0,\"type\":\"⏚\",\"points\":[0],\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":0,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true}]\"},{\"id\":1,\"type\":\"⏚\",\"points\":[1],\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":1,\\\"x\\\":-20.000068,\\\"y\\\":0,\\\"fixed\\\":true}]\"},{\"id\":2,\"type\":\"⏚\",\"points\":[2],\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":2,\\\"x\\\":-10.000027,\\\"y\\\":0,\\\"fixed\\\":true}]\"},{\"id\":3,\"type\":\"⏚\",\"points\":[3],\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":3,\\\"x\\\":9.99999,\\\"y\\\":-0.000001,\\\"fixed\\\":true}]\"},{\"id\":4,\"type\":\"⏚\",\"points\":[4],\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":4,\\\"x\\\":19.99994,\\\"y\\\":-0.000001,\\\"fixed\\\":true}]\"},{\"id\":5,\"type\":\"≡\",\"points\":[5,0],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":5,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true},{\\\"id\\\":0,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true}]\",\"error\":null},{\"id\":6,\"type\":\"≡\",\"points\":[6,1],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":6,\\\"x\\\":-20.000068,\\\"y\\\":0,\\\"fixed\\\":true},{\\\"id\\\":1,\\\"x\\\":-20.000068,\\\"y\\\":0,\\\"fixed\\\":true}]\",\"error\":null},{\"id\":7,\"type\":\"≡\",\"points\":[7,4],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":7,\\\"x\\\":19.99994,\\\"y\\\":-0.000001,\\\"fixed\\\":true},{\\\"id\\\":4,\\\"x\\\":19.99994,\\\"y\\\":-0.000001,\\\"fixed\\\":true}]\",\"error\":null},{\"id\":8,\"type\":\"≡\",\"points\":[8,0],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":8,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true},{\\\"id\\\":0,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true}]\",\"error\":null},{\"id\":9,\"type\":\"≡\",\"points\":[10,3],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":10,\\\"x\\\":9.99999,\\\"y\\\":-0.000001,\\\"fixed\\\":true},{\\\"id\\\":3,\\\"x\\\":9.99999,\\\"y\\\":-0.000001,\\\"fixed\\\":true}]\",\"error\":null},{\"id\":10,\"type\":\"≡\",\"points\":[9,2],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":9,\\\"x\\\":-10.000027,\\\"y\\\":0,\\\"fixed\\\":true},{\\\"id\\\":2,\\\"x\\\":-10.000027,\\\"y\\\":0,\\\"fixed\\\":true}]\",\"error\":null}]}",
+        "lastSketchChanged": false,
+        "externalRefs": [
+          {
+            "edgeId": 112762,
+            "edgeName": "E2:G2_SW|E2:S1:PROFILE_START",
+            "solidName": "E2",
+            "p0": 1,
+            "p1": 2
+          },
+          {
+            "edgeId": 112774,
+            "edgeName": "E2:G3_SW|E2:S1:PROFILE_START",
+            "solidName": "E2",
+            "p0": 3,
+            "p1": 4
+          }
+        ],
+        "sketchDimOffsets": {}
+      },
+      "timestamp": 1760835766923
+    },
+    {
+      "type": "E",
+      "inputParams": {
+        "featureID": "E4",
+        "profile": "S3:PROFILE",
+        "distance": "0",
+        "distanceBack": "10",
+        "boolean": {
+          "targets": [
+            "E2"
+          ],
+          "operation": "UNION"
+        }
+      },
+      "persistentData": {},
+      "timestamp": 1760836118293
+    }
+  ],
+  "idCounter": 4,
+  "expressions": "//Examples:\nx = 10 + 6; \ny = x * 2;",
+  "pmiViews": [],
+  "metadata": {},
+  "assemblyConstraints": [],
+  "assemblyConstraintIdCounter": 0
+}

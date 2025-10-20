@@ -84,8 +84,8 @@ async function registerPartFileTests() {
                 testFunctions.push({
                     test: importTest,
                     printArtifacts: false,
-                    exportFaces: false,
-                    exportSolids: false,
+                    exportFaces: true,
+                    exportSolids: true,
                     resetHistory: true,
                     allowErrors: true,
                     _sourceFile: filePath,

@@ -9,6 +9,123 @@
 import manifold from "./setupManifold.js";
 import { Solid } from "./BetterSolid.js";
 
+const __booleanDebugConfig = (() => {
+  try {
+    if (typeof process === 'undefined' || !process?.env) return null;
+    const raw = process.env.DEBUG_BOOLEAN;
+    if (!raw) return null;
+    const tokens = String(raw)
+      .split(/[,;|]+|\s+/g)
+      .map(t => t.trim())
+      .filter(Boolean);
+    if (!tokens.length) return null;
+    const cfg = {
+      all: false,
+      ids: new Set(),
+      names: [],
+      ops: new Set(),
+    };
+    for (const tokenRaw of tokens) {
+      const token = tokenRaw.trim();
+      if (!token) continue;
+      const upper = token.toUpperCase();
+      if (upper === '*' || upper === 'ALL' || upper === 'TRUE' || upper === '1') {
+        cfg.all = true;
+        continue;
+      }
+      if (upper.startsWith('NAME:')) {
+        const idx = token.indexOf(':');
+        const namePart = idx >= 0 ? token.slice(idx + 1).trim().toLowerCase() : '';
+        if (namePart) cfg.names.push(namePart);
+        continue;
+      }
+      if (upper.startsWith('OP:')) {
+        const opPart = upper.slice(3).trim();
+        if (opPart) cfg.ops.add(opPart);
+        continue;
+      }
+      cfg.ids.add(token);
+    }
+    return cfg;
+  } catch {
+    return null;
+  }
+})();
+
+function __booleanDebugSummarizeSolid(solid) {
+  if (!solid || typeof solid !== 'object') return { name: '(null)' };
+  const summary = {
+    name: solid.name || solid.owningFeatureID || solid.id || solid.uuid || '(unnamed)',
+  };
+  if (solid.owningFeatureID && solid.owningFeatureID !== summary.name) {
+    summary.owningFeatureID = solid.owningFeatureID;
+  }
+  try {
+    const vp = solid._vertProperties;
+    if (Array.isArray(vp)) summary.vertexCount = Math.floor(vp.length / 3);
+  } catch { }
+  try {
+    const tris = solid._triVerts || solid._triangles;
+    if (Array.isArray(tris)) summary.triangleCount = Math.floor(tris.length / 3);
+  } catch { }
+  return summary;
+}
+
+function __booleanDebugMatch(featureID, op, baseSolid, tools) {
+  const cfg = __booleanDebugConfig;
+  if (!cfg) return false;
+  if (cfg.all) return true;
+
+  const ids = cfg.ids;
+  const names = cfg.names;
+  const ops = cfg.ops;
+
+  const normalizeName = (obj) => {
+    if (!obj || typeof obj !== 'object') return '';
+    const raw = obj.name || obj.owningFeatureID || obj.id || obj.uuid || '';
+    return String(raw || '').trim();
+  };
+
+  const matchesNamePattern = (value) => {
+    if (!names || names.length === 0) return false;
+    const lower = String(value || '').toLowerCase();
+    if (!lower) return false;
+    for (const pat of names) {
+      if (lower.includes(pat)) return true;
+    }
+    return false;
+  };
+
+  if (featureID != null && ids.has(String(featureID))) return true;
+
+  const opUpper = String(op || '').toUpperCase();
+  if (opUpper && ops.has(opUpper)) return true;
+
+  const baseName = normalizeName(baseSolid);
+  if (baseName) {
+    if (ids.has(baseName)) return true;
+    if (matchesNamePattern(baseName)) return true;
+  }
+
+  for (const tool of tools || []) {
+    const toolName = normalizeName(tool);
+    if (!toolName) continue;
+    if (ids.has(toolName)) return true;
+    if (matchesNamePattern(toolName)) return true;
+  }
+
+  return false;
+}
+
+function __booleanDebugLogger(featureID, op, baseSolid, tools) {
+  const shouldLog = __booleanDebugMatch(featureID, op, baseSolid, tools);
+  if (!shouldLog) return () => {};
+  const tag = (featureID != null) ? `[BooleanDebug ${featureID}]` : '[BooleanDebug]';
+  return (...args) => {
+    try { console.log(tag, ...args); } catch { }
+  };
+}
+
 export async function applyBooleanOperation(partHistory, baseSolid, booleanParam, featureID) {
   try {
     if (!booleanParam || typeof booleanParam !== 'object') return { added: [baseSolid], removed: [] };
@@ -45,6 +162,15 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
     }
 
     if (tools.length === 0) return { added: [baseSolid], removed: [] };
+
+    const debugLog = __booleanDebugLogger(featureID, op, baseSolid, tools);
+    debugLog('Starting boolean', {
+      featureID,
+      operation: op,
+      base: __booleanDebugSummarizeSolid(baseSolid),
+      tools: tools.map(__booleanDebugSummarizeSolid),
+      targetCount: tools.length,
+    });
 
     // Optional: Offset sweep start/end cap faces on the tool when coplanar with target faces.
     // Applies only for SUBTRACT where `baseSolid` acts as the tool against scene targets.
@@ -321,6 +447,11 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
           continue;
         } catch (e1) {
           // Fallback A: try on welded clones with tiny epsilon
+          debugLog('Primary subtract failed; attempting welded fallback', {
+            message: e1?.message || e1,
+            target: __booleanDebugSummarizeSolid(target),
+            tool: __booleanDebugSummarizeSolid(baseSolid),
+          });
           try {
             const a = typeof target.clone === 'function' ? target.clone() : target;
             const b = typeof baseSolid.clone === 'function' ? baseSolid.clone() : baseSolid;
@@ -336,6 +467,9 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
           } catch (e2) {
             // Fallback B1: tweak Fillet tool for open-edge subtract and retry
             try {
+              debugLog('Welded subtract fallback failed; attempting fillet regenerate fallback', {
+                message: e2?.message || e2,
+              });
               const scale = Math.max(1, approxScaleLocal(target));
               const changed = maybeRegenFilletSubtract(baseSolid, scale);
               if (changed) {
@@ -350,6 +484,7 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
             } catch (_) {}
             // Fallback B2: attempt a convex hull of the tool's authored points
             try {
+              debugLog('Fillet regenerate fallback failed; attempting hull fallback');
               const hull = hullFromAuthoring(baseSolid);
               if (hull) {
                 const out = target.subtract(hull);
@@ -361,6 +496,9 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
             } catch (_) {}
             // Give up on this target; add it unchanged so pipeline continues
             try { console.warn('[applyBooleanOperation] SUBTRACT failed; passing through target unchanged'); } catch {}
+            debugLog('All subtract fallbacks failed; passing through target', {
+              target: __booleanDebugSummarizeSolid(target),
+            });
             results.push(target);
           }
         }
@@ -368,6 +506,10 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
       // In SUBTRACT: removed = [all targets, baseSolid]
       const removed = [...tools];
       if (baseSolid) removed.push(baseSolid);
+      debugLog('Subtract boolean finished', {
+        results: results.map(__booleanDebugSummarizeSolid),
+        removed: removed.map(__booleanDebugSummarizeSolid),
+      });
       return { added: results.length ? results : [baseSolid], removed };
     }
 
@@ -437,6 +579,11 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
       try {
         result = (op === 'UNION') ? result.union(tool) : result.intersect(tool);
       } catch (e1) {
+        debugLog('Primary union/intersect failed; attempting welded fallback', {
+          message: e1?.message || e1,
+          tool: __booleanDebugSummarizeSolid(tool),
+          epsilon: eps,
+        });
         // Fallback A: try on welded clones with tiny epsilon
         try {
           const a = typeof result.clone === 'function' ? result.clone() : result;
@@ -449,6 +596,9 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
           // rebuild it without projection and retry.
           let retried = false;
           try {
+            debugLog('Welded fallback failed; attempting fillet regenerate fallback', {
+              message: e2?.message || e2,
+            });
             const changed = maybeRegenerateFilletTool(tool, op, scale);
             if (changed) {
               const a2 = typeof result.clone === 'function' ? result.clone() : result;
@@ -466,6 +616,10 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
       }
     }
     result.visualize();
+    debugLog('Boolean successful', {
+      result: __booleanDebugSummarizeSolid(result),
+      removedCount: tools.length + (baseSolid ? 1 : 0),
+    });
     try { result.name = featureID || result.name || 'RESULT'; } catch (_) { }
     // UNION/INTERSECT: remove tools and the base solid (replace base with result)
     const removed = tools.slice();
@@ -474,6 +628,11 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
   } catch (err) {
     // On failure, pass through original to avoid breaking the pipeline
     console.warn('[applyBooleanOperation] failed:', err?.message || err);
+    const debugLog = __booleanDebugLogger(featureID, booleanParam?.operation, baseSolid, []);
+    debugLog('applyBooleanOperation threw; returning base solid', {
+      error: err?.message || err,
+      stack: err?.stack || null,
+    });
     return { added: [baseSolid], removed: [] };
   }
 }
