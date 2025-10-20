@@ -514,7 +514,16 @@ export class SketchFeature {
                 // CCW sweep in [0, 2π). If start≈end, treat as full circle.
                 let d = a1 - a0; d = ((d % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI); if (Math.abs(d) < 1e-6) d = 2*Math.PI;
                 const n=Math.max(8, Math.ceil(curveRes*(d)/(2*Math.PI)));
-                const pts=[]; for(let i=0;i<=n;i++){ const t=a0+d*(i/n); pts.push([cx+r*Math.cos(t), cy+r*Math.sin(t)]);} 
+                const pts=[]; 
+                for(let i=0;i<=n;i++){ 
+                    const t=a0+d*(i/n); 
+                    pts.push([cx+r*Math.cos(t), cy+r*Math.sin(t)]);
+                }
+                if (pts.length){
+                    // Snap endpoints to exact sketch values so shared joints line up after discretization
+                    pts[0] = [sa.x, sa.y];
+                    pts[pts.length-1] = [sb.x, sb.y];
+                }
                 segs.push({ id:g.id, pts });
                 const flat=[]; const worldPts=[]; for(const p of pts){ const v=toWorld(p[0],p[1]); flat.push(v.x,v.y,v.z); worldPts.push([v.x,v.y,v.z]); }
                 const lg = new LineGeometry(); lg.setPositions(flat);
@@ -525,7 +534,14 @@ export class SketchFeature {
                 edges.push(e); edgeBySegId.set(g.id, e);
             } else if (g.type==='circle' && g.points?.length===2) {
                 const c = pointById.get(g.points[0]); const rp=pointById.get(g.points[1]); if(!c||!rp) continue;
-                const cx=c.x, cy=c.y; const r=Math.hypot(rp.x-cx, rp.y-cy); const n=Math.max(8, curveRes); const pts=[]; for(let i=0;i<=n;i++){ const t=(i/n)*Math.PI*2; pts.push([cx+r*Math.cos(t), cy+r*Math.sin(t)]);} 
+                const cx=c.x, cy=c.y; const r=Math.hypot(rp.x-cx, rp.y-cy); const n=Math.max(8, curveRes); const pts=[]; 
+                for(let i=0;i<=n;i++){ const t=(i/n)*Math.PI*2; pts.push([cx+r*Math.cos(t), cy+r*Math.sin(t)]);} 
+                if (pts.length){
+                    // Ensure perfect closure so hole loops stay connected
+                    const first=[cx+r, cy];
+                    pts[0] = first;
+                    pts[pts.length-1] = [first[0], first[1]];
+                }
                 segs.push({ id:g.id, pts });
                 const flat=[]; const worldPts=[]; for(const p of pts){ const v=toWorld(p[0],p[1]); flat.push(v.x,v.y,v.z); worldPts.push([v.x,v.y,v.z]); }
                 const lg = new LineGeometry(); lg.setPositions(flat);
