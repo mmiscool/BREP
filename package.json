@@ -5,7 +5,7 @@
     "dev": "pnpm generateLicenses && vite --host 0.0.0.0",
     "build": "pnpm generateLicenses && vite build",
     "start": "pnpm dev",
-    "liveTesting": "nodemon --watch src --watch tests --ext js --exec \"pnpm run tests\"",
+    "liveTesting": "nodemon --watch src --watch tests --ext js --exec \"pnpm run test\"",
     "test": "node ./src/tests/tests.js",
     "debug:boolean": "node ./src/tests/debugBoolean.js",
     "generateLicenses": "node ./generateLicenses.js",

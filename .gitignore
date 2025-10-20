@@ -4,6 +4,7 @@ dist/*
 *aiCoder/llmConfig*
 *aiCoder/backups/*
 tests/results/*
+tests/test-run.log
 test-results/*
 .parcel-cache/*
 .vscode/*

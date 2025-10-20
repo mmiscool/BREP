@@ -117,16 +117,6 @@ export function uint8ArrayToBase64(uint8) {
   return btoa(binary);
 }
 
-export function summarizeRecord(record) {
-  if (!record) return null;
-  return {
-    name: record.name || '',
-    savedAt: record.savedAt || null,
-    hasHistory: !!record.data,
-    hasMesh: !!record.data3mf,
-  };
-}
-
 export function setComponentRecord(name, dataObj) {
   if (!name) return;
   const key = MODEL_STORAGE_PREFIX + encodeURIComponent(String(name));

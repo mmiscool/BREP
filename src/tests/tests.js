@@ -21,6 +21,9 @@ import { test_tube } from './test_tube.js';
 import { test_tube_closedLoop } from './test_tube_closedLoop.js';
 import { test_offsetShellGrouping } from './test_offsetShellGrouping.js';
 
+const IS_NODE_RUNTIME = typeof process !== 'undefined' && process.versions && process.versions.node && typeof window === 'undefined';
+const TEST_LOG_PATH = path.join('tests', 'test-run.log');
+
 
 export const testFunctions = [
     { test: test_plane, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
@@ -101,8 +104,18 @@ async function registerPartFileTests() {
 
 
 
-// call runTests if we are in the nodejs environment
-if (typeof process !== "undefined" && process.versions && process.versions.node) runTests();
+// call runTests automatically when executed under Node.js
+if (IS_NODE_RUNTIME) {
+    runTests()
+        .then(() => {
+            // ensure CLI exits promptly once the suite finishes
+            process.exit(0);
+        })
+        .catch((err) => {
+            console.error(err);
+            process.exit(1);
+        });
+}
 
 
 
@@ -110,6 +123,11 @@ if (typeof process !== "undefined" && process.versions && process.versions.node)
 export async function runTests(partHistory = new PartHistory(), callbackToRunBetweenTests = null) {
     if (typeof process !== "undefined" && process.versions && process.versions.node) {
         //await console.clear();
+    }
+
+    if (IS_NODE_RUNTIME) {
+        resetTestLog();
+        logTestEvent('Test run started');
     }
 
     // delete the ./tests/results directory in an asynchronous way
@@ -124,7 +142,21 @@ export async function runTests(partHistory = new PartHistory(), callbackToRunBet
 
         if (testFunction.resetHistory) partHistory.features = [];
 
-        await runSingleTest(testFunction, partHistory);
+        const testName = (testFunction?.test?.name && String(testFunction.test.name)) || 'unnamed_test';
+        if (IS_NODE_RUNTIME) logTestEvent(`Starting ${testName}`);
+
+        let handledError = null;
+        try {
+            handledError = await runSingleTest(testFunction, partHistory);
+        } catch (err) {
+            if (IS_NODE_RUNTIME) logTestEvent(`Test ${testName} failed: ${stringifyError(err)}`);
+            throw err;
+        }
+
+        if (IS_NODE_RUNTIME) {
+            if (handledError) logTestEvent(`Test ${testName} completed with handled error: ${stringifyError(handledError)}`);
+            else logTestEvent(`Test ${testName} completed successfully`);
+        }
 
         if (typeof window !== "undefined") {
             if (typeof callbackToRunBetweenTests === 'function') {
@@ -132,8 +164,8 @@ export async function runTests(partHistory = new PartHistory(), callbackToRunBet
             }
         } else {
             // run each test and export the results to a folder ./tests/results/<testFunction name>/
-            const testName = testFunction.test.name;
-            const exportPath = `./tests/results/${testName}/`;
+            const exportName = testFunction.test.name;
+            const exportPath = `./tests/results/${exportName}/`;
             // create the directory if it does not exist
             if (!fs.existsSync(exportPath)) {
                 fs.mkdirSync(exportPath, { recursive: true });
@@ -183,6 +215,8 @@ export async function runTests(partHistory = new PartHistory(), callbackToRunBet
 
         }
     }
+
+    if (IS_NODE_RUNTIME) logTestEvent('Test run finished');
 }
 
 
@@ -219,6 +253,8 @@ export async function runSingleTest(testFunction, partHistory = new PartHistory(
     }
     // sleep for 1 second to allow any async operations to complete
     await new Promise(resolve => setTimeout(resolve, 1000));
+
+    return error;
 }
 
 
@@ -239,6 +275,37 @@ function writeFile(filePath, content) {
     } catch (error) {
         console.log(`Error writing file ${filePath}:`, error);
     }
+}
+
+function appendToFile(filePath, content) {
+    if (!IS_NODE_RUNTIME) return;
+    try {
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.appendFileSync(filePath, content, 'utf8');
+    } catch (error) {
+        console.log(`Error appending file ${filePath}:`, error);
+    }
+}
+
+function resetTestLog() {
+    if (!IS_NODE_RUNTIME) return;
+    writeFile(TEST_LOG_PATH, '');
+}
+
+function logTestEvent(message) {
+    if (!IS_NODE_RUNTIME) return;
+    const timestamp = new Date().toISOString();
+    appendToFile(TEST_LOG_PATH, `[${timestamp}] ${message}\n`);
+}
+
+function stringifyError(err) {
+    if (!err) return 'Unknown error';
+    if (typeof err === 'string') return err;
+    const message = err?.message || err?.toString?.() || 'Unknown error';
+    return err?.stack ? `${message}\n${err.stack}` : message;
 }
 
 // ---------------- Local helpers for artifact export (Node only) ----------------
