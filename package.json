@@ -7,6 +7,7 @@
     "start": "pnpm dev",
     "liveTesting": "nodemon --watch src --watch tests --ext js --exec \"pnpm run tests\"",
     "test": "node ./src/tests/tests.js",
+    "debug:boolean": "node ./src/tests/debugBoolean.js",
     "generateLicenses": "node ./generateLicenses.js",
     "capture": "node ./scripts/capture.js"
   },

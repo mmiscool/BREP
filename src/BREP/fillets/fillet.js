@@ -2,6 +2,7 @@ import { Solid } from "../BetterSolid.js";
 import manifold from "../setupManifold.js";
 import { buildTightPointCloudWrap } from "../PointCloudWrap.js";
 import * as THREE from 'three';
+import Tess2 from 'tess2';
 import {
     getScaleAdaptiveTolerance,
     getDistanceTolerance,
@@ -22,7 +23,6 @@ import {
     displaceRailPForInflate,
     classifyFilletBoolean,
 } from './inset.js';
-import { generateEndcapFaces } from './common.js';
 import {
     buildWedgeDirect,
     solveCenterFromOffsetPlanesAnchored,
@@ -31,6 +31,7 @@ import {
     removeDegenerateTrianglesAuthoring,
     ensureOutwardOrientationAuthoring,
     enforceTwoManifoldByDropping,
+    computeParallelTransportFrames,
 } from './outset.js';
 
 export { clearFilletCaches, trimFilletCaches } from './inset.js';
@@ -61,6 +62,7 @@ export class FilletSolid extends Solid {
         this.debug = !!debug;
         this.debugStride = 12;
         this._debugObjects = [];
+        this._endcapsGenerated = false; // Track if we've already generated endcaps
         this.operationTargetSolid = null;
         this.filletType = null; // will be set to either "UNION" or "SUBTRACT" 
         // Optional outward bulge distances for end caps (absolute units).
@@ -252,6 +254,8 @@ export class FilletSolid extends Solid {
         const railA = [];   // tangency along faceA direction
         const railB = [];   // tangency along faceB direction
         const sectorDefs = []; // per-sample arc definition: {C,t,r0,angle}
+        const tangentList = []; // tangent vectors for parallel transport
+        const initialUList = []; // initial U vectors aligned to face A
         // Effective fillet arc radius (do not include inflate here).
         // Inflation is applied later as a uniform offset of the entire solid.
         const rEff = Math.max(this.eps, this.radius);
@@ -419,7 +423,7 @@ export class FilletSolid extends Solid {
             }
             axis.normalize();
             const ang = Math.acos(clamp(r0.dot(r1), -1, 1)); // [0, pi]
-            sectorDefs.push({ C: center.clone(), axis, r0: r0.clone(), angle: ang });
+            sectorDefs.push({ C: center.clone(), axis, r0: r0.clone(), r1: r1.clone(), angle: ang });
 
             // --- Debug helpers (draw section vectors) ---
             if (this.debug && (i % this.debugStride === 0)) {
@@ -566,27 +570,15 @@ export class FilletSolid extends Solid {
         const sideRowsA = computeSideStripRows(railPBuild, seamA, isClosed, trisA, widthSubdiv, seamInset, sideOffsetSigned, projectSide, faceA.name, faceDataA);
         const sideRowsB = computeSideStripRows(railPBuild, seamB, isClosed, trisB, widthSubdiv, seamInset, sideOffsetSigned, projectSide, faceB.name, faceDataB);
 
+        // Compute parallel transport frames to prevent self-intersecting meshes
+        const parallelFrames = computeParallelTransportFrames(tangentList, initialUList, isClosed);
+
         buildWedgeDirect(this, baseName,
             railPBuild, sectorDefs, rEff, radialSegments, isClosed, seamA, seamB,
-            { rowsA: sideRowsA, rowsB: sideRowsB });
+            { rowsA: sideRowsA, rowsB: sideRowsB, frames: parallelFrames });
 
         buildSideStripOnFace(this, `${baseName}_SIDE_A`, railPBuild, seamA, isClosed, trisA, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide, sideRowsA);
         buildSideStripOnFace(this, `${baseName}_SIDE_B`, railPBuild, seamB, isClosed, trisB, widthSubdiv, seamInset, sideOffsetSigned, overshootLen, projectSide, sideRowsB);
-
-        // Generate endcaps for open edges after building the main geometry
-        // This ensures the mesh is manifold before entering the cleanup phase
-        if (!isClosed) {
-            try {
-                const initialEndcaps = this._generateEndcapsIfNeeded(rEff, baseName);
-                if (initialEndcaps > 0 && this.debug) {
-                    console.log(`FilletSolid: generated ${initialEndcaps} initial endcaps after wedge construction`);
-                }
-            } catch (e) {
-                if (this.debug) {
-                    console.warn('FilletSolid: initial endcap generation failed:', e?.message || e);
-                }
-            }
-        }
 
         // Heuristic: decide union vs subtract based on bisector direction vs outward normals
         this.filletType = classifyFilletBoolean(nAavg, nBavg, polyLocal);
@@ -788,9 +780,17 @@ export class FilletSolid extends Solid {
      * @returns {number} Number of endcaps generated
      */
     _generateEndcapsIfNeeded(radius, baseName) {
+        // Only generate endcaps once to avoid nested boundaries
+        if (this._endcapsGenerated) {
+            if (this.debug) {
+                console.log('[ENDCAP] Skipping - endcaps already generated');
+            }
+            return 0;
+        }
+
         // Generate endcaps for manifold mesh creation
         if (this.debug) {
-            console.log('Starting endcap generation for manifold mesh...');
+            console.log('[ENDCAP] Starting endcap generation for manifold mesh...');
         }
         
         try {
@@ -798,32 +798,36 @@ export class FilletSolid extends Solid {
             const boundaryLoops = this._findBoundaryLoops();
             if (!boundaryLoops || boundaryLoops.length === 0) {
                 if (this.debug) {
-                    console.log('No boundary loops found - mesh already manifold');
+                    console.log('[ENDCAP] No boundary loops found - mesh already manifold');
                 }
+                this._endcapsGenerated = true;
                 return 0;
             }
             
             if (this.debug) {
-                console.log(`Found ${boundaryLoops.length} boundary loops to patch:`);
+                console.log(`[ENDCAP] Found ${boundaryLoops.length} boundary loops to patch:`);
                 for (let i = 0; i < boundaryLoops.length; i++) {
                     const loop = boundaryLoops[i];
-                    console.log(`  Loop ${i}: ${loop.vertices.length} vertices`);
+                    console.log(`[ENDCAP]   Loop ${i}: ${loop.vertices.length} vertices`);
                 }
             }
             
             const patchCount = this._patchAllHoles(baseName);
+            this._endcapsGenerated = true; // Mark as generated
+            
             if (this.debug) {
                 if (patchCount > 0) {
-                    console.log(`✓ Successfully patched ${patchCount} holes for manifold mesh`);
+                    console.log(`[ENDCAP] ✓ Successfully patched ${patchCount} holes for manifold mesh`);
                 } else {
-                    console.log(`⚠ No holes were patched - check boundary loop detection`);
+                    console.log(`[ENDCAP] ⚠ No holes were patched - check boundary loop detection`);
                 }
             }
             return patchCount;
         } catch (error) {
             if (this.debug) {
-                console.error('Endcap generation failed:', error.message);
+                console.error('[ENDCAP] Endcap generation failed:', error.message);
             }
+            this._endcapsGenerated = true; // Mark as attempted
             return 0;
         }
     }
@@ -914,6 +918,10 @@ export class FilletSolid extends Solid {
             }
         }
 
+        if (this.debug) {
+            console.log(`[BOUNDARY] Found ${boundaryEdges.length} boundary edges from ${triCount} triangles`);
+        }
+
         if (boundaryEdges.length === 0) {
             return [];
         }
@@ -939,6 +947,23 @@ export class FilletSolid extends Solid {
             adjacency.get(b).push(a);
         }
 
+        if (this.debug) {
+            console.log(`[BOUNDARY] Built adjacency map with ${adjacency.size} vertices`);
+            // Check for vertices with more than 2 neighbors (branching/non-manifold)
+            let branchCount = 0;
+            for (const [vertex, neighbors] of adjacency) {
+                if (neighbors.length !== 2) {
+                    branchCount++;
+                    if (branchCount <= 5) { // Show first 5
+                        console.log(`[BOUNDARY] Vertex ${vertex} has ${neighbors.length} neighbors: ${neighbors.join(',')}`);
+                    }
+                }
+            }
+            if (branchCount > 0) {
+                console.log(`[BOUNDARY] Found ${branchCount} vertices with ≠2 neighbors (potential branching)`);
+            }
+        }
+
         const loops = [];
         const visited = new Set();
 
@@ -947,6 +972,9 @@ export class FilletSolid extends Solid {
 
             const loop = this._traceLoop(startVertex, adjacency, visited, vp);
             if (loop && loop.vertices.length >= 3) {
+                if (this.debug) {
+                    console.log(`[BOUNDARY] Traced loop with ${loop.vertices.length} vertices starting from vertex ${startVertex}`);
+                }
                 loops.push(loop);
             }
         }
@@ -965,12 +993,11 @@ export class FilletSolid extends Solid {
     _traceLoop(start, adjacency, visited, vp) {
         const vertices = [];
         const positions = [];
+        const visitedEdges = new Set(); // Track edges we've traversed
         let current = start;
         let previous = -1;
 
         do {
-            if (visited.has(current)) break;
-            
             visited.add(current);
             vertices.push(current);
             
@@ -982,18 +1009,35 @@ export class FilletSolid extends Solid {
             );
             positions.push(pos);
 
-            // Find next vertex
+            // Find next unvisited neighbor
             const neighbors = adjacency.get(current) || [];
             let next = -1;
             
+            // Try to find an unvisited edge
             for (const neighbor of neighbors) {
-                if (neighbor !== previous) {
+                if (neighbor === previous) continue; // Don't go backwards
+                
+                const edgeKey = current < neighbor ? `${current}-${neighbor}` : `${neighbor}-${current}`;
+                if (!visitedEdges.has(edgeKey)) {
                     next = neighbor;
+                    visitedEdges.add(edgeKey);
                     break;
                 }
             }
 
-            if (next === -1 || next === start) break;
+            // If no unvisited edge found, check if we've completed the loop
+            if (next === -1) {
+                // Check if we can close the loop back to start
+                if (neighbors.includes(start) && vertices.length > 2) {
+                    const edgeKey = current < start ? `${current}-${start}` : `${start}-${current}`;
+                    if (!visitedEdges.has(edgeKey)) {
+                        // Loop closes properly
+                        break;
+                    }
+                }
+                // Dead end - incomplete loop
+                break;
+            }
             
             previous = current;
             current = next;
@@ -1019,18 +1063,548 @@ export class FilletSolid extends Solid {
                 return 0;
             }
 
+            console.log(`[ENDCAP] Patching hole ${patchName} with ${positions.length} vertices`);
+
+            // Debug visualization: show boundary loop and vertices
             if (this.debug) {
-                console.log(`Patching hole ${patchName} with ${positions.length} vertices using robust triangulation`);
+                const scene = this.operationTargetSolid?.parent;
+                if (scene) {
+                    // Visualize each vertex as a small sphere
+                    const sphereGeometry = new THREE.SphereGeometry(this.radius * 0.05, 8, 8);
+                    const sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xff6600 }); // Orange
+                    
+                    for (const pos of positions) {
+                        const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+                        sphere.position.copy(pos);
+                        sphere.renderOrder = 100;
+                        scene.add(sphere);
+                        this._debugObjects.push(sphere);
+                    }
+
+                    // Visualize the boundary loop as an orange polyline
+                    const loopPoints = [...positions, positions[0]]; // Close the loop
+                    const loopGeometry = new THREE.BufferGeometry().setFromPoints(loopPoints);
+                    const loopMaterial = new THREE.LineBasicMaterial({ 
+                        color: 0xff6600, // Orange
+                        linewidth: 2,
+                        depthTest: false
+                    });
+                    const loopLine = new THREE.Line(loopGeometry, loopMaterial);
+                    loopLine.renderOrder = 99;
+                    scene.add(loopLine);
+                    this._debugObjects.push(loopLine);
+
+                    console.log(`[DEBUG ENDCAP] Visualized ${positions.length} boundary vertices for ${patchName}`);
+                }
             }
 
-            return this._robustTriangulateLoop(positions, patchName);
+            // Use tess2 to generate an endcap surface by tessellating the projected boundary loop.
+            const tessTriangleCount = this._triangulateLoopWithTess2(loop, patchName);
+            if (tessTriangleCount > 0) {
+                if (this.debug) {
+                    console.log(`[ENDCAP] tess2 triangulation produced ${tessTriangleCount} triangles for ${patchName}`);
+                }
+                return tessTriangleCount;
+            }
+
+            // For fillet end caps, identify arc vertices vs side vertices and triangulate accordingly
+            const filletCapStructure = this._identifyFilletCapStructure(positions);
+            
+            if (filletCapStructure) {
+                // This is a fillet end cap - triangulate between arc and side vertices
+                console.log(`[ENDCAP] Identified fillet end cap structure: ${filletCapStructure.arcVertices.length} arc vertices, ` +
+                              `${filletCapStructure.sideAVertices.length} side A vertices, ` +
+                              `${filletCapStructure.sideBVertices.length} side B vertices`);
+                return this._triangulateFilletEndCap(filletCapStructure, patchName);
+            } else {
+                // Not a fillet end cap, use standard triangulation
+                console.log(`[ENDCAP] No fillet structure found for ${patchName}, using standard triangulation`);
+                return this._robustTriangulateLoop(positions, patchName);
+            }
             
         } catch (error) {
+            console.error(`[ENDCAP] Failed to patch hole ${patchName}:`, error);
+            return 0;
+        }
+    }
+
+    _triangulateLoopWithTess2(loop, faceName) {
+        if (!loop || !Array.isArray(loop.positions) || loop.positions.length < 3) {
+            return 0;
+        }
+        if (!Tess2 || typeof Tess2.tesselate !== 'function') {
+            return 0;
+        }
+
+        const positions = loop.positions;
+        const normal = this._calculateNewellNormal(positions);
+        if (!isFiniteVec3(normal) || normal.lengthSq() < 1e-12) {
             if (this.debug) {
-                console.warn(`Failed to patch hole ${patchName}:`, error.message);
+                console.warn(`[ENDCAP] Invalid loop normal for tess2 triangulation on ${faceName}`);
             }
             return 0;
         }
+
+        const centroid = new THREE.Vector3();
+        for (const pos of positions) {
+            centroid.add(pos);
+        }
+        centroid.multiplyScalar(1 / positions.length);
+
+        // Build an orthonormal basis (u, v) for the projection plane
+        const tangentRef = new THREE.Vector3(1, 0, 0);
+        if (Math.abs(normal.dot(tangentRef)) > 0.999) {
+            tangentRef.set(0, 1, 0);
+        }
+        const u = new THREE.Vector3().crossVectors(normal, tangentRef).normalize();
+        if (u.lengthSq() < 1e-12) {
+            tangentRef.set(0, 0, 1);
+            u.crossVectors(normal, tangentRef).normalize();
+            if (u.lengthSq() < 1e-12) {
+                if (this.debug) {
+                    console.warn(`[ENDCAP] Failed to compute projection basis for ${faceName}`);
+                }
+                return 0;
+            }
+        }
+        const v = new THREE.Vector3().crossVectors(normal, u).normalize();
+
+        const baseEps = Number.isFinite(this.eps) ? this.eps : 0;
+        const duplicateEps = Math.max(1e-10, baseEps * 0.5);
+        const duplicateEps2 = duplicateEps * duplicateEps;
+        const keyTol = Math.max(1e-8, baseEps * 5);
+        const invTol = 1 / keyTol;
+
+        const contour = [];
+        const projectedInfo = [];
+
+        let prevX = 0;
+        let prevY = 0;
+        let havePrev = false;
+        const offset = new THREE.Vector3();
+
+        for (let i = 0; i < positions.length; i++) {
+            const pos = positions[i];
+            offset.copy(pos).sub(centroid);
+            const x = offset.dot(u);
+            const y = offset.dot(v);
+
+            if (havePrev) {
+                const dx = x - prevX;
+                const dy = y - prevY;
+                if ((dx * dx + dy * dy) <= duplicateEps2) {
+                    continue;
+                }
+            }
+
+            contour.push(x, y);
+            projectedInfo.push({ x, y, pos });
+
+            prevX = x;
+            prevY = y;
+            havePrev = true;
+        }
+
+        if (projectedInfo.length >= 3) {
+            const first = projectedInfo[0];
+            const last = projectedInfo[projectedInfo.length - 1];
+            const dx = first.x - last.x;
+            const dy = first.y - last.y;
+            if ((dx * dx + dy * dy) <= duplicateEps2) {
+                projectedInfo.pop();
+                contour.splice(contour.length - 2, 2);
+            }
+        }
+
+        if (projectedInfo.length < 3) {
+            return 0;
+        }
+
+        let area2 = 0;
+        for (let i = 0; i < projectedInfo.length; i++) {
+            const a = projectedInfo[i];
+            const b = projectedInfo[(i + 1) % projectedInfo.length];
+            area2 += a.x * b.y - b.x * a.y;
+        }
+        if (!Number.isFinite(area2) || Math.abs(area2) < 1e-12) {
+            return 0;
+        }
+
+        const makeKey = (x, y) => `${Math.round(x * invTol)},${Math.round(y * invTol)}`;
+        const boundaryMap = new Map();
+        for (const info of projectedInfo) {
+            const key = makeKey(info.x, info.y);
+            if (!boundaryMap.has(key)) {
+                boundaryMap.set(key, [info]);
+            } else {
+                boundaryMap.get(key).push(info);
+            }
+        }
+
+        const windingRules = [Tess2.WINDING_ODD, Tess2.WINDING_NONZERO];
+        const contourCandidates = [contour];
+        if (contour.length >= 6) {
+            const reversed = [];
+            for (let i = contour.length - 2; i >= 0; i -= 2) {
+                reversed.push(contour[i], contour[i + 1]);
+            }
+            contourCandidates.push(reversed);
+        }
+
+        let tessResult = null;
+        let tessError = null;
+
+        outer: for (const windingRule of windingRules) {
+            for (const contourCandidate of contourCandidates) {
+                try {
+                    const res = Tess2.tesselate({
+                        contours: [contourCandidate],
+                        windingRule,
+                        elementType: Tess2.POLYGONS,
+                        polySize: 3,
+                        vertexSize: 2,
+                    });
+                    if (res && res.elements && res.elements.length > 0) {
+                        tessResult = res;
+                        break outer;
+                    } else if (!tessResult) {
+                        tessResult = res;
+                    }
+                } catch (err) {
+                    tessError = err;
+                }
+            }
+        }
+
+        if (!tessResult || !tessResult.elements || tessResult.elements.length === 0) {
+            if (this.debug && tessError) {
+                console.warn(`[ENDCAP] tess2 triangulation failed for ${faceName}:`, tessError?.message || tessError);
+            }
+            return 0;
+        }
+
+        const tessVerts = tessResult?.vertices;
+        const tessElems = tessResult?.elements;
+        if (!tessVerts || !tessElems || tessElems.length === 0) {
+            return 0;
+        }
+
+        const tempA = new THREE.Vector3();
+        const tempB = new THREE.Vector3();
+        const tempC = new THREE.Vector3();
+        const edge1 = new THREE.Vector3();
+        const edge2 = new THREE.Vector3();
+        const triNormal = new THREE.Vector3();
+
+        const restoreProjectedPoint = (x, y, target) => {
+            const key = makeKey(x, y);
+            const bucket = boundaryMap.get(key);
+            if (bucket) {
+                for (const entry of bucket) {
+                    const dx = Math.abs(entry.x - x);
+                    const dy = Math.abs(entry.y - y);
+                    if (dx <= keyTol && dy <= keyTol) {
+                        return entry.pos;
+                    }
+                }
+            }
+            target.copy(centroid);
+            target.addScaledVector(u, x);
+            target.addScaledVector(v, y);
+            return target;
+        };
+
+        let triangleCount = 0;
+        for (let i = 0; i + 2 < tessElems.length; i += 3) {
+            const ia = tessElems[i];
+            const ib = tessElems[i + 1];
+            const ic = tessElems[i + 2];
+            if (ia < 0 || ib < 0 || ic < 0) continue;
+            const ia2 = ia * 2;
+            const ib2 = ib * 2;
+            const ic2 = ic * 2;
+            if (ia2 + 1 >= tessVerts.length || ib2 + 1 >= tessVerts.length || ic2 + 1 >= tessVerts.length) {
+                continue;
+            }
+
+            const ax = tessVerts[ia2];
+            const ay = tessVerts[ia2 + 1];
+            const bx = tessVerts[ib2];
+            const by = tessVerts[ib2 + 1];
+            const cx = tessVerts[ic2];
+            const cy = tessVerts[ic2 + 1];
+
+            const pa = restoreProjectedPoint(ax, ay, tempA);
+            const pb = restoreProjectedPoint(bx, by, tempB);
+            const pc = restoreProjectedPoint(cx, cy, tempC);
+
+            edge1.subVectors(pb, pa);
+            edge2.subVectors(pc, pa);
+            triNormal.crossVectors(edge1, edge2);
+
+            const triArea = triNormal.length() * 0.5;
+            if (!Number.isFinite(triArea) || triArea <= 1e-12) {
+                continue;
+            }
+
+            const facing = triNormal.dot(normal);
+            if (facing < 0) {
+                this.addTriangle(faceName,
+                    [pa.x, pa.y, pa.z],
+                    [pc.x, pc.y, pc.z],
+                    [pb.x, pb.y, pb.z]);
+            } else {
+                this.addTriangle(faceName,
+                    [pa.x, pa.y, pa.z],
+                    [pb.x, pb.y, pb.z],
+                    [pc.x, pc.y, pc.z]);
+            }
+            triangleCount++;
+        }
+
+        if (triangleCount > 0 && typeof this._weldVerticesByEpsilon === 'function') {
+            const weldTol = Math.max(1e-9, baseEps * 5);
+            try {
+                this._weldVerticesByEpsilon(weldTol);
+            } catch (weldError) {
+                if (this.debug) {
+                    console.warn(`[ENDCAP] Vertex weld failed after tess2 triangulation for ${faceName}:`, weldError);
+                }
+            }
+        }
+
+        return triangleCount;
+    }
+
+    /**
+     * Identify the structure of a fillet end cap boundary loop.
+     * The boundary should have: arc vertices, side A vertices, and side B vertices.
+     * 
+     * @param {Array<THREE.Vector3>} positions - Boundary loop positions
+     * @returns {Object|null} Structure with arc and side vertices, or null if not a fillet cap
+     */
+    _identifyFilletCapStructure(positions) {
+        console.log(`[ENDCAP DETECT] Starting structure analysis for ${positions.length} vertices`);
+        
+        if (positions.length < 4) {
+            console.log('[ENDCAP DETECT] Too few positions:', positions.length);
+            return null;
+        }
+
+        console.log('[ENDCAP DETECT] Analyzing edge curvatures...');
+
+        // Analyze edge curvature to identify arc vs straight segments
+        const edgeCurvatures = [];
+        for (let i = 0; i < positions.length; i++) {
+            const p0 = positions[(i - 1 + positions.length) % positions.length];
+            const p1 = positions[i];
+            const p2 = positions[(i + 1) % positions.length];
+            
+            const e1 = new THREE.Vector3().subVectors(p1, p0).normalize();
+            const e2 = new THREE.Vector3().subVectors(p2, p1).normalize();
+            
+            // Measure angle change (curvature indicator)
+            const angleCos = e1.dot(e2);
+            const angle = Math.acos(Math.max(-1, Math.min(1, angleCos)));
+            
+            edgeCurvatures.push({ index: i, angle, position: p1 });
+        }
+
+        console.log('[ENDCAP DETECT] Edge curvatures (showing first 10):');
+        edgeCurvatures.slice(0, 10).forEach((ec, i) => {
+            console.log(`  Vertex ${i}: angle=${ec.angle.toFixed(4)} rad (${(ec.angle * 180 / Math.PI).toFixed(2)}°)`);
+        });
+
+        // Identify structure based on angle patterns:
+        // - Arc vertices: consistent small angles (0.05-0.15 rad, ~3-9°)
+        // - Straight vertices: near-zero angles (< 0.01 rad, ~0.5°)
+        // - Corner vertices: large angles (> 1 rad, ~60°+)
+        
+        const arcIndices = [];       // Consistent small curvature (arc)
+        const straightIndices = [];  // Near-zero curvature (straight line)
+        const cornerIndices = [];    // Large angles (corners/transitions)
+        
+        const arcThresholdMin = 0.03;   // ~1.7° minimum for arc
+        const arcThresholdMax = 0.15;   // ~8.6° maximum for arc
+        const cornerThreshold = 1.0;    // ~57° indicates corner
+        
+        for (let i = 0; i < edgeCurvatures.length; i++) {
+            const angle = edgeCurvatures[i].angle;
+            if (angle > cornerThreshold) {
+                cornerIndices.push(i);
+            } else if (angle >= arcThresholdMin && angle <= arcThresholdMax) {
+                arcIndices.push(i);
+            } else {
+                straightIndices.push(i);
+            }
+        }
+
+        console.log(`[ENDCAP DETECT] Classification:`);
+        console.log(`  Arc vertices (${arcThresholdMin}-${arcThresholdMax} rad): [${arcIndices.slice(0, 5).join(', ')}${arcIndices.length > 5 ? '...' : ''}] (${arcIndices.length} total)`);
+        console.log(`  Straight vertices (< ${arcThresholdMin} rad): [${straightIndices.slice(0, 5).join(', ')}${straightIndices.length > 5 ? '...' : ''}] (${straightIndices.length} total)`);
+        console.log(`  Corner vertices (> ${cornerThreshold} rad): [${cornerIndices.join(', ')}]`);
+
+        // A fillet end cap should have: one continuous arc segment and two straight segments
+        if (arcIndices.length < 3) {
+            console.log(`[ENDCAP DETECT] Insufficient arc vertices (${arcIndices.length})`);
+            return null;
+        }
+
+        // Group consecutive indices into segments
+        let arcSegments = this._groupConsecutiveIndices(arcIndices, positions.length);
+        let straightSegments = this._groupConsecutiveIndices(straightIndices, positions.length);
+
+        console.log(`[ENDCAP DETECT] Found ${arcSegments.length} arc segment(s) and ${straightSegments.length} straight segment(s) (before filtering)`);
+        arcSegments.forEach((seg, i) => console.log(`  Arc segment ${i}: ${seg.length} vertices (indices ${seg[0]}-${seg[seg.length-1]})`));
+        straightSegments.forEach((seg, i) => console.log(`  Straight segment ${i}: ${seg.length} vertices (indices ${seg[0]}-${seg[seg.length-1]})`));
+
+        // Filter out single-vertex or very short arc segments (likely misclassified straight edges)
+        arcSegments = arcSegments.filter(seg => seg.length >= 3);
+        console.log(`[ENDCAP DETECT] After filtering short arcs: ${arcSegments.length} arc segment(s)`);
+
+        // IMPORTANT: Do NOT merge straight segments - we need to preserve manifold topology
+        // Accept any number of straight segments as long as we have one good arc
+        if (arcSegments.length !== 1) {
+            console.log(`[ENDCAP DETECT] Structure mismatch: expected 1 arc segment, got ${arcSegments.length}`);
+            return null;
+        }
+
+        if (straightSegments.length < 2) {
+            console.log(`[ENDCAP DETECT] Insufficient straight segments: need at least 2, got ${straightSegments.length}`);
+            return null;
+        }
+
+        // Collect all straight vertices AND corner vertices in boundary order
+        // These represent the side walls that connect to the arc endpoints
+        const allStraightVertices = straightSegments.flatMap(seg => seg.map(i => positions[i]));
+        const allStraightIndices = straightSegments.flatMap(seg => seg);
+        
+        // Include corner vertices as they are boundary vertices that must be triangulated
+        const allStraightAndCornerIndices = [...allStraightIndices, ...cornerIndices].sort((a, b) => a - b);
+        
+        // Split straight+corner vertices into those before arc and those after arc
+        const arcStartIdx = arcSegments[0][0];
+        const arcEndIdx = arcSegments[0][arcSegments[0].length - 1];
+        
+        const beforeArcIndices = allStraightAndCornerIndices.filter(idx => idx < arcStartIdx);
+        const afterArcIndices = allStraightAndCornerIndices.filter(idx => idx > arcEndIdx);
+        
+        const arcVertices = arcSegments[0].map(i => positions[i]);
+        const sideAVertices = beforeArcIndices.map(i => positions[i]);
+        const sideBVertices = afterArcIndices.map(i => positions[i]);
+
+        console.log(`[ENDCAP DETECT] ✓ Identified fillet cap structure:`);
+        console.log(`  Arc: ${arcVertices.length} vertices (indices ${arcSegments[0][0]}-${arcSegments[0][arcSegments[0].length-1]})`);
+        console.log(`  Side A (before arc): ${sideAVertices.length} vertices`);
+        console.log(`  Side B (after arc): ${sideBVertices.length} vertices`);
+
+        return {
+            arcVertices,
+            sideAVertices,
+            sideBVertices,
+            arcIndices: arcSegments[0],
+            sideAIndices: beforeArcIndices,
+            sideBIndices: afterArcIndices
+        };
+    }
+
+    /**
+     * Group consecutive indices into segments
+     * @param {Array<number>} indices - Sorted indices
+     * @param {number} totalLength - Total number of positions
+     * @returns {Array<Array<number>>} Array of segments
+     */
+    _groupConsecutiveIndices(indices, totalLength) {
+        if (indices.length === 0) return [];
+        
+        const segments = [];
+        let currentSegment = [indices[0]];
+        
+        for (let i = 1; i < indices.length; i++) {
+            const prev = indices[i - 1];
+            const curr = indices[i];
+            
+            // Check if consecutive (considering wrap-around)
+            if (curr === prev + 1 || (prev === totalLength - 1 && curr === 0)) {
+                currentSegment.push(curr);
+            } else {
+                segments.push(currentSegment);
+                currentSegment = [curr];
+            }
+        }
+        segments.push(currentSegment);
+        
+        // Handle wrap-around: merge first and last segments if they connect
+        if (segments.length > 1) {
+            const first = segments[0];
+            const last = segments[segments.length - 1];
+            if (last[last.length - 1] === totalLength - 1 && first[0] === 0) {
+                segments[segments.length - 1] = [...last, ...first];
+                segments.shift();
+            }
+        }
+        
+        return segments;
+    }
+
+    /**
+     * Triangulate a fillet end cap by connecting all boundary vertices.
+     * Uses ONLY existing boundary vertices - never creates new points.
+     * Side A vertices connect to arc start, Side B vertices connect to arc end.
+     * 
+     * @param {Object} structure - Fillet cap structure with arc and side vertices
+     * @param {string} faceName - Face name for triangles
+     * @returns {number} Number of triangles created
+     */
+    _triangulateFilletEndCap(structure, faceName) {
+        const { arcVertices, sideAVertices, sideBVertices, arcIndices, sideAIndices, sideBIndices } = structure;
+        let triangleCount = 0;
+
+        if (arcVertices.length < 2) {
+            console.warn('[ENDCAP TRIANGULATE] Insufficient arc vertices');
+            return 0;
+        }
+
+        console.log(`[ENDCAP TRIANGULATE] Starting triangulation with boundary vertices:`);
+        console.log(`  Arc: ${arcVertices.length} vertices`);
+        console.log(`  Side A: ${sideAVertices.length} vertices`);
+        console.log(`  Side B: ${sideBVertices.length} vertices`);
+
+        // The boundary loop goes: ...sideA vertices... → arc vertices → ...sideB vertices...
+        // We need to create a triangle fan that uses ALL boundary vertices
+        // Strategy: Create triangles connecting consecutive boundary edges
+        
+        // Combine all vertices in boundary order
+        const allVertices = [...sideAVertices, ...arcVertices, ...sideBVertices];
+        const n = allVertices.length;
+        
+        if (n < 3) {
+            console.warn('[ENDCAP TRIANGULATE] Insufficient total vertices');
+            return 0;
+        }
+
+        // Simple ear clipping: find a "pivot" vertex and create triangles to all other edges
+        // Use the first sideA vertex as pivot (or arc start if no sideA)
+        const pivotIdx = 0;
+        const pivot = allVertices[pivotIdx];
+        
+        // Create triangles from pivot to each consecutive pair of vertices
+        // Important: Loop must go from 1 to n-1 (inclusive) to create n-1 triangles
+        // This properly closes the fan without creating overlapping triangles
+        for (let i = 1; i < n - 1; i++) {
+            const v1 = allVertices[i];
+            const v2 = allVertices[i + 1];
+            
+            this.addTriangle(faceName,
+                [pivot.x, pivot.y, pivot.z],
+                [v1.x, v1.y, v1.z],
+                [v2.x, v2.y, v2.z]
+            );
+            triangleCount++;
+        }
+
+        console.log(`[ENDCAP TRIANGULATE] ✓ Created ${triangleCount} triangles (expected ${n-1} for ${n} boundary vertices)`);
+        return triangleCount;
     }
 
     /**
@@ -2233,58 +2807,6 @@ export class FilletSolid extends Solid {
         }
 
         return null;
-    }
-
-    /**
-     * Generate a manifold-guaranteed endcap for a boundary loop.
-     * Uses robust triangulation with proper orientation and edge matching.
-     * 
-     * @param {Object} loop - Boundary loop with vertices, positions, normal
-     * @param {string} capName - Name for the endcap face
-     * @param {number} minArea - Minimum triangle area threshold
-     * @param {number} radius - Reference radius for tolerances
-     * @returns {number} Number of triangles generated
-     */
-    _generateManifoldEndcap(loop, capName, minArea, radius) {
-        if (!loop?.positions || loop.positions.length < 3) return 0;
-
-        const positions = loop.positions.slice(); // Copy to avoid modifying original
-        const normal = loop.normal || new THREE.Vector3(0, 0, 1);
-
-        // Ensure loop is properly oriented for outward normal
-        if (!loop.closed && positions.length > 0) {
-            // For open boundaries, close the loop by duplicating the first vertex
-            positions.push(positions[0].clone());
-        }
-
-        // Remove consecutive duplicates that can cause degenerate triangles
-        const cleanPositions = this._cleanBoundaryPositions(positions, radius * 1e-6);
-        if (cleanPositions.length < 3) return 0;
-
-        // Determine winding order based on adjacent triangle normals
-        const shouldReverse = this._shouldReverseWindingForManifold(cleanPositions, normal);
-        if (shouldReverse) {
-            cleanPositions.reverse();
-        }
-
-        let triangleCount = 0;
-
-        // Use different strategies based on vertex count
-        if (cleanPositions.length === 3) {
-            // Single triangle - direct addition
-            triangleCount = this._addManifoldTriangle(capName, cleanPositions, minArea);
-        } else if (cleanPositions.length === 4) {
-            // Quad - use optimal diagonal split
-            triangleCount = this._triangulateQuadManifold(capName, cleanPositions, minArea);
-        } else if (this._isConvexLoop(cleanPositions, normal)) {
-            // Convex polygon - use fan triangulation from centroid for better quality
-            triangleCount = this._triangulateFanFromCentroid(capName, cleanPositions, minArea);
-        } else {
-            // Complex/concave polygon - use robust ear clipping
-            triangleCount = this._triangulateEarClippingRobust(capName, cleanPositions, normal, minArea);
-        }
-
-        return triangleCount;
     }
 
     /**
