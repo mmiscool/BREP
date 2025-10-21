@@ -493,6 +493,7 @@ export class SketchFeature {
         const pointById = new Map(sketch.points.map(p => [p.id, { x: p.x, y: p.y }]));
         const segs = [];
         const edges = [];
+        const openChains = [];
         const toWorld = (u,v)=> to3D(u,v);
 
         const edgeBySegId = new Map();
@@ -688,12 +689,21 @@ export class SketchFeature {
             }
 
             chain = dedupeConsecutive(chain);
+            if (chain.length < 3 || !closePt(chain[0], chain[chain.length-1])) {
+                openChains.push({ pts: chain.slice(), segIDs: usedSegs.slice() });
+                continue;
+            }
             chain = ensureClosed(chain);
             // Simplify to avoid near-collinear noise
             let simple = chain.slice(0, chain.length-1);
             simple = removeCollinear(simple);
             simple.push(simple[0]);
             if (simple.length>=4){ loopsInfo.push({ pts: simple, segIDs: usedSegs.slice() }); }
+        }
+
+        // Always expose sketch edges in 3D, even if no closed profile can be triangulated
+        for (const e of edges) {
+            sceneGroup.add(e);
         }
 
         // Classify loops (outer/holes) by nesting parity and normalize winding
@@ -834,6 +844,7 @@ export class SketchFeature {
                     polyline: safePts,
                 };
             });
+            const diagOpenChains = openChains.map((chain) => chain.pts.map((pt) => [Number(pt[0]) || 0, Number(pt[1]) || 0]));
 
             if (triPositions.length){
                 const geom2D = new THREE.BufferGeometry();
@@ -848,7 +859,6 @@ export class SketchFeature {
                 geom2D.applyMatrix4(m); geom2D.computeVertexNormals(); geom2D.computeBoundingSphere();
                 const face = new BREP.Face(geom2D); face.name = `${sceneGroup.name}:PROFILE`; face.userData.faceName = face.name; face.edges = Array.from(boundaryEdges); face.userData.boundaryLoopsWorld = boundaryLoopsWorld; face.userData.profileGroups = profileGroups;
                 sceneGroup.add(face);
-                for (const e of edges) { sceneGroup.add(e); }
                 profileFace = face;
                 this.persistentData.lastProfileDiagnostics = {
                     status: 'ok',
@@ -867,6 +877,7 @@ export class SketchFeature {
                     })),
                     boundaryEdges: Array.from(boundaryEdges).map((edge) => edge?.name || null),
                     edges: diagEdges,
+                    openChains2D: diagOpenChains,
                     triangleCount: diagTriangles2D.length,
                 };
             } else {
@@ -888,6 +899,7 @@ export class SketchFeature {
                     })),
                     boundaryEdges: Array.from(boundaryEdges).map((edge) => edge?.name || null),
                     edges: diagEdges,
+                    openChains2D: diagOpenChains,
                     triangleCount: 0,
                 };
             }
@@ -905,6 +917,7 @@ export class SketchFeature {
                 profileGroups: [],
                 boundaryEdges: [],
                 edges: [],
+                openChains2D: openChains.map((chain) => chain.pts.map((pt) => [Number(pt[0]) || 0, Number(pt[1]) || 0])),
                 triangleCount: 0,
             };
         }

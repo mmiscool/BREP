@@ -20,6 +20,7 @@ import { test_fillets_more_dificult } from './test_filletsMoreDifficult.js';
 import { test_tube } from './test_tube.js';
 import { test_tube_closedLoop } from './test_tube_closedLoop.js';
 import { test_offsetShellGrouping } from './test_offsetShellGrouping.js';
+import { test_sketch_openLoop, afterRun_sketch_openLoop } from './test_sketch_openLoop.js';
 
 const IS_NODE_RUNTIME = typeof process !== 'undefined' && process.versions && process.versions.node && typeof window === 'undefined';
 const TEST_LOG_PATH = path.join('tests', 'test-run.log');
@@ -38,6 +39,7 @@ export const testFunctions = [
     { test: test_SweepFace, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_tube, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_tube_closedLoop, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
+    { test: test_sketch_openLoop, afterRun: afterRun_sketch_openLoop, printArtifacts: false, exportFaces: false, exportSolids: false, resetHistory: true },
     { test: test_offsetShellGrouping, printArtifacts: false, exportFaces: false, exportSolids: false, resetHistory: true },
     { test: test_ExtrudeFace, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_Fillet, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
