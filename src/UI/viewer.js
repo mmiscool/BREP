@@ -21,6 +21,7 @@ import { registerDefaultToolbarButtons } from './toolbarButtons/registerDefaultB
 import { FileManagerWidget } from './fileManagerWidget.js';
 import './mobile.js';
 import { SketchMode3D } from './SketchMode3D.js';
+import { SplineMode3D } from './SplineMode3D.js';
 import { ViewCube } from './ViewCube.js';
 import { FloatingWindow } from './FloatingWindow.js';
 import { generateObjectUI } from './objectDump.js';
@@ -31,6 +32,7 @@ import { PMIViewsWidget } from './pmi/PMIViewsWidget.js';
 import { PMIMode } from './pmi/PMIMode.js';
 import { annotationRegistry } from './pmi/AnnotationRegistry.js';
 import { SchemaForm } from './featureDialogs.js';
+import { cloneSplineData } from '../features/spline/splineUtils.js';
 
 export class Viewer {
     /**
@@ -160,6 +162,7 @@ export class Viewer {
         this._raf = null;
         this._disposed = false;
         this._sketchMode = null;
+        this._splineMode = null;
         this._lastPointerEvent = null;
         this._cubeActive = false;
         // Inspector panel state
@@ -397,6 +400,8 @@ export class Viewer {
         window.removeEventListener('resize', this._onResize);
         this.controls.dispose();
         this.renderer.dispose();
+        try { if (this._sketchMode) this._sketchMode.dispose(); } catch { }
+        try { if (this._splineMode) this._splineMode.dispose(); } catch { }
         if (el.parentNode) el.parentNode.removeChild(el);
     }
 
@@ -470,6 +475,42 @@ export class Viewer {
                 leftovers.forEach(el => { try { el.parentNode && el.parentNode.removeChild(el); } catch { } });
             }
         } catch { }
+    }
+
+    // ————————————————————————————————————————
+    // Spline Mode API
+    // ————————————————————————————————————————
+    startSplineMode(featureID) {
+        try { if (this._splineMode) this._splineMode.dispose(); } catch { }
+        this._splineMode = new SplineMode3D(this, featureID);
+        this._splineMode.open();
+    }
+
+    onSplineFinished(featureID, splineData) {
+        const ph = this.partHistory;
+        this.endSplineMode();
+        if (!ph || !featureID) return;
+        const feature = Array.isArray(ph.features)
+            ? ph.features.find((f) => f?.inputParams?.featureID === featureID)
+            : null;
+        if (!feature) return;
+        feature.lastRunInputParams = {};
+        feature.timestamp = 0;
+        feature.dirty = true;
+        feature.persistentData = feature.persistentData || {};
+        feature.persistentData.spline = cloneSplineData(splineData);
+        try { ph.runHistory(); } catch { }
+    }
+
+    onSplineCancelled(_featureID) {
+        this.endSplineMode();
+    }
+
+    endSplineMode() {
+        try { if (this._splineMode) this._splineMode.close(); } catch { }
+        this._splineMode = null;
+        try { if (this.controls) this.controls.enabled = true; } catch { }
+        try { this.render(); } catch { }
     }
 
     // ————————————————————————————————————————
@@ -731,7 +772,7 @@ export class Viewer {
     _pickAtEvent(event) {
         // While Sketch Mode is active, suppress normal scene picking
         // SketchMode3D manages its own picking for sketch points/curves and model edges.
-        if (this._sketchMode) return { hit: null, target: null };
+        if (this._sketchMode || this._splineMode) return { hit: null, target: null };
         if (!event) return { hit: null, target: null };
         const ndc = this._getPointerNDC(event);
         this.raycaster.setFromCamera(ndc, this.camera);
@@ -757,6 +798,7 @@ export class Viewer {
         // Intersect everything; raycaster will skip non-geometry nodes
         const intersects = this.raycaster.intersectObjects(this.scene.children, true);
         for (const it of intersects) {
+            console.log('Pick intersect:', it);
             const target = this._mapIntersectionToTarget(it);
             if (target) return { hit: it, target };
         }

@@ -26,6 +26,7 @@ import { PatternRadialFeature } from './features/patternRadial/PatternRadialFeat
 import { TubeFeature } from './features/tube/TubeFeature.js';
 import { AssemblyComponentFeature } from './features/assemblyComponent/AssemblyComponentFeature.js';
 import { OffsetShellFeature } from './features/offsetShell/OffsetShellFeature.js';
+import { SplineFeature } from './features/spline/SplineFeature.js';
 
 /* ========================================================================
    FeatureRegistry
@@ -47,6 +48,7 @@ export class FeatureRegistry {
     this.register(PrimitivePyramidFeature);
     this.register(Import3dModelFeature);
     this.register(SketchFeature);
+    this.register(SplineFeature);
     this.register(ExtrudeFeature);
     this.register(BooleanFeature);
     this.register(FilletFeature);

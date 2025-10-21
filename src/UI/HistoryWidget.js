@@ -537,6 +537,8 @@ export class HistoryWidget {
                                 if (!v) return;
                                 if (actionKey === 'editSketch' && typeof v.startSketchMode === 'function') {
                                     v.startSketchMode(featureID);
+                                } else if (actionKey === 'editSpline' && typeof v.startSplineMode === 'function') {
+                                    v.startSplineMode(featureID);
                                 }
                             } catch (_) { }
                         },
