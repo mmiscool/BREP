@@ -1,0 +1,102 @@
+.pmi-label-root {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 6;
+  overflow: hidden;
+  contain: layout paint size;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.pmi-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  background: rgba(17, 24, 39, 0.92);
+  color: #ffffff;
+  border: 1px solid #111827;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 14px;
+  font-weight: 700;
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+  line-height: 1.2;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+  width: max-content;
+}
+
+.pmi-label[data-anchor-position="Left Top"] {
+  transform: translate(-100%, 0);
+  text-align: right;
+}
+
+.pmi-label[data-anchor-position="Left Middle"] {
+  transform: translate(-100%, -50%);
+  text-align: right;
+}
+
+.pmi-label[data-anchor-position="Left Bottom"] {
+  transform: translate(-100%, -100%);
+  text-align: right;
+}
+
+.pmi-label[data-anchor-position="Right Top"] {
+  transform: translate(0, 0);
+  text-align: left;
+}
+
+.pmi-label[data-anchor-position="Right Middle"] {
+  transform: translate(0, -50%);
+  text-align: left;
+}
+
+.pmi-label[data-anchor-position="Right Bottom"] {
+  transform: translate(0, -100%);
+  text-align: left;
+}
+
+.pmi-label:active {
+  cursor: grabbing;
+}
+
+.pmi-label-edit {
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  outline: 2px solid #3b82f6;
+  background: rgba(17, 24, 39, 0.95);
+  color: #ffffff;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  padding: 2px 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.pmi-label.constraint-label {
+  background: rgba(15, 17, 23, 0.92);
+  border: 1px solid rgba(110, 168, 254, 0.45);
+  border-radius: 8px;
+  padding: 4px 8px;
+  color: #e6f1ff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.pmi-label.constraint-label:hover {
+  background: rgba(17, 20, 27, 0.96);
+  border-color: rgba(110, 168, 254, 0.8);
+}

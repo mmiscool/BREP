@@ -313,17 +313,7 @@ export class PMIMode {
       .pmi-acc-del { appearance: none; border: 1px solid #374151; background: rgba(255,255,255,.03); color: #e5e7eb; border-radius: 8px; padding: 4px 8px; cursor: pointer; }
       .pmi-acc-del:hover { border-color: #ef4444; color: #fff; background: rgba(239,68,68,.15); }
 
-      /* Overlay labels */
-      .pmi-label-root { position: absolute; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; z-index: 6; overflow: visible; contain: layout paint size; max-width: 100%; max-height: 100%; }
-      .pmi-label { position: absolute; transform: translate(-50%, -50%); background: rgba(17,24,39,.92); color: #ffffff; border: 1px solid #111827; border-radius: 6px; padding: 2px 8px; font-weight: 700; pointer-events: auto; cursor: grab; user-select: none; font-size: 14px; line-height: 1.2; box-shadow: 0 2px 6px rgba(0,0,0,.35); white-space: pre-wrap; word-break: break-word; text-align: left; width: max-content; }
-      .pmi-label[data-anchor-position="Left Top"] { transform: translate(-100%, 0); text-align: right; }
-      .pmi-label[data-anchor-position="Left Middle"] { transform: translate(-100%, -50%); text-align: right; }
-      .pmi-label[data-anchor-position="Left Bottom"] { transform: translate(-100%, -100%); text-align: right; }
-      .pmi-label[data-anchor-position="Right Top"] { transform: translate(0, 0); text-align: left; }
-      .pmi-label[data-anchor-position="Right Middle"] { transform: translate(0, -50%); text-align: left; }
-      .pmi-label[data-anchor-position="Right Bottom"] { transform: translate(0, -100%); text-align: left; }
-      .pmi-label:active { cursor: grabbing; }
-      .pmi-label-edit { font-size: 14px; font-weight: 700; text-align: left; outline: 2px solid #3b82f6; background: rgba(17,24,39,.95); color: #ffffff; border: 1px solid #374151; border-radius: 6px; padding: 2px 8px; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+      /* Overlay labels are defined in LabelOverlay.css */
 
       /* Form fields for View Settings / Tool Options */
       .pmi-vfield { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }

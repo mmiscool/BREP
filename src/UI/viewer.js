@@ -143,7 +143,7 @@ export class Viewer {
                 this.scene.traverse((object) => {
                     const g = object && object.geometry;
                     if (g && typeof g.computeBoundingSphere === 'function') {
-                        try { g.computeBoundingSphere(); } catch(_) { /* noop */ }
+                        try { g.computeBoundingSphere(); } catch (_) { /* noop */ }
                     }
                 });
             }
@@ -193,7 +193,7 @@ export class Viewer {
         const el = this.renderer.domElement;
         el.addEventListener('pointermove', this._onPointerMove, { passive: true });
         el.addEventListener('pointerleave', () => {
-            try { SelectionFilter.clearHover(); } catch (_) {}
+            try { SelectionFilter.clearHover(); } catch (_) { }
             // When pointer leaves the canvas, forget the last pointer event
             this._lastPointerEvent = null;
         }, { passive: true });
@@ -290,9 +290,9 @@ export class Viewer {
             const q = Array.isArray(this._pendingSidePanels) ? this._pendingSidePanels : [];
             this._pendingSidePanels = [];
             for (const it of q) {
-                try { await this._applyPluginSidePanel(it); } catch {}
+                try { await this._applyPluginSidePanel(it); } catch { }
             }
-        } catch {}
+        } catch { }
 
         // Plugin setup panel (after settings)
         const pluginsSection = await this.accordion.addSection('Plugins');
@@ -311,18 +311,18 @@ export class Viewer {
         // Mount the main toolbar (layout only; buttons registered externally)
         this.mainToolbar = new MainToolbar(this);
         // Register core/default toolbar buttons via the public API
-        try { registerDefaultToolbarButtons(this); } catch {}
+        try { registerDefaultToolbarButtons(this); } catch { }
         // Drain any queued custom toolbar buttons from early plugin registration
         try {
             const q = Array.isArray(this._pendingToolbarButtons) ? this._pendingToolbarButtons : [];
             this._pendingToolbarButtons = [];
             for (const it of q) {
-                try { this.mainToolbar.addCustomButton(it); } catch {}
+                try { this.mainToolbar.addCustomButton(it); } catch { }
             }
-        } catch {}
+        } catch { }
 
         // Ensure toolbar sits above the canvas and doesn't block controls when not hovered
-        try { this.renderer.domElement.style.marginTop = '0px'; } catch {}
+        try { this.renderer.domElement.style.marginTop = '0px'; } catch { }
     }
 
     // Public: allow plugins to add toolbar buttons even before MainToolbar is constructed
@@ -364,8 +364,8 @@ export class Viewer {
                         root.insertBefore(sec.uiElement, targetTitle);
                     }
                 }
-            } catch {}
-        } catch {}
+            } catch { }
+        } catch { }
         return sec;
     }
 
@@ -404,9 +404,25 @@ export class Viewer {
     // Sketch Mode API
     // ————————————————————————————————————————
     startSketchMode(featureID) {
+        // Hide the sketch in the scene if it exists
+        try {
+            const ph = this.partHistory.getObjectByName(featureID);
+            if (ph) ph.visible = false;
+        } catch (e) {
+            console.log(e);
+            console.log(this.viewer);
+        }
+
+        console.log('Starting Sketch Mode for featureID:', featureID);
+        console.log(this.partHistory.scene);
+        console.log(this.partHistory);
+        console.log(this);
+
         try { if (this._sketchMode) this._sketchMode.dispose(); } catch { }
         this._sketchMode = new SketchMode3D(this, featureID);
         this._sketchMode.open();
+
+
     }
 
     onSketchFinished(featureID, sketchObject) {
@@ -436,7 +452,7 @@ export class Viewer {
         try {
             if (this.sidebar) {
                 this.sidebar.hidden = false;
-                try { this.sidebar.style.removeProperty('display'); } catch {}
+                try { this.sidebar.style.removeProperty('display'); } catch { }
                 this.sidebar.style.display = this.sidebar.style.display || '';
                 this.sidebar.style.visibility = 'visible';
                 this.sidebar.style.opacity = .9;
@@ -451,7 +467,7 @@ export class Viewer {
             const c = this.container;
             if (c && typeof c.querySelectorAll === 'function') {
                 const leftovers = c.querySelectorAll('.sketch-overlay');
-                leftovers.forEach(el => { try { el.parentNode && el.parentNode.removeChild(el); } catch {} });
+                leftovers.forEach(el => { try { el.parentNode && el.parentNode.removeChild(el); } catch { } });
             }
         } catch { }
     }
@@ -496,7 +512,7 @@ export class Viewer {
         try {
             if (this.sidebar) {
                 this.sidebar.hidden = false;
-                try { this.sidebar.style.removeProperty('display'); } catch {}
+                try { this.sidebar.style.removeProperty('display'); } catch { }
                 this.sidebar.style.display = this.sidebar.style.display || '';
                 this.sidebar.style.visibility = 'visible';
                 this.sidebar.style.opacity = .9;
@@ -508,7 +524,7 @@ export class Viewer {
 
     render() {
         this.renderer.render(this.scene, this.camera);
-        try { this.viewCube && this.viewCube.render(); } catch {}
+        try { this.viewCube && this.viewCube.render(); } catch { }
     }
 
     // Zoom-to-fit using only ArcballControls operations (pan + zoom).
@@ -544,7 +560,7 @@ export class Viewer {
                         const group = ax.group || null;
                         // Collect likely Object3D parts across three versions
                         const parts = new Set();
-                        const addIfObj = (o)=>{ try { if (o && o.isObject3D) parts.add(o); } catch(_){} };
+                        const addIfObj = (o) => { try { if (o && o.isObject3D) parts.add(o); } catch (_) { } };
                         addIfObj(group);
                         addIfObj(tc);
                         addIfObj(tc && tc.getHelper ? tc.getHelper() : null);
@@ -620,11 +636,11 @@ export class Viewer {
             const center = box.getCenter(new THREE.Vector3());
 
             // Perform pan+zoom via ArcballControls only
-            try { c.updateMatrixState && c.updateMatrixState(); } catch {}
+            try { c.updateMatrixState && c.updateMatrixState(); } catch { }
             c.focus(center, sizeFactor);
 
             // Sync and render
-            try { c.update && c.update(); } catch {}
+            try { c.update && c.update(); } catch { }
             this.render();
         } catch { /* noop */ }
     }
@@ -762,21 +778,21 @@ export class Viewer {
         // One-shot diagnostic inspector
         if (this._diagPickOnce) {
             this._diagPickOnce = false;
-            try { this._showDiagnosticsFor(target); } catch (e) { try { console.warn('Diagnostics failed:', e); } catch {} }
+            try { this._showDiagnosticsFor(target); } catch (e) { try { console.warn('Diagnostics failed:', e); } catch { } }
             // Restore selection filter if we changed it
             if (this._diagRestoreFilter) {
-                try { SelectionFilter.restoreAllowedSelectionTypes && SelectionFilter.restoreAllowedSelectionTypes(); } catch {}
+                try { SelectionFilter.restoreAllowedSelectionTypes && SelectionFilter.restoreAllowedSelectionTypes(); } catch { }
                 this._diagRestoreFilter = false;
             }
         }
         // If inspector panel is open, update it immediately for the clicked object
         if (this._inspectorOpen) {
-            try { this._updateInspectorFor(target); } catch (e) { try { console.warn('Inspector update failed:', e); } catch {} }
+            try { this._updateInspectorFor(target); } catch (e) { try { console.warn('Inspector update failed:', e); } catch { } }
         }
         const metadataPanel = this.__metadataPanelController;
         if (metadataPanel && typeof metadataPanel.handleSelection === 'function') {
             try { metadataPanel.handleSelection(target); }
-            catch (e) { try { console.warn('Metadata panel update failed:', e); } catch {} }
+            catch (e) { try { console.warn('Metadata panel update failed:', e); } catch { } }
         }
         if (typeof target.onClick === 'function') {
             try { target.onClick(); } catch { }
@@ -793,12 +809,12 @@ export class Viewer {
         // If hovering over the view cube, avoid main-scene hover
         try {
             if (this.viewCube && this.viewCube.isEventInside(event)) return;
-        } catch {}
+        } catch { }
         // If hovering TransformControls gizmo, skip scene hover handling
         try {
             const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
             if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) return;
-        } catch {}
+        } catch { }
         this._updateHover(event);
     }
 
@@ -807,8 +823,8 @@ export class Viewer {
         // If pointer is over TransformControls gizmo, let it handle the interaction
         try {
             const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
-            if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) { try { event.preventDefault(); } catch {}; return; }
-        } catch {}
+            if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) { try { event.preventDefault(); } catch { }; return; }
+        } catch { }
         // If pressing in the view cube region, disable controls for this gesture
         try {
             this._cubeActive = !!(this.viewCube && this.viewCube.isEventInside(event));
@@ -827,11 +843,11 @@ export class Viewer {
         // If releasing over TransformControls gizmo, skip scene selection
         try {
             const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
-            if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) { try { event.preventDefault(); } catch {}; return; }
-        } catch {}
+            if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) { try { event.preventDefault(); } catch { }; return; }
+        } catch { }
         // If the gesture began in the cube, handle click there exclusively
         if (this._cubeActive) {
-            try { if (this.viewCube && this.viewCube.handleClick(event)) { this._cubeActive = false; return; } } catch {}
+            try { if (this.viewCube && this.viewCube.handleClick(event)) { this._cubeActive = false; return; } } catch { }
             this._cubeActive = false;
         }
         // Click selection if within drag threshold and left button
@@ -964,7 +980,7 @@ export class Viewer {
                 const ud = node.userData || (node.userData = {});
                 if (ud.__brepOverlayHook) return;
                 const prev = node.onBeforeRender;
-                node.onBeforeRender = function(renderer, scene, camera, geometry, material, group) {
+                node.onBeforeRender = function (renderer, scene, camera, geometry, material, group) {
                     try { renderer.clearDepth(); } catch { }
                     if (typeof prev === 'function') {
                         prev.call(this, renderer, scene, camera, geometry, material, group);
@@ -1146,7 +1162,7 @@ export class Viewer {
     enableDiagnosticPick() {
         this._diagPickOnce = true;
         // Do not modify the SelectionFilter; inspect will honor the current filter.
-        try { this._toast('Click an item to inspect'); } catch {}
+        try { this._toast('Click an item to inspect'); } catch { }
     }
 
     // ————————————————————————————————————————
@@ -1161,12 +1177,12 @@ export class Viewer {
         // Placeholder message until user clicks an object
         try {
             this._setInspectorPlaceholder('Click an object in the scene to inspect.');
-        } catch {}
+        } catch { }
     }
     _closeInspectorPanel() {
         if (!this._inspectorOpen) return;
         this._inspectorOpen = false;
-        try { this._inspectorEl.style.display = 'none'; } catch {}
+        try { this._inspectorEl.style.display = 'none'; } catch { }
     }
     _ensureInspectorPanel() {
         if (this._inspectorEl) return;
@@ -1183,8 +1199,8 @@ export class Viewer {
                 const blob = new Blob([json], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a'); a.href = url; a.download = 'diagnostics.json'; document.body.appendChild(a); a.click();
-                setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
-            } catch {}
+                setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+            } catch { }
         });
         const btnClose = document.createElement('button');
         btnClose.className = 'fw-btn';
@@ -1259,7 +1275,7 @@ export class Viewer {
     }
 
     _buildDiagnostics(target) {
-        const out = { type: target?.type || String(target?.constructor?.name||'Object'), name: target?.name || null };
+        const out = { type: target?.type || String(target?.constructor?.name || 'Object'), name: target?.name || null };
         let downloadFactory = null; // optional closure that returns full JSON text for download
 
         // Add owning feature information if available
@@ -1268,7 +1284,7 @@ export class Viewer {
                 out.owningFeatureID = target.owningFeatureID;
                 out._owningFeatureFormatted = `Created by: ${target.owningFeatureID}`;
             }
-        } catch {}
+        } catch { }
 
         if (target.type === 'FACE') {
             // Triangles via Solid API to ensure correct grouping
@@ -1280,22 +1296,22 @@ export class Viewer {
                     const mapTri = (t) => ({
                         indices: Array.isArray(t.indices) ? t.indices : undefined,
                         p1: t.p1.map(this._round), p2: t.p2.map(this._round), p3: t.p3.map(this._round),
-                        normal: (()=>{ const a=t.p1, b=t.p2, c=t.p3; const ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2]; const vx=c[0]-a[0], vy=c[1]-a[1], vz=c[2]-a[2]; const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const len=Math.hypot(nx,ny,nz)||1; return [this._round(nx/len),this._round(ny/len),this._round(nz/len)]; })(),
-                        area: (()=>{ const a=t.p1, b=t.p2, c=t.p3; const ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2]; const vx=c[0]-a[0], vy=c[1]-a[1], vz=c[2]-a[2]; const cx=uy*vz-uz*vy, cy=uz*vx-ux*vz, cz=ux*vy-uy*vx; return this._round(0.5*Math.hypot(cx,cy,cz)); })()
+                        normal: (() => { const a = t.p1, b = t.p2, c = t.p3; const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2]; const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]; const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const len = Math.hypot(nx, ny, nz) || 1; return [this._round(nx / len), this._round(ny / len), this._round(nz / len)]; })(),
+                        area: (() => { const a = t.p1, b = t.p2, c = t.p3; const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2]; const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]; const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx; return this._round(0.5 * Math.hypot(cx, cy, cz)); })()
                     });
                     const triFull = tris.map(mapTri);
                     try {
                         let triMax = 5000; // preview cap
-                        if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX_FACE)) triMax = window.BREP_DIAG_TRI_MAX_FACE|0;
+                        if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX_FACE)) triMax = window.BREP_DIAG_TRI_MAX_FACE | 0;
                         if (triMax < 0) triMax = triFull.length;
                         const count = Math.min(triFull.length, triMax);
                         // Make triangles lazy-loaded for performance
                         out._trianglesSummary = `${triFull.length} triangles (click to expand)`;
                         out._lazyTriangles = () => triFull.slice(0, count);
                         if (count < triFull.length) { out.trianglesTruncated = true; out.trianglesTotal = triFull.length; out.trianglesLimit = triMax; }
-                    } catch { 
+                    } catch {
                         out._trianglesSummary = `${triFull.length} triangles (click to expand)`;
-                        out._lazyTriangles = () => triFull; 
+                        out._lazyTriangles = () => triFull;
                     }
                     // Full JSON factory for download
                     downloadFactory = () => {
@@ -1312,20 +1328,20 @@ export class Viewer {
                         const triCount = (pos.count / 3) | 0;
                         const triFull = new Array(triCount);
                         for (let i = 0; i < triCount; i++) {
-                            v.set(pos.getX(3*i+0), pos.getY(3*i+0), pos.getZ(3*i+0)).applyMatrix4(target.matrixWorld);
+                            v.set(pos.getX(3 * i + 0), pos.getY(3 * i + 0), pos.getZ(3 * i + 0)).applyMatrix4(target.matrixWorld);
                             const p0 = [this._round(v.x), this._round(v.y), this._round(v.z)];
-                            v.set(pos.getX(3*i+1), pos.getY(3*i+1), pos.getZ(3*i+1)).applyMatrix4(target.matrixWorld);
+                            v.set(pos.getX(3 * i + 1), pos.getY(3 * i + 1), pos.getZ(3 * i + 1)).applyMatrix4(target.matrixWorld);
                             const p1 = [this._round(v.x), this._round(v.y), this._round(v.z)];
-                            v.set(pos.getX(3*i+2), pos.getY(3*i+2), pos.getZ(3*i+2)).applyMatrix4(target.matrixWorld);
+                            v.set(pos.getX(3 * i + 2), pos.getY(3 * i + 2), pos.getZ(3 * i + 2)).applyMatrix4(target.matrixWorld);
                             const p2 = [this._round(v.x), this._round(v.y), this._round(v.z)];
-                            const ux=p1[0]-p0[0], uy=p1[1]-p0[1], uz=p1[2]-p0[2];
-                            const vx=p2[0]-p0[0], vy=p2[1]-p0[1], vz=p2[2]-p0[2];
-                            const cx=uy*vz-uz*vy, cy=uz*vx-ux*vz, cz=ux*vy-uy*vx; const len=Math.hypot(cx,cy,cz)||1;
-                            triFull[i] = { p1: p0, p2: p1, p3: p2, normal:[this._round(cx/len),this._round(cy/len),this._round(cz/len)], area:this._round(0.5*Math.hypot(cx,cy,cz)) };
+                            const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+                            const vx = p2[0] - p0[0], vy = p2[1] - p0[1], vz = p2[2] - p0[2];
+                            const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx; const len = Math.hypot(cx, cy, cz) || 1;
+                            triFull[i] = { p1: p0, p2: p1, p3: p2, normal: [this._round(cx / len), this._round(cy / len), this._round(cz / len)], area: this._round(0.5 * Math.hypot(cx, cy, cz)) };
                         }
                         try {
                             let triMax = 5000; // preview cap for UI
-                            if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX_FACE)) triMax = window.BREP_DIAG_TRI_MAX_FACE|0;
+                            if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX_FACE)) triMax = window.BREP_DIAG_TRI_MAX_FACE | 0;
                             if (triMax < 0) triMax = triFull.length;
                             const count = Math.min(triFull.length, triMax);
                             out.triangles = triFull.slice(0, count);
@@ -1339,12 +1355,12 @@ export class Viewer {
                         };
                     }
                 }
-            } catch {}
+            } catch { }
 
             // Edges connected to this face
             try {
                 const edges = Array.isArray(target.edges) ? target.edges : [];
-                out.edges = edges.map(e => ({ name: e.name || null, faces: (Array.isArray(e.faces)? e.faces.map(f=>f?.name||f?.userData?.faceName||null):[]), closedLoop: !!e.closedLoop, length: (typeof e.length==='function'? this._round(e.length()): undefined), points: this._edgePointsWorld(e) }));
+                out.edges = edges.map(e => ({ name: e.name || null, faces: (Array.isArray(e.faces) ? e.faces.map(f => f?.name || f?.userData?.faceName || null) : []), closedLoop: !!e.closedLoop, length: (typeof e.length === 'function' ? this._round(e.length()) : undefined), points: this._edgePointsWorld(e) }));
             } catch { out.edges = []; }
 
             // Lazy-load unique vertices to improve performance
@@ -1352,68 +1368,68 @@ export class Viewer {
                 out._lazyUniqueVertices = () => {
                     const triangles = (out._lazyTriangles && typeof out._lazyTriangles === 'function') ? out._lazyTriangles() : [];
                     const uniq = new Map();
-                    for (const tri of triangles) { 
-                        for (const P of [tri.p1,tri.p2,tri.p3]) { 
-                            const k=`${P[0]},${P[1]},${P[2]}`; 
-                            if (!uniq.has(k)) uniq.set(k, P); 
-                        } 
+                    for (const tri of triangles) {
+                        for (const P of [tri.p1, tri.p2, tri.p3]) {
+                            const k = `${P[0]},${P[1]},${P[2]}`;
+                            if (!uniq.has(k)) uniq.set(k, P);
+                        }
                     }
                     return Array.from(uniq.values());
                 };
-            } catch {}
+            } catch { }
 
             // Basic metrics and orientation hints
-            try { const n = target.getAverageNormal?.(); if (n) out.averageNormal = [this._round(n.x), this._round(n.y), this._round(n.z)]; } catch {}
-            try { 
-                const a = target.surfaceArea?.(); 
+            try { const n = target.getAverageNormal?.(); if (n) out.averageNormal = [this._round(n.x), this._round(n.y), this._round(n.z)]; } catch { }
+            try {
+                const a = target.surfaceArea?.();
                 if (Number.isFinite(a)) {
                     out.surfaceArea = this._round(a);
                     // Make face area more prominent for easy reference
                     out._faceAreaFormatted = `${this._round(a)} units²`;
                 }
-            } catch {}
+            } catch { }
             try {
                 // Bounding box in world coords from triangle points (lazy-loaded)
                 out._lazyBbox = () => {
-                    const pts=[]; for (const tri of out.triangles||[]) { pts.push(tri.p1, tri.p2, tri.p3); }
+                    const pts = []; for (const tri of out.triangles || []) { pts.push(tri.p1, tri.p2, tri.p3); }
                     if (pts.length) {
-                        let min=[+Infinity,+Infinity,+Infinity], max=[-Infinity,-Infinity,-Infinity];
-                        for (const p of pts) { if (p[0]<min[0]) min[0]=p[0]; if (p[1]<min[1]) min[1]=p[1]; if (p[2]<min[2]) min[2]=p[2]; if (p[0]>max[0]) max[0]=p[0]; if (p[1]>max[1]) max[1]=p[1]; if (p[2]>max[2]) max[2]=p[2]; }
+                        let min = [+Infinity, +Infinity, +Infinity], max = [-Infinity, -Infinity, -Infinity];
+                        for (const p of pts) { if (p[0] < min[0]) min[0] = p[0]; if (p[1] < min[1]) min[1] = p[1]; if (p[2] < min[2]) min[2] = p[2]; if (p[0] > max[0]) max[0] = p[0]; if (p[1] > max[1]) max[1] = p[1]; if (p[2] > max[2]) max[2] = p[2]; }
                         return { min, max };
                     }
                     return null;
                 };
-            } catch {}
+            } catch { }
 
             // Neighbor face names
-            try { out.neighbors = Array.from(new Set((out.edges||[]).flatMap(e=> e.faces||[]).filter(Boolean))); } catch {}
+            try { out.neighbors = Array.from(new Set((out.edges || []).flatMap(e => e.faces || []).filter(Boolean))); } catch { }
 
             // Boundary loops if available from metadata
             try {
                 const loops = target.userData?.boundaryLoopsWorld;
                 if (Array.isArray(loops) && loops.length) {
-                    out.boundaryLoops = loops.map(l => ({ isHole: !!l.isHole, pts: (Array.isArray(l.pts)? l.pts : l).map(p=>[this._round(p[0]),this._round(p[1]),this._round(p[2])]) }));
+                    out.boundaryLoops = loops.map(l => ({ isHole: !!l.isHole, pts: (Array.isArray(l.pts) ? l.pts : l).map(p => [this._round(p[0]), this._round(p[1]), this._round(p[2])]) }));
                 }
-            } catch {}
+            } catch { }
         } else if (target.type === 'EDGE') {
             out.closedLoop = !!target.closedLoop;
             // Lazy-load points to improve performance
             out._lazyPoints = () => this._edgePointsWorld(target);
-            try { 
-                const len = target.length(); 
+            try {
+                const len = target.length();
                 if (Number.isFinite(len)) {
                     out.length = this._round(len);
                     out._edgeLengthFormatted = `${this._round(len)} units`;
                 }
-            } catch {}
-            try { out.faces = (Array.isArray(target.faces)? target.faces.map(f=>f?.name||f?.userData?.faceName||null):[]); } catch {}
+            } catch { }
+            try { out.faces = (Array.isArray(target.faces) ? target.faces.map(f => f?.name || f?.userData?.faceName || null) : []); } catch { }
         } else if (target.type === 'SOLID') {
             try {
                 const faces = target.getFaces?.(false) || [];
                 out.faceCount = faces.length;
-                out.faces = faces.slice(0, 10).map(f => ({ faceName: f.faceName, triangles: (f.triangles||[]).length }));
+                out.faces = faces.slice(0, 10).map(f => ({ faceName: f.faceName, triangles: (f.triangles || []).length }));
                 if (faces.length > 10) out.facesTruncated = true;
-            } catch {}
+            } catch { }
             // Gather geometry arrays (prefer manifold mesh, fallback to authoring arrays)
             let arrays = null; let usedAuthoring = false;
             try {
@@ -1421,49 +1437,49 @@ export class Viewer {
                 if (mesh && mesh.vertProperties && mesh.triVerts) {
                     arrays = { vp: Array.from(mesh.vertProperties), tv: Array.from(mesh.triVerts), ids: Array.isArray(mesh.faceID) ? Array.from(mesh.faceID) : [] };
                 }
-            } catch {}
+            } catch { }
             if (!arrays) {
                 try {
                     const vp = Array.isArray(target._vertProperties) ? target._vertProperties.slice() : [];
                     const tv = Array.isArray(target._triVerts) ? target._triVerts.slice() : [];
                     const ids = Array.isArray(target._triIDs) ? target._triIDs.slice() : [];
                     arrays = { vp, tv, ids }; usedAuthoring = true;
-                } catch {}
+                } catch { }
             }
 
             if (arrays) {
                 const { vp, tv, ids } = arrays;
-                out.meshStats = { vertices: (vp.length/3)|0, triangles: (tv.length/3)|0, source: usedAuthoring ? 'authoring' : 'manifold' };
+                out.meshStats = { vertices: (vp.length / 3) | 0, triangles: (tv.length / 3) | 0, source: usedAuthoring ? 'authoring' : 'manifold' };
                 // BBox
-                let min=[+Infinity,+Infinity,+Infinity], max=[-Infinity,-Infinity,-Infinity];
-                for (let i=0;i<vp.length;i+=3){ const x=this._round(vp[i]), y=this._round(vp[i+1]), z=this._round(vp[i+2]); if (x<min[0])min[0]=x; if (y<min[1])min[1]=y; if (z<min[2])min[2]=z; if (x>max[0])max[0]=x; if (y>max[1])max[1]=y; if (z>max[2])max[2]=z; }
-                if (min[0]!==Infinity) out.bbox = { min, max };
+                let min = [+Infinity, +Infinity, +Infinity], max = [-Infinity, -Infinity, -Infinity];
+                for (let i = 0; i < vp.length; i += 3) { const x = this._round(vp[i]), y = this._round(vp[i + 1]), z = this._round(vp[i + 2]); if (x < min[0]) min[0] = x; if (y < min[1]) min[1] = y; if (z < min[2]) min[2] = z; if (x > max[0]) max[0] = x; if (y > max[1]) max[1] = y; if (z > max[2]) max[2] = z; }
+                if (min[0] !== Infinity) out.bbox = { min, max };
 
                 // Triangles with points (cap output size in preview; full list available via Download)
                 try {
-                    const triCount = (tv.length/3)|0;
+                    const triCount = (tv.length / 3) | 0;
                     let triMax = 5000; // sane default for UI
-                    try { if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX)) triMax = window.BREP_DIAG_TRI_MAX|0; } catch {}
+                    try { if (typeof window !== 'undefined' && Number.isFinite(window.BREP_DIAG_TRI_MAX)) triMax = window.BREP_DIAG_TRI_MAX | 0; } catch { }
                     if (triMax < 0) triMax = triCount; // -1 => no cap
                     const count = Math.min(triCount, triMax);
                     const tris = new Array(count);
-                    const nameOf = (id)=> (target._idToFaceName && target._idToFaceName.get) ? target._idToFaceName.get(id) : undefined;
-                    for (let t=0;t<count;t++){
-                        const i0=tv[3*t+0]>>>0, i1=tv[3*t+1]>>>0, i2=tv[3*t+2]>>>0;
-                        const p0=[this._round(vp[3*i0+0]), this._round(vp[3*i0+1]), this._round(vp[3*i0+2])];
-                        const p1=[this._round(vp[3*i1+0]), this._round(vp[3*i1+1]), this._round(vp[3*i1+2])];
-                        const p2=[this._round(vp[3*i2+0]), this._round(vp[3*i2+1]), this._round(vp[3*i2+2])];
-                        let faceID = (Array.isArray(ids) && ids.length===triCount) ? ids[t] : undefined;
-                        const ux=p1[0]-p0[0], uy=p1[1]-p0[1], uz=p1[2]-p0[2];
-                        const vx=p2[0]-p0[0], vy=p2[1]-p0[1], vz=p2[2]-p0[2];
-                        const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const nlen=Math.hypot(nx,ny,nz)||1;
+                    const nameOf = (id) => (target._idToFaceName && target._idToFaceName.get) ? target._idToFaceName.get(id) : undefined;
+                    for (let t = 0; t < count; t++) {
+                        const i0 = tv[3 * t + 0] >>> 0, i1 = tv[3 * t + 1] >>> 0, i2 = tv[3 * t + 2] >>> 0;
+                        const p0 = [this._round(vp[3 * i0 + 0]), this._round(vp[3 * i0 + 1]), this._round(vp[3 * i0 + 2])];
+                        const p1 = [this._round(vp[3 * i1 + 0]), this._round(vp[3 * i1 + 1]), this._round(vp[3 * i1 + 2])];
+                        const p2 = [this._round(vp[3 * i2 + 0]), this._round(vp[3 * i2 + 1]), this._round(vp[3 * i2 + 2])];
+                        let faceID = (Array.isArray(ids) && ids.length === triCount) ? ids[t] : undefined;
+                        const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+                        const vx = p2[0] - p0[0], vy = p2[1] - p0[1], vz = p2[2] - p0[2];
+                        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const nlen = Math.hypot(nx, ny, nz) || 1;
                         tris[t] = {
                             index: t,
                             faceID: faceID,
-                            faceName: faceID!==undefined ? (nameOf(faceID) || null) : null,
+                            faceName: faceID !== undefined ? (nameOf(faceID) || null) : null,
                             p1: p0, p2: p1, p3: p2,
-                            normal: [this._round(nx/nlen), this._round(ny/nlen), this._round(nz/nlen)],
-                            area: this._round(0.5*nlen)
+                            normal: [this._round(nx / nlen), this._round(ny / nlen), this._round(nz / nlen)],
+                            area: this._round(0.5 * nlen)
                         };
                     }
                     // Make triangles lazy-loaded for performance
@@ -1473,56 +1489,56 @@ export class Viewer {
                     // Build full JSON on demand
                     downloadFactory = () => {
                         const trisFull = new Array(triCount);
-                        const nameOf = (id)=> (target._idToFaceName && target._idToFaceName.get) ? target._idToFaceName.get(id) : undefined;
-                        for (let t=0;t<triCount;t++){
-                            const i0=tv[3*t+0]>>>0, i1=tv[3*t+1]>>>0, i2=tv[3*t+2]>>>0;
-                            const p0=[this._round(vp[3*i0+0]), this._round(vp[3*i0+1]), this._round(vp[3*i0+2])];
-                            const p1=[this._round(vp[3*i1+0]), this._round(vp[3*i1+1]), this._round(vp[3*i1+2])];
-                            const p2=[this._round(vp[3*i2+0]), this._round(vp[3*i2+1]), this._round(vp[3*i2+2])];
-                            let faceID = (Array.isArray(ids) && ids.length===triCount) ? ids[t] : undefined;
-                            const ux=p1[0]-p0[0], uy=p1[1]-p0[1], uz=p1[2]-p0[2];
-                            const vx=p2[0]-p0[0], vy=p2[1]-p0[1], vz=p2[2]-p0[2];
-                            const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const nlen=Math.hypot(nx,ny,nz)||1;
+                        const nameOf = (id) => (target._idToFaceName && target._idToFaceName.get) ? target._idToFaceName.get(id) : undefined;
+                        for (let t = 0; t < triCount; t++) {
+                            const i0 = tv[3 * t + 0] >>> 0, i1 = tv[3 * t + 1] >>> 0, i2 = tv[3 * t + 2] >>> 0;
+                            const p0 = [this._round(vp[3 * i0 + 0]), this._round(vp[3 * i0 + 1]), this._round(vp[3 * i0 + 2])];
+                            const p1 = [this._round(vp[3 * i1 + 0]), this._round(vp[3 * i1 + 1]), this._round(vp[3 * i1 + 2])];
+                            const p2 = [this._round(vp[3 * i2 + 0]), this._round(vp[3 * i2 + 1]), this._round(vp[3 * i2 + 2])];
+                            let faceID = (Array.isArray(ids) && ids.length === triCount) ? ids[t] : undefined;
+                            const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+                            const vx = p2[0] - p0[0], vy = p2[1] - p0[1], vz = p2[2] - p0[2];
+                            const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const nlen = Math.hypot(nx, ny, nz) || 1;
                             trisFull[t] = {
                                 index: t,
                                 faceID: faceID,
-                                faceName: faceID!==undefined ? (nameOf(faceID) || null) : null,
+                                faceName: faceID !== undefined ? (nameOf(faceID) || null) : null,
                                 p1: p0, p2: p1, p3: p2,
-                                normal: [this._round(nx/nlen), this._round(ny/nlen), this._round(nz/nlen)],
-                                area: this._round(0.5*nlen)
+                                normal: [this._round(nx / nlen), this._round(ny / nlen), this._round(nz / nlen)],
+                                area: this._round(0.5 * nlen)
                             };
                         }
                         const full = JSON.parse(JSON.stringify(out));
                         full.triangles = trisFull; delete full.trianglesTruncated; delete full.trianglesLimit; delete full.trianglesTotal;
                         return JSON.stringify(full, null, 2);
                     };
-                } catch {}
+                } catch { }
 
                 // Non-manifold / topology diagnostics (undirected edge uses)
                 try {
-                    const nv = (vp.length/3)|0; const NV = BigInt(Math.max(1,nv));
-                    const eKey = (a,b)=>{ const A=BigInt(a), B=BigInt(b); return A<B ? A*NV+B : B*NV+A; };
+                    const nv = (vp.length / 3) | 0; const NV = BigInt(Math.max(1, nv));
+                    const eKey = (a, b) => { const A = BigInt(a), B = BigInt(b); return A < B ? A * NV + B : B * NV + A; };
                     const e2c = new Map();
-                    const triCount = (tv.length/3)|0;
+                    const triCount = (tv.length / 3) | 0;
                     const degenerate = []; const used = new Uint8Array(nv);
-                    for (let t=0;t<triCount;t++){
-                        const i0=tv[3*t+0]>>>0, i1=tv[3*t+1]>>>0, i2=tv[3*t+2]>>>0;
-                        used[i0]=1; used[i1]=1; used[i2]=1;
-                        const ax=vp[3*i0+0], ay=vp[3*i0+1], az=vp[3*i0+2];
-                        const bx=vp[3*i1+0], by=vp[3*i1+1], bz=vp[3*i1+2];
-                        const cx=vp[3*i2+0], cy=vp[3*i2+1], cz=vp[3*i2+2];
-                        const ux=bx-ax, uy=by-ay, uz=bz-az; const vx=cx-ax, vy=cy-ay, vz=cz-az;
-                        const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx; const area2=nx*nx+ny*ny+nz*nz;
+                    for (let t = 0; t < triCount; t++) {
+                        const i0 = tv[3 * t + 0] >>> 0, i1 = tv[3 * t + 1] >>> 0, i2 = tv[3 * t + 2] >>> 0;
+                        used[i0] = 1; used[i1] = 1; used[i2] = 1;
+                        const ax = vp[3 * i0 + 0], ay = vp[3 * i0 + 1], az = vp[3 * i0 + 2];
+                        const bx = vp[3 * i1 + 0], by = vp[3 * i1 + 1], bz = vp[3 * i1 + 2];
+                        const cx = vp[3 * i2 + 0], cy = vp[3 * i2 + 1], cz = vp[3 * i2 + 2];
+                        const ux = bx - ax, uy = by - ay, uz = bz - az; const vx = cx - ax, vy = cy - ay, vz = cz - az;
+                        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const area2 = nx * nx + ny * ny + nz * nz;
                         if (area2 <= 1e-30) degenerate.push(t);
-                        const add=(a,b)=>{ const k=eKey(Math.min(a,b),Math.max(a,b)); e2c.set(k, (e2c.get(k)||0)+1); };
-                        add(i0,i1); add(i1,i2); add(i2,i0);
+                        const add = (a, b) => { const k = eKey(Math.min(a, b), Math.max(a, b)); e2c.set(k, (e2c.get(k) || 0) + 1); };
+                        add(i0, i1); add(i1, i2); add(i2, i0);
                     }
-                    let gt2=0, lt2=0, eq1=0; const exGT=[], exLT=[], exB=[];
-                    for (const [k,c] of e2c.entries()){
-                        if (c>2){ gt2++; if (exGT.length<12) exGT.push({ edge:k.toString(), uses:c }); }
-                        else if (c<2){ lt2++; if (c===1){ eq1++; if (exB.length<12) exB.push({ edge:k.toString(), uses:c }); } else { if (exLT.length<12) exLT.push({ edge:k.toString(), uses:c }); } }
+                    let gt2 = 0, lt2 = 0, eq1 = 0; const exGT = [], exLT = [], exB = [];
+                    for (const [k, c] of e2c.entries()) {
+                        if (c > 2) { gt2++; if (exGT.length < 12) exGT.push({ edge: k.toString(), uses: c }); }
+                        else if (c < 2) { lt2++; if (c === 1) { eq1++; if (exB.length < 12) exB.push({ edge: k.toString(), uses: c }); } else { if (exLT.length < 12) exLT.push({ edge: k.toString(), uses: c }); } }
                     }
-                    let isolated=0; for (let i=0;i<nv;i++) if (!used[i]) isolated++;
+                    let isolated = 0; for (let i = 0; i < nv; i++) if (!used[i]) isolated++;
                     const isClosed = (eq1 === 0);
                     const hasNonManifoldEdges = (gt2 > 0);
                     const isManifold = isClosed && !hasNonManifoldEdges;
@@ -1530,42 +1546,42 @@ export class Viewer {
                         isManifold,
                         closed: isClosed,
                         nonManifoldEdges: hasNonManifoldEdges ? gt2 : 0,
-                        degenerateTriangles: { count: degenerate.length, examples: degenerate.slice(0,12) },
-                        edges: { gt2, lt2, boundary:eq1, examples_gt2: exGT, examples_lt2: exLT, examples_boundary: exB },
+                        degenerateTriangles: { count: degenerate.length, examples: degenerate.slice(0, 12) },
+                        edges: { gt2, lt2, boundary: eq1, examples_gt2: exGT, examples_lt2: exLT, examples_boundary: exB },
                         isolatedVertices: isolated
                     };
                     // Expose quick boolean at root for easy scanning
                     out.isManifold = isManifold;
-                } catch {}
+                } catch { }
 
                 // Faces fallback from authoring arrays when manifold faces unavailable
                 if (!out.faceCount || !Array.isArray(out.faces)) {
                     try {
-                        const nameOf = (id)=> (target._idToFaceName && target._idToFaceName.get) ? target._idToFaceName.get(id) : String(id);
+                        const nameOf = (id) => (target._idToFaceName && target._idToFaceName.get) ? target._idToFaceName.get(id) : String(id);
                         const nameToTris = new Map();
-                        const triCount=(tv.length/3)|0;
-                        for(let t=0;t<triCount;t++){
+                        const triCount = (tv.length / 3) | 0;
+                        for (let t = 0; t < triCount; t++) {
                             const id = Array.isArray(ids) ? ids[t] : undefined;
                             const name = nameOf(id);
                             if (!name) continue;
-                            let arr = nameToTris.get(name); if (!arr){ arr=[]; nameToTris.set(name, arr); }
+                            let arr = nameToTris.get(name); if (!arr) { arr = []; nameToTris.set(name, arr); }
                             arr.push(t);
                         }
                         const facesRaw = [];
                         for (const [faceName, trisIdx] of nameToTris.entries()) facesRaw.push({ faceName, triangles: trisIdx.length });
-                        facesRaw.sort((a,b)=> b.triangles - a.triangles);
+                        facesRaw.sort((a, b) => b.triangles - a.triangles);
                         out.faceCount = facesRaw.length;
                         out.faces = facesRaw.slice(0, 20);
                         if (facesRaw.length > 20) out.facesTruncated = true;
-                    } catch {}
+                    } catch { }
                 }
             }
 
-            try { const vol = target.volume?.(); if (Number.isFinite(vol)) out.volume = this._round(vol); } catch {}
-            try { const area = target.surfaceArea?.(); if (Number.isFinite(area)) out.surfaceArea = this._round(area); } catch {}
+            try { const vol = target.volume?.(); if (Number.isFinite(vol)) out.volume = this._round(vol); } catch { }
+            try { const area = target.surfaceArea?.(); if (Number.isFinite(area)) out.surfaceArea = this._round(area); } catch { }
         }
 
-        return { out, downloadFactory: downloadFactory || (()=> JSON.stringify(out, null, 2)) };
+        return { out, downloadFactory: downloadFactory || (() => JSON.stringify(out, null, 2)) };
     }
 
     _showDiagnosticsFor(target) {
@@ -1580,8 +1596,8 @@ export class Viewer {
             el.textContent = msg;
             el.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);background:#111c;backdrop-filter:blur(6px);color:#e5e7eb;padding:6px 10px;border:1px solid #2a3442;border-radius:8px;z-index:7;font:12px/1.2 system-ui;';
             document.body.appendChild(el);
-            setTimeout(()=>{ try{ el.parentNode && el.parentNode.removeChild(el);}catch{} }, ms);
-        } catch {}
+            setTimeout(() => { try { el.parentNode && el.parentNode.removeChild(el); } catch { } }, ms);
+        } catch { }
     }
 
     _showModal(title, text, opts = {}) {
@@ -1606,7 +1622,7 @@ export class Viewer {
         copyBtn.className = 'mtb-btn';
         copyBtn.textContent = 'Copy JSON';
         copyBtn.style.cssText = 'background:#1b2433;border:1px solid #334155;color:#e5e7eb;padding:6px 10px;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;';
-        copyBtn.addEventListener('click', async () => { try { await navigator.clipboard.writeText(pre.value); copyBtn.textContent = 'Copied!'; setTimeout(()=>copyBtn.textContent='Copy JSON', 900); } catch {} });
+        copyBtn.addEventListener('click', async () => { try { await navigator.clipboard.writeText(pre.value); copyBtn.textContent = 'Copied!'; setTimeout(() => copyBtn.textContent = 'Copy JSON', 900); } catch { } });
         const dlBtn = document.createElement('button');
         dlBtn.className = 'mtb-btn';
         dlBtn.textContent = 'Download';
@@ -1614,16 +1630,16 @@ export class Viewer {
         dlBtn.addEventListener('click', () => {
             try {
                 const content = (opts && typeof opts.onDownload === 'function') ? opts.onDownload() : pre.value;
-                const blob = new Blob([content], {type:'application/json'});
+                const blob = new Blob([content], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url; a.download = 'diagnostics.json'; document.body.appendChild(a); a.click();
-                setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
-            } catch {}
+                setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+            } catch { }
         });
 
-        close.addEventListener('click', ()=>{ try{ document.body.removeChild(mask);}catch{} });
-        mask.addEventListener('click', (e)=>{ if (e.target === mask) { try{ document.body.removeChild(mask);}catch{} } });
+        close.addEventListener('click', () => { try { document.body.removeChild(mask); } catch { } });
+        mask.addEventListener('click', (e) => { if (e.target === mask) { try { document.body.removeChild(mask); } catch { } } });
 
         header.appendChild(close);
         box.appendChild(header);
@@ -1726,7 +1742,7 @@ export class Viewer {
             this._resizeRendererToDisplaySize();
             this.render();
             // Keep overlayed labels/leaders in sync with new viewport
-            try { this._sketchMode?.onCameraChanged?.(); } catch {}
+            try { this._sketchMode?.onCameraChanged?.(); } catch { }
         });
     }
 
@@ -1736,7 +1752,7 @@ export class Viewer {
         // Re-evaluate hover while camera moves (if we have a last pointer)
         if (this._lastPointerEvent) this._updateHover(this._lastPointerEvent);
         // While orbiting/panning/zooming, reposition dimension labels/leaders
-        try { this._sketchMode?.onCameraChanged?.(); } catch {}
+        try { this._sketchMode?.onCameraChanged?.(); } catch { }
     }
 
     // Compute world-units per screen pixel for current camera and viewport

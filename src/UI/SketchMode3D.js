@@ -1959,7 +1959,7 @@ export class SketchMode3D {
       this._ctxBar.appendChild(mk("Distance ⟺", "⟺"));
     }
     if (pointCount === 3) {
-      this._ctxBar.appendChild(mk("Colinear ⏛", "⋯"));
+      this._ctxBar.appendChild(mk("Point On Line ⏛", "⏛"));
       this._ctxBar.appendChild(mk("Angle ∠", "∠"));
     }
 

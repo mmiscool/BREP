@@ -1,6 +1,8 @@
 // LabelOverlay.js
 // Manages creation and positioning of PMI label overlays in viewer container.
 
+import './LabelOverlay.css';
+
 export class LabelOverlay {
   constructor(viewer, onPointerDown, onDblClick, onClick, onDragEnd) {
     this.viewer = viewer;
@@ -25,7 +27,7 @@ export class LabelOverlay {
     const div = document.createElement('div');
     div.className = 'pmi-label-root';
     try {
-      div.style.overflow = 'visible';
+      div.style.overflow = 'hidden';
       div.style.contain = 'layout paint size';
       div.style.maxWidth = '100%';
       div.style.maxHeight = '100%';
