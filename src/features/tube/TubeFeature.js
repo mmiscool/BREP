@@ -15,7 +15,7 @@ const inputParamsSchema = {
   },
   radius: {
     type: 'number',
-    default_value: 1,
+    default_value: 5,
     hint: 'Outer radius of the tube'
   },
   innerRadius: {
@@ -80,52 +80,70 @@ function extractPathPolylineWorld(edgeObj) {
   return pts;
 }
 
-function combinePathPolylines(edges, tol = 1e-5) {
-  if (!Array.isArray(edges) || edges.length === 0) return [];
+function collectEdgePolylines(edges) {
   const polys = [];
-  for (const e of edges) {
-    const p = extractPathPolylineWorld(e);
-    if (p.length >= 2) polys.push(p);
+  const validEdges = [];
+  if (!Array.isArray(edges) || edges.length === 0) return { polys, edges: validEdges };
+  for (const edge of edges) {
+    const pts = extractPathPolylineWorld(edge);
+    if (pts.length >= 2) {
+      polys.push(pts);
+      validEdges.push(edge);
+    }
   }
+  return { polys, edges: validEdges };
+}
+
+function deriveTolerance(polys, baseTol = 1e-5) {
+  if (!Array.isArray(polys) || polys.length === 0) return baseTol;
+  if (baseTol !== 1e-5) return baseTol;
+
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  const segLens = [];
+  for (const p of polys) {
+    for (let i = 0; i < p.length; i++) {
+      const v = p[i];
+      if (v[0] < minX) minX = v[0]; if (v[0] > maxX) maxX = v[0];
+      if (v[1] < minY) minY = v[1]; if (v[1] > maxY) maxY = v[1];
+      if (v[2] < minZ) minZ = v[2]; if (v[2] > maxZ) maxZ = v[2];
+      if (i > 0) {
+        const a = p[i - 1];
+        const dx = a[0] - v[0], dy = a[1] - v[1], dz = a[2] - v[2];
+        segLens.push(Math.hypot(dx, dy, dz));
+      }
+    }
+  }
+  const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+  const diag = Math.hypot(dx, dy, dz) || 1;
+  segLens.sort((a, b) => a - b);
+  const med = segLens.length ? segLens[(segLens.length >> 1)] : diag;
+  return Math.min(Math.max(1e-5, diag * 1e-3), med * 0.1);
+}
+
+function createQuantizer(tol) {
+  const t = tol || 1e-5;
+  const q = (v) => [
+    Math.round(v[0] / t) * t,
+    Math.round(v[1] / t) * t,
+    Math.round(v[2] / t) * t,
+  ];
+  const k = (v) => `${v[0]},${v[1]},${v[2]}`;
+  return { q, k };
+}
+
+function combinePathPolylines(edges, tol = 1e-5) {
+  const { polys } = collectEdgePolylines(edges);
   if (polys.length === 0) return [];
   if (polys.length === 1) return polys[0];
 
-  if (tol === 1e-5) {
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    const segLens = [];
-    for (const p of polys) {
-      for (let i = 0; i < p.length; i++) {
-        const v = p[i];
-        if (v[0] < minX) minX = v[0]; if (v[0] > maxX) maxX = v[0];
-        if (v[1] < minY) minY = v[1]; if (v[1] > maxY) maxY = v[1];
-        if (v[2] < minZ) minZ = v[2]; if (v[2] > maxZ) maxZ = v[2];
-        if (i > 0) {
-          const a = p[i - 1];
-          const dx = a[0] - v[0], dy = a[1] - v[1], dz = a[2] - v[2];
-          segLens.push(Math.hypot(dx, dy, dz));
-        }
-      }
-    }
-    const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
-    const diag = Math.hypot(dx, dy, dz) || 1;
-    segLens.sort((a, b) => a - b);
-    const med = segLens.length ? segLens[(segLens.length >> 1)] : diag;
-    const adaptive = Math.min(Math.max(1e-5, diag * 1e-3), med * 0.1);
-    tol = adaptive;
-  }
-
-  const tol2 = tol * tol;
+  const effectiveTol = deriveTolerance(polys, tol);
+  const tol2 = effectiveTol * effectiveTol;
   const d2 = (a, b) => {
     const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
     return dx * dx + dy * dy + dz * dz;
   };
-  const q = (v) => [
-    Math.round(v[0] / tol) * tol,
-    Math.round(v[1] / tol) * tol,
-    Math.round(v[2] / tol) * tol,
-  ];
-  const k = (v) => `${v[0]},${v[1]},${v[2]}`;
+  const { q, k } = createQuantizer(effectiveTol);
 
   const nodes = new Map();
   const endpoints = [];
@@ -193,7 +211,6 @@ function combinePathPolylines(edges, tol = 1e-5) {
     if (used[s]) continue;
     const localUsed = new Array(polys.length).fill(false);
     const localChain = [];
-    const sEnds = endpoints[s];
     localUsed[s] = true;
     const append = (poly, reverse = false) => {
       const pts = reverse ? poly.slice().reverse() : poly;
@@ -242,6 +259,52 @@ function combinePathPolylines(edges, tol = 1e-5) {
   return best;
 }
 
+function groupEdgesByConnectivity(edges, tol = 1e-5) {
+  const { polys, edges: validEdges } = collectEdgePolylines(edges);
+  if (polys.length === 0) return [];
+
+  const effectiveTol = deriveTolerance(polys, tol);
+  const { q, k } = createQuantizer(effectiveTol);
+  const nodeEdges = new Map();
+  const endpoints = [];
+
+  const register = (key, idx) => {
+    if (!nodeEdges.has(key)) nodeEdges.set(key, new Set());
+    nodeEdges.get(key).add(idx);
+  };
+
+  for (let i = 0; i < polys.length; i++) {
+    const poly = polys[i];
+    const startKey = k(q(poly[0]));
+    const endKey = k(q(poly[poly.length - 1]));
+    endpoints.push([startKey, endKey]);
+    register(startKey, i);
+    register(endKey, i);
+  }
+
+  const visited = new Array(polys.length).fill(false);
+  const groups = [];
+  for (let i = 0; i < polys.length; i++) {
+    if (visited[i]) continue;
+    const stack = [i];
+    const component = [];
+    visited[i] = true;
+    while (stack.length) {
+      const idx = stack.pop();
+      component.push(validEdges[idx]);
+      const [sKey, eKey] = endpoints[idx];
+      const neighbors = new Set([...(nodeEdges.get(sKey) || []), ...(nodeEdges.get(eKey) || [])]);
+      for (const n of neighbors) {
+        if (visited[n]) continue;
+        visited[n] = true;
+        stack.push(n);
+      }
+    }
+    if (component.length) groups.push(component);
+  }
+  return groups;
+}
+
 function dedupePoints(points, eps = 1e-7) {
   if (!Array.isArray(points) || points.length === 0) return [];
   const epsSq = eps * eps;
@@ -285,38 +348,83 @@ export class TubeFeature {
       throw new Error('Tube requires at least one EDGE selection for the path.');
     }
 
-    const pathPoints = dedupePoints(combinePathPolylines(edges));
-    if (pathPoints.length < 2) {
+    const edgeGroups = groupEdgesByConnectivity(edges);
+    if (!edgeGroups.length) {
       throw new Error('Unable to build a connected path for the tube.');
     }
 
-    // Detect if the path forms a closed loop
-    const isClosedLoop = pathPoints.length > 2 && (() => {
-      const first = pathPoints[0];
-      const last = pathPoints[pathPoints.length - 1];
-      const dx = first[0] - last[0];
-      const dy = first[1] - last[1];
-      const dz = first[2] - last[2];
-      const distSq = dx * dx + dy * dy + dz * dz;
-      // Use a tolerance based on the path's scale
-      const pathScale = Math.max(...pathPoints.map(p => Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])))) || 1;
-      const tolerance = pathScale * 1e-6;
-      return distSq <= tolerance * tolerance;
+    const tubes = [];
+    for (let i = 0; i < edgeGroups.length; i++) {
+      const group = edgeGroups[i];
+      const pathPoints = dedupePoints(combinePathPolylines(group));
+      if (pathPoints.length < 2) {
+        throw new Error('Unable to build a connected path for the tube.');
+      }
+
+      const isClosedLoop = pathPoints.length > 2 && (() => {
+        const first = pathPoints[0];
+        const last = pathPoints[pathPoints.length - 1];
+        const dx = first[0] - last[0];
+        const dy = first[1] - last[1];
+        const dz = first[2] - last[2];
+        const distSq = dx * dx + dy * dy + dz * dz;
+        const pathScale = Math.max(...pathPoints.map(p => Math.max(Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])))) || 1;
+        const tolerance = pathScale * 1e-6;
+        return distSq <= tolerance * tolerance;
+      })();
+
+      const finalPoints = isClosedLoop ? pathPoints.slice(0, -1) : pathPoints;
+      const tubeName = (() => {
+        if (!featureID) return featureID;
+        if (edgeGroups.length === 1) return featureID;
+        return `${featureID}_${i + 1}`;
+      })();
+
+      const tube = new BREP.Tube({
+        points: finalPoints,
+        radius: radiusValue,
+        innerRadius: inner,
+        resolution: Math.max(8, Math.floor(Number(resolution) || 32)),
+        closed: isClosedLoop,
+        name: tubeName,
+      });
+
+      tube.visualize();
+      tubes.push(tube);
+    }
+
+    if (!tubes.length) {
+      throw new Error('Unable to build a connected path for the tube.');
+    }
+
+    const booleanParam = this.inputParams.boolean;
+    const shouldApplyBoolean = (() => {
+      if (!booleanParam || typeof booleanParam !== 'object') return false;
+      const op = String(booleanParam.operation || 'NONE').toUpperCase();
+      if (op === 'NONE') return false;
+      const targets = Array.isArray(booleanParam.targets) ? booleanParam.targets.filter(Boolean) : [];
+      return targets.length > 0;
     })();
 
-    // For closed loops, remove the duplicate end point to prevent self-intersection
-    const finalPoints = isClosedLoop ? pathPoints.slice(0, -1) : pathPoints;
+    if (shouldApplyBoolean) {
+      const added = [];
+      const removed = [];
+      for (const tube of tubes) {
+        const effects = await BREP.applyBooleanOperation(partHistory || {}, tube, booleanParam, featureID);
+        if (effects?.added?.length) {
+          for (const solid of effects.added) {
+            if (solid) added.push(solid);
+          }
+        }
+        if (effects?.removed?.length) {
+          for (const solid of effects.removed) {
+            if (solid) removed.push(solid);
+          }
+        }
+      }
+      return { added, removed };
+    }
 
-    const tube = new BREP.Tube({
-      points: finalPoints,
-      radius: radiusValue,
-      innerRadius: inner,
-      resolution: Math.max(8, Math.floor(Number(resolution) || 32)),
-      closed: isClosedLoop,
-      name: featureID,
-    });
-
-    tube.visualize();
-    return await BREP.applyBooleanOperation(partHistory || {}, tube, this.inputParams.boolean, featureID);
+    return { added: tubes, removed: [] };
   }
 }
