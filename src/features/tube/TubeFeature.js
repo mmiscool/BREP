@@ -320,6 +320,40 @@ function dedupePoints(points, eps = 1e-7) {
   return out;
 }
 
+function extendPathEndpoints(points, extension = 0) {
+  if (!Array.isArray(points) || points.length < 2 || !(extension > 0)) {
+    return Array.isArray(points) ? points.map(p => Array.isArray(p) ? [p[0], p[1], p[2]] : p) : points;
+  }
+  const extended = points.map(p => [p[0], p[1], p[2]]);
+  const start = extended[0];
+  const next = extended[1];
+  const sx = next[0] - start[0];
+  const sy = next[1] - start[1];
+  const sz = next[2] - start[2];
+  const startLen = Math.hypot(sx, sy, sz);
+  if (startLen > 1e-9) {
+    const inv = extension / startLen;
+    start[0] -= sx * inv;
+    start[1] -= sy * inv;
+    start[2] -= sz * inv;
+  }
+
+  const end = extended[extended.length - 1];
+  const prev = extended[extended.length - 2];
+  const ex = end[0] - prev[0];
+  const ey = end[1] - prev[1];
+  const ez = end[2] - prev[2];
+  const endLen = Math.hypot(ex, ey, ez);
+  if (endLen > 1e-9) {
+    const inv = extension / endLen;
+    end[0] += ex * inv;
+    end[1] += ey * inv;
+    end[2] += ez * inv;
+  }
+
+  return extended;
+}
+
 export class TubeFeature {
   static featureShortName = 'TU';
   static featureName = 'Tube';
@@ -353,7 +387,9 @@ export class TubeFeature {
       throw new Error('Unable to build a connected path for the tube.');
     }
 
-    const tubes = [];
+    const baseResolution = Math.max(8, Math.floor(Number(resolution) || 32));
+    const outerSolids = [];
+    const innerSolids = [];
     for (let i = 0; i < edgeGroups.length; i++) {
       const group = edgeGroups[i];
       const pathPoints = dedupePoints(combinePathPolylines(group));
@@ -380,37 +416,170 @@ export class TubeFeature {
         return `${featureID}_${i + 1}`;
       })();
 
-      const tube = new BREP.Tube({
+      const outerTube = new BREP.Tube({
         points: finalPoints,
         radius: radiusValue,
-        innerRadius: inner,
-        resolution: Math.max(8, Math.floor(Number(resolution) || 32)),
+        innerRadius: 0,
+        resolution: baseResolution,
         closed: isClosedLoop,
         name: tubeName,
       });
+      outerSolids.push(outerTube);
 
-      tube.visualize();
-      tubes.push(tube);
+      if (inner > 0) {
+        const innerName = tubeName ? `${tubeName}_Inner` : null;
+        const baseScale = Math.max(radiusValue, inner);
+        const capExtension = (!isClosedLoop && baseScale > 0)
+          ? Math.max(baseScale * 5e-3, 1e-4)
+          : 0;
+        const innerPoints = (!isClosedLoop && capExtension > 0)
+          ? extendPathEndpoints(finalPoints, capExtension)
+          : finalPoints;
+        const innerTube = new BREP.Tube({
+          points: innerPoints,
+          radius: inner,
+          innerRadius: 0,
+          resolution: baseResolution,
+          closed: isClosedLoop,
+          name: innerName,
+        });
+        innerSolids.push(innerTube);
+      }
     }
 
-    if (!tubes.length) {
+    if (!outerSolids.length) {
       throw new Error('Unable to build a connected path for the tube.');
     }
 
+    const attemptUnionSolids = (solids, label) => {
+      if (!Array.isArray(solids) || solids.length === 0) return null;
+      if (solids.length === 1) {
+        if (label) {
+          try { solids[0].name = label; } catch (_) {}
+        }
+        return solids[0];
+      }
+      try {
+        let result = solids[0];
+        for (let idx = 1; idx < solids.length; idx++) {
+          try {
+            result = result.union(solids[idx]);
+          } catch (err) {
+            console.warn(`[TubeFeature] Union step failed at index ${idx}:`, err?.message || err);
+            return null;
+          }
+        }
+        if (label) {
+          try { result.name = label; } catch (_) {}
+        }
+        return result;
+      } catch (error) {
+        console.warn('[TubeFeature] Union attempt failed:', error?.message || error);
+        return null;
+      }
+    };
+
     const booleanParam = this.inputParams.boolean;
-    const shouldApplyBoolean = (() => {
-      if (!booleanParam || typeof booleanParam !== 'object') return false;
-      const op = String(booleanParam.operation || 'NONE').toUpperCase();
-      if (op === 'NONE') return false;
-      const targets = Array.isArray(booleanParam.targets) ? booleanParam.targets.filter(Boolean) : [];
-      return targets.length > 0;
+    const booleanOp = String(booleanParam?.operation || 'NONE').toUpperCase();
+    const booleanTargets = Array.isArray(booleanParam?.targets) ? booleanParam.targets.filter(Boolean) : [];
+    const shouldApplyBoolean = booleanOp !== 'NONE' && booleanTargets.length > 0;
+
+    const shouldUnionOuter = (booleanOp === 'UNION') || inner > 0;
+    let workingSolids = outerSolids.slice();
+    if (shouldUnionOuter && outerSolids.length > 1) {
+      const unionLabel = featureID || outerSolids[0]?.name || 'TubeUnion';
+      const outerUnion = attemptUnionSolids(outerSolids, unionLabel);
+      if (outerUnion) {
+        workingSolids = [outerUnion];
+      }
+    }
+
+    const innerComposite = (() => {
+      if (!innerSolids.length) return null;
+      if (innerSolids.length === 1) return innerSolids[0];
+      const label = featureID ? `${featureID}_InnerUnion` : null;
+      return attemptUnionSolids(innerSolids, label);
     })();
+
+    let baseSolids = workingSolids.slice();
+    if (inner > 0) {
+      if (!baseSolids.length) {
+        baseSolids = outerSolids.slice();
+      }
+      if (baseSolids.length === 1) {
+        const cutters = innerComposite ? [innerComposite] : innerSolids;
+        if (cutters.length) {
+          let shell = baseSolids[0];
+          try {
+            for (const cutter of cutters) {
+              if (!cutter) continue;
+              shell = shell.subtract(cutter);
+            }
+          } catch (err) {
+            console.warn('[TubeFeature] Hollow subtraction failed; retrying sequentially:', err?.message || err);
+            let fallback = baseSolids[0];
+            for (const cutter of innerSolids) {
+              if (!cutter) continue;
+              try {
+                fallback = fallback.subtract(cutter);
+              } catch (innerErr) {
+                console.warn('[TubeFeature] Sequential hollow subtraction failed:', innerErr?.message || innerErr);
+              }
+            }
+            shell = fallback;
+          }
+          baseSolids = [shell];
+        }
+      } else {
+        const shells = [];
+        for (let idx = 0; idx < baseSolids.length; idx++) {
+          let shell = baseSolids[idx];
+          const cutter = innerSolids[idx] || innerComposite;
+          if (cutter) {
+            try {
+              shell = shell.subtract(cutter);
+            } catch (err) {
+              console.warn(`[TubeFeature] Hollow subtraction failed for segment ${idx}:`, err?.message || err);
+            }
+          }
+          shells.push(shell);
+        }
+        baseSolids = shells;
+      }
+    }
+
+    baseSolids = baseSolids.filter(Boolean);
+
+    if (!baseSolids.length) {
+      throw new Error('Tube generation failed to produce a valid solid.');
+    }
+
+    for (const solid of baseSolids) {
+      if (!solid) continue;
+      if (featureID) {
+        try { solid.owningFeatureID = featureID; } catch (_) {}
+        if (!solid.name) {
+          try { solid.name = featureID; } catch (_) {}
+        }
+      }
+      try { solid.visualize(); } catch (_) {}
+    }
 
     if (shouldApplyBoolean) {
       const added = [];
       const removed = [];
-      for (const tube of tubes) {
-        const effects = await BREP.applyBooleanOperation(partHistory || {}, tube, booleanParam, featureID);
+      let booleanBases = baseSolids;
+      if (booleanOp === 'UNION' && baseSolids.length > 1) {
+        const unionLabel = featureID || baseSolids[0]?.name || 'TubeUnion';
+        const unified = attemptUnionSolids(baseSolids, unionLabel);
+        if (unified) {
+          booleanBases = [unified];
+          try { unified.owningFeatureID = featureID; } catch (_) {}
+          try { unified.visualize(); } catch (_) {}
+        }
+      }
+      for (const base of booleanBases) {
+        const effects = await BREP.applyBooleanOperation(partHistory || {}, base, booleanParam, featureID);
         if (effects?.added?.length) {
           for (const solid of effects.added) {
             if (solid) added.push(solid);
@@ -425,6 +594,6 @@ export class TubeFeature {
       return { added, removed };
     }
 
-    return { added: tubes, removed: [] };
+    return { added: baseSolids, removed: [] };
   }
 }
