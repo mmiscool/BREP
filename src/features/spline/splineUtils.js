@@ -83,7 +83,7 @@ function computeTangents(points, startHandle, endHandle) {
   const count = points.length;
   for (let i = 0; i < count; i++) {
     if (i === 0) {
-      const vec = new THREE.Vector3().subVectors(startHandle, points[0]);
+      const vec = new THREE.Vector3().subVectors(startHandle, points[0]).multiplyScalar(3);
       if (vec.lengthSq() < 1e-6 && count >= 2) {
         vec.subVectors(points[1], points[0]);
       }
@@ -91,7 +91,7 @@ function computeTangents(points, startHandle, endHandle) {
       continue;
     }
     if (i === count - 1) {
-      const vec = new THREE.Vector3().subVectors(endHandle, points[i]);
+      const vec = new THREE.Vector3().subVectors(points[i], endHandle).multiplyScalar(3);
       if (vec.lengthSq() < 1e-6 && count >= 2) {
         vec.subVectors(points[i], points[i - 1]);
       }

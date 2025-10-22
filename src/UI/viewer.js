@@ -21,7 +21,6 @@ import { registerDefaultToolbarButtons } from './toolbarButtons/registerDefaultB
 import { FileManagerWidget } from './fileManagerWidget.js';
 import './mobile.js';
 import { SketchMode3D } from './SketchMode3D.js';
-import { SplineMode3D } from './SplineMode3D.js';
 import { ViewCube } from './ViewCube.js';
 import { FloatingWindow } from './FloatingWindow.js';
 import { generateObjectUI } from './objectDump.js';
@@ -477,41 +476,7 @@ export class Viewer {
         } catch { }
     }
 
-    // ————————————————————————————————————————
-    // Spline Mode API
-    // ————————————————————————————————————————
-    startSplineMode(featureID) {
-        try { if (this._splineMode) this._splineMode.dispose(); } catch { }
-        this._splineMode = new SplineMode3D(this, featureID);
-        this._splineMode.open();
-    }
 
-    onSplineFinished(featureID, splineData) {
-        const ph = this.partHistory;
-        this.endSplineMode();
-        if (!ph || !featureID) return;
-        const feature = Array.isArray(ph.features)
-            ? ph.features.find((f) => f?.inputParams?.featureID === featureID)
-            : null;
-        if (!feature) return;
-        feature.lastRunInputParams = {};
-        feature.timestamp = 0;
-        feature.dirty = true;
-        feature.persistentData = feature.persistentData || {};
-        feature.persistentData.spline = cloneSplineData(splineData);
-        try { ph.runHistory(); } catch { }
-    }
-
-    onSplineCancelled(_featureID) {
-        this.endSplineMode();
-    }
-
-    endSplineMode() {
-        try { if (this._splineMode) this._splineMode.close(); } catch { }
-        this._splineMode = null;
-        try { if (this.controls) this.controls.enabled = true; } catch { }
-        try { this.render(); } catch { }
-    }
 
     // ————————————————————————————————————————
     // PMI Edit Mode API

@@ -161,6 +161,7 @@ export class SchemaForm {
             : true;
         this._inputs = new Map();
         this._widgets = new Map();
+        this._skipDefaultRefresh = new Set();
         this._excludedKeys = new Set(['featureID']); // exclude from defaults & rendering
         if (Array.isArray(options.excludeKeys)) {
             for (const key of options.excludeKeys) {
@@ -228,6 +229,12 @@ export class SchemaForm {
             const s = SchemaForm.__activeXform;
             if (s && s.owner === this) SchemaForm.__stopGlobalActiveXform();
         } catch (_) { }
+        for (const widget of this._widgets.values()) {
+            if (widget && typeof widget.destroy === 'function') {
+                try { widget.destroy(); } catch (_) { /* ignore widget destroy errors */ }
+            }
+        }
+        this._widgets.clear();
     }
 
     /** Returns the live params object (already kept in sync). */
@@ -237,8 +244,24 @@ export class SchemaForm {
 
     /** Programmatically refresh input widgets from the current params object. */
     refreshFromParams() {
+        for (const [key, widget] of this._widgets.entries()) {
+            if (widget && typeof widget.refreshFromParams === 'function') {
+                try {
+                    widget.refreshFromParams(this.params[key], {
+                        ui: this,
+                        key,
+                        def: this.schema[key] || {},
+                        params: this.params,
+                    });
+                } catch (_) { }
+            }
+        }
+
         for (const [key, el] of this._inputs.entries()) {
             const def = this.schema[key] || {};
+            if (this._skipDefaultRefresh.has(key)) {
+                continue;
+            }
             const v = this._pickInitialValue(key, def);
             // Special composite types handle their own refresh
             if (def && def.type === 'boolean_operation') {
@@ -316,6 +339,7 @@ export class SchemaForm {
         }
 
         this._widgets.clear();
+        this._skipDefaultRefresh.clear();
 
         // Build field rows
         for (const key in this.schema) {
@@ -347,7 +371,13 @@ export class SchemaForm {
             let inputEl;
             let inputRegistered = true;
 
-            const renderer = getWidgetRenderer(def.type);
+            // Allow schema defs to supply inline renderer without touching global registry.
+            const renderer =
+                typeof def.renderWidget === 'function'
+                    ? def.renderWidget
+                    : typeof def.widgetRenderer === 'function'
+                        ? def.widgetRenderer
+                        : getWidgetRenderer(def.type);
             const widget = renderer({
                 ui: this,
                 key,
@@ -364,6 +394,10 @@ export class SchemaForm {
 
             if (widget && typeof widget === 'object') {
                 this._widgets.set(key, widget);
+                // Custom widgets can opt out of default refresh handling.
+                if (widget.skipDefaultRefresh === true) {
+                    this._skipDefaultRefresh.add(key);
+                }
             }
 
             if (!inputEl || !(inputEl instanceof HTMLElement)) {
