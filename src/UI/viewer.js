@@ -713,10 +713,11 @@ export class Viewer {
                 p = p.parent;
             }
         }
+        console.log('Picked object:', obj);
 
         // If the object (or its ancestors) doesn't expose onClick, climb to one that does
         let target = obj;
-        while (target && typeof target.onClick !== 'function') target = target.parent;
+        while (target && typeof target.onClick !== 'function' && target.visible) target = target.parent;
         if (!target) return null;
 
         // Respect selection filter: ensure target is a permitted type, or ALL
@@ -762,10 +763,32 @@ export class Viewer {
         } catch { }
         // Intersect everything; raycaster will skip non-geometry nodes
         const intersects = this.raycaster.intersectObjects(this.scene.children, true);
+        //console.log('Pick intersects: wooooooooooooooooooooo', intersects);
         for (const it of intersects) {
-            console.log('Pick intersect:', it);
-            const target = this._mapIntersectionToTarget(it);
-            if (target) return { hit: it, target };
+            // skip entities that are not visible (or have invisible parents)
+            if (!it || !it.object) continue;
+            const testVisible = (obj) => {
+                if (obj.parent === null) {
+                    console.log('Reached scene root during visibility test.');
+                    return true;
+                }
+                if (obj.visible === false) return false;
+                return testVisible(obj.parent);
+            }
+            //console.log('Testing intersect object visibility:', testVisible(it.object), it.object.name);
+
+            const visibleResult = testVisible(it.object);
+
+            if (visibleResult) {
+
+                console.log('Intersect object visibility result:', visibleResult, it.object.name);
+                //console.log('Pick intersect object:', it.object);
+                const target = this._mapIntersectionToTarget(it);
+                if (target) return { hit: it, target };
+            }
+
+
+
         }
         return { hit: null, target: null };
     }

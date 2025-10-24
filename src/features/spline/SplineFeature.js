@@ -798,7 +798,7 @@ export class SplineFeature {
     const sceneGroup = new THREE.Group();
     sceneGroup.name = featureId;
     sceneGroup.type = "SKETCH";
-    sceneGroup.onClick = () => {};
+    sceneGroup.onClick = () => { };
 
     const resolution = Number.isFinite(Number(this.inputParams?.curveResolution))
       ? Math.max(4, Number(this.inputParams.curveResolution))

@@ -262,6 +262,42 @@ export class Solid extends THREE.Group {
     surfaceArea() {
         return SolidMethods.surfaceArea.apply(this, arguments);
     }
+
+    /**
+     * Split any self-intersecting triangle pairs in-place.
+     * Replaces the original triangles with subdivided triangles while
+     * preserving per-triangle face IDs. Operates on authoring arrays
+     * (_vertProperties/_triVerts/_triIDs) and marks the solid dirty.
+     */
+    splitSelfIntersectingTriangles() {
+        return SolidMethods.splitSelfIntersectingTriangles.apply(this, arguments);
+    }
+
+    /**
+     * Remove internal triangles by rebuilding from the Manifold surface.
+     * Keeps only exterior triangles, preserving face IDs. In-place.
+     * Returns the number of triangles removed.
+     */
+    removeInternalTriangles() {
+        return SolidMethods.removeInternalTriangles.apply(this, arguments);
+    }
+
+    /**
+     * Remove internal triangles using a raycast point-in-solid test.
+     * Works even on non-manifold authoring meshes. In-place.
+     * Returns the number of triangles removed.
+     */
+    removeInternalTrianglesByRaycast() {
+        return SolidMethods.removeInternalTrianglesByRaycast.apply(this, arguments);
+    }
+
+    /**
+     * Remove internal triangles using solid-angle (winding number) test.
+     * Robust to self-intersections; does not require manifold. In-place.
+     */
+    removeInternalTrianglesByWinding(options = {}) {
+        return SolidMethods.removeInternalTrianglesByWinding.apply(this, [options]);
+    }
 }
 
 // --- Method-level time profiling for Solid -----------------------------------

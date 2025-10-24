@@ -32,6 +32,10 @@ export {
     removeSmallInternalIslands,
     removeTinyBoundaryTriangles,
     remesh,
+    splitSelfIntersectingTriangles,
+    removeInternalTriangles,
+    removeInternalTrianglesByRaycast,
+    removeInternalTrianglesByWinding,
 } from "./meshCleanup.js";
 export {
     getMesh,

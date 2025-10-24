@@ -244,6 +244,11 @@ export class SplineEditorSession {
 
   _initMaterials() {
     this._sphereGeometry = new THREE.SphereGeometry(0.2, 20, 16);
+    // add click event to the sphere geometry
+
+    this._sphereGeometry
+
+
     this._anchorBaseMaterial = new THREE.MeshBasicMaterial({
       color: 0x2b9bd8,
     });
@@ -265,6 +270,8 @@ export class SplineEditorSession {
       opacity: 0.85,
       depthTest: false,
     });
+
+    // add oncli
   }
 
   _disposeMaterials() {
@@ -294,6 +301,8 @@ export class SplineEditorSession {
     this._previewGroup.name = `SplineEditorPreview:${this.featureID || ""}`;
     this._previewGroup.userData = this._previewGroup.userData || {};
     this._previewGroup.userData.excludeFromFit = true;
+    this._previewGroup.userData.preventRemove = true;
+    alert(this._previewGroup.name);
 
     const lineMaterial = new THREE.LineBasicMaterial({
       color: 0xffffff,
@@ -328,7 +337,7 @@ export class SplineEditorSession {
       /* noop */
     }
     try {
-      this.viewer.scene.remove(this._previewGroup);
+      //this.viewer.scene.remove(this._previewGroup);
     } catch {
       /* noop */
     }
@@ -339,7 +348,10 @@ export class SplineEditorSession {
   }
 
   _createTransformControl(id, mesh) {
+    console.log(this._previewGroup);
+    //this.viewerscene.add(this._previewGroup);
     if (!this.viewer?.scene || !this.viewer?.camera || !this.viewer?.renderer) {
+      alert("Cannot create transform control: viewer is not properly initialized.");
       return null;
     }
     if (!TransformControlsDirect) return null;
@@ -352,41 +364,18 @@ export class SplineEditorSession {
     control.showX = true;
     control.showY = true;
     control.showZ = true;
-    control.setSize(1.0);
+    control.setSize(1);
     control.enabled = false;
     control.attach(mesh);
     control.userData = control.userData || {};
     control.userData.excludeFromFit = true;
+    console.log(control);
 
     const helper =
       typeof control.getHelper === "function"
         ? control.getHelper()
         : null;
 
-    if (helper && helper.isObject3D) {
-      helper.visible = false;
-      helper.userData = helper.userData || {};
-      helper.userData.excludeFromFit = true;
-      helper.renderOrder = 10000;
-      try {
-        helper.traverse((child) => {
-          if (!child || !child.isObject3D) return;
-          const mat = child.material;
-          if (mat && typeof mat === "object") {
-            if ("depthTest" in mat) mat.depthTest = false;
-            if ("depthWrite" in mat) mat.depthWrite = false;
-            if ("transparent" in mat) mat.transparent = true;
-          }
-        });
-      } catch {
-        /* noop */
-      }
-      try {
-        this.viewer.scene.add(helper);
-      } catch {
-        /* noop */
-      }
-    }
 
     const changeHandler = () => this._handleTransformChangeFor(id);
     const dragHandler = (event) => this._handleTransformDragging(!!event?.value);
@@ -395,6 +384,12 @@ export class SplineEditorSession {
 
     this._transformsById.set(id, { control, helper });
     this._transformListeners.set(id, { changeHandler, dragHandler });
+    helper.userData.preventRemove = true;
+
+    this.viewer.scene.add(helper);
+    console.log(this);
+    window.test = this.viewer.scene.children;
+    console.log(this.viewer.scene.children);
     return control;
   }
 
@@ -591,6 +586,10 @@ export class SplineEditorSession {
       );
       mesh.name = `SplinePoint:${pt.id}`;
       this._previewGroup.add(mesh);
+      mesh.onclick = () => {
+        alert(`Point ${pt.id} clicked`);
+        this.selectObject(`point:${pt.id}`);
+      }
       const entryId = `point:${pt.id}`;
       const transform = this._createTransformControl(entryId, mesh);
       this._objectsById.set(entryId, {
