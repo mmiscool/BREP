@@ -1,4 +1,6 @@
-// Lightweight GitHub plugin loader: try GitHub Raw first, then fall back to jsDelivr.
+// Plugin loader utilities.
+// - GitHub repos: try GitHub Raw first, then fall back to jsDelivr.
+// - Generic URLs: load from any HTTP(S) base or a direct plugin entry URL.
 
 // Parse common GitHub URL shapes.
 // Supports:
@@ -26,6 +28,14 @@ export function parseGithubUrl(input) {
   }
   if (!user || !repo) throw new Error('Invalid GitHub repo URL');
   return { user, repo, ref, subdir };
+}
+
+function isGithubRepoUrl(u) {
+  try { return new URL(u).hostname === 'github.com'; } catch { return false; }
+}
+
+function dirOf(u) {
+  try { return new URL('.', u).href; } catch { return u; }
 }
 
 async function fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, ts) {
@@ -93,6 +103,48 @@ export async function importGithubPlugin(repoUrl) {
   }
 }
 
+// Generic URL importer. Accepts either a base URL (serving plugin files with entry as plugin.js)
+// or a direct entry URL ending in .js. Example: http://localhost:8080/ or https://host/path/plugin.js
+export async function importUrlPlugin(rawUrl) {
+  const t = Date.now();
+  let entryUrl = '';
+  let baseUrl = '';
+  try {
+    const u = new URL(String(rawUrl));
+    // If it looks like a direct JS entry, use it as-is; otherwise, append plugin.js to the base.
+    const path = u.pathname || '';
+    const isJsEntry = /\.m?js$/i.test(path);
+    if (isJsEntry) {
+      entryUrl = u.href;
+      baseUrl = dirOf(u.href);
+    } else {
+      // Ensure trailing slash so URL('plugin.js', base) works consistently
+      if (!u.pathname.endsWith('/')) u.pathname = (u.pathname || '') + '/';
+      baseUrl = u.href;
+      entryUrl = new URL('plugin.js', baseUrl).href;
+    }
+  } catch (e) {
+    throw new Error('Invalid URL');
+  }
+
+  const entryUrls = [`${entryUrl}${entryUrl.includes('?') ? '&' : '?'}t=${t}`];
+  const baseUrls = [baseUrl];
+
+  const { code, __worker, __cleanup } = await fetchAndPrepareEntryViaWorker(entryUrls, baseUrls, t);
+  const blob = new Blob([code], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  try {
+    const mod = await import(/* webpackIgnore: true */ /* @vite-ignore */ url);
+    return mod;
+  } finally {
+    setTimeout(() => {
+      try { URL.revokeObjectURL(url); } catch { }
+      try { (__cleanup || (()=>{}))(); } catch { }
+      try { __worker && __worker.terminate && __worker.terminate(); } catch { }
+    }, 0);
+  }
+}
+
 // Plugin app object: exposes the full viewer and helper hooks for plugins.
 function buildApp(viewer) {
   const app = {
@@ -149,7 +201,9 @@ function buildApp(viewer) {
 }
 
 export async function loadPluginFromRepoUrl(viewer, repoUrl) {
-  const mod = await importGithubPlugin(repoUrl);
+  // Route based on host: GitHub repo URL vs arbitrary base/entry URL
+  const isGh = isGithubRepoUrl(repoUrl);
+  const mod = isGh ? await importGithubPlugin(repoUrl) : await importUrlPlugin(repoUrl);
   const app = buildApp(viewer);
   if (typeof mod?.default === 'function') {
     await mod.default(app);

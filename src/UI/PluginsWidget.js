@@ -1,4 +1,4 @@
-// PluginsWidget — manage GitHub plugin repo URLs with a list+actions UI
+// PluginsWidget — manage plugin URLs (GitHub repos or generic base/entry URLs)
 import { getSavedPluginUrls, savePluginUrls, loadPlugins, parseGithubUrl, getPluginEnabledMap, savePluginEnabledMap } from '../plugins/pluginManager.js';
 
 export class PluginsWidget {
@@ -152,17 +152,19 @@ export class PluginsWidget {
     modal.className = 'plg-modal';
 
     const title = document.createElement('h3');
-    title.textContent = 'Add third-party plugin from GitHub repo';
+    title.textContent = 'Add third-party plugin';
     const h2 = document.createElement('h2');
     h2.style.color = 'red';
     h2.innerHTML = `Installing third-party plugins can be risky. <br><br>
-    These plugins run code that we do not control, and malicious or poorly written plugins could compromise your data, expose sensitive information, or harm the stability and security of your application. 
+    These plugins run code that we do not control, and malicious or poorly written plugins could compromise your data, expose sensitive information, or harm the stability and security of your application.
     <br><br>Only proceed if you fully trust the source of the plugin.
-    <br><br>Enter the GitHub repository URL :<br>(e.g., https://github.com/USER/REPO or with /tree/branch).`;
+    <br><br>Enter either:
+    <br>- a GitHub repository URL (e.g., https://github.com/USER/REPO or with /tree/branch)
+    <br>- or a base/entry URL where plugin files are served (e.g., http://localhost:8080/ or https://example.com/my-plugin/plugin.js)`;
 
     const urlInput = document.createElement('input');
     urlInput.className = 'plg-input';
-    urlInput.placeholder = 'https://github.com/USER/REPO[/tree/REF][/sub/dir]';
+    urlInput.placeholder = 'GitHub repo or base/entry URL (e.g., https://github.com/USER/REPO or http://localhost:8080/)';
 
     const p2 = document.createElement('h2');
     p2.innerHTML = '<br>To proceed, type "yes" below to confirm you understand the risks of third-party plugins.';
@@ -191,8 +193,21 @@ export class PluginsWidget {
       let urlOk = false;
       err.textContent = '';
       if (v) {
-        try { parseGithubUrl(v); urlOk = true; }
-        catch (e) { urlOk = false; err.textContent = String(e?.message || 'Invalid GitHub URL'); }
+        try {
+          const u = new URL(v);
+          if (u.protocol === 'http:' || u.protocol === 'https:') {
+            if (u.hostname === 'github.com') {
+              // Enforce GitHub URL shape if it's a GitHub host
+              parseGithubUrl(v);
+            }
+            urlOk = true;
+          } else {
+            throw new Error('URL must start with http(s)');
+          }
+        } catch (e) {
+          urlOk = false;
+          err.textContent = String(e?.message || 'Invalid URL');
+        }
       }
       const confirmed = c === 'yes';
       okBtn.disabled = !(urlOk && confirmed);
@@ -206,7 +221,11 @@ export class PluginsWidget {
       const v = String(urlInput.value || '').trim();
       const c = String(confirmInput.value || '').trim().toLowerCase();
       if (!v || c !== 'yes') return; // safety
-      try { parseGithubUrl(v); } catch { return; }
+      // For GitHub URLs, ensure shape is valid; otherwise accept generic http(s) URL
+      try {
+        const u = new URL(v);
+        if (u.hostname === 'github.com') parseGithubUrl(v);
+      } catch { return; }
       // prevent duplicates
       this.urls = Array.isArray(this.urls) ? this.urls : [];
       if (!this.urls.includes(v)) this.urls.push(v);
