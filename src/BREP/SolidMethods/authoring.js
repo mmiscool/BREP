@@ -11,11 +11,23 @@ export function _key([x, y, z]) {
 
 /** Return the index of `p`, adding it to the vertex buffer if new. */
 export function _getPointIndex(p) {
+    // Validate that all coordinates are finite before adding to vertex buffer
+    if (!Array.isArray(p) || p.length < 3) {
+        console.error('Invalid point passed to _getPointIndex:', p);
+        throw new Error('Point must be an array with at least 3 elements');
+    }
+    
+    const x = p[0], y = p[1], z = p[2];
+    if (!isFinite(x) || !isFinite(y) || !isFinite(z)) {
+        console.error('Non-finite coordinates in _getPointIndex:', {x, y, z});
+        throw new Error(`Invalid point coordinates: (${x}, ${y}, ${z}) - must be finite numbers`);
+    }
+    
     const k = this._key(p);
     const found = this._vertKeyToIndex.get(k);
     if (found !== undefined) return found;
     const idx = this._vertProperties.length / 3;
-    this._vertProperties.push(p[0], p[1], p[2]);
+    this._vertProperties.push(x, y, z);
     this._vertKeyToIndex.set(k, idx);
     return idx;
 }
@@ -54,8 +66,16 @@ export function addTriangle(faceName, v1, v2, v3) {
  */
 export function addAuxEdge(name, points, options = {}) {
     try {
+        const toArr = (p) => {
+            if (Array.isArray(p) && p.length === 3) return [p[0], p[1], p[2]];
+            if (p && typeof p === 'object') {
+                const x = +p.x, y = +p.y, z = +p.z;
+                if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) return [x, y, z];
+            }
+            return null;
+        };
         const pts = Array.isArray(points)
-            ? points.filter(p => Array.isArray(p) && p.length === 3).map(p => [p[0], p[1], p[2]])
+            ? points.map(toArr).filter(Boolean)
             : [];
         if (pts.length < 2) return this;
         const entry = {
@@ -77,4 +97,3 @@ export function addCenterline(a, b, name = 'CENTERLINE', options = {}) {
     const B = Array.isArray(b) ? b : [b?.x || 0, b?.y || 0, b?.z || 0];
     return this.addAuxEdge(name, [A, B], options);
 }
-

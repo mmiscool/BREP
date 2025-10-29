@@ -56,5 +56,5 @@ export {
     simplify,
 } from "./booleanOps.js";
 export { toSTL, writeSTL } from "./io.js";
-export { volume, surfaceArea } from "./metrics.js";
+export { volume, surfaceArea, getTriangleCount } from "./metrics.js";
 export { default as visualize } from "./visualize.js";

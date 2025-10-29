@@ -394,15 +394,31 @@ function addRingCap(solid, name, outerRing, innerRing, outwardDir) {
 }
 
 export class TubeSolid extends Solid {
-  constructor({ points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = false, name = 'Tube' } = {}) {
+  constructor({ points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = true, name = 'Tube' } ) {
     super();
     this.params = { points, radius, innerRadius, resolution, closed, name };
     this.name = name;
-    this.generate();
+    // Only auto-generate when we have a valid param set.
+    // When created via boolean ops (_fromManifold), the constructor is
+    // invoked with no arguments and geometry will be populated from the
+    // Manifold mesh immediately after construction. Avoid calling
+    // generate() in that case to prevent errors.
+    try {
+      const hasPath = Array.isArray(points) && points.length >= 2;
+      const validRadius = Number(radius) > 0;
+      if (hasPath && validRadius) {
+        this.generate();
+        this.visualize();
+      }
+    } catch {
+      // Fail-quietly to keep boolean reconstruction safe
+    }
   }
 
   generate() {
+    
     const { points, radius, innerRadius, resolution, closed, name } = this.params;
+    //console.log(points, radius, innerRadius, resolution, closed, name);
     if (!(radius > 0)) {
       throw new Error('Tube radius must be greater than zero.');
     }
@@ -522,7 +538,7 @@ export class TubeSolid extends Solid {
 
     try {
       const auxPath = smoothed.map(p => [p.x, p.y, p.z]);
-      this.addAuxEdge(`${faceTag}_PATH`, auxPath, { polylineWorld: true, materialKey: 'OVERLAY' });
+      this.addAuxEdge(`${faceTag}_PATH`, auxPath, { polylineWorld: true, materialKey: 'OVERLAY', closedLoop: !!closed });
     } catch (_) {
       // ignore auxiliary path errors
     }

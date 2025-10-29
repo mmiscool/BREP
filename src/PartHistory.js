@@ -30,6 +30,7 @@ export class PartHistory {
     this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
     this.pmiViewsManager = new PMIViewsManager(this);
     this.metadataManager = new MetadataManager
+    this.ambientLight = new THREE.AmbientLight(0xffffff, 2);
     if (this.assemblyConstraintHistory) {
       this.assemblyConstraintHistory.clear();
       this.assemblyConstraintHistory.setPartHistory(this);
@@ -40,20 +41,20 @@ export class PartHistory {
 
     const originalRemove = this.scene.remove;
     this.scene.remove = (...args) => {
-      console.log("Removing from scene:", args);
+      //console.log("Removing from scene:", args);
       if (args[0]?.userData?.preventRemove) {
         console.log("Removal prevented by object flag.");
         return;
       }
 
-      console.trace();
+      //console.trace();
       originalRemove.apply(this.scene, args);
     };
 
     // overide the scenes add method to console log additions along with the stack trace
     const originalAdd = this.scene.add;
     this.scene.add = (...args) => {
-      console.log("Adding to scene:", args);
+      //console.log("Adding to scene:", args);
       //console.trace();
       originalAdd.apply(this.scene, args);
     };
@@ -119,7 +120,7 @@ export class PartHistory {
   async runHistory() {
     const whatStepToStopAt = this.currentHistoryStepId;
 
-    //await this.scene.clear();
+    await this.scene.clear();
     // remove all objects from the scene except lights, camera and transform gizmos
     const toRemove = this.scene.children.slice().filter(ch => !ch.isLight && !ch.isCamera && !ch.isTransformGizmo);
     for (const ch of toRemove) {
@@ -130,9 +131,8 @@ export class PartHistory {
       this.scene.remove(ch);
     }
 
-    // add ambient light to scene
-    const ambientLight = new THREE.AmbientLight(0xffffff, 2);
-    this.scene.add(ambientLight);
+
+    this.scene.add(this.ambientLight);
 
     let skipAllFeatures = false;
     const features = Array.isArray(this.features) ? this.features : [];

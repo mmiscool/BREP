@@ -713,7 +713,7 @@ export class Viewer {
                 p = p.parent;
             }
         }
-        console.log('Picked object:', obj);
+        //console.log('Picked object:', obj);
 
         // If the object (or its ancestors) doesn't expose onClick, climb to one that does
         let target = obj;
@@ -769,7 +769,7 @@ export class Viewer {
             if (!it || !it.object) continue;
             const testVisible = (obj) => {
                 if (obj.parent === null) {
-                    console.log('Reached scene root during visibility test.');
+                    //console.log('Reached scene root during visibility test.');
                     return true;
                 }
                 if (obj.visible === false) return false;
@@ -781,7 +781,7 @@ export class Viewer {
 
             if (visibleResult) {
 
-                console.log('Intersect object visibility result:', visibleResult, it.object.name);
+                //console.log('Intersect object visibility result:', visibleResult, it.object.name);
                 //console.log('Pick intersect object:', it.object);
                 const target = this._mapIntersectionToTarget(it);
                 if (target) return { hit: it, target };

@@ -263,6 +263,10 @@ export class Solid extends THREE.Group {
         return SolidMethods.surfaceArea.apply(this, arguments);
     }
 
+    getTriangleCount() {
+        return SolidMethods.getTriangleCount.apply(this, arguments);
+    }
+
     /**
      * Split any self-intersecting triangle pairs in-place.
      * Replaces the original triangles with subdivided triangles while

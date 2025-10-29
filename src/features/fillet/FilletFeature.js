@@ -1,5 +1,6 @@
-import { BREP } from "../../BREP/BREP.js";
-import { clearFilletCaches } from "../../BREP/fillets/fillet.js";
+import { add } from "three/tsl";
+import { clearFilletCaches, computeFilletCenterline, filletSolid } from "../../BREP/fillets/fillet.js";
+import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
 
 
 const inputParamsSchema = {
@@ -9,6 +10,11 @@ const inputParamsSchema = {
         multiple: true,
         default_value: null,
         hint: "Select faces (or an edge) to fillet along shared edges",
+    },
+    centerlineOnly: {
+        type: "boolean",
+        default_value: false,
+        hint: "Only create the fillet centerline (no geometry changes)"
     },
     radius: {
         type: "number",
@@ -59,54 +65,35 @@ export class FilletFeature {
         this.persistentData = {};
     }
     async run(partHistory) {
-        // Geometry in earlier features can rename faces while keeping the same IDs,
-        // so clear cached face data between runs to avoid stale projections.
-        try { clearFilletCaches(); } catch {}
-        const dbg = !!this.inputParams.debug;
-        const fjson = (tag, obj) => { if (!dbg) return; try { console.log(`[FilletDBG-JSON] ${tag} ` + JSON.stringify(obj)); } catch { console.log(`[FilletDBG-JSON] ${tag}`, obj); } };
-        const safeVolume = (s) => { try { return s.volume(); } catch { return 0; } };
+        // Clear caches between runs
+        try { clearFilletCaches(); } catch { }
+        const added = [];
+        const removed = [];
+
         // Accept resolved objects from sanitizeInputParams
         const inputObjects = Array.isArray(this.inputParams.edges) ? this.inputParams.edges.filter(Boolean) : [];
 
-        //console.log("FilletFeature input objects:", inputObjects);
-
         let edgeObjs = [];
-
         inputObjects.forEach(obj => {
-            //console.log("Processing input object:", obj);
             if (obj.type === "EDGE") {
-
-                // check if edge already in array
-                if (edgeObjs.includes(obj)) return;
-                edgeObjs.push(obj);
+                if (!edgeObjs.includes(obj)) edgeObjs.push(obj);
             }
             if (obj.type === "FACE") {
-                // if the object is a face, it might have multiple edges selected
                 for (const edge of obj.edges) {
                     edgeObjs.push(edge);
-
                 }
             }
-
         });
 
-
-        // Deduplicate edges
+        // Deduplicate and ensure edges belong to a solid
         edgeObjs = Array.from(new Set(edgeObjs));
-        
-        // Filter out edges that don't belong to any solid
         edgeObjs = edgeObjs.filter(e => (e && (e.parentSolid || e.parent)));
-        
-
-
-
 
         if (edgeObjs.length === 0) {
             console.warn("No edges selected for fillet");
             return { added: [], removed: [] };
         }
         const solids = new Set(edgeObjs.map(e => e.parentSolid || e.parent));
-
         if (solids.size === 0) {
             console.warn("Selected edges do not belong to any solid");
             return { added: [], removed: [] };
@@ -116,273 +103,91 @@ export class FilletFeature {
             return { added: [], removed: [] };
         }
 
-        const targetSolidOriginal = edgeObjs[0].parentSolid || edgeObjs[0].parent;
+        // Centerline-only mode: compute overlays and exit. No geometry changes.
 
-        const targetSolid = targetSolidOriginal.clone();
-        targetSolid.name = targetSolidOriginal.name;
-
-        targetSolid.visualize();
+        const dir = String(this.inputParams.direction || 'INSET').toUpperCase();
+        const r = Number(this.inputParams.radius);
 
 
 
+        const filletSolids = [];
 
-        // Pre-remesh the target solid for more regular triangles before
-        // constructing fillet tools. Use max edge length = radius / 2.
-        // Important: remeshing + visualize() rebuilds child Edge objects,
-        // so we must remap the selected edges to their new counterparts.
-        try {
-            const r = Number(this.inputParams.radius);
-            if (Number.isFinite(r) && r > 0) {
-                // Capture descriptors for currently selected edges
-                const toDesc = (edge) => {
-                    const ua = edge?.userData || {};
-                    const faceA = ua.faceA || (edge?.faces?.[0]?.name) || null;
-                    const faceB = ua.faceB || (edge?.faces?.[1]?.name) || null;
-                    const pair = (faceA && faceB) ? (faceA < faceB ? [faceA, faceB] : [faceB, faceA]) : null;
-                    const pts = Array.isArray(ua.polylineLocal) ? ua.polylineLocal : null;
-                    const center = (() => {
-                        if (!pts || pts.length === 0) return [0, 0, 0];
-                        let sx = 0, sy = 0, sz = 0;
-                        for (const p of pts) { sx += p[0]; sy += p[1]; sz += p[2]; }
-                        const inv = 1 / pts.length; return [sx * inv, sy * inv, sz * inv];
-                    })();
-                    const length = (() => {
-                        if (!pts || pts.length < 2) return 0;
-                        let L = 0;
-                        for (let i = 0; i < pts.length - 1; i++) {
-                            const a = pts[i], b = pts[i + 1];
-                            const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
-                            L += Math.hypot(dx, dy, dz);
-                        }
-                        return L;
-                    })();
-                    return { pair, center, length, closed: !!edge?.closedLoop };
-                };
-                const oldDescs = edgeObjs.map(toDesc);
+        if (Number.isFinite(r) && r > 0) {
+            const fid = this.inputParams?.featureID || 'FILLET';
+            let ci = 0;
+            // Collect individual fillet solids per edge to combine later
 
-                const maxEdge = Math.max(1e-6, r / 2);
-                targetSolid.remesh({ maxEdgeLength: maxEdge });
-                // Refresh edge polylines for visualization
-                try { targetSolid.visualize(); } catch (_) { }
+            for (const e of edgeObjs) {
+                try {
+                    console.log(e);
+                    try {
+                        const res = filletSolid({
+                            edgeToFillet: e,
+                            radius: r,
+                            sideMode: dir,
+                            debug: !!this.inputParams.debug,
+                            name: `${fid}_FILLET_${ci++}`
+                        });
 
-                // Remap to new Edge objects by matching face-pair and closest center
-                const allEdges = targetSolid.children.filter(o => o && o.type === 'EDGE');
-                const dist2 = (a, b) => {
-                    const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
-                    return dx * dx + dy * dy + dz * dz;
-                };
-                const centerOf = (edge) => {
-                    const pts = edge?.userData?.polylineLocal;
-                    if (!Array.isArray(pts) || pts.length === 0) return [0, 0, 0];
-                    let sx = 0, sy = 0, sz = 0;
-                    for (const p of pts) { sx += p[0]; sy += p[1]; sz += p[2]; }
-                    const inv = 1 / pts.length; return [sx * inv, sy * inv, sz * inv];
-                };
-                const lengthOf = (edge) => {
-                    const pts = edge?.userData?.polylineLocal;
-                    if (!Array.isArray(pts) || pts.length < 2) return 0;
-                    let L = 0; for (let i = 0; i < pts.length - 1; i++) { const a = pts[i], b = pts[i + 1]; L += Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); }
-                    return L;
-                };
-                const pairOf = (edge) => {
-                    const ua = edge?.userData || {};
-                    const faceA = ua.faceA || (edge?.faces?.[0]?.name) || null;
-                    const faceB = ua.faceB || (edge?.faces?.[1]?.name) || null;
-                    return (faceA && faceB) ? (faceA < faceB ? [faceA, faceB] : [faceB, faceA]) : null;
-                };
+                        const { finalSolid } = res || {};
+                        if (finalSolid) filletSolids.push({ finalSolid, target: e.parentSolid });
 
-                const remapped = [];
-                for (const desc of oldDescs) {
-                    if (!desc.pair) continue;
-                    let best = null; let bestCost = Infinity;
-                    for (const e of allEdges) {
-                        const pair = pairOf(e);
-                        if (!pair || pair[0] !== desc.pair[0] || pair[1] !== desc.pair[1]) continue;
-                        if (e.closedLoop !== desc.closed) continue;
-                        const c = centerOf(e);
-                        const L = lengthOf(e);
-                        const d2 = dist2(c, desc.center);
-                        const dL = Math.abs(L - desc.length);
-                        const cost = d2 + 0.01 * dL;
-                        if (cost < bestCost) { bestCost = cost; best = e; }
+                        console.log("Fillet solid created for edge:", e);
+
+
+
+                    } catch (filletError) {
+                        console.error("Failed to create FilletSolid:", filletError?.message || filletError);
+                        // Continue with next edge instead of stopping entirely
                     }
-                    if (best) remapped.push(best);
-                }
 
-                if (remapped.length) {
-                    edgeObjs = remapped;
-                } else {
-                    console.warn('[FilletFeature] remesh edge remap failed; no matching edges found.');
-                    // If we continue, selected Edge parents are likely null; abort gracefully
-                    return { added: [], removed: [] };
+                } catch (error) {
+                    console.warn("Fillet generation failed for edge:", e, error);
                 }
-            }
-        } catch (e) {
-            console.warn('[FilletFeature] remesh skipped:', e?.message || e);
-        }
-
-        // Create the fillet solid for each edge
-        fjson('FeatureStart', {
-            edgesSelected: edgeObjs.length,
-            radius: this.inputParams.radius,
-            inflate: this.inputParams.inflate,
-            direction: this.inputParams.direction,
-            debug: !!this.inputParams.debug
-        });
-        const objectsForBoolean = [];
-        for (let idx = 0; idx < edgeObjs.length; idx++) {
-            const edgeObj = edgeObjs[idx];
-            const edgeName = (edgeObj && edgeObj.name) || null;
-            fjson('BuildToolStart', { idx, edge: edgeName });
-            const filletSolid = makeSingleFilletSolid(edgeObj,
-                this.inputParams.radius,
-                this.inputParams.inflate,
-                this.inputParams.direction,
-                this.inputParams.debug,
-                -this.inputParams.capBulgeStart,
-                -this.inputParams.capBulgeEnd);
-            if (dbg) { try { filletSolid.visualize(); } catch {} }
-            objectsForBoolean.push(filletSolid);
-            if (dbg) {
-                try { console.log(`[FilletFeature] Created fillet tool for edge ${edgeName || '(unnamed)'}: volume=${safeVolume(filletSolid)}`); } catch {}
-                try { console.log(filletSolid); } catch {}
-            }
-            // Summarize tool mesh if available
-            try {
-                const mesh = filletSolid.getMesh();
-                const counts = {
-                    vertices: (mesh.vertProperties?.length || 0) / 3 | 0,
-                    triangles: (mesh.triVerts?.length || 0) / 3 | 0,
-                    faceLabels: (mesh.faceID?.length || 0) / 1 | 0
-                };
-                fjson('BuildToolDone', { idx, edge: edgeName, filletType: filletSolid.filletType || null, counts });
-                try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
-            } catch (e) {
-                fjson('BuildToolError', { idx, edge: edgeName, message: e?.message || String(e) });
             }
         }
 
-        // Apply booleans sequentially using shared helper; supports robust nudge behavior
-        let finalSolid = targetSolid;
-        const toRemove = new Set();
-        toRemove.add(targetSolidOriginal);
 
-        for (let idx = 0; idx < objectsForBoolean.length; idx++) {
-            const tool = objectsForBoolean[idx];
-            const dir = String(this.inputParams.direction || 'INSET').toUpperCase();
-            const op = (dir === 'OUTSET' ? 'UNION' : 'SUBTRACT');
-            const beforeVol = safeVolume(finalSolid);
-                const params = { operation: op, targets: [] };
-            // Encourage distinct end-cap faces after subtraction by slightly
-            // nudging coplanar caps off target faces when needed. Use the user's
-            // inflate if provided, else a small fraction of the radius.
-            if (op === 'SUBTRACT') {
-                const mag = Math.max(0, Number(this.inputParams.inflate) || 0);
-                const dist = (mag > 0) ? mag : Math.max(1e-4, 0.02 * Math.abs(Number(this.inputParams.radius) || 1));
-                params.offsetCoplanarCap = 'START+;END+'; // both caps outward
-                params.offsetDistance = dist;
-            }
-            let effects = { added: [], removed: [] };
-
-            if (op === 'SUBTRACT') {
-                // base = tool, targets = [finalSolid]
-                params.targets = [finalSolid];
-                fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
-                effects = await BREP.applyBooleanOperation(partHistory, tool, params, null);
-                finalSolid = effects.added[0] || finalSolid;
-            } else {
-                // UNION/INTERSECT: base = finalSolid, targets = [tool]
-                params.targets = [tool];
-                fjson('BooleanTry', { idx, op, before: beforeVol, toolVol: safeVolume(tool) });
-                effects = await BREP.applyBooleanOperation(partHistory, finalSolid, params, null);
-                finalSolid = effects.added[0] || finalSolid;
-            }
-
-            fjson('BooleanDone', { idx, op, after: safeVolume(finalSolid) });
-            // Flag removed artifacts for scene cleanup
-            // In debug mode, keep fillet tools visible: don't mark them for removal.
-            for (const r of effects.removed) {
-                if (!r) continue;
-                if (this.inputParams.debug && objectsForBoolean.includes(r)) continue;
-                toRemove.add(r);
-            }
+        //console.log("Fillet solids created:", filletSolids);
+        // group fillet solids by their target solids
+        const filletsByTarget = new Map();
+        for (const { finalSolid, target } of filletSolids) {
+            if (!filletsByTarget.has(target)) filletsByTarget.set(target, []);
+            filletsByTarget.get(target).push(finalSolid);
         }
 
-        finalSolid.name = `${targetSolid.name}`;
-        finalSolid.removeSmallInternalIslands(100);
-        finalSolid.removeSmallIslands();
 
-        //const actualFinalSolid = await finalSolid.simplify(0.00001);
-        const actualFinalSolid = await finalSolid.simplify(0.0001);
-        actualFinalSolid.name = `${targetSolid.name}`;
-        actualFinalSolid.visualize();
+        // Apply fillet solids to their target solids using the boolean union for outset and boolean subtract for inset
+        for (const [targetSolid, filletSolids] of filletsByTarget.entries()) {
+            console.log("Applying fillets to target solid:", targetSolid, filletSolids);
+            let solidResult = targetSolid;
 
-        // Alert if any triangles in the final solid are missing a face name
-        try {
-            const mesh = actualFinalSolid.getMesh && actualFinalSolid.getMesh();
-            const faceIDs = mesh && mesh.faceID ? Array.from(mesh.faceID) : [];
-            const idToName = actualFinalSolid && actualFinalSolid._idToFaceName ? actualFinalSolid._idToFaceName : new Map();
-            if (faceIDs.length) {
-                let missing = 0;
-                for (let i = 0; i < faceIDs.length; i++) {
-                    const id = faceIDs[i];
-                    if (!idToName.has(id)) missing++;
-                }
-                if (missing > 0) {
-                    const msg = `Fillet result warning: ${missing} triangle(s) in the final solid are missing a face name.`;
-                    if (typeof window !== 'undefined' && typeof window.alert === 'function') window.alert(msg);
-                    else if (typeof alert === 'function') alert(msg);
-                    else console.warn(msg);
+
+            //loop over each fillet solid and apply boolean operation
+            for (const filletSolid of filletSolids) {
+                // check if we are doing INSET or OUTSET
+                if (dir === "OUTSET") {
+                    solidResult = solidResult.union(filletSolid);
+                } else if (dir === "INSET") {
+                    solidResult = solidResult.subtract(filletSolid);
                 }
             }
-            try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch {}
-        } catch (e) {
-            // Non-fatal; continue pipeline
-            console.warn('[FilletFeature] Face-name check failed:', e?.message || e);
+
+            removed.push(targetSolid);
+            added.push(solidResult);
+
         }
-        // Replace original target solid
-        toRemove.add(targetSolid, targetSolidOriginal);
 
-        // Mark removals via flag for PartHistory to collect
-        try { for (const r of toRemove) { if (r) r.__removeFlag = true; } } catch { }
 
-        // Return only the resulting artifacts to add
-        const out = [];
+        // if debug is enabled, add all debug solids
         if (this.inputParams.debug) {
-            for (const tool of objectsForBoolean) { try { tool.visualize(); } catch {} }
-            out.push(...objectsForBoolean, targetSolid);
+            filletSolids.forEach(fillet => {
+                added.push(fillet.finalSolid);
+            });
+
         }
-        out.push(actualFinalSolid);
-        return { added: out, removed: Array.from(toRemove) };
+
+
+        return { added, removed };
     }
 }
-
-
-
-function makeSingleFilletSolid(edgeObj,
-    radius = 1,
-    inflate = 0,
-    direction = 'INSET',
-    debug = false,
-    capBulgeStart = 0,
-    capBulgeEnd = 0) {
-    // Only UI params are accepted; all robustness knobs are internal.
-    const tool = new BREP.FilletSolid({
-        edgeToFillet: edgeObj,
-        radius,
-        inflate,
-        sideMode: direction,
-        debug,
-        capBulgeStart,
-        capBulgeEnd,
-    });
-    // tool.fixTriangleWindingsByAdjacency();
-    // tool.invertNormals();
-    tool.name = "FILLET_TOOL";
-    try { tool.visualize(); } catch {}
-
-    // No extra flips or authoring tweaks here; FilletSolid handles robustness internally.
-    return tool;
-}
-
-// (removed unused duplicate safeVolume; run() defines its own helper)

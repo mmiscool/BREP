@@ -455,10 +455,14 @@ export class TubeFeature {
       if (!Array.isArray(solids) || solids.length === 0) return null;
       if (solids.length === 1) {
         if (label) {
-          try { solids[0].name = label; } catch (_) {}
+          try { solids[0].name = label; } catch (_) { }
         }
         return solids[0];
       }
+      console.log('Attempting union of solids:', solids);
+
+
+
       try {
         let result = solids[0];
         for (let idx = 1; idx < solids.length; idx++) {
@@ -470,7 +474,7 @@ export class TubeFeature {
           }
         }
         if (label) {
-          try { result.name = label; } catch (_) {}
+          try { result.name = label; } catch (_) { }
         }
         return result;
       } catch (error) {
@@ -484,68 +488,73 @@ export class TubeFeature {
     const booleanTargets = Array.isArray(booleanParam?.targets) ? booleanParam.targets.filter(Boolean) : [];
     const shouldApplyBoolean = booleanOp !== 'NONE' && booleanTargets.length > 0;
 
-    const shouldUnionOuter = (booleanOp === 'UNION') || inner > 0;
-    let workingSolids = outerSolids.slice();
-    if (shouldUnionOuter && outerSolids.length > 1) {
-      const unionLabel = featureID || outerSolids[0]?.name || 'TubeUnion';
-      const outerUnion = attemptUnionSolids(outerSolids, unionLabel);
-      if (outerUnion) {
-        workingSolids = [outerUnion];
-      }
-    }
+    // Always attempt to union outer segments into one solid when possible
+    const outerUnionLabel = featureID || outerSolids[0]?.name || 'TubeUnion';
+    const outerUnion = (outerSolids.length > 1) ? attemptUnionSolids(outerSolids, outerUnionLabel) : (outerSolids[0] || null);
 
-    const innerComposite = (() => {
-      if (!innerSolids.length) return null;
-      if (innerSolids.length === 1) return innerSolids[0];
-      const label = featureID ? `${featureID}_InnerUnion` : null;
-      return attemptUnionSolids(innerSolids, label);
-    })();
+    // Always attempt to union inner segments into one cutter when inside radius is set
+    const innerUnionLabel = featureID ? `${featureID}_InnerUnion` : (innerSolids[0]?.name || null);
+    const innerUnion = (inner > 0 && innerSolids.length > 0)
+      ? ((innerSolids.length > 1) ? attemptUnionSolids(innerSolids, innerUnionLabel) : innerSolids[0])
+      : null;
 
-    let baseSolids = workingSolids.slice();
+    // Build the base (hollow) shell per required pipeline:
+    // final = union(outer) minus union(inner)
+    let baseSolids = [];
     if (inner > 0) {
-      if (!baseSolids.length) {
-        baseSolids = outerSolids.slice();
+      // Preferred path: single subtract of the two unions
+      if (outerUnion && innerUnion) {
+        try {
+          baseSolids = [outerUnion.subtract(innerUnion)];
+        } catch (e) {
+          console.warn('[TubeFeature] Subtract of unioned inner from unioned outer failed; falling back:', e?.message || e);
+        }
       }
-      if (baseSolids.length === 1) {
-        const cutters = innerComposite ? [innerComposite] : innerSolids;
-        if (cutters.length) {
-          let shell = baseSolids[0];
-          try {
-            for (const cutter of cutters) {
-              if (!cutter) continue;
-              shell = shell.subtract(cutter);
+
+      // Fallbacks if the preferred single subtract was not possible
+      if (!baseSolids.length) {
+        if (outerUnion && innerSolids.length > 0) {
+          // Subtract each inner from the outer union
+          let shell = outerUnion;
+          for (const cutter of innerUnion ? [innerUnion] : innerSolids) {
+            try { if (cutter) shell = shell.subtract(cutter); } catch (err) {
+              console.warn('[TubeFeature] Fallback subtract (outerUnion - cutter) failed:', err?.message || err);
             }
-          } catch (err) {
-            console.warn('[TubeFeature] Hollow subtraction failed; retrying sequentially:', err?.message || err);
-            let fallback = baseSolids[0];
-            for (const cutter of innerSolids) {
-              if (!cutter) continue;
-              try {
-                fallback = fallback.subtract(cutter);
-              } catch (innerErr) {
-                console.warn('[TubeFeature] Sequential hollow subtraction failed:', innerErr?.message || innerErr);
-              }
-            }
-            shell = fallback;
           }
           baseSolids = [shell];
-        }
-      } else {
-        const shells = [];
-        for (let idx = 0; idx < baseSolids.length; idx++) {
-          let shell = baseSolids[idx];
-          const cutter = innerSolids[idx] || innerComposite;
-          if (cutter) {
-            try {
-              shell = shell.subtract(cutter);
-            } catch (err) {
-              console.warn(`[TubeFeature] Hollow subtraction failed for segment ${idx}:`, err?.message || err);
+        } else if (!outerUnion && innerUnion && outerSolids.length > 0) {
+          // Subtract inner union from each outer, then try to union the result
+          const shells = [];
+          for (const outer of outerSolids) {
+            try { shells.push(outer.subtract(innerUnion)); } catch (err) {
+              console.warn('[TubeFeature] Fallback subtract (outer - innerUnion) failed:', err?.message || err);
+              shells.push(outer);
             }
           }
-          shells.push(shell);
+          const unifiedShell = attemptUnionSolids(shells, outerUnionLabel) || null;
+          baseSolids = unifiedShell ? [unifiedShell] : shells.filter(Boolean);
+        } else {
+          // Last resort: pairwise subtract matching inners when available
+          const shells = [];
+          for (let i = 0; i < outerSolids.length; i++) {
+            const outer = outerSolids[i];
+            const cutter = innerSolids[i] || innerUnion || null;
+            if (outer) {
+              try {
+                shells.push(cutter ? outer.subtract(cutter) : outer);
+              } catch (err) {
+                console.warn(`[TubeFeature] Pairwise subtract failed for segment ${i}:`, err?.message || err);
+                shells.push(outer);
+              }
+            }
+          }
+          const unifiedShell = attemptUnionSolids(shells, outerUnionLabel) || null;
+          baseSolids = unifiedShell ? [unifiedShell] : shells.filter(Boolean);
         }
-        baseSolids = shells;
       }
+    } else {
+      // Solid tube (no inner). Prefer a unified outer shell if available
+      baseSolids = outerUnion ? [outerUnion] : outerSolids.slice();
     }
 
     baseSolids = baseSolids.filter(Boolean);
@@ -557,12 +566,12 @@ export class TubeFeature {
     for (const solid of baseSolids) {
       if (!solid) continue;
       if (featureID) {
-        try { solid.owningFeatureID = featureID; } catch (_) {}
+        try { solid.owningFeatureID = featureID; } catch (_) { }
         if (!solid.name) {
-          try { solid.name = featureID; } catch (_) {}
+          try { solid.name = featureID; } catch (_) { }
         }
       }
-      try { solid.visualize(); } catch (_) {}
+      try { solid.visualize(); } catch (_) { }
     }
 
     if (shouldApplyBoolean) {
@@ -574,8 +583,8 @@ export class TubeFeature {
         const unified = attemptUnionSolids(baseSolids, unionLabel);
         if (unified) {
           booleanBases = [unified];
-          try { unified.owningFeatureID = featureID; } catch (_) {}
-          try { unified.visualize(); } catch (_) {}
+          try { unified.owningFeatureID = featureID; } catch (_) { }
+          try { unified.visualize(); } catch (_) { }
         }
       }
       for (const base of booleanBases) {

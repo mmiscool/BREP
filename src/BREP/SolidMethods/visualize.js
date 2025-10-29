@@ -85,6 +85,19 @@ export default function visualize(options = {}) {
             for (let t = 0; t < triangles.length; t++) {
                 const tri = triangles[t];
                 const p0 = tri.p1, p1 = tri.p2, p2 = tri.p3;
+                
+                // Validate triangle coordinates before adding to geometry
+                const coords = [p0[0], p0[1], p0[2], p1[0], p1[1], p1[2], p2[0], p2[1], p2[2]];
+                const hasInvalidCoords = coords.some(coord => !isFinite(coord));
+                
+                if (hasInvalidCoords) {
+                    console.error(`Invalid triangle coordinates in face ${faceName}, triangle ${t}:`);
+                    console.error('p0:', p0, 'p1:', p1, 'p2:', p2);
+                    console.error('Triangle data:', tri);
+                    // Skip this triangle by not incrementing w and not setting positions
+                    continue;
+                }
+                
                 positions[w++] = p0[0]; positions[w++] = p0[1]; positions[w++] = p0[2];
                 positions[w++] = p1[0]; positions[w++] = p1[1]; positions[w++] = p1[2];
                 positions[w++] = p2[0]; positions[w++] = p2[1]; positions[w++] = p2[2];
@@ -207,8 +220,20 @@ export default function visualize(options = {}) {
                             }
                             poly.push(verts(u));
                             if (poly.length >= 2) {
+                                // Validate polyline coordinates before creating geometry
+                                const flatCoords = poly.flat();
+                                const hasInvalidCoords = flatCoords.some(coord => !isFinite(coord));
+                                
+                                if (hasInvalidCoords) {
+                                    console.error('Invalid coordinates detected in edge polyline:');
+                                    console.error('Poly coordinates:', poly);
+                                    console.error('Flat coordinates:', flatCoords);
+                                    console.error('Face names:', nameA, '|', nameB);
+                                    continue; // Skip this edge
+                                }
+                                
                                 const g = new LineGeometry();
-                                g.setPositions(poly.flat());
+                                g.setPositions(flatCoords);
                                 try { g.computeBoundingSphere(); } catch { }
                                 const edgeObj = new Edge(g);
                                 edgeObj.name = `${nameA}|${nameB}`;
@@ -238,6 +263,16 @@ export default function visualize(options = {}) {
                     if (pts.length < 2) continue;
                     const flat = [];
                     for (const p of pts) { flat.push(p[0], p[1], p[2]); }
+                    
+                    // Validate auxiliary edge coordinates
+                    const hasInvalidCoords = flat.some(coord => !isFinite(coord));
+                    if (hasInvalidCoords) {
+                        console.error('Invalid coordinates in auxiliary edge:', aux?.name || 'CENTERLINE');
+                        console.error('Points:', pts);
+                        console.error('Flat coordinates:', flat);
+                        continue; // Skip this auxiliary edge
+                    }
+                    
                     const g = new LineGeometry();
                     g.setPositions(flat);
                     try { g.computeBoundingSphere(); } catch { }

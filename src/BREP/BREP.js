@@ -5,7 +5,7 @@ import { Sweep } from "./Sweep.js";
 import { TubeSolid } from "./Tube.js";
 import { ChamferSolid } from "./chamfer.js";
 import { ExtrudeSolid } from "./Extrude.js";
-import { FilletSolid } from "./fillets/fillet.js";
+import { filletSolid, computeFilletCenterline, attachFilletCenterlineAuxEdge } from "./fillets/fillet.js";
 import { applyBooleanOperation } from "./applyBooleanOperation.js";
 import { MeshToBrep } from "./meshToBrep.js";
 import { MeshRepairer } from "./MeshRepairer.js";
@@ -28,7 +28,9 @@ export const BREP = {
     Sweep,
     ExtrudeSolid,
     ChamferSolid,
-    FilletSolid,
+    filletSolid,
+    computeFilletCenterline,
+    attachFilletCenterlineAuxEdge,
     applyBooleanOperation,
     MeshToBrep,
     MeshRepairer,

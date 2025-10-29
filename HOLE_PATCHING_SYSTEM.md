@@ -2,7 +2,7 @@
 
 ## Overview
 
-The FilletSolid class now includes a robust hole patching system that ensures all generated meshes are manifold (closed, no holes). This addresses the critical requirement for manifold mesh generation in BREP operations.
+The `filletSolid` function now includes a robust hole patching approach that ensures generated meshes aim to be manifold (closed, no holes). This addresses the critical requirement for manifold mesh generation in BREP operations.
 
 ## Key Features
 
@@ -62,19 +62,20 @@ _cleanupAfterPatching()         // Weld vertices and fix windings
 ### Automatic Usage
 The system is automatically triggered during fillet operations:
 ```javascript
-const fillet = new FilletSolid({ 
-    edgeToFillet: edge, 
-    radius: 2.0,
-    debug: true  // Enable logging
+const { tube, wedge } = filletSolid({
+  edgeToFillet: edge,
+  radius: 2.0,
+  debug: true
 });
-// Hole patching happens automatically if needed
+// Hole patching and manifold checks happen during construction
 ```
 
 ### Manual Testing
 ```javascript
-// Test with a mesh that has holes
-const patchCount = filletSolid._generateEndcapsIfNeeded(1.0, 'FILLET');
-console.log(`Patched ${patchCount} holes`);
+// Test: build fillet parts and visualize
+const { tube, wedge } = filletSolid({ edgeToFillet: edge, radius: 1.0, debug: true });
+tube.visualize();
+wedge.visualize();
 ```
 
 ## Manifold Properties Guaranteed
@@ -133,10 +134,10 @@ Manifold validation after patching: PASSED
 
 ## Integration Points
 
-### FilletSolid Integration
-- Automatically called in `buildFillet()` method
-- Integrated with existing mesh construction pipeline
-- Compatible with all fillet modes (INSET, OUTSET, etc.)
+### filletSolid Integration
+ - Used by FilletFeature to generate fillet parts
+ - Integrated with existing mesh construction pipeline
+ - Compatible with fillet modes (INSET, OUTSET)
 
 ### External Dependencies
 - Uses THREE.js Vector3 for geometric calculations

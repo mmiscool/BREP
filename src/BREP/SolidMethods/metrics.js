@@ -43,3 +43,13 @@ export function surfaceArea() {
     } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
 }
 
+/**
+ * Count triangles in the current mesh.
+ */
+export function getTriangleCount() {
+    const mesh = this.getMesh();
+    try {
+        const tv = mesh.triVerts;
+        return (tv.length / 3) | 0;
+    } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
+}
