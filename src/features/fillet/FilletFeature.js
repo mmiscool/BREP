@@ -11,11 +11,6 @@ const inputParamsSchema = {
         default_value: null,
         hint: "Select faces (or an edge) to fillet along shared edges",
     },
-    centerlineOnly: {
-        type: "boolean",
-        default_value: false,
-        hint: "Only create the fillet centerline (no geometry changes)"
-    },
     radius: {
         type: "number",
         step: 0.1,
@@ -111,6 +106,7 @@ export class FilletFeature {
 
 
         const filletSolids = [];
+        const debugSolids = []; // Store tube and wedge solids for debug mode
 
         if (Number.isFinite(r) && r > 0) {
             const fid = this.inputParams?.featureID || 'FILLET';
@@ -129,8 +125,14 @@ export class FilletFeature {
                             name: `${fid}_FILLET_${ci++}`
                         });
 
-                        const { finalSolid } = res || {};
-                        if (finalSolid) filletSolids.push({ finalSolid, target: e.parentSolid });
+                        const { finalSolid, tube, wedge } = res || {};
+                        if (finalSolid) {
+                            filletSolids.push({ finalSolid, target: e.parentSolid });
+                            
+                            // Store debug solids for debug mode
+                            if (tube) debugSolids.push(tube);
+                            if (wedge) debugSolids.push(wedge);
+                        }
 
                         console.log("Fillet solid created for edge:", e);
 
@@ -179,12 +181,11 @@ export class FilletFeature {
         }
 
 
-        // if debug is enabled, add all debug solids
+        // if debug is enabled, add all debug solids (tube and wedge solids)
         if (this.inputParams.debug) {
-            filletSolids.forEach(fillet => {
-                added.push(fillet.finalSolid);
+            debugSolids.forEach(debugSolid => {
+                added.push(debugSolid);
             });
-
         }
 
 
