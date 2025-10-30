@@ -800,39 +800,43 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         }
     }
 
-    // Apply the same offset to the wedge edge points to keep them aligned with tangent points
-    for (let i = 0; i < edgeWedgeCopy.length; i++) {
-        const edgeWedgePt = edgeWedgeCopy[i];
-        const centerPt = centerlineCopy[i] || centerlineCopy[centerlineCopy.length - 1];
-        const tanAPt = tangentACopy[i] || tangentACopy[tangentACopy.length - 1];
-        const tanBPt = tangentBCopy[i] || tangentBCopy[tangentBCopy.length - 1];
-        
-        if (edgeWedgePt && centerPt && tanAPt && tanBPt) {
-            try {
-                const origWedgeEdge = { ...edgeWedgePt };
-                const offsetDistance = -0.01; // Same as applied to tangents
-                
-                // Apply the same offsetAndMovePoints logic to the wedge edge point
-                // We'll use the edge point as if it were one of the triangle points
-                offsetAndMovePoints(edgeWedgePt, { x: edgeWedgePt.x, y: edgeWedgePt.y, z: edgeWedgePt.z }, { x: edgeWedgePt.x, y: edgeWedgePt.y, z: edgeWedgePt.z }, offsetDistance, offsetDistance, offsetDistance);
-                
-                // Validate the result
-                if (!isFiniteVec3(edgeWedgePt)) {
-                    console.warn(`Invalid wedge edge point after offset at index ${i}, reverting to original`);
-                    Object.assign(edgeWedgePt, origWedgeEdge);
+    // Apply a small offset to the tangent curves relative to the centerline.
+    // This directly affects the wedge faces between centerline and tangency curves.
+    // INSET flips the direction compared to OUTSET.
+    {
+        const offsetDistance = (side === 'INSET') ? 0.01 : -0.01;
+        const n = Math.min(centerlineCopy.length, tangentACopy.length, tangentBCopy.length);
+        for (let i = 0; i < n; i++) {
+            const c = centerlineCopy[i];
+            const ta = tangentACopy[i];
+            const tb = tangentBCopy[i];
+            if (c && ta) {
+                const dax = ta.x - c.x, day = ta.y - c.y, daz = ta.z - c.z;
+                const daL = Math.hypot(dax, day, daz);
+                if (daL > 1e-12) {
+                    ta.x += (dax / daL) * offsetDistance;
+                    ta.y += (day / daL) * offsetDistance;
+                    ta.z += (daz / daL) * offsetDistance;
                 }
-            } catch (offsetError) {
-                console.warn(`Wedge edge offset failed at index ${i}: ${offsetError?.message || offsetError}`);
-                // Revert on error
-                const origWedgeEdge = edgeCopy[i] ? { ...edgeCopy[i] } : null;
-                if (origWedgeEdge) Object.assign(edgeWedgePt, origWedgeEdge);
+            }
+            if (c && tb) {
+                const dbx = tb.x - c.x, dby = tb.y - c.y, dbz = tb.z - c.z;
+                const dbL = Math.hypot(dbx, dby, dbz);
+                if (dbL > 1e-12) {
+                    tb.x += (dbx / dbL) * offsetDistance;
+                    tb.y += (dby / dbL) * offsetDistance;
+                    tb.z += (dbz / dbL) * offsetDistance;
+                }
             }
         }
+        try { console.log(`Applied tangent offsetDistance=${offsetDistance} to ${n} samples`); } catch {}
     }
 
-    // Push wedge edge points slightly inside the original shape
-    // This creates a small inset to ensure the wedge doesn't extend beyond the original geometry
-    const wedgeInsetDistance = -0.05; // Negative to push inward
+    // Push wedge edge points slightly relative to the centerline to ensure
+    // the wedge doesn't extend beyond the original geometry. For OUTSET this
+    // nudge is inward (toward the centerline). For INSET it must be the
+    // opposite direction (away from the centerline) to build the correct wedge.
+    const wedgeInsetMagnitude = 0.05; // small bias distance
     for (let i = 0; i < edgeWedgeCopy.length; i++) {
         const edgeWedgePt = edgeWedgeCopy[i];
         const centerPt = centerlineCopy[i] || centerlineCopy[centerlineCopy.length - 1]; // Fallback to last point
@@ -858,11 +862,13 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                         y: inwardDir.y / inwardLength,
                         z: inwardDir.z / inwardLength
                     };
-                    
-                    // Move edge point slightly toward the centerline (negative offset = inward)
-                    edgeWedgePt.x += normalizedInward.x * Math.abs(wedgeInsetDistance);
-                    edgeWedgePt.y += normalizedInward.y * Math.abs(wedgeInsetDistance);
-                    edgeWedgePt.z += normalizedInward.z * Math.abs(wedgeInsetDistance);
+                    // Determine direction: OUTSET -> inward, INSET -> outward (opposite)
+                    const dirSign = (side === 'INSET') ? -1 : 1;
+                    const step = dirSign * wedgeInsetMagnitude;
+                    // Apply
+                    edgeWedgePt.x += normalizedInward.x * step;
+                    edgeWedgePt.y += normalizedInward.y * step;
+                    edgeWedgePt.z += normalizedInward.z * step;
                     
                     // Validate the result
                     if (!isFiniteVec3(edgeWedgePt)) {
@@ -878,7 +884,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         }
     }
     
-    console.log(`Applied wedge inset of ${Math.abs(wedgeInsetDistance)} units to ${edgeWedgeCopy.length} edge points`);
+    console.log(`Applied wedge inset of ${wedgeInsetMagnitude} units (${side === 'INSET' ? 'outward' : 'inward'}) to ${edgeWedgeCopy.length} edge points`);
 
 
     // fix the winding of the edge points to match the centerline
