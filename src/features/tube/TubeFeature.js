@@ -413,6 +413,16 @@ export class TubeFeature {
       const tubeName = (() => {
         if (!featureID) return featureID;
         if (edgeGroups.length === 1) return featureID;
+
+        // get the name of the first edge in the group if possible
+        const firstEdge = group[0];
+        if (firstEdge) {
+          const edgeName = firstEdge.name || firstEdge.id;
+          if (edgeName) {
+            return `${featureID}_${edgeName}`;
+          }
+        }
+
         return `${featureID}_${i + 1}`;
       })();
 
@@ -465,6 +475,7 @@ export class TubeFeature {
 
       try {
         let result = solids[0];
+
         for (let idx = 1; idx < solids.length; idx++) {
           try {
             result = result.union(solids[idx]);

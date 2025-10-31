@@ -394,8 +394,9 @@ function addRingCap(solid, name, outerRing, innerRing, outwardDir) {
 }
 
 export class TubeSolid extends Solid {
-  constructor({ points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = true, name = 'Tube' } ) {
+  constructor(opts = {}) {
     super();
+    const { points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = true, name = 'Tube' } = opts;
     this.params = { points, radius, innerRadius, resolution, closed, name };
     this.name = name;
     // Only auto-generate when we have a valid param set.
