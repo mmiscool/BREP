@@ -694,7 +694,7 @@ export function attachFilletCenterlineAuxEdge(solid, edgeObj, radius = 1, sideMo
 
 
 // Functional API: builds fillet tube and wedge and returns them.
-export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debug = false, name = 'fillet' } = {}) {
+export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debug = false, name = 'fillet', inflate = 0.1 } = {}) {
     // Validate inputs
     if (!edgeToFillet) {
         throw new Error('filletSolid: edgeToFillet is required');
@@ -804,7 +804,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
     // This directly affects the wedge faces between centerline and tangency curves.
     // INSET flips the direction compared to OUTSET.
     {
-        const offsetDistance = (side === 'INSET') ? 0.01 : -0.01;
+        const offsetDistance = (side === 'INSET') ? inflate : -inflate;
         const n = Math.min(centerlineCopy.length, tangentACopy.length, tangentBCopy.length);
         for (let i = 0; i < n; i++) {
             const c = centerlineCopy[i];
