@@ -103,7 +103,7 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
         const trisA = solid.getFace(faceA.name);
         const trisB = solid.getFace(faceB.name);
         if (!Array.isArray(trisA) || !trisA.length || !Array.isArray(trisB) || !trisB.length) return out;
-        
+
         // Create unique cache keys that include solid identity and geometry hash to prevent cross-contamination
         const solidId = solid.uuid || solid.name || solid.constructor.name;
         const geometryHashA = trisA.length > 0 ? `${trisA.length}_${trisA[0].p1?.[0]?.toFixed(3) || 0}` : '0';
@@ -135,7 +135,7 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
                 const a = src[0], b = src[src.length - 1];
                 if (a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) src.pop();
             }
-            
+
             const outPts = [];
             for (let i = 0; i < src.length; i++) {
                 const a = src[i];
@@ -182,7 +182,7 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
             const pNext = isClosed ? samples[(i + 1) % sampleCount] : samples[Math.min(sampleCount - 1, i + 1)];
 
             tangent.copy(pNext).sub(pPrev);
-            
+
             if (tangent.lengthSq() < vecLengthTol) continue;
             tangent.normalize();
 
@@ -221,7 +221,7 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
             const C_out = solveCenterFromOffsetPlanesAnchored(p, tangent, nA, qA, +1, nB, qB, +1, rEff);
             let pick = (String(sideMode).toUpperCase() === 'OUTSET') ? 'out' : 'in';
             let center = (pick === 'in') ? (C_in || C_out) : (C_out || C_in);
-            
+
 
 
             // Initial tangency points from center (used to refine/fallback)
@@ -296,59 +296,35 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
             edgePts.push({ x: p.x, y: p.y, z: p.z });
         }
 
-        // For closed loops, ensure proper closure by making sure start and end points are the same
+        // For closed loops, explicitly duplicate the start point at the end
+        // so the centerline is a closed polyline (last point equals first point).
         if (isClosed && centers.length >= 2) {
-            // Check if the centerline is actually closed (first point == last point)
             const firstCenter = centers[0];
             const lastCenter = centers[centers.length - 1];
-            
-            const dx = firstCenter.x - lastCenter.x;
-            const dy = firstCenter.y - lastCenter.y;  
-            const dz = firstCenter.z - lastCenter.z;
-            const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
-            
-            // If there's a gap larger than tolerance, close it by adding the first point at the end
-            if (distance > distTol) {
-                console.log(`Closing centerline gap of ${distance.toFixed(4)} by adding first point at end`);
+
+            const exactlyEqual = (a, b) => a.x === b.x && a.y === b.y && a.z === b.z;
+
+            if (!exactlyEqual(firstCenter, lastCenter)) {
+                // Always append an explicit duplicate of the first point
                 centers.push({ x: firstCenter.x, y: firstCenter.y, z: firstCenter.z });
-                
-                // Also close the tangent lines
+
+                // Mirror closure on tangency curves and sampled edge points to keep arrays aligned
                 if (tanA.length > 0) {
-                    tanA.push({ x: tanA[0].x, y: tanA[0].y, z: tanA[0].z });
+                    const a0 = tanA[0];
+                    tanA.push({ x: a0.x, y: a0.y, z: a0.z });
                 }
                 if (tanB.length > 0) {
-                    tanB.push({ x: tanB[0].x, y: tanB[0].y, z: tanB[0].z });
+                    const b0 = tanB[0];
+                    tanB.push({ x: b0.x, y: b0.y, z: b0.z });
                 }
                 if (edgePts.length > 0) {
-                    edgePts.push({ x: edgePts[0].x, y: edgePts[0].y, z: edgePts[0].z });
-                }
-            }
-            
-            // Ensure proper closure by duplicating the first point at the end if needed
-            const eqPt = (a, b) => {
-                const ax = Array.isArray(a) ? a[0] : a?.x, ay = Array.isArray(a) ? a[1] : a?.y, az = Array.isArray(a) ? a[2] : a?.z;
-                const bx = Array.isArray(b) ? b[0] : b?.x, by = Array.isArray(b) ? b[1] : b?.y, bz = Array.isArray(b) ? b[2] : b?.z;
-                const dx = ax - bx, dy = ay - by, dz = az - bz;
-                return (dx * dx + dy * dy + dz * dz) <= (distTol * distTol);
-            };
-            const cFirst = centers[0];
-            const cLast = centers[centers.length - 1];
-            if (!eqPt(cFirst, cLast)) {
-                centers.push({ x: (Array.isArray(cFirst) ? cFirst[0] : cFirst.x), y: (Array.isArray(cFirst) ? cFirst[1] : cFirst.y), z: (Array.isArray(cFirst) ? cFirst[2] : cFirst.z) });
-                if (tanA.length === centers.length - 1 && tanB.length === centers.length - 1) {
-                    const a0 = tanA[0], b0 = tanB[0];
-                    const a0x = Array.isArray(a0) ? a0[0] : a0.x, a0y = Array.isArray(a0) ? a0[1] : a0.y, a0z = Array.isArray(a0) ? a0[2] : a0.z;
-                    const b0x = Array.isArray(b0) ? b0[0] : b0.x, b0y = Array.isArray(b0) ? b0[1] : b0.y, b0z = Array.isArray(b0) ? b0[2] : b0.z;
-                    tanA.push({ x: a0x, y: a0y, z: a0z });
-                    tanB.push({ x: b0x, y: b0y, z: b0z });
                     const e0 = edgePts[0];
-                    const e0x = Array.isArray(e0) ? e0[0] : e0.x, e0y = Array.isArray(e0) ? e0[1] : e0.y, e0z = Array.isArray(e0) ? e0[2] : e0.z;
-                    edgePts.push({ x: e0x, y: e0y, z: e0z });
+                    edgePts.push({ x: e0.x, y: e0.y, z: e0.z });
                 }
             }
         }
 
-       // console.log("Fillet centerline computed:", { points: centers, tangentA: tanA, tangentB: tanB });
+        // console.log("Fillet centerline computed:", { points: centers, tangentA: tanA, tangentB: tanB });
 
         // IMPORTANT: Keep original ordering across all three arrays.
         // They are generated in lockstep (same index i), so reordering each
@@ -458,13 +434,13 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
 
             const combos = [
                 [false, false, false],
-                [false, true,  false],
-                [false, false, true ],
-                [true,  false, false],
-                [true,  true,  false],
-                [true,  false, true ],
-                [false, true,  true ],
-                [true,  true,  true ]
+                [false, true, false],
+                [false, false, true],
+                [true, false, false],
+                [true, true, false],
+                [true, false, true],
+                [false, true, true],
+                [true, true, true]
             ];
 
             let best = { cost: Infinity, rc: false, ra: false, rb: false };
@@ -553,39 +529,39 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
 
             // Vector along centerline
             const centerVec = { x: c2.x - c1.x, y: c2.y - c1.y, z: c2.z - c1.z };
-            
+
             // Vector along tangent A
             const tangentAVec = { x: tA2.x - tA1.x, y: tA2.y - tA1.y, z: tA2.z - tA1.z };
-            
+
             // Vector along tangent B
             const tangentBVec = { x: tB2.x - tB1.x, y: tB2.y - tB1.y, z: tB2.z - tB1.z };
-            
+
             // Vector from centerline to tangent A
             const centerToTangentA = { x: tA1.x - c1.x, y: tA1.y - c1.y, z: tA1.z - c1.z };
-            
+
             // Vector from centerline to tangent B
             const centerToTangentB = { x: tB1.x - c1.x, y: tB1.y - c1.y, z: tB1.z - c1.z };
-            
+
             // Vector from tangent A to tangent B
             const tangentAToTangentB = { x: tB1.x - tA1.x, y: tB1.y - tA1.y, z: tB1.z - tA1.z };
 
             // Calculate cross products to determine relative orientations
             // We'll use the dot product of cross products with a consistent reference vector
-            
+
             // Cross product: centerline direction × (center to tangentA)
             const cross1 = {
                 x: centerVec.y * centerToTangentA.z - centerVec.z * centerToTangentA.y,
                 y: centerVec.z * centerToTangentA.x - centerVec.x * centerToTangentA.z,
                 z: centerVec.x * centerToTangentA.y - centerVec.y * centerToTangentA.x
             };
-            
+
             // Cross product: centerline direction × (center to tangentB)
             const cross2 = {
                 x: centerVec.y * centerToTangentB.z - centerVec.z * centerToTangentB.y,
                 y: centerVec.z * centerToTangentB.x - centerVec.x * centerToTangentB.z,
                 z: centerVec.x * centerToTangentB.y - centerVec.y * centerToTangentB.x
             };
-            
+
             // Cross product: tangentA direction × (tangentA to tangentB)
             const cross3 = {
                 x: tangentAVec.y * tangentAToTangentB.z - tangentAVec.z * tangentAToTangentB.y,
@@ -623,10 +599,10 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
         const centerRelationshipInconsistent = (avgCenterToA > 0) !== (avgCenterToB > 0);
         const tangentsGoSameDirection = avgAToB > 0.5; // Strong positive correlation means same direction
         const tangentsGoOppositeDirection = avgAToB < -0.5; // Strong negative correlation means opposite directions
-        
+
         if (centerRelationshipInconsistent && !(centerlineReversed || tangentAReversed || tangentBReversed)) {
             console.log('Detected inconsistent centerline-to-tangent relationships');
-            
+
             // If centerline relationships are inconsistent AND tangents go in same direction,
             // this suggests the centerline itself might need reversal
             if (tangentsGoSameDirection) {
@@ -648,7 +624,7 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
             console.log('Tangents go in same direction - reversing tangent B to create opposing flow');
             tangentBReversed = true;
         }
-        
+
         // Additional check: if all relationships are weak, there might be a fundamental issue
         if (Math.abs(avgCenterToA) < 0.2 && Math.abs(avgCenterToB) < 0.2 && Math.abs(avgAToB) < 0.2) {
             console.log('All winding relationships are weak - polylines may be nearly perpendicular or have issues');
@@ -710,18 +686,18 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
     const centerline = Array.isArray(res?.points) ? res.points : [];
     let tangentA = Array.isArray(res?.tangentA) ? res.tangentA : [];
     let tangentB = Array.isArray(res?.tangentB) ? res.tangentB : [];
-    let edgePts  = Array.isArray(res?.edge) ? res.edge : [];
+    let edgePts = Array.isArray(res?.edge) ? res.edge : [];
     const closedLoop = !!res?.closedLoop;
 
     if (debug) {
-        try { console.log('filletSolid: centerline/tangent edges computed'); } catch {}
+        try { console.log('filletSolid: centerline/tangent edges computed'); } catch { }
     }
 
     // Clone into plain objects
     const centerlineCopy = centerline.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
     let tangentACopy = tangentA.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
     let tangentBCopy = tangentB.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
-    let edgeCopy      = edgePts.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
+    let edgeCopy = edgePts.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
     // Working copy of the original edge points used for wedge construction.
     // Kept separate from `edgeCopy` so we can apply small insets/offsets without
     // disturbing other consumers that rely on the original edge sampling.
@@ -732,22 +708,22 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         console.log('🟡 ORIGINAL CENTERLINE (Yellow):');
         const originalVisualization = new Solid();
         originalVisualization.name = `${name}_ORIGINAL_CENTERLINE`;
-        
+
         // Add centerline as line segments
         for (let i = 0; i < centerlineCopy.length - 1; i++) {
             const p1 = centerlineCopy[i];
             const p2 = centerlineCopy[i + 1];
             console.log(`  Segment ${i}: (${p1.x.toFixed(3)}, ${p1.y.toFixed(3)}, ${p1.z.toFixed(3)}) → (${p2.x.toFixed(3)}, ${p2.y.toFixed(3)}, ${p2.z.toFixed(3)})`);
         }
-        
+
         // Convert to array format for addAuxEdge
         const originalCenterlineArray = centerlineCopy.map(pt => [pt.x, pt.y, pt.z]);
-        originalVisualization.addAuxEdge('ORIGINAL_CENTERLINE', originalCenterlineArray, { 
-            materialKey: 'YELLOW', 
+        originalVisualization.addAuxEdge('ORIGINAL_CENTERLINE', originalCenterlineArray, {
+            materialKey: 'YELLOW',
             closedLoop: closedLoop,
             lineWidth: 3.0
         });
-        
+
         try {
             originalVisualization.visualize();
             console.log('🟡 Original centerline visualization created (Yellow)');
@@ -771,7 +747,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             const c = centerlineCopy[i];
             const tA = tangentACopy[i];
             const tB = tangentBCopy[i];
-            const e  = edgeCopy[i];
+            const e = edgeCopy[i];
             if (!isFiniteVec3(c) || !isFiniteVec3(tA) || !isFiniteVec3(tB) || !isFiniteVec3(e)) {
                 // Only offset the wedge edge points (edgeWedgeCopy) inward toward the centerline
                 // Prepare wedge edge points (copy and offset inward)
@@ -785,7 +761,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                         const dx = centerPt.x - edgePt.x;
                         const dy = centerPt.y - edgePt.y;
                         const dz = centerPt.z - edgePt.z;
-                        const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                        const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
                         if (len > 1e-12) {
                             edgePt.x += (dx / len) * Math.abs(wedgeInsetDistance);
                             edgePt.y += (dy / len) * Math.abs(wedgeInsetDistance);
@@ -829,7 +805,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 }
             }
         }
-        try { console.log(`Applied tangent offsetDistance=${offsetDistance} to ${n} samples`); } catch {}
+        try { console.log(`Applied tangent offsetDistance=${offsetDistance} to ${n} samples`); } catch { }
     }
 
     // Push wedge edge points slightly relative to the centerline to ensure
@@ -842,11 +818,11 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         const centerPt = centerlineCopy[i] || centerlineCopy[centerlineCopy.length - 1]; // Fallback to last point
         const tanAPt = tangentACopy[i] || tangentACopy[tangentACopy.length - 1];
         const tanBPt = tangentBCopy[i] || tangentBCopy[tangentBCopy.length - 1];
-        
+
         if (edgeWedgePt && centerPt) {
             try {
                 const origWedgeEdge = { ...edgeWedgePt };
-                
+
                 // Calculate direction from edge point toward the centerline (inward direction)
                 const inwardDir = {
                     x: centerPt.x - edgeWedgePt.x,
@@ -854,7 +830,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                     z: centerPt.z - edgeWedgePt.z
                 };
                 const inwardLength = Math.sqrt(inwardDir.x * inwardDir.x + inwardDir.y * inwardDir.y + inwardDir.z * inwardDir.z);
-                
+
                 if (inwardLength > 1e-12) {
                     // Normalize and apply inset
                     const normalizedInward = {
@@ -869,7 +845,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                     edgeWedgePt.x += normalizedInward.x * step;
                     edgeWedgePt.y += normalizedInward.y * step;
                     edgeWedgePt.z += normalizedInward.z * step;
-                    
+
                     // Validate the result
                     if (!isFiniteVec3(edgeWedgePt)) {
                         console.warn(`Invalid wedge edge point after inset at index ${i}, reverting to original`);
@@ -883,7 +859,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             }
         }
     }
-    
+
     console.log(`Applied wedge inset of ${wedgeInsetMagnitude} units (${side === 'INSET' ? 'outward' : 'inward'}) to ${edgeWedgeCopy.length} edge points`);
 
 
@@ -900,22 +876,22 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         console.log('🔵 MANIPULATED CENTERLINE (Blue):');
         const manipulatedVisualization = new Solid();
         manipulatedVisualization.name = `${name}_MANIPULATED_CENTERLINE`;
-        
+
         // Add manipulated centerline as line segments
         for (let i = 0; i < centerlineCopy.length - 1; i++) {
             const p1 = centerlineCopy[i];
             const p2 = centerlineCopy[i + 1];
             console.log(`  Segment ${i}: (${p1.x.toFixed(3)}, ${p1.y.toFixed(3)}, ${p1.z.toFixed(3)}) → (${p2.x.toFixed(3)}, ${p2.y.toFixed(3)}, ${p2.z.toFixed(3)})`);
         }
-        
+
         // Convert to array format for addAuxEdge
         const manipulatedCenterlineArray = centerlineCopy.map(pt => [pt.x, pt.y, pt.z]);
-        manipulatedVisualization.addAuxEdge('MANIPULATED_CENTERLINE', manipulatedCenterlineArray, { 
-            materialKey: 'BLUE', 
+        manipulatedVisualization.addAuxEdge('MANIPULATED_CENTERLINE', manipulatedCenterlineArray, {
+            materialKey: 'BLUE',
             closedLoop: closedLoop,
             lineWidth: 3.0
         });
-        
+
         try {
             manipulatedVisualization.visualize();
             console.log('🔵 Manipulated centerline visualization created (Blue)');
@@ -947,7 +923,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             const prev = tubePathOriginal[i - 1];
             const distance = Math.hypot(curr.x - prev.x, curr.y - prev.y, curr.z - prev.z);
             if (distance < minSpacing) {
-                console.warn(`Centerline points ${i-1} and ${i} are too close (distance: ${distance}), this may cause tube generation issues`);
+                console.warn(`Centerline points ${i - 1} and ${i} are too close (distance: ${distance}), this may cause tube generation issues`);
             }
         }
     }
@@ -957,39 +933,40 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
     try {
         // TubeSolid expects [x,y,z] arrays; convert original {x,y,z} objects
         let tubePoints = tubePathOriginal.map(p => [p.x, p.y, p.z]);
-        
+
         if (closedLoop) {
+            console.log('Closed loop detected: preparing tube centerline...');
             // For closed loops: ensure the tube polyline has the same point at start and end
             if (tubePoints.length >= 2) {
                 const firstPt = tubePoints[0];
                 const lastPt = tubePoints[tubePoints.length - 1];
-                
+
                 // Check if first and last points are different
                 const dx = firstPt[0] - lastPt[0];
-                const dy = firstPt[1] - lastPt[1]; 
+                const dy = firstPt[1] - lastPt[1];
                 const dz = firstPt[2] - lastPt[2];
-                const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                
-                if (distance > 1e-6) {
-                    // Add the first point at the end to close the loop
-                    tubePoints.push([firstPt[0], firstPt[1], firstPt[2]]);
-                    console.log('Closed loop: Added first point at end for tube generation');
-                }
+                const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+                // Add the first point at the end to close the loop
+                tubePoints.push([firstPt[0], firstPt[1], firstPt[2]]);
+                console.log('Closed loop: Added first point at end for tube generation');
+
             }
         } else {
+            console.log('Non-closed loop detected: preparing tube centerline...');
             // For non-closed loops: extend the start and end segments of the centerline polyline for tube only
             if (tubePoints.length >= 2) {
                 console.log('Non-closed loop: Extending tube centerline segments...');
                 const extensionDistance = 0.1;
-                
+
                 // Extend first segment backwards
                 const p0 = tubePoints[0];
                 const p1 = tubePoints[1];
                 const dir0 = [p0[0] - p1[0], p0[1] - p1[1], p0[2] - p1[2]];
-                const len0 = Math.sqrt(dir0[0]*dir0[0] + dir0[1]*dir0[1] + dir0[2]*dir0[2]);
-                
+                const len0 = Math.sqrt(dir0[0] * dir0[0] + dir0[1] * dir0[1] + dir0[2] * dir0[2]);
+
                 if (len0 > 1e-12) {
-                    const norm0 = [dir0[0]/len0, dir0[1]/len0, dir0[2]/len0];
+                    const norm0 = [dir0[0] / len0, dir0[1] / len0, dir0[2] / len0];
                     const extendedStart = [
                         p0[0] + norm0[0] * extensionDistance,
                         p0[1] + norm0[1] * extensionDistance,
@@ -997,16 +974,16 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                     ];
                     tubePoints[0] = extendedStart;
                 }
-                
+
                 // Extend last segment forwards
                 const lastIdx = tubePoints.length - 1;
                 const pLast = tubePoints[lastIdx];
                 const pPrev = tubePoints[lastIdx - 1];
                 const dirLast = [pLast[0] - pPrev[0], pLast[1] - pPrev[1], pLast[2] - pPrev[2]];
-                const lenLast = Math.sqrt(dirLast[0]*dirLast[0] + dirLast[1]*dirLast[1] + dirLast[2]*dirLast[2]);
-                
+                const lenLast = Math.sqrt(dirLast[0] * dirLast[0] + dirLast[1] * dirLast[1] + dirLast[2] * dirLast[2]);
+
                 if (lenLast > 1e-12) {
-                    const normLast = [dirLast[0]/lenLast, dirLast[1]/lenLast, dirLast[2]/lenLast];
+                    const normLast = [dirLast[0] / lenLast, dirLast[1] / lenLast, dirLast[2] / lenLast];
                     const extendedEnd = [
                         pLast[0] + normLast[0] * extensionDistance,
                         pLast[1] + normLast[1] * extensionDistance,
@@ -1014,17 +991,16 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                     ];
                     tubePoints[lastIdx] = extendedEnd;
                 }
-                
+
                 console.log(`Extended tube centerline by ${extensionDistance} units at both ends`);
             }
         }
-        
+
         filletTube = new TubeSolid({
             points: tubePoints,
             radius: radius * 1.01,
             innerRadius: 0,
             resolution: 32,
-            closed: closedLoop,
             name: `${name}_TUBE`
         });
     } catch (tubeError) {
@@ -1037,7 +1013,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
     console.log('Creating wedge solid...');
     const wedgeSolid = new Solid();
     wedgeSolid.name = `${name}_WEDGE`;
-    
+
     if (closedLoop) {
         // CLOSED LOOP PATH - preserve existing logic exactly
         try {
@@ -1105,7 +1081,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             const minTriangleArea = radius * radius * 1e-8;
             let validTriangles = 0;
             let skippedTriangles = 0;
-            
+
             const isValidTriangle = (p1, p2, p3) => {
                 const v1 = { x: p2.x - p1.x, y: p2.y - p1.y, z: p2.z - p1.z };
                 const v2 = { x: p3.x - p1.x, y: p3.y - p1.y, z: p3.z - p1.z };
@@ -1143,16 +1119,16 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 // Surface between centerline and tangent A
                 if (isValidTriangle(c1, c2, tA1) && addTriangleWithValidation(`${name}_SURFACE_CA`, c1, c2, tA1)) validTriangles++; else skippedTriangles++;
                 if (isValidTriangle(c2, tA2, tA1) && addTriangleWithValidation(`${name}_SURFACE_CA`, c2, tA2, tA1)) validTriangles++; else skippedTriangles++;
-                
+
                 // Surface between centerline and tangent B
                 if (isValidTriangle(c1, tB1, c2) && addTriangleWithValidation(`${name}_SURFACE_CB`, c1, tB1, c2)) validTriangles++; else skippedTriangles++;
                 if (isValidTriangle(c2, tB1, tB2) && addTriangleWithValidation(`${name}_SURFACE_CB`, c2, tB1, tB2)) validTriangles++; else skippedTriangles++;
-                
+
                 // Surface between tangent A and edge (original face A)
                 if (e1 && e2) {
                     if (isValidTriangle(tA1, tA2, e1) && addTriangleWithValidation(`${name}_FACE_A`, tA1, tA2, e1)) validTriangles++; else skippedTriangles++;
                     if (isValidTriangle(tA2, e2, e1) && addTriangleWithValidation(`${name}_FACE_A`, tA2, e2, e1)) validTriangles++; else skippedTriangles++;
-                    
+
                     // Surface between tangent B and edge (original face B)  
                     if (isValidTriangle(tB1, e1, tB2) && addTriangleWithValidation(`${name}_FACE_B`, tB1, e1, tB2)) validTriangles++; else skippedTriangles++;
                     if (isValidTriangle(tB2, e1, e2) && addTriangleWithValidation(`${name}_FACE_B`, tB2, e1, e2)) validTriangles++; else skippedTriangles++;
@@ -1162,26 +1138,26 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             // Add end caps for open edges to create a closed solid
             if (centerlineCopy.length >= 2) {
                 console.log('Adding end caps for non-closed loop...');
-                
+
                 // First end cap
                 const firstC = centerlineCopy[0];
                 const firstTA = tangentACopy[0];
                 const firstTB = tangentBCopy[0];
                 const firstE = edgeWedgeCopy[0];
-                
+
                 if (firstE && isValidPoint(firstC) && isValidPoint(firstTA) && isValidPoint(firstTB) && isValidPoint(firstE)) {
                     // Create triangular fan from centerline to form end cap
                     if (isValidTriangle(firstC, firstTB, firstTA) && addTriangleWithValidation(`${name}_END_CAP_1`, firstC, firstTB, firstTA)) validTriangles++; else skippedTriangles++;
                     if (isValidTriangle(firstTA, firstTB, firstE) && addTriangleWithValidation(`${name}_END_CAP_1`, firstTA, firstTB, firstE)) validTriangles++; else skippedTriangles++;
                 }
-                
+
                 // Last end cap
                 const lastIndex = centerlineCopy.length - 1;
                 const lastC = centerlineCopy[lastIndex];
                 const lastTA = tangentACopy[lastIndex];
                 const lastTB = tangentBCopy[lastIndex];
                 const lastE = edgeWedgeCopy[lastIndex];
-                
+
                 if (lastE && isValidPoint(lastC) && isValidPoint(lastTA) && isValidPoint(lastTB) && isValidPoint(lastE)) {
                     // Create triangular fan from centerline to form end cap (reversed winding for proper normal)
                     if (isValidTriangle(lastC, lastTA, lastTB) && addTriangleWithValidation(`${name}_END_CAP_2`, lastC, lastTA, lastTB)) validTriangles++; else skippedTriangles++;
@@ -1212,12 +1188,12 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
     console.log('Wedge solid creation completed');
     const triangleCount = wedgeSolid._triVerts ? wedgeSolid._triVerts.length / 3 : 0;
     console.log('Wedge solid created with', triangleCount, 'triangles (raw count)');
-    try { wedgeSolid.visualize(); } catch {}
+    try { wedgeSolid.visualize(); } catch { }
 
 
     const finalSolid = wedgeSolid.subtract(filletTube);
     finalSolid.name = `${name}_FINAL_FILLET`;
-    try { finalSolid.visualize(); } catch {}
+    try { finalSolid.visualize(); } catch { }
     console.log('Final fillet solid created by subtracting tube from wedge', finalSolid);
 
 

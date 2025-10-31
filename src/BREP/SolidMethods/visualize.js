@@ -263,6 +263,22 @@ export default function visualize(options = {}) {
                     if (pts.length < 2) continue;
                     const flat = [];
                     for (const p of pts) { flat.push(p[0], p[1], p[2]); }
+
+                    // If the auxiliary edge is marked as a closed loop, ensure the
+                    // rendered polyline has an explicit closing segment by duplicating
+                    // the first point at the end if necessary. This affects rendering
+                    // only; stored userData remains unchanged for downstream consumers.
+                    if (aux?.closedLoop && pts.length >= 2) {
+                        const f = pts[0];
+                        const l = pts[pts.length - 1];
+                        const dx = l[0] - f[0];
+                        const dy = l[1] - f[1];
+                        const dz = l[2] - f[2];
+                        const needsClosure = (dx !== 0) || (dy !== 0) || (dz !== 0);
+                        if (needsClosure) {
+                            flat.push(f[0], f[1], f[2]);
+                        }
+                    }
                     
                     // Validate auxiliary edge coordinates
                     const hasInvalidCoords = flat.some(coord => !isFinite(coord));

@@ -63,7 +63,7 @@ function calculateTubeIntersectionTrimming(points, tubeRadius) {
 
     const vPrev = curr.clone().sub(prev);
     const vNext = next.clone().sub(curr);
-    
+
     // Check for degenerate segments
     if (vPrev.lengthSq() < EPS_SQ || vNext.lengthSq() < EPS_SQ) {
       out.push(curr.clone());
@@ -74,35 +74,35 @@ function calculateTubeIntersectionTrimming(points, tubeRadius) {
     vNext.normalize();
 
     const dot = THREE.MathUtils.clamp(vPrev.dot(vNext), -1, 1);
-    
+
     // Calculate the angle between the segments
     const angle = Math.acos(Math.abs(dot));
-    
+
     // Only trim for very sharp corners to be less aggressive
     if (angle > Math.PI / 3) { // Only angles sharper than 60 degrees
       const halfAngle = angle * 0.5;
-      
+
       // Calculate the distance from corner where tubes would intersect
       const intersectionDist = tubeRadius / Math.tan(halfAngle);
-      
+
       // Calculate trimmed points that prevent intersection
       const distPrev = prev.distanceTo(curr);
       const distNext = curr.distanceTo(next);
-      
+
       // Be more conservative with trimming
       const trimDistPrev = Math.min(intersectionDist * 0.8, distPrev * 0.6);
       const trimDistNext = Math.min(intersectionDist * 0.8, distNext * 0.6);
-      
+
       // Only trim if we have enough distance
       if (trimDistPrev > tubeRadius * 0.1 && trimDistNext > tubeRadius * 0.1) {
         const trimmedPrev = curr.clone().addScaledVector(vPrev, -trimDistPrev);
         const trimmedNext = curr.clone().addScaledVector(vNext, trimDistNext);
-        
+
         // Add the trimmed points
         if (out[out.length - 1].distanceTo(trimmedPrev) > 1e-6) {
           out.push(trimmedPrev);
         }
-        
+
         out.push(trimmedNext);
       } else {
         // Not enough room to trim safely, just add the corner
@@ -123,7 +123,7 @@ function smoothPath(points, tubeRadius) {
   try {
     const trimmedPoints = calculateTubeIntersectionTrimming(points, tubeRadius);
     if (DEBUG_LOGS) console.log(`smoothPath: Original ${points.length} -> Trimmed ${trimmedPoints.length}`);
-    
+
     if (!Array.isArray(trimmedPoints) || trimmedPoints.length < 2) {
       console.warn('smoothPath: Insufficient points after trimming');
       return Array.isArray(points) ? points.map(p => p.clone()) : [];
@@ -149,17 +149,17 @@ function computeFrames(points, closed = false) {
   // Compute tangents with better smoothing
   for (let i = 0; i < points.length; i++) {
     const tangent = new THREE.Vector3();
-    
+
     if (closed) {
       // For closed loops, always use central difference with wraparound
       const prevIdx = (i - 1 + points.length) % points.length;
       const nextIdx = (i + 1) % points.length;
       const forward = new THREE.Vector3().subVectors(points[nextIdx], points[i]);
       const backward = new THREE.Vector3().subVectors(points[i], points[prevIdx]);
-      
+
       const forwardLen = forward.length();
       const backwardLen = backward.length();
-      
+
       if (forwardLen > EPS && backwardLen > EPS) {
         forward.normalize();
         backward.normalize();
@@ -183,11 +183,11 @@ function computeFrames(points, closed = false) {
         // Central difference for intermediate points
         const forward = new THREE.Vector3().subVectors(points[i + 1], points[i]);
         const backward = new THREE.Vector3().subVectors(points[i], points[i - 1]);
-        
+
         // Weighted average based on segment lengths for better smoothing
         const forwardLen = forward.length();
         const backwardLen = backward.length();
-        
+
         if (forwardLen > EPS && backwardLen > EPS) {
           forward.normalize();
           backward.normalize();
@@ -206,7 +206,7 @@ function computeFrames(points, closed = false) {
         }
       }
     }
-    
+
     if (tangent.lengthSq() < EPS_SQ) {
       if (tangents.length > 0) {
         tangent.copy(tangents[tangents.length - 1]);
@@ -216,7 +216,7 @@ function computeFrames(points, closed = false) {
     } else {
       tangent.normalize();
     }
-    
+
     tangents.push(tangent);
   }
 
@@ -226,7 +226,7 @@ function computeFrames(points, closed = false) {
   const ax = Math.abs(firstTan.x);
   const ay = Math.abs(firstTan.y);
   const az = Math.abs(firstTan.z);
-  
+
   if (ax <= min) { min = ax; normalSeed.set(1, 0, 0); }
   if (ay <= min) { min = ay; normalSeed.set(0, 1, 0); }
   if (az <= min) { normalSeed.set(0, 0, 1); }
@@ -243,10 +243,10 @@ function computeFrames(points, closed = false) {
     }
   }
   vec.normalize();
-  
+
   const firstBinormal = vec.clone();
   const firstNormal = new THREE.Vector3().crossVectors(firstBinormal, firstTan).normalize();
-  
+
   normals[0] = firstNormal;
   binormals[0] = firstBinormal;
 
@@ -255,28 +255,28 @@ function computeFrames(points, closed = false) {
     const prevTan = tangents[i - 1];
     const currTan = tangents[i];
     const prevNormal = normals[i - 1];
-    
+
     // Use parallel transport (rotation minimizing frame)
     const rotAxis = new THREE.Vector3().crossVectors(prevTan, currTan);
-    
+
     if (rotAxis.lengthSq() > EPS_SQ) {
       rotAxis.normalize();
       const angle = Math.acos(THREE.MathUtils.clamp(prevTan.dot(currTan), -1, 1));
-      
+
       // Rotate the normal by the same rotation that takes prevTan to currTan
       const rotation = new THREE.Matrix4().makeRotationAxis(rotAxis, angle);
       const newNormal = prevNormal.clone().applyMatrix4(rotation);
-      
+
       // Ensure orthogonality (Gram-Schmidt)
       const projection = currTan.clone().multiplyScalar(newNormal.dot(currTan));
       newNormal.sub(projection).normalize();
-      
+
       normals[i] = newNormal;
     } else {
       // Tangents are parallel, just copy the normal
       normals[i] = prevNormal.clone();
     }
-    
+
     // Compute binormal
     binormals[i] = new THREE.Vector3().crossVectors(currTan, normals[i]).normalize();
   }
@@ -288,30 +288,30 @@ function computeFrames(points, closed = false) {
     const lastNormal = normals[normals.length - 1];
     const firstTangent = tangents[0];
     const lastTangent = tangents[tangents.length - 1];
-    
+
     // Calculate the rotation needed to align last frame with first frame
     const rotAxis = new THREE.Vector3().crossVectors(lastTangent, firstTangent);
-    
+
     if (rotAxis.lengthSq() > EPS_SQ) {
       rotAxis.normalize();
       const angle = Math.acos(THREE.MathUtils.clamp(lastTangent.dot(firstTangent), -1, 1));
       const rotation = new THREE.Matrix4().makeRotationAxis(rotAxis, angle);
       const alignedLastNormal = lastNormal.clone().applyMatrix4(rotation);
-      
+
       // Ensure orthogonality
       const projection = firstTangent.clone().multiplyScalar(alignedLastNormal.dot(firstTangent));
       alignedLastNormal.sub(projection).normalize();
-      
+
       // Calculate the twist needed to align normals
       const normalDot = firstNormal.dot(alignedLastNormal);
       const twistAngle = Math.acos(THREE.MathUtils.clamp(normalDot, -1, 1));
-      
+
       // Check if we need to apply the twist in the opposite direction
       const crossProduct = new THREE.Vector3().crossVectors(firstNormal, alignedLastNormal);
       if (crossProduct.dot(firstTangent) < 0) {
         // Apply the twist distributed over the entire path to minimize discontinuity
         const twistPerSegment = -twistAngle / (points.length - 1);
-        
+
         for (let i = 1; i < points.length; i++) {
           const segmentTwist = twistPerSegment * i;
           const twistRotation = new THREE.Matrix4().makeRotationAxis(tangents[i], segmentTwist);
@@ -417,8 +417,17 @@ export class TubeSolid extends Solid {
   }
 
   generate() {
-    
-    const { points, radius, innerRadius, resolution, closed, name } = this.params;
+
+    let { points, radius, innerRadius, resolution, closed, name } = this.params;
+    console.log('Generating tube with params:', this.params);
+
+    console.log('Tube closed loop detected:',closed, points[0], points[points.length - 1]);
+    // determine if we have a closed loop by checking first and last points and set closed accordingly
+    //closed = points[0].equals(points[points.length - 1]);
+    console.log('Tube closed loop detected:',closed, points[0], points[points.length - 1]);
+
+
+
     //console.log(points, radius, innerRadius, resolution, closed, name);
     if (!(radius > 0)) {
       throw new Error('Tube radius must be greater than zero.');
@@ -434,7 +443,7 @@ export class TubeSolid extends Solid {
 
     const vecPoints = dedupeVectors(toVector3Array(points));
     if (DEBUG_LOGS) console.log(`Tube generation: Input points: ${points.length}, Valid points: ${vecPoints.length}`);
-    
+
     if (vecPoints.length < 2) {
       throw new Error(`Tube requires at least two distinct path points. Got ${vecPoints.length} valid points from ${points.length} input points.`);
     }
@@ -448,7 +457,7 @@ export class TubeSolid extends Solid {
       console.error('Error in smoothPath:', error);
       throw new Error(`Path smoothing failed: ${error.message}`);
     }
-    
+
     if (smoothed.length < 2) {
       throw new Error(`Tube path collapsed after smoothing; check input. Original: ${vecPoints.length}, Smoothed: ${smoothed.length}`);
     }
@@ -459,7 +468,7 @@ export class TubeSolid extends Solid {
       const last = smoothed[smoothed.length - 1];
       const closureDistSq = first.distanceToSquared(last);
       const tolerance = 1e-6; // Small tolerance for floating point comparison
-      
+
       if (closureDistSq < tolerance * tolerance) {
         // Remove the duplicate last point
         smoothed = smoothed.slice(0, -1);
@@ -482,13 +491,13 @@ export class TubeSolid extends Solid {
       const ringB = outer[(i + 1) % outer.length]; // For closed loops, wrap around to first ring
       const nextIdx = (i + 1) % smoothed.length;
       const pathDir = smoothed[nextIdx].clone().sub(smoothed[i]).normalize();
-      
+
       for (let j = 0; j < segs; j++) {
         const j1 = (j + 1) % segs;
-        
+
         // Ensure outward-facing normal for outer surface
         // Order: A[j] -> A[j1] -> B[j1] -> B[j] forms outward quads
-        addQuadOriented(this, `${faceTag}_Outer`, 
+        addQuadOriented(this, `${faceTag}_Outer`,
           ringA[j], ringA[j1], ringB[j1], ringB[j], pathDir);
       }
     }
@@ -502,10 +511,10 @@ export class TubeSolid extends Solid {
         const nextIdx = (i + 1) % smoothed.length;
         const pathDir = smoothed[nextIdx].clone().sub(smoothed[i]).normalize();
         const inwardDir = pathDir.clone().negate(); // Inward for hollow interior
-        
+
         for (let j = 0; j < segs; j++) {
           const j1 = (j + 1) % segs;
-          
+
           // Reverse winding for inward-facing inner surface
           addQuadOriented(this, `${faceTag}_Inner`,
             ringA[j], ringB[j], ringB[j1], ringA[j1], inwardDir);
