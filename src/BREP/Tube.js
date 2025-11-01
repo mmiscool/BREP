@@ -396,9 +396,21 @@ function addRingCap(solid, name, outerRing, innerRing, outwardDir) {
 export class TubeSolid extends Solid {
   constructor(opts = {}) {
     super();
-    const { points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = true, name = 'Tube' } = opts;
+    const { points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = false, name = 'Tube' } = opts;
     this.params = { points, radius, innerRadius, resolution, closed, name };
     this.name = name;
+
+
+    // if the start point equals the end point, set closed to true
+    if (Array.isArray(points) && points.length >= 2) {
+      const firstPoint = points[0];
+      const lastPoint = points[points.length - 1];
+      if (firstPoint[0] === lastPoint[0] && firstPoint[1] === lastPoint[1] && firstPoint[2] === lastPoint[2]) {
+        this.params.closed = true;
+      }
+    }
+
+
     // Only auto-generate when we have a valid param set.
     // When created via boolean ops (_fromManifold), the constructor is
     // invoked with no arguments and geometry will be populated from the
