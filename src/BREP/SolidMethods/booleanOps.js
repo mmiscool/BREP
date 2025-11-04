@@ -65,8 +65,8 @@ export function setTolerance(tolerance) {
     try { out._auxEdges = Array.isArray(this._auxEdges) ? this._auxEdges.slice() : []; } catch { }
     return out;
 }
-
-export function simplify(tolerance = undefined) {
+//3284
+export function simplify(tolerance = 1) {
     const Solid = this.constructor;
     const m = this._manifoldize();
     const outM = (tolerance === undefined) ? m.simplify() : m.simplify(tolerance);

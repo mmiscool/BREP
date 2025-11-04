@@ -1198,5 +1198,5 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
 
 
 
-    return { tube: filletTube, wedge: wedgeSolid, finalSolid };
+    return { tube: filletTube, wedge: wedgeSolid, finalSolid, centerline: centerlineCopy, tangentA: tangentACopy, tangentB: tangentBCopy};
 }
