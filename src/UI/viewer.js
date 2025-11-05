@@ -31,6 +31,7 @@ import { PMIViewsWidget } from './pmi/PMIViewsWidget.js';
 import { PMIMode } from './pmi/PMIMode.js';
 import { annotationRegistry } from './pmi/AnnotationRegistry.js';
 import { SchemaForm } from './featureDialogs.js';
+import './dialogs.js';
 import { cloneSplineData } from '../features/spline/splineUtils.js';
 
 export class Viewer {

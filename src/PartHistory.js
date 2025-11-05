@@ -315,8 +315,9 @@ export class PartHistory {
     // set the owningFeatureID for each item added by this feature
     for (const artifact of added) {
       artifact.owningFeatureID = featureID;
-      try { await artifact.visualize(); } catch { }
+      // Ensure any stale manifold/cache is dropped before visualizing
       try { await artifact.free(); } catch { }
+      try { await artifact.visualize(); } catch { }
 
     }
 
@@ -337,8 +338,9 @@ export class PartHistory {
 
     for (const a of added) {
       if (a && typeof a === 'object') {
-        try { await a.visualize(); } catch { }
+        // Free first to force rebuild from latest arrays, then visualize
         try { await a.free(); } catch { }
+        try { await a.visualize(); } catch { }
         await this.scene.add(a);
         // make sure the flag for removal is cleared
         try { a.__removeFlag = false; } catch { }

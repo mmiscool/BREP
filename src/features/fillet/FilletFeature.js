@@ -35,6 +35,11 @@ const inputParamsSchema = {
         type: "boolean",
         default_value: false,
         hint: "Draw diagnostic vectors for section frames (u,v, bisector, tangency)",
+    },
+    snapSeam: {
+        type: "boolean",
+        default_value: false,
+        hint: "Experimental: snap boolean seam to computed tangents (INSET only)",
     }
 }
     ;
@@ -179,8 +184,9 @@ export class FilletFeature {
 
             removed.push(targetSolid);
             try {
-                // Post-process: snap new boundary edges to computed tangent polylines
-                if (snapTargets.length) {
+                // Post-process: optional snapping of boolean-created seams to tangency curves.
+                // Disabled by default; only available for INSET (subtractive) fillets.
+                if (snapTargets.length && dir === "INSET" && this.inputParams.snapSeam === true) {
                     this._snapBooleanEdgesToTangents(solidResult, snapTargets);
                 }
                 // In debug mode, visualize the calculated tangent polylines
@@ -279,24 +285,53 @@ export class FilletFeature {
             let acc = 0, n = 0; for (let i=1;i<poly.length;i++){ const a=poly[i-1], b=poly[i]; acc += Math.hypot(b[0]-a[0], b[1]-a[1], b[2]-a[2]); n++; }
             return n ? acc/n : 0;
         };
+        // Helper: compute AABB of points array [[x,y,z],...]
+        const bboxOf = (pts) => {
+            let minX = Infinity, minY = Infinity, minZ = Infinity;
+            let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+            for (const p of pts) {
+                const x = p[0], y = p[1], z = p[2];
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+                if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+            }
+            return { minX, minY, minZ, maxX, maxY, maxZ };
+        };
+        const aabbIntersects = (A, B) => !(A.minX > B.maxX || A.maxX < B.minX || A.minY > B.maxY || A.maxY < B.minY || A.minZ > B.maxZ || A.maxZ < B.minZ);
+        const expandAABB = (B, h) => ({ minX: B.minX - h, minY: B.minY - h, minZ: B.minZ - h, maxX: B.maxX + h, maxY: B.maxY + h, maxZ: B.maxZ + h });
+        const aabbDiag = (B) => Math.hypot(B.maxX - B.minX, B.maxY - B.minY, B.maxZ - B.minZ);
         // Helper: densify a polyline by inserting points every `step` along segments (keeps endpoints)
-        const densifyPolyline = (poly, step) => {
+        // Safety caps are applied to avoid generating an excessive number of points.
+        const densifyPolyline = (poly, step, opts = {}) => {
             if (!Array.isArray(poly) || poly.length < 2 || !(step > 0)) return poly.slice();
+            const maxPoints = Math.max(64, Math.floor(opts.maxPoints || 5000));
+            const maxPerSeg = Math.max(1, Math.floor(opts.maxPerSeg || 200));
             const out = [poly[0].slice()];
+            let emitted = 1;
             for (let i = 1; i < poly.length; i++) {
                 const a = poly[i-1];
                 const b = poly[i];
                 const dx = b[0]-a[0], dy = b[1]-a[1], dz = b[2]-a[2];
                 const len = Math.hypot(dx,dy,dz);
-                if (len <= step) { out.push(b.slice()); continue; }
-                const count = Math.max(1, Math.floor(len/step));
+                if (!(len > 0)) { out.push(b.slice()); emitted++; if (emitted >= maxPoints) break; continue; }
+                if (len <= step) { out.push(b.slice()); emitted++; if (emitted >= maxPoints) break; continue; }
+                let desiredSegs = Math.max(1, Math.floor(len / step));
+                if (desiredSegs > maxPerSeg) desiredSegs = maxPerSeg;
+                // Respect global cap
+                const remaining = Math.max(0, maxPoints - emitted - 1); // keep room for endpoint
+                if (remaining <= 0) break;
+                const interior = Math.min(remaining, Math.max(0, desiredSegs - 1));
                 const inv = 1/len;
                 const ux = dx*inv, uy = dy*inv, uz = dz*inv;
-                for (let k=1;k<count;k++) {
-                    const t = k*step;
+                for (let k=1; k<=interior; k++) {
+                    const t = (k * len) / desiredSegs;
                     out.push([a[0]+ux*t, a[1]+uy*t, a[2]+uz*t]);
+                    emitted++;
+                    if (emitted >= maxPoints - 1) break; // leave space for endpoint
                 }
                 out.push(b.slice());
+                emitted++;
+                if (emitted >= maxPoints) break;
             }
             return out;
         };
@@ -330,17 +365,60 @@ export class FilletFeature {
             ownerToTangents.get(key).push(t);
         }
 
-        // For each owner group, snap every boundary polyline that involves faces
-        // from that fillet to the nearest tangent from the same owner.
+        // For each owner group, snap every boundary polyline that is spatially near
+        // that fillet's tangents. We avoid relying solely on face labels to prevent
+        // false-positives from face-ID collisions after booleans.
         for (const [owner, tangs] of ownerToTangents.entries()) {
-            // Find boundary polylines created by this boolean (faceA or faceB contains owner label)
-            const candidates = boundary
-                .map((b, idx) => ({ idx, poly: b, faceA: String(b.faceA||''), faceB: String(b.faceB||'') }))
-                .filter(e => owner && (e.faceA.includes(owner) || e.faceB.includes(owner)));
+            // Build spatial filter from tangent polylines
+            const allTPts = [];
+            let groupR = 0, rCount = 0;
+            for (const t of tangs) {
+                if (Array.isArray(t.pts)) for (const p of t.pts) allTPts.push(p);
+                if (Number.isFinite(t.r)) { groupR += Math.abs(t.r); rCount++; }
+            }
+            const groupBBox = bboxOf(allTPts);
+            const diag = aabbDiag(groupBBox);
+            const rEst = rCount ? (groupR / rCount) : (diag > 0 ? diag * 0.2 : 1);
+            const halo = Math.max(rEst * 2, diag * 0.15, 1e-6);
+            const expanded = expandAABB(groupBBox, halo);
+
+            // Candidate boundaries: either label-matched or spatially overlapping the halo box
+            const candidates = boundary.map((b, idx) => ({
+                idx,
+                poly: b,
+                faceA: String(b.faceA||''),
+                faceB: String(b.faceB||''),
+                bbox: bboxOf(b.positions || []),
+            })).filter(e => aabbIntersects(expanded, e.bbox) || (owner && (e.faceA.includes(owner) || e.faceB.includes(owner))));
+
+            // Distance-based filter: keep only boundaries sufficiently close to any tangent
+            const maxSamples = 10;
+            const sampleIndices = (arrLen) => {
+                if (arrLen <= maxSamples) return Array.from({length: arrLen}, (_,i)=>i);
+                const out = new Set([0, arrLen-1]);
+                for (let k=1;k<maxSamples-1;k++) out.add(Math.floor((k*(arrLen-1))/(maxSamples-1)));
+                return Array.from(out).sort((a,b)=>a-b);
+            };
 
             for (const c of candidates) {
                 const pts = c.poly.positions || [];
                 if (!pts.length) continue;
+                // Quick rejection if far from all tangents
+                let minApprox = Infinity;
+                const samples = sampleIndices(pts.length);
+                for (const si of samples) {
+                    const p = pts[si];
+                    for (const t of tangs) {
+                        const d = (() => {
+                            const q = closestOnPolyline(p, t.pts);
+                            const dx = q[0]-p[0], dy = q[1]-p[1], dz = q[2]-p[2];
+                            return Math.hypot(dx,dy,dz);
+                        })();
+                        if (d < minApprox) minApprox = d;
+                    }
+                    if (minApprox <= rEst * 2.5) break;
+                }
+                if (!(minApprox <= rEst * 2.5 || aabbIntersects(expanded, c.bbox))) continue;
                 // Choose the nearest tangent (A vs B) for this boundary
                 let bestT = tangs[0];
                 let bestScore = Infinity;
@@ -348,9 +426,16 @@ export class FilletFeature {
                     const s = polyScore(c.poly, t.pts, t.r);
                     if (s < bestScore) { bestScore = s; bestT = t; }
                 }
-                // Densify chosen tangent to match boundary spacing
-                const step = Math.max(1e-9, avgSegLen(pts) * 0.5);
-                const denseTangent = densifyPolyline(bestT.pts, step);
+                // Densify chosen tangent to roughly match boundary spacing, but cap work.
+                const Lt = polyLength(bestT.pts);
+                // Prefer boundary average spacing; fall back to uniform spacing along tangent.
+                let step = avgSegLen(pts);
+                if (!(step > 0)) step = Lt / Math.max(2, (pts.length || 2) - 1);
+                // Compute a reasonable lower bound from radius/length to avoid tiny steps
+                const tol = getDistanceTolerance(Number.isFinite(bestT.r) ? bestT.r : (Lt || 1));
+                const minStep = Math.max(tol, (Lt > 0 ? Lt / 5000 : tol));
+                if (!(step > 0) || step < minStep) step = minStep;
+                const denseTangent = densifyPolyline(bestT.pts, step, { maxPoints: 5000, maxPerSeg: 200 });
 
                 // Snap absolutely every vertex on this boundary polyline
                 const idxChain = c.poly.indices || [];

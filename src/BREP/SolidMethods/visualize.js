@@ -97,6 +97,22 @@ export default function visualize(options = {}) {
                     // Skip this triangle by not incrementing w and not setting positions
                     continue;
                 }
+
+                // Degenerate triangle check (area ~ 0) and log its points
+                // Compute squared area via cross product of edges (robust to uniform scale)
+                try {
+                    const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+                    const vx = p2[0] - p0[0], vy = p2[1] - p0[1], vz = p2[2] - p0[2];
+                    const nx = uy * vz - uz * vy;
+                    const ny = uz * vx - ux * vz;
+                    const nz = ux * vy - uy * vx;
+                    const area2 = nx * nx + ny * ny + nz * nz;
+                    // Use same threshold as viewer diagnostics
+                    if (area2 <= 1e-30) {
+                        console.warn(`[Solid.visualize] Degenerate triangle in face ${faceName} @ index ${t}`);
+                        console.warn('points:', {p0, p1, p2});
+                    }
+                } catch { /* best-effort logging only */ }
                 
                 positions[w++] = p0[0]; positions[w++] = p0[1]; positions[w++] = p0[2];
                 positions[w++] = p1[0]; positions[w++] = p1[1]; positions[w++] = p1[2];

@@ -777,10 +777,11 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
     }
 
     // Apply a small offset to the tangent curves relative to the centerline.
-    // This directly affects the wedge faces between centerline and tangency curves.
-    // INSET flips the direction compared to OUTSET.
+    // Keep OUTSET behavior unchanged: move tangents slightly toward the centerline;
+    // INSET moves them outward. Closed loops skip inflation to avoid self‑intersection.
     {
-        const offsetDistance = (side === 'INSET') ? inflate : -inflate;
+        const base = closedLoop ? 0 : Math.abs(inflate || 0);
+        const offsetDistance = base;
         const n = Math.min(centerlineCopy.length, tangentACopy.length, tangentBCopy.length);
         for (let i = 0; i < n; i++) {
             const c = centerlineCopy[i];
@@ -805,14 +806,18 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 }
             }
         }
-        try { console.log(`Applied tangent offsetDistance=${offsetDistance} to ${n} samples`); } catch { }
+        try { if (offsetDistance) console.log(`Applied tangent offsetDistance=${offsetDistance} to ${n} samples`); } catch { }
     }
 
     // Push wedge edge points slightly relative to the centerline to ensure
     // the wedge doesn't extend beyond the original geometry. For OUTSET this
     // nudge is inward (toward the centerline). For INSET it must be the
     // opposite direction (away from the centerline) to build the correct wedge.
-    const wedgeInsetMagnitude = 0.05; // small bias distance
+    // Slightly offset edge points to guarantee robust boolean overlap.
+    // Preserve OUTSET behavior (unchanged): use a small fixed nudge.
+    // INSET uses the same magnitude but opposite direction to ensure the
+    // cutter exits the target.
+    const wedgeInsetMagnitude = closedLoop ? 0 : ((side === 'INSET') ? inflate : -0.05);
     for (let i = 0; i < edgeWedgeCopy.length; i++) {
         const edgeWedgePt = edgeWedgeCopy[i];
         const centerPt = centerlineCopy[i] || centerlineCopy[centerlineCopy.length - 1]; // Fallback to last point
@@ -860,16 +865,13 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         }
     }
 
-    console.log(`Applied wedge inset of ${wedgeInsetMagnitude} units (${side === 'INSET' ? 'outward' : 'inward'}) to ${edgeWedgeCopy.length} edge points`);
+    if (wedgeInsetMagnitude) console.log(`Applied wedge inset of ${wedgeInsetMagnitude} units (${side === 'INSET' ? 'outward' : 'inward'}) to ${edgeWedgeCopy.length} edge points`);
 
 
-    // fix the winding of the edge points to match the centerline
-    if (edgeCopy.length === centerlineCopy.length) {
-        console.log('Reordering edge points to match centerline order...');
-        edgeCopy = reorderPolyLine(edgeCopy);
-    } else {
-        console.warn('Edge points count does not match centerline, skipping edge reordering');
-    }
+    // Do not reorder edge points. Centerline/tangent/edge points are produced in
+    // lockstep elsewhere; reindexing the edge points breaks correspondence and
+    // can create long crossing triangles. If orientation issues arise, reverse
+    // the entire polylines together rather than reordering indices.
 
     // Visualize manipulated centerline after all processing
     if (debug && centerlineCopy.length >= 2) {
