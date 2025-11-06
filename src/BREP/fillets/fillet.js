@@ -324,17 +324,27 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
             }
         }
 
-        // console.log("Fillet centerline computed:", { points: centers, tangentA: tanA, tangentB: tanB });
 
-        // IMPORTANT: Keep original ordering across all three arrays.
-        // They are generated in lockstep (same index i), so reordering each
-        // independently breaks correspondence and causes crossed triangles.
-        // We only return the arrays as‑is here; higher‑level logic may
-        // reverse entire polylines together if needed, but never reindex.
+
+
+
+        // out.points = !isClosed ? reorderPolyLine(centers) : centers;
+        // out.tangentA = !isClosed ? reorderPolyLine(tanA) : tanA;
+        // out.tangentB = !isClosed ? reorderPolyLine(tanB) : tanB;
+        // out.edge = !isClosed ? reorderPolyLine(edgePts) : edgePts;
+
+
         out.points = centers;
         out.tangentA = tanA;
         out.tangentB = tanB;
         out.edge = edgePts;
+
+
+
+        fixPolylineWinding(centers, tanA, tanB);
+
+
+
         return out;
     } catch (e) {
         console.warn('[computeFilletCenterline] failed:', e?.message || e);
@@ -780,8 +790,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
     // Keep OUTSET behavior unchanged: move tangents slightly toward the centerline;
     // INSET moves them outward. Closed loops skip inflation to avoid self‑intersection.
     {
-        const base = closedLoop ? 0 : Math.abs(inflate || 0);
-        const offsetDistance = base;
+        const base =  Math.abs(inflate || 0);
+        const offsetDistance =  base;
         const n = Math.min(centerlineCopy.length, tangentACopy.length, tangentBCopy.length);
         for (let i = 0; i < n; i++) {
             const c = centerlineCopy[i];
@@ -1200,5 +1210,5 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
 
 
 
-    return { tube: filletTube, wedge: wedgeSolid, finalSolid, centerline: centerlineCopy, tangentA: tangentACopy, tangentB: tangentBCopy};
+    return { tube: filletTube, wedge: wedgeSolid, finalSolid, centerline: centerlineCopy, tangentA: tangentACopy, tangentB: tangentBCopy };
 }
