@@ -315,13 +315,13 @@ function attachDimLabelEvents(inst, el, c, world) {
   el.addEventListener('pointerleave', () => { try { inst.clearHoverFromLabel?.(c.id); } catch { } });
 
   // Edit on double click (value expression support preserved)
-  el.addEventListener('dblclick', (e) => {
+  el.addEventListener('dblclick', async (e) => {
     e.preventDefault(); e.stopPropagation();
     dbg('dblclick-edit', { cid: c.id, type: c.type, value: c.value, expr: c.valueExpr });
     const initial = (typeof c.valueExpr === 'string' && c.valueExpr.length)
       ? c.valueExpr
       : String(c.value ?? '');
-    const v = prompt('Enter value', initial);
+    const v = await prompt('Enter value', initial);
     if (v == null) return;
     const input = String(v?.trim?.() ?? v);
     if (!input.length) return;

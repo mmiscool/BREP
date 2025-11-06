@@ -249,7 +249,7 @@ export class FileManagerWidget {
     if (!this.viewer || !this.viewer.partHistory) return;
     let name = (this.nameInput.value || '').trim();
     if (!name) {
-      name = prompt('Enter a name for this model:') || '';
+      name = await prompt('Enter a name for this model:') || '';
       name = name.trim();
       if (!name) return;
       this.nameInput.value = name;

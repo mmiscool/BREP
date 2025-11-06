@@ -201,7 +201,7 @@ window.prompt = async (message, defaultValue = '') => {
     return new Promise((resolve) => {
         const dialog = document.createElement('div');
         const messageDiv = document.createElement('div');
-        const inputField = document.createElement('textarea');
+        const inputField = document.createElement('input');
         const buttonContainer = document.createElement('div');
         const okButton = document.createElement('button');
         const cancelButton = document.createElement('button');
@@ -256,7 +256,11 @@ window.prompt = async (message, defaultValue = '') => {
 
         const onEnter = (event) => {
             if (event.key === 'Enter') {
+                event.preventDefault();
                 onOk();
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                onCancel();
             }
         };
 
@@ -265,4 +269,3 @@ window.prompt = async (message, defaultValue = '') => {
         inputField.addEventListener('keydown', onEnter);
     });
 };
-
