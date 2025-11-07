@@ -13,6 +13,12 @@ const inputParamsSchema = {
     default_value: null,
     hint: "Select a solid to remesh (clone is created)",
   },
+  mode: {
+    type: "options",
+    options: ["Increase resolution", "Simplify"],
+    default_value: "Increase resolution",
+    hint: "Choose remeshing mode",
+  },
   maxEdgeLength: {
     type: "number",
     step: 0.1,
@@ -24,6 +30,12 @@ const inputParamsSchema = {
     step: 1,
     default_value: 10,
     hint: "Maximum refinement passes",
+  },
+  tolerance: {
+    type: "number",
+    step: 0.1,
+    default_value: 0.1,
+    hint: "Simplify tolerance (used in Simplify mode)",
   },
 };
 
@@ -50,20 +62,36 @@ export class RemeshFeature {
 
     if (!target || target.type !== 'SOLID') return { added: [], removed: [] };
 
-    const L = Number(this.inputParams.maxEdgeLength);
-    const I = Number(this.inputParams.maxIterations);
-    const maxEdgeLength = (Number.isFinite(L) && L > 0) ? L : 1;
-    const maxIterations = (Number.isFinite(I) && I > 0) ? I : 10;
+    const modeRaw = this.inputParams.mode || 'Increase resolution';
+    const mode = String(modeRaw).toLowerCase();
 
-    // Clone, remesh clone, keep original intact
-    const remeshed = target.clone();
-    remeshed.remesh({ maxEdgeLength, maxIterations });
+    // Clone target to preserve original
+    const outSolid = target.clone();
+
+    if (mode === 'simplify') {
+      const T = Number(this.inputParams.tolerance);
+      const tol = Number.isFinite(T) && T >= 0 ? T : undefined;
+      try {
+        if (tol === undefined) outSolid.simplify();
+        else outSolid.simplify(tol);
+      } catch (e) {
+        console.warn('[RemeshFeature] Simplify failed; returning original clone.', e);
+      }
+    } else {
+      const L = Number(this.inputParams.maxEdgeLength);
+      const I = Number(this.inputParams.maxIterations);
+      const maxEdgeLength = (Number.isFinite(L) && L > 0) ? L : 1;
+      const maxIterations = (Number.isFinite(I) && I > 0) ? I : 10;
+      try { outSolid.remesh({ maxEdgeLength, maxIterations }); } catch (e) {
+        console.warn('[RemeshFeature] Remesh failed; returning original clone.', e);
+      }
+    }
 
     // Name and visualize for UI
-    try { remeshed.name = `(${target.name || 'Solid'})`; } catch (_) {}
-    try { remeshed.visualize(); } catch (_) {}
+    try { outSolid.name = `(${target.name || 'Solid'})`; } catch (_) {}
+    try { outSolid.visualize(); } catch (_) {}
 
     try { target.__removeFlag = true; } catch {}
-    return { added: [remeshed], removed: [target] };
+    return { added: [outSolid], removed: [target] };
   }
 }

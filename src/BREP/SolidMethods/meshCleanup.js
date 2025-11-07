@@ -524,6 +524,169 @@ export function remesh({ maxEdgeLength, maxIterations = 10 } = {}) {
 }
 
 /**
+ * Collapse tiny triangles by snapping the shortest edge of any triangle
+ * below a length threshold. The collapse is implemented by moving one
+ * endpoint of the short edge onto the other (preferring the lower index
+ * as the representative), which produces degenerate triangles. Those are
+ * then cleaned up by intersecting the result with a large bounding box
+ * and adopting the manifold surface back into this Solid.
+ *
+ * Returns the number of edge-collapses (unique unions) applied.
+ */
+export function collapseTinyTriangles(lengthThreshold) {
+    const thr = Number(lengthThreshold);
+    if (!Number.isFinite(thr) || thr <= 0) return 0;
+    const vp = this._vertProperties;
+    const tv = this._triVerts;
+    const triCount = (tv.length / 3) | 0;
+    const nv = (vp.length / 3) | 0;
+    if (triCount === 0 || nv === 0) return 0;
+
+    const thr2 = thr * thr;
+
+    // Disjoint set union (union-find) to map vertices to representatives
+    const parent = new Int32Array(nv);
+    for (let i = 0; i < nv; i++) parent[i] = i;
+    const find = (i) => {
+        while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+        return i;
+    };
+    const unite = (a, b) => {
+        let ra = find(a), rb = find(b);
+        if (ra === rb) return false;
+        // Prefer lower index as stable representative
+        if (rb < ra) { const tmp = ra; ra = rb; rb = tmp; }
+        parent[rb] = ra;
+        return true;
+    };
+    const len2 = (i, j) => {
+        const ax = vp[i * 3 + 0], ay = vp[i * 3 + 1], az = vp[i * 3 + 2];
+        const bx = vp[j * 3 + 0], by = vp[j * 3 + 1], bz = vp[j * 3 + 2];
+        const dx = ax - bx, dy = ay - by, dz = az - bz;
+        return dx * dx + dy * dy + dz * dz;
+    };
+
+    // Identify and unify the endpoints of the shortest edge in triangles
+    // that fall below the threshold.
+    let unions = 0;
+    for (let t = 0; t < triCount; t++) {
+        const base = t * 3;
+        const i0 = tv[base + 0] >>> 0;
+        const i1 = tv[base + 1] >>> 0;
+        const i2 = tv[base + 2] >>> 0;
+        const d01 = len2(i0, i1);
+        const d12 = len2(i1, i2);
+        const d20 = len2(i2, i0);
+        let minD = d01, a = i0, b = i1;
+        if (d12 < minD) { minD = d12; a = i1; b = i2; }
+        if (d20 < minD) { minD = d20; a = i2; b = i0; }
+        if (minD < thr2) {
+            if (unite(a, b)) unions++;
+        }
+    }
+
+    if (unions === 0) return 0;
+
+    // Apply the collapse: move non-representative vertices onto their root.
+    for (let i = 0; i < nv; i++) {
+        const r = find(i);
+        if (r !== i) {
+            vp[i * 3 + 0] = vp[r * 3 + 0];
+            vp[i * 3 + 1] = vp[r * 3 + 1];
+            vp[i * 3 + 2] = vp[r * 3 + 2];
+        }
+    }
+
+    // Mark dirty and refresh quick vertex index map
+    this._vertKeyToIndex = new Map();
+    for (let i = 0; i < nv; i++) {
+        const x = vp[i * 3 + 0], y = vp[i * 3 + 1], z = vp[i * 3 + 2];
+        this._vertKeyToIndex.set(`${x},${y},${z}`, i);
+    }
+    this._dirty = true;
+    this._faceIndex = null;
+
+    // Cleanup degenerate triangles by intersecting with a large bounding box
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let i = 0; i < nv; i++) {
+        const x = vp[i * 3 + 0], y = vp[i * 3 + 1], z = vp[i * 3 + 2];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return unions;
+    const dx = Math.max(1e-9, maxX - minX);
+    const dy = Math.max(1e-9, maxY - minY);
+    const dz = Math.max(1e-9, maxZ - minZ);
+    const maxDim = Math.max(dx, dy, dz, thr);
+    const margin = Math.max(thr * 10, maxDim * 0.1 + 1e-6);
+    const width = dx + 2 * margin;
+    const height = dy + 2 * margin;
+    const depth = dz + 2 * margin;
+    const ox = minX - margin, oy = minY - margin, oz = minZ - margin;
+
+    // Build a box Solid inline (avoid importing primitives to keep dependencies acyclic)
+    const SolidCtor = this.constructor;
+    const box = new SolidCtor();
+    const p000 = [ox, oy, oz];
+    const p100 = [ox + width, oy, oz];
+    const p010 = [ox, oy + height, oz];
+    const p110 = [ox + width, oy + height, oz];
+    const p001 = [ox, oy, oz + depth];
+    const p101 = [ox + width, oy, oz + depth];
+    const p011 = [ox, oy + height, oz + depth];
+    const p111 = [ox + width, oy + height, oz + depth];
+    box.addTriangle('__BIGBOX_NX', p000, p001, p011);
+    box.addTriangle('__BIGBOX_NX', p000, p011, p010);
+    box.addTriangle('__BIGBOX_PX', p100, p110, p111);
+    box.addTriangle('__BIGBOX_PX', p100, p111, p101);
+    box.addTriangle('__BIGBOX_NY', p000, p100, p101);
+    box.addTriangle('__BIGBOX_NY', p000, p101, p001);
+    box.addTriangle('__BIGBOX_PY', p010, p011, p111);
+    box.addTriangle('__BIGBOX_PY', p010, p111, p110);
+    box.addTriangle('__BIGBOX_NZ', p000, p010, p110);
+    box.addTriangle('__BIGBOX_NZ', p000, p110, p100);
+    box.addTriangle('__BIGBOX_PZ', p001, p101, p111);
+    box.addTriangle('__BIGBOX_PZ', p001, p111, p011);
+
+    const result = this.intersect(box);
+
+    // Adopt the result's manifold surface back into this Solid
+    const mesh = result.getMesh();
+    try {
+        this._numProp = mesh.numProp || 3;
+        this._vertProperties = Array.from(mesh.vertProperties || []);
+        this._triVerts = Array.from(mesh.triVerts || []);
+        const triCountAfter = (this._triVerts.length / 3) | 0;
+        if (mesh.faceID && mesh.faceID.length === triCountAfter) {
+            this._triIDs = Array.from(mesh.faceID);
+        } else {
+            const SolidClass = this.constructor;
+            this._triIDs = SolidClass._expandTriIDsFromMesh(mesh);
+        }
+        this._vertKeyToIndex = new Map();
+        for (let i = 0; i < this._vertProperties.length; i += 3) {
+            const x = this._vertProperties[i], y = this._vertProperties[i + 1], z = this._vertProperties[i + 2];
+            this._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
+        }
+        // Adopt face label mapping from the boolean result to keep IDs consistent
+        try { this._idToFaceName = new Map(result._idToFaceName); } catch { 
+            // throw an error if it fails
+            throw new Error("Failed to adopt face label mapping from boolean result");
+        }
+        try { this._faceNameToID = new Map([...this._idToFaceName.entries()].map(([id, name]) => [name, id])); } catch { }
+        this._dirty = false;
+        this._faceIndex = null;
+        this._manifold = null; // Rebuild lazily on next need
+    } finally {
+        try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { }
+    }
+
+    return unions;
+}
+
+/**
  * Detect and split self-intersecting triangle pairs.
  * - Finds non-adjacent triangle pairs that intersect along a segment.
  * - Splits both triangles along the intersection segment and triangulates

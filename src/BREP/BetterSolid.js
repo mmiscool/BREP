@@ -56,17 +56,8 @@
  *   linear in triangle count.
  */
 import {
-    manifold,
-    Manifold,
-    ManifoldMesh,
     THREE,
-    CADmaterials,
-    Line2,
-    LineGeometry,
     debugMode,
-    Edge,
-    Vertex,
-    Face
 } from "./SolidShared.js";
 import * as SolidMethods from "./SolidMethods/index.js";
 export { Edge, Vertex, Face } from "./SolidShared.js";
@@ -141,6 +132,10 @@ export class Solid extends THREE.Group {
 
     removeTinyBoundaryTriangles(areaThreshold, maxIterations = 1) {
         return SolidMethods.removeTinyBoundaryTriangles.apply(this, arguments);
+    }
+
+    collapseTinyTriangles(lengthThreshold) {
+        return SolidMethods.collapseTinyTriangles.apply(this, arguments);
     }
 
     invertNormals() {

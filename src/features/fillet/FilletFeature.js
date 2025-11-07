@@ -31,18 +31,17 @@ const inputParamsSchema = {
         default_value: "INSET",
         hint: "Prefer fillet inside (INSET) or outside (OUTSET)",
     },
+    snapSeam: {
+        type: "boolean",
+        default_value: true,
+        hint: "Experimental: snap boolean seam to computed tangents (INSET only)",
+    },
     debug: {
         type: "boolean",
         default_value: false,
         hint: "Draw diagnostic vectors for section frames (u,v, bisector, tangency)",
     },
-    snapSeam: {
-        type: "boolean",
-        default_value: false,
-        hint: "Experimental: snap boolean seam to computed tangents (INSET only)",
-    }
-}
-    ;
+};
 
 export class FilletFeature {
     static featureShortName = "F";
@@ -122,11 +121,17 @@ export class FilletFeature {
                             name: filletName
                         });
 
-                        const { finalSolid, tube, wedge, tangentA, tangentB } = res || {};
+                        const { finalSolid, tube, wedge } = res || {};
                         if (finalSolid) {
+                            // Use the actual, non-inflated tangent polylines for snapping
                             const tangents = [];
-                            if (Array.isArray(tangentA) && tangentA.length >= 2) tangents.push({ points: tangentA, radius: r, label: `${filletName}_TA`, owner: filletName });
-                            if (Array.isArray(tangentB) && tangentB.length >= 2) tangents.push({ points: tangentB, radius: r, label: `${filletName}_TB`, owner: filletName });
+                            try {
+                                const raw = computeFilletCenterline(e, r, dir) || {};
+                                const tAraw = Array.isArray(raw.tangentA) ? raw.tangentA : [];
+                                const tBraw = Array.isArray(raw.tangentB) ? raw.tangentB : [];
+                                if (tAraw.length >= 2) tangents.push({ points: tAraw, radius: r, label: `${filletName}_TA`, owner: filletName });
+                                if (tBraw.length >= 2) tangents.push({ points: tBraw, radius: r, label: `${filletName}_TB`, owner: filletName });
+                            } catch (_) { /* best-effort; snapping remains optional */ }
                             filletSolids.push({ finalSolid, target: e.parentSolid, tangents });
 
                             // Store debug solids for debug mode
@@ -185,16 +190,26 @@ export class FilletFeature {
             removed.push(targetSolid);
             try {
                 // Post-process: optional snapping of boolean-created seams to tangency curves.
-                // Disabled by default; only available for INSET (subtractive) fillets.
-                if (snapTargets.length && dir === "INSET" && this.inputParams.snapSeam === true) {
-                    this._snapBooleanEdgesToTangents(solidResult, snapTargets);
+                // Applies to both INSET (subtract) and OUTSET (union) when enabled.
+                if (snapTargets.length && this.inputParams.snapSeam === true) {
+                    // if closed loop fillet, enable snapping
+                    let isClosedLoop = false;
+                    for (const e of edgeObjs) {
+                        console.log("checking closed loop for edge:", e);
+                        console.log(e, e.closedLoop);
+                        if (e.closedLoop) {
+                            isClosedLoop = true;
+                            break;
+                        }
+                    }
+                    this._snapBooleanEdgesToTangents(solidResult, snapTargets, !isClosedLoop);
                 }
                 // In debug mode, visualize the calculated tangent polylines
                 if (this.inputParams.debug && snapTargets.length) {
                     const isClosed = (arr) => {
                         if (!Array.isArray(arr) || arr.length < 2) return false;
                         const a = Array.isArray(arr[0]) ? arr[0] : [arr[0]?.x, arr[0]?.y, arr[0]?.z];
-                        const b = Array.isArray(arr[arr.length-1]) ? arr[arr.length-1] : [arr[arr.length-1]?.x, arr[arr.length-1]?.y, arr[arr.length-1]?.z];
+                        const b = Array.isArray(arr[arr.length - 1]) ? arr[arr.length - 1] : [arr[arr.length - 1]?.x, arr[arr.length - 1]?.y, arr[arr.length - 1]?.z];
                         if (!Array.isArray(a) || !Array.isArray(b)) return false;
                         return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
                     };
@@ -233,10 +248,9 @@ export class FilletFeature {
      * @param {{ points: Array<{x:number,y:number,z:number}|number[]>, radius?: number, label?: string }[]} targets
      */
     _snapBooleanEdgesToTangents(solidResult, targets = [], skip = true) {
-        // Force on: absolutely every point along boolean-created edges should snap
         if (!solidResult || !Array.isArray(targets) || targets.length === 0) return;
 
-        const toArrayPoint = (p) => Array.isArray(p) ? [Number(p[0])||0, Number(p[1])||0, Number(p[2])||0] : [Number(p.x)||0, Number(p.y)||0, Number(p.z)||0];
+        const toArrayPoint = (p) => Array.isArray(p) ? [Number(p[0]) || 0, Number(p[1]) || 0, Number(p[2]) || 0] : [Number(p.x) || 0, Number(p.y) || 0, Number(p.z) || 0];
         const tangentPolys = targets.map(t => ({
             pts: (Array.isArray(t.points) ? t.points : []).map(toArrayPoint),
             r: Number.isFinite(t.radius) ? Math.abs(t.radius) : undefined,
@@ -251,8 +265,8 @@ export class FilletFeature {
         // Helper: polyline length
         const polyLength = (arr) => {
             let L = 0; for (let i = 1; i < arr.length; i++) {
-                const a = arr[i-1], b = arr[i];
-                const dx = b[0]-a[0], dy = b[1]-a[1], dz = b[2]-a[2];
+                const a = arr[i - 1], b = arr[i];
+                const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
                 L += Math.hypot(dx, dy, dz);
             } return L;
         };
@@ -263,18 +277,18 @@ export class FilletFeature {
             const px = p[0], py = p[1], pz = p[2];
             const vx = bx - ax, vy = by - ay, vz = bz - az;
             const wx = px - ax, wy = py - ay, wz = pz - az;
-            const vv = vx*vx + vy*vy + vz*vz;
-            let t = vv > 0 ? (wx*vx + wy*vy + wz*vz) / vv : 0;
+            const vv = vx * vx + vy * vy + vz * vz;
+            let t = vv > 0 ? (wx * vx + wy * vy + wz * vz) / vv : 0;
             if (t < 0) t = 0; else if (t > 1) t = 1;
-            return [ax + vx*t, ay + vy*t, az + vz*t];
+            return [ax + vx * t, ay + vy * t, az + vz * t];
         };
         // Helper: closest point on a polyline to point p
         const closestOnPolyline = (p, poly) => {
             let best = null, bestD2 = Infinity;
             for (let i = 1; i < poly.length; i++) {
-                const q = closestOnSeg(p, poly[i-1], poly[i]);
-                const dx = q[0]-p[0], dy = q[1]-p[1], dz = q[2]-p[2];
-                const d2 = dx*dx + dy*dy + dz*dz;
+                const q = closestOnSeg(p, poly[i - 1], poly[i]);
+                const dx = q[0] - p[0], dy = q[1] - p[1], dz = q[2] - p[2];
+                const d2 = dx * dx + dy * dy + dz * dz;
                 if (d2 < bestD2) { bestD2 = d2; best = q; }
             }
             return best || poly[0].slice();
@@ -282,8 +296,8 @@ export class FilletFeature {
         // Helper: average segment length
         const avgSegLen = (poly) => {
             if (!Array.isArray(poly) || poly.length < 2) return 0;
-            let acc = 0, n = 0; for (let i=1;i<poly.length;i++){ const a=poly[i-1], b=poly[i]; acc += Math.hypot(b[0]-a[0], b[1]-a[1], b[2]-a[2]); n++; }
-            return n ? acc/n : 0;
+            let acc = 0, n = 0; for (let i = 1; i < poly.length; i++) { const a = poly[i - 1], b = poly[i]; acc += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]); n++; }
+            return n ? acc / n : 0;
         };
         // Helper: compute AABB of points array [[x,y,z],...]
         const bboxOf = (pts) => {
@@ -309,10 +323,10 @@ export class FilletFeature {
             const out = [poly[0].slice()];
             let emitted = 1;
             for (let i = 1; i < poly.length; i++) {
-                const a = poly[i-1];
+                const a = poly[i - 1];
                 const b = poly[i];
-                const dx = b[0]-a[0], dy = b[1]-a[1], dz = b[2]-a[2];
-                const len = Math.hypot(dx,dy,dz);
+                const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+                const len = Math.hypot(dx, dy, dz);
                 if (!(len > 0)) { out.push(b.slice()); emitted++; if (emitted >= maxPoints) break; continue; }
                 if (len <= step) { out.push(b.slice()); emitted++; if (emitted >= maxPoints) break; continue; }
                 let desiredSegs = Math.max(1, Math.floor(len / step));
@@ -321,11 +335,11 @@ export class FilletFeature {
                 const remaining = Math.max(0, maxPoints - emitted - 1); // keep room for endpoint
                 if (remaining <= 0) break;
                 const interior = Math.min(remaining, Math.max(0, desiredSegs - 1));
-                const inv = 1/len;
-                const ux = dx*inv, uy = dy*inv, uz = dz*inv;
-                for (let k=1; k<=interior; k++) {
+                const inv = 1 / len;
+                const ux = dx * inv, uy = dy * inv, uz = dz * inv;
+                for (let k = 1; k <= interior; k++) {
                     const t = (k * len) / desiredSegs;
-                    out.push([a[0]+ux*t, a[1]+uy*t, a[2]+uz*t]);
+                    out.push([a[0] + ux * t, a[1] + uy * t, a[2] + uz * t]);
                     emitted++;
                     if (emitted >= maxPoints - 1) break; // leave space for endpoint
                 }
@@ -343,7 +357,7 @@ export class FilletFeature {
             for (let i = 0; i < pts.length; i++) {
                 const p = pts[i];
                 const q = closestOnPolyline(p, tangentPoly);
-                const dx = q[0]-p[0], dy = q[1]-p[1], dz = q[2]-p[2];
+                const dx = q[0] - p[0], dy = q[1] - p[1], dz = q[2] - p[2];
                 sum += Math.hypot(dx, dy, dz);
             }
             const avg = sum / pts.length;
@@ -386,18 +400,18 @@ export class FilletFeature {
             const candidates = boundary.map((b, idx) => ({
                 idx,
                 poly: b,
-                faceA: String(b.faceA||''),
-                faceB: String(b.faceB||''),
+                faceA: String(b.faceA || ''),
+                faceB: String(b.faceB || ''),
                 bbox: bboxOf(b.positions || []),
             })).filter(e => aabbIntersects(expanded, e.bbox) || (owner && (e.faceA.includes(owner) || e.faceB.includes(owner))));
 
             // Distance-based filter: keep only boundaries sufficiently close to any tangent
             const maxSamples = 10;
             const sampleIndices = (arrLen) => {
-                if (arrLen <= maxSamples) return Array.from({length: arrLen}, (_,i)=>i);
-                const out = new Set([0, arrLen-1]);
-                for (let k=1;k<maxSamples-1;k++) out.add(Math.floor((k*(arrLen-1))/(maxSamples-1)));
-                return Array.from(out).sort((a,b)=>a-b);
+                if (arrLen <= maxSamples) return Array.from({ length: arrLen }, (_, i) => i);
+                const out = new Set([0, arrLen - 1]);
+                for (let k = 1; k < maxSamples - 1; k++) out.add(Math.floor((k * (arrLen - 1)) / (maxSamples - 1)));
+                return Array.from(out).sort((a, b) => a - b);
             };
 
             for (const c of candidates) {
@@ -411,8 +425,8 @@ export class FilletFeature {
                     for (const t of tangs) {
                         const d = (() => {
                             const q = closestOnPolyline(p, t.pts);
-                            const dx = q[0]-p[0], dy = q[1]-p[1], dz = q[2]-p[2];
-                            return Math.hypot(dx,dy,dz);
+                            const dx = q[0] - p[0], dy = q[1] - p[1], dz = q[2] - p[2];
+                            return Math.hypot(dx, dy, dz);
                         })();
                         if (d < minApprox) minApprox = d;
                     }
@@ -426,43 +440,37 @@ export class FilletFeature {
                     const s = polyScore(c.poly, t.pts, t.r);
                     if (s < bestScore) { bestScore = s; bestT = t; }
                 }
-                // Densify chosen tangent to roughly match boundary spacing, but cap work.
-                const Lt = polyLength(bestT.pts);
-                // Prefer boundary average spacing; fall back to uniform spacing along tangent.
-                let step = avgSegLen(pts);
-                if (!(step > 0)) step = Lt / Math.max(2, (pts.length || 2) - 1);
-                // Compute a reasonable lower bound from radius/length to avoid tiny steps
-                const tol = getDistanceTolerance(Number.isFinite(bestT.r) ? bestT.r : (Lt || 1));
-                const minStep = Math.max(tol, (Lt > 0 ? Lt / 5000 : tol));
-                if (!(step > 0) || step < minStep) step = minStep;
-                const denseTangent = densifyPolyline(bestT.pts, step, { maxPoints: 5000, maxPerSeg: 200 });
+                // Snap directly to the provided tangent polyline without any offset/resampling.
+                // Using the exact calculated tangent preserves intended geometry.
 
-                // Snap absolutely every vertex on this boundary polyline
+                // Snap vertices only if they are within a radius-based threshold
                 const idxChain = c.poly.indices || [];
                 const moved = new Set();
                 for (const vi of idxChain) {
                     if (!Number.isFinite(vi) || vi < 0) continue;
                     if (moved.has(vi)) continue; moved.add(vi);
-                    const px = vp[vi*3+0], py = vp[vi*3+1], pz = vp[vi*3+2];
-                    const q = closestOnPolyline([px,py,pz], denseTangent);
-                    vp[vi*3+0] = q[0]; vp[vi*3+1] = q[1]; vp[vi*3+2] = q[2];
+                    const px = vp[vi * 3 + 0], py = vp[vi * 3 + 1], pz = vp[vi * 3 + 2];
+                    const q = closestOnPolyline([px, py, pz], bestT.pts);
+                    const dx = q[0] - px, dy = q[1] - py, dz = q[2] - pz;
+                    const d = Math.hypot(dx, dy, dz);
+                    const threshold = (Number.isFinite(bestT.r) && bestT.r > 0) ? (1.1 * Math.abs(bestT.r)) : 0;
+                    if (threshold > 0 && d <= threshold) {
+                        vp[vi * 3 + 0] = q[0]; vp[vi * 3 + 1] = q[1]; vp[vi * 3 + 2] = q[2];
+                    }
                 }
             }
         }
 
-        // loop over all the solids and cleanup any degenerated triangles
-        //solidResult.removeInternalTriangles();
+        // loop over all the solids and cleanup any degenerated triangles using the updated vertex positions
+        solidResult.collapseTinyTriangles();
+        // solidResult._manifoldize();
+        // console.log("going to simplify");
+        // solidResult.simplify(.01);
 
-        // Invalidate caches and rehash vertex keys
-        solidResult._dirty = true;
+        // console.log("simplified");
+
+
+        // Topology changed; drop face index cache. simplify() rebuilt the rest.
         solidResult._faceIndex = null;
-        try {
-            if (solidResult._vertKeyToIndex && typeof solidResult._vertKeyToIndex.clear === 'function') solidResult._vertKeyToIndex.clear();
-            const n = (vp.length/3)|0;
-            for (let i = 0; i < n; i++) {
-                const k = `${vp[i*3+0]},${vp[i*3+1]},${vp[i*3+2]}`;
-                solidResult._vertKeyToIndex.set(k, i);
-            }
-        } catch {}
     }
 }

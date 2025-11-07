@@ -71,7 +71,9 @@ const inputParamsSchema = {
     },
     curveResolution: {
         type: "number",
-        default_value: 16,
+        default_value: 32,
+        min: 32,
+        max: 512,
         hint: "Segments for circles; arcs scale proportionally",
     },
 };

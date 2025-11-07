@@ -66,14 +66,81 @@ export function setTolerance(tolerance) {
     return out;
 }
 //3284
-export function simplify(tolerance = 1) {
+export function simplify(tolerance = undefined) {
     const Solid = this.constructor;
     const m = this._manifoldize();
+
+    // Log input manifold counts via MeshGL since Manifold does not expose numVerts/numFaces
+    try {
+        const meshIn = m.getMesh();
+        try {
+            const inVerts = (meshIn.vertProperties?.length || 0) / 3 | 0;
+            const inFaces = (meshIn.triVerts?.length || 0) / 3 | 0;
+            console.log(`Simplifying manifold with ${inVerts} vertices and ${inFaces} faces.`);
+        } finally {
+            try { if (meshIn && typeof meshIn.delete === 'function') meshIn.delete(); } catch { }
+        }
+    } catch { /* best-effort debug logging */ }
+
+    // Run simplify on the manifold
     const outM = (tolerance === undefined) ? m.simplify() : m.simplify(tolerance);
-    const mapCopy = new Map(this._idToFaceName);
-    const out = Solid._fromManifold(outM, mapCopy);
-    try { out._auxEdges = Array.isArray(this._auxEdges) ? this._auxEdges.slice() : []; } catch { }
-    return out;
+
+    // Read back the simplified mesh and update this Solid in-place
+    let meshOut = null;
+    try {
+        meshOut = outM.getMesh();
+        const outVerts = (meshOut.vertProperties?.length || 0) / 3 | 0;
+        const outFaces = (meshOut.triVerts?.length || 0) / 3 | 0;
+        console.log(`Simplified manifold now has ${outVerts} vertices and ${outFaces} faces.`);
+
+        // Replace geometry arrays
+        this._numProp = meshOut.numProp;
+        this._vertProperties = Array.from(meshOut.vertProperties);
+        this._triVerts = Array.from(meshOut.triVerts);
+        this._triIDs = Solid._expandTriIDsFromMesh(meshOut);
+
+        // Rebuild vertex key map
+        this._vertKeyToIndex = new Map();
+        for (let i = 0; i < this._vertProperties.length; i += 3) {
+            const x = this._vertProperties[i + 0];
+            const y = this._vertProperties[i + 1];
+            const z = this._vertProperties[i + 2];
+            this._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
+        }
+
+        // Keep existing face name map; best-effort completion for any new IDs
+        const completeMap = new Map(this._idToFaceName);
+        try {
+            const ids = meshOut.faceID && meshOut.faceID.length ? meshOut.faceID : null;
+            const triCount = (meshOut.triVerts?.length || 0) / 3 | 0;
+            if (ids && ids.length === triCount) {
+                const seen = new Set();
+                for (let t = 0; t < triCount; t++) {
+                    const id = ids[t] >>> 0;
+                    if (seen.has(id)) continue;
+                    seen.add(id);
+                    if (!completeMap.has(id)) completeMap.set(id, `FACE_${id}`);
+                }
+            } else if (!ids) {
+                if (!completeMap.has(0)) completeMap.set(0, 'FACE_0');
+            }
+        } catch { /* ignore */ }
+        this._idToFaceName = completeMap;
+        this._faceNameToID = new Map(
+            [...this._idToFaceName.entries()].map(([id, name]) => [name, id]),
+        );
+
+        // Replace cached manifold and reset caches
+        try { if (this._manifold && this._manifold !== outM && typeof this._manifold.delete === 'function') this._manifold.delete(); } catch { }
+        this._manifold = outM;
+        this._dirty = false;
+        this._faceIndex = null;
+    } finally {
+        try { if (meshOut && typeof meshOut.delete === 'function') meshOut.delete(); } catch { }
+    }
+
+    // Return the mutated Solid (chainable)
+    return this;
 }
 
 export function _expandTriIDsFromMesh(mesh) {
@@ -126,4 +193,3 @@ export function _fromManifold(manifoldObj, idToFaceName) {
     solid._dirty = false;
     try { return solid; } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
 }
-

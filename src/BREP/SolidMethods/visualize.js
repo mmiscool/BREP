@@ -1,10 +1,6 @@
 import {
-    manifold,
-    Manifold,
-    ManifoldMesh,
     THREE,
     CADmaterials,
-    Line2,
     LineGeometry,
     debugMode,
     Edge,

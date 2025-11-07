@@ -764,6 +764,10 @@ export class HistoryWidget {
             const [item] = ph.features.splice(idx, 1);
             ph.features.splice(idx - 1, 0, item);
             ph.currentHistoryStepId = featureID;
+            // make the feature dirty so that it gets re-executed
+            
+            item.lastRunInputParams = null;
+            console.log('Moved feature up:', item);
             if (typeof ph.runHistory === "function") {
                 await ph.runHistory();
             }

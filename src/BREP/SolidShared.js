@@ -15,7 +15,6 @@ const debugMode = false;
 export { Edge, Vertex, Face };
 
 export {
-    manifold,
     Manifold,
     ManifoldMesh,
     THREE,
