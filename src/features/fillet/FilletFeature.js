@@ -282,17 +282,45 @@ export class FilletFeature {
             if (t < 0) t = 0; else if (t > 1) t = 1;
             return [ax + vx * t, ay + vy * t, az + vz * t];
         };
-        // Helper: closest point on a polyline to point p
-        const closestOnPolyline = (p, poly) => {
-            let best = null, bestD2 = Infinity;
-            for (let i = 1; i < poly.length; i++) {
-                const q = closestOnSeg(p, poly[i - 1], poly[i]);
-                const dx = q[0] - p[0], dy = q[1] - p[1], dz = q[2] - p[2];
-                const d2 = dx * dx + dy * dy + dz * dz;
-                if (d2 < bestD2) { bestD2 = d2; best = q; }
-            }
-            return best || poly[0].slice();
+        // Helper: detect if polyline is closed (first point equals last point)
+        const isClosedPolyline = (poly) => {
+            if (!Array.isArray(poly) || poly.length < 3) return false;
+            const a = poly[0], b = poly[poly.length - 1];
+            return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
         };
+        // Helper: closest point on a polyline to point p, including arc-length position
+        const closestOnPolylineWithParam = (p, poly) => {
+            let best = null, bestD2 = Infinity, bestIdx = 1, bestT = 0;
+            // cumulative length up to vertex i
+            let cum = [0];
+            for (let i = 1; i < poly.length; i++) {
+                const a = poly[i - 1], b = poly[i];
+                const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+                const len = Math.hypot(dx, dy, dz);
+                cum.push(cum[cum.length - 1] + len);
+            }
+            for (let i = 1; i < poly.length; i++) {
+                const a = poly[i - 1], b = poly[i];
+                const ax = a[0], ay = a[1], az = a[2];
+                const bx = b[0], by = b[1], bz = b[2];
+                const px = p[0], py = p[1], pz = p[2];
+                const vx = bx - ax, vy = by - ay, vz = bz - az;
+                const wx = px - ax, wy = py - ay, wz = pz - az;
+                const vv = vx * vx + vy * vy + vz * vz;
+                let t = vv > 0 ? (wx * vx + wy * vy + wz * vz) / vv : 0;
+                if (t < 0) t = 0; else if (t > 1) t = 1;
+                const qx = ax + vx * t, qy = ay + vy * t, qz = az + vz * t;
+                const dx = qx - px, dy = qy - py, dz = qz - pz;
+                const d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < bestD2) { bestD2 = d2; best = [qx, qy, qz]; bestIdx = i; bestT = t; }
+            }
+            const totalLen = cum[cum.length - 1] || 0;
+            const segLen = (bestIdx >= 1 ? (cum[bestIdx] - cum[bestIdx - 1]) : 0);
+            const arcAt = (bestIdx >= 1 ? (cum[bestIdx - 1] + segLen * bestT) : 0);
+            return { q: best || poly[0].slice(), arcAt, totalLen, segIndex: bestIdx, t: bestT };
+        };
+        // Back-compat wrapper for callers that only need the point
+        const closestOnPolyline = (p, poly) => closestOnPolylineWithParam(p, poly).q;
         // Helper: average segment length
         const avgSegLen = (poly) => {
             if (!Array.isArray(poly) || poly.length < 2) return 0;
@@ -450,11 +478,23 @@ export class FilletFeature {
                     if (!Number.isFinite(vi) || vi < 0) continue;
                     if (moved.has(vi)) continue; moved.add(vi);
                     const px = vp[vi * 3 + 0], py = vp[vi * 3 + 1], pz = vp[vi * 3 + 2];
-                    const q = closestOnPolyline([px, py, pz], bestT.pts);
+                    const { q, arcAt, totalLen } = closestOnPolylineWithParam([px, py, pz], bestT.pts);
                     const dx = q[0] - px, dy = q[1] - py, dz = q[2] - pz;
                     const d = Math.hypot(dx, dy, dz);
                     const threshold = (Number.isFinite(bestT.r) && bestT.r > 0) ? (1.1 * Math.abs(bestT.r)) : 0;
-                    if (threshold > 0 && d <= threshold) {
+                    // Exclude end-cap regions for non-closed fillets: if the nearest point lies
+                    // within a small arc-length window from either end of the tangent, skip.
+                    // We use a window based on the fillet radius (or 5% of length as fallback).
+                    const openTangent = !isClosedPolyline(bestT.pts);
+                    const capWindow = (Number.isFinite(bestT.r) && bestT.r > 0)
+                        ? (1.0 * Math.abs(bestT.r))
+                        : (0.05 * (totalLen || 0));
+                    const nearStart = (totalLen > 0) && (arcAt <= capWindow);
+                    const nearEnd = (totalLen > 0) && ((totalLen - arcAt) <= capWindow);
+                    // Always allow snapping for the two boundary end points, even if they project
+                    // into the end-cap window, so the arc endpoints remain coherent with the seam.
+                    const isEndpoint = (vi === idxChain[0] || vi === idxChain[idxChain.length - 1]);
+                    if (threshold > 0 && d <= threshold && !(openTangent && (nearStart || nearEnd) && !isEndpoint)) {
                         vp[vi * 3 + 0] = q[0]; vp[vi * 3 + 1] = q[1]; vp[vi * 3 + 2] = q[2];
                     }
                 }
