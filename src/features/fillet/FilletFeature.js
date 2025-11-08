@@ -179,6 +179,8 @@ export class FilletFeature {
                 } else if (dir === "INSET") {
                     solidResult = solidResult.subtract(filletSolid);
                 }
+                // we use the name of the target solid for the result
+                solidResult.name = targetSolid.name;
                 // accumulate tangents
                 if (Array.isArray(entry.tangents)) {
                     for (const t of entry.tangents) {
