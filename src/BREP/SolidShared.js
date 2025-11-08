@@ -1,4 +1,4 @@
-import manifold from "./setupManifold.js";
+import { Manifold, ManifoldMesh, CrossSection } from "./setupManifold.js";
 
 import * as THREE from "three";
 import { CADmaterials } from "../UI/CADmaterials.js";
@@ -8,7 +8,7 @@ import Edge from "./Edge.js";
 import Vertex from "./Vertex.js";
 import Face from "./Face.js";
 
-const { Manifold, Mesh: ManifoldMesh } = manifold;
+// Use named exports from setupManifold.js
 
 const debugMode = false;
 
@@ -17,6 +17,7 @@ export { Edge, Vertex, Face };
 export {
     Manifold,
     ManifoldMesh,
+    CrossSection,
     THREE,
     CADmaterials,
     Line2,

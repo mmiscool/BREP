@@ -25,4 +25,10 @@ export const manifold = await (async () => {
   }
 })();
 
-export default manifold;
+
+
+
+
+export const Manifold = manifold.Manifold;
+export const CrossSection = manifold.CrossSection;
+export const ManifoldMesh = manifold.Mesh;

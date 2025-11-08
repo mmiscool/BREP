@@ -2,10 +2,8 @@
 // Primitive solids built on top of BetterSolid.Solid
 // All classes extend Solid and author triangles via addTriangle(faceName, p1, p2, p3).
 
-import manifold from './setupManifold.js';
+import { Manifold, CrossSection } from './SolidShared.js';
 import { Solid } from './BetterSolid.js';
-
-const { Manifold, CrossSection } = manifold;
 
 // Utilities
 function rotateZupToYupMesh(mesh) {

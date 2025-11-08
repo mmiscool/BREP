@@ -7,10 +7,9 @@
 //   return out; // array of solids to add to scene
 
 import * as THREE from 'three';
-import manifold from "./setupManifold.js";
+import { Manifold, ManifoldMesh } from "./SolidShared.js";
 import { Solid } from "./BetterSolid.js";
 import { MeshRepairer } from "./MeshRepairer.js";
-const { Manifold, Mesh: ManifoldMesh } = manifold;
 
 const __booleanDebugConfig = (() => {
   try {
@@ -719,7 +718,6 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
 
       const hullFromAuthoring = (solid) => {
         try {
-          const { Manifold } = manifold;
           const vp = solid && solid._vertProperties;
           if (!Array.isArray(vp)) return null;
           const uniq = new Set();

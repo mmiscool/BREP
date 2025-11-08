@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
-import manifold from './setupManifold.js';
+import { Manifold } from './SolidShared.js';
 import { Solid } from './BetterSolid.js';
 
-const { Manifold } = manifold;
+// Manifold imported directly as named export
 
 export class OffsetShellSolid extends Solid {
   /**

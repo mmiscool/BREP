@@ -1,5 +1,5 @@
 import { BREP } from "../../BREP/BREP.js";
-import manifold from "../../BREP/setupManifold.js";
+import { Manifold } from "../../BREP/SolidShared.js";
 const THREE = BREP.THREE;
 
 const inputParamsSchema = {
@@ -238,7 +238,6 @@ function computeRefPlane(refObj) {
 function retagSolidFaces(solid, suffix) {
   if (!solid || !suffix) return;
   try {
-    const { Manifold } = manifold;
     const oldIdToFace = (solid._idToFaceName instanceof Map) ? solid._idToFaceName : new Map();
     const triIDs = Array.isArray(solid._triIDs) ? solid._triIDs : [];
     const presentIDs = new Set();
