@@ -418,7 +418,7 @@ function findMatchingParen(str, startIdx) {
 }
 
 function writeSharedModule(sharedPath, analysis) {
-    const header = `import manifold from "./setupManifold.js";\n\nimport * as THREE from "three";\nimport { CADmaterials } from '../UI/CADmaterials.js';\nimport { Line2, LineGeometry } from "three/examples/jsm/Addons.js";\n\nconst { Manifold, Mesh: ManifoldMesh } = manifold;\n\n`;
+    const header = `import { manifold, Manifold, ManifoldMesh } from "./setupManifold.js";\n\nimport * as THREE from "three";\nimport { CADmaterials } from '../UI/CADmaterials.js';\nimport { Line2, LineGeometry } from "three/examples/jsm/Addons.js";\n\n`;
     const exportsBlock = `\nexport {\n    manifold,\n    Manifold,\n    ManifoldMesh,\n    THREE,\n    CADmaterials,\n    Line2,\n    LineGeometry,\n    debugMode,\n};\n`;
     const reexports = `\nexport { Edge, Vertex, Face };\n`;
     const helpers = analysis.helpersBlock.trim();
@@ -455,7 +455,8 @@ function writeMethodModules(methodDir, methodsIndexPath, methods) {
         const fileContent = `${importBlock}${leadingSection}${functionDecl}`;
         fs.writeFileSync(filePath, `${fileContent.trimEnd()}\n`, "utf8");
 
-        indexLines.push(`export { default as ${exportName} } from "./${fileBase}.js";`);
+        const declName = method.name === "constructor" ? "constructorBody" : method.name;
+        indexLines.push(`export { ${declName} as ${exportName} } from "./${fileBase}.js";`);
         method.exportName = exportName;
     });
 
@@ -516,7 +517,7 @@ function generateFunctionDecl(method, replacements) {
     const isGenerator = headerPrefix.includes("*");
     const declName = method.name === "constructor" ? "constructorBody" : method.name;
     const fnKeyword = `${isAsync ? "async " : ""}function${isGenerator ? "*" : ""}`;
-    const header = `export default ${fnKeyword} ${declName}${params}`;
+    const header = `export ${fnKeyword} ${declName}${params}`;
 
     let lines = [];
     lines.push(`${header} {`);

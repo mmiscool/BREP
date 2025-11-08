@@ -6,5 +6,3 @@ export function normalizeTypeString(type) {
   if (!type) return '';
   return String(type).trim();
 }
-
-export default normalizeTypeString;

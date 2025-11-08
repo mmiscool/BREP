@@ -374,9 +374,6 @@ const localStorageShim = hasIndexedDB ? new LocalStorageShim() : {
   ready() { return Promise.resolve(); }
 };
 
-// Export default named as localStorage to enable easy find/replace.
+// Export as named `localStorage` to enable easy find/replace.
 // Example replacement: from `window.localStorage` to imported `localStorage`.
-export default localStorageShim;
-
-// Also export a named export in case you prefer: import { LocalStorage } from ...
 export { localStorageShim as localStorage };

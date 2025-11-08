@@ -152,7 +152,7 @@ class Point {
 }
 
 // === Public API class ===
-export default class ConstraintSolver {
+export class ConstraintSolver {
     /**
      * @param {Object} opts
      * @param {Object} [opts.sketch]  initial sketch {points, geometries, constraints}

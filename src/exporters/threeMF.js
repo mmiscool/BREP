@@ -283,5 +283,3 @@ export async function generate3MF(solids, opts = {}) {
   const data = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   return data;
 }
-
-export default generate3MF;

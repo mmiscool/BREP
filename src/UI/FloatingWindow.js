@@ -244,5 +244,3 @@ export class FloatingWindow {
     } catch { return 42; }
   }
 }
-
-export default FloatingWindow;

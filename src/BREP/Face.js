@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { CADmaterials } from "../UI/CADmaterials.js";
 
-export default class Face extends THREE.Mesh {
+export class Face extends THREE.Mesh {
     constructor(geometry) {
         super(geometry, CADmaterials.FACE.BASE);
         this.edges = [];

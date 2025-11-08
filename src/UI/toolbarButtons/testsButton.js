@@ -24,6 +24,3 @@ export function createTestsButton(viewer) {
     },
   };
 }
-
-export default createTestsButton;
-

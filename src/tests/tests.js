@@ -1,5 +1,5 @@
-import path from '../path.proxy.js';
-import fs from '../fs.proxy.js';
+import { posix as path } from '../path.proxy.js';
+import { fs } from '../fs.proxy.js';
 import { PartHistory } from "../PartHistory.js";
 import { test_primitiveCube } from './test_primitiveCube.js';
 import { test_solidMetrics, afterRun_solidMetrics } from './test_solidMetrics.js';

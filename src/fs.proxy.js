@@ -511,6 +511,4 @@ function requireLikeFsSync() {
   }
   return nodeFsSync;
 }
-
-export default universalFs;
 export const fs = universalFs;

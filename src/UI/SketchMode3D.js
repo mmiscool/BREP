@@ -1,7 +1,7 @@
 // SketchMode3D: In-scene sketch editing overlay (no camera locking).
 
 import * as THREE from "three";
-import ConstraintSolver from "../features/sketch/sketchSolver2D/ConstraintEngine.js";
+import { ConstraintSolver } from "../features/sketch/sketchSolver2D/ConstraintEngine.js";
 import { updateListHighlights, applyHoverAndSelectionColors } from "./sketcher/highlights.js";
 import { renderDimensions as dimsRender } from "./sketcher/dimensions.js";
 import { AccordionWidget } from "./AccordionWidget.js";

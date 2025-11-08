@@ -21,7 +21,7 @@ import {
  * @param {string} options.name Name for the group (default 'Solid')
  * @returns {any} THREE.Group containing one child Mesh per face
  */
-export default function visualize(options = {}) {
+export function visualize(options = {}) {
         const Solid = this.constructor;
         // Clear existing children and dispose resources
         for (let i = this.children.length - 1; i >= 0; i--) {

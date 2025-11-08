@@ -67,5 +67,3 @@ export function deepClone(value) {
 
   return value;
 }
-
-export default deepClone;

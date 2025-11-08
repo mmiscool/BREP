@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { CADmaterials } from "../UI/CADmaterials.js";
 import { Line2 } from "three/examples/jsm/Addons.js";
 
-export default class Edge extends Line2 {
+export class Edge extends Line2 {
     constructor(geometry) {
         super(geometry, CADmaterials.EDGE.BASE);
         this.faces = [];

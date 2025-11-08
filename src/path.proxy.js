@@ -268,12 +268,10 @@ const universalPosix = {
 universalPosix.posix = universalPosix;
 const win32Shim = new Proxy({}, {
   get() {
-    throw new Error("POSIX-only path module: use the default export/`posix` with your VFS.");
+    throw new Error("POSIX-only path module: use the named export `posix` with your VFS.");
   }
 });
 universalPosix.win32 = win32Shim;
-
-export default universalPosix;
 export const posix = universalPosix;
 export const win32 = win32Shim;
 export const ensureNodePathLoaded = loadNodePathIfNeeded;

@@ -1,7 +1,7 @@
 import { clearFilletCaches, computeFilletCenterline, filletSolid } from "../../BREP/fillets/fillet.js";
 import { applyBooleanOperation } from "../../BREP/applyBooleanOperation.js";
 import { getDistanceTolerance } from "../../BREP/fillets/inset.js";
-import Edge from "../../BREP/Edge.js";
+import { Edge } from "../../BREP/Edge.js";
 import { THREE } from "../../BREP/SolidShared.js";
 
 
