@@ -1,44 +1,58 @@
 
-const dialogStyle = {
+const overlayStyle = {
     position: 'fixed',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    backgroundColor: 'rgba(0,0,0,0.8)', // Partly transparent black
-    color: '#fff',
-    padding: '20px',
-    boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
-    borderRadius: '8px',
-    zIndex: '1000',
-    fontSize: '18px', // Medium font size
+    inset: '0',
+    background: 'rgba(0,0,0,.6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: '10000',
+};
+
+const dialogStyle = {
+    // Centered within overlay
+    position: 'relative',
+    background: 'var(--bg-elev, #12141b)',
+    color: 'var(--text, #e6e6e6)',
+    padding: '14px',
+    boxShadow: '0 10px 40px rgba(0,0,0,.5)',
+    borderRadius: '12px',
+    border: '1px solid var(--border, #262b36)',
+    fontSize: '14px',
+    lineHeight: '1.4',
     textAlign: 'left',
-    zIndex: '10000'
+    width: 'min(480px, calc(100vw - 32px))',
+    maxWidth: '100%',
 };
 
-const confirmButtonStyle = {
-    padding: '10px 20px',
-    margin: '10px',
-    backgroundColor: '#4CAF50', // Green
-    color: '#fff',
-    border: 'none',
-    borderRadius: '5px',
+// Buttons follow the app's neutral button style; the "confirm" style is the emphasized/primary look.
+const neutralButtonStyle = {
+    appearance: 'none',
+    border: '1px solid var(--border, #262b36)',
+    background: 'linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03))',
+    color: 'var(--text, #e6e6e6)',
+    borderRadius: '10px',
+    padding: '8px 12px',
+    fontWeight: '700',
+    fontSize: '12px',
     cursor: 'pointer',
 };
 
-const cancelButtonStyle = {
-    padding: '10px 20px',
-    margin: '10px',
-    backgroundColor: '#f44336', // Red
-    color: '#fff',
-    border: 'none',
-    borderRadius: '5px',
-    cursor: 'pointer',
+const emphasizedButtonStyle = {
+    ...neutralButtonStyle,
+    border: '1px solid var(--focus, #3b82f6)',
+    boxShadow: '0 0 0 3px rgba(59,130,246,.15)'
 };
+
+// Keep variable names used below; map to our neutral/emphasized styles.
+const confirmButtonStyle = emphasizedButtonStyle;   // used for the default/emphasized action
+const cancelButtonStyle = neutralButtonStyle;       // used for the secondary action
 
 
 
 window.confirm = async (message, timeoutInSeconds = null, defaultValue = false) => {
     return new Promise((resolve) => {
+        const overlay = document.createElement('div');
         const dialog = document.createElement('div');
         const messageDiv = document.createElement('div');
         const countdownDiv = document.createElement('div');
@@ -46,18 +60,22 @@ window.confirm = async (message, timeoutInSeconds = null, defaultValue = false) 
         const confirmButton = document.createElement('button');
         const cancelButton = document.createElement('button');
 
-        // apply styles from dialogStyle using Object.assign
+        // Overlay + dialog styles
+        Object.assign(overlay.style, overlayStyle);
         Object.assign(dialog.style, dialogStyle);
 
-
         messageDiv.textContent = message;
-        // set style to preformatted text
+        // preformatted text and spacing
         messageDiv.style.whiteSpace = 'pre-wrap';
+        messageDiv.style.marginBottom = '8px';
+        messageDiv.style.color = 'var(--text, #e6e6e6)';
 
         // Countdown indicator
         if (timeoutInSeconds && timeoutInSeconds > 0) {
             countdownDiv.textContent = `Time remaining: ${timeoutInSeconds} seconds`;
-            countdownDiv.style.marginBottom = '10px';
+            countdownDiv.style.marginBottom = '8px';
+            countdownDiv.style.fontSize = '12px';
+            countdownDiv.style.color = 'var(--muted, #9aa4b2)';
             dialog.appendChild(countdownDiv);
         }
 
@@ -74,12 +92,19 @@ window.confirm = async (message, timeoutInSeconds = null, defaultValue = false) 
             Object.assign(cancelButton.style, confirmButtonStyle);
         }
 
+        // Button container styling
+        buttonContainer.style.display = 'flex';
+        buttonContainer.style.justifyContent = 'flex-end';
+        buttonContainer.style.gap = '8px';
+        buttonContainer.style.marginTop = '12px';
+
         buttonContainer.appendChild(confirmButton);
         buttonContainer.appendChild(cancelButton);
 
         dialog.appendChild(messageDiv);
         dialog.appendChild(buttonContainer);
-        document.body.appendChild(dialog);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
 
         let timeout = null;
         let countdownInterval = null;
@@ -106,7 +131,7 @@ window.confirm = async (message, timeoutInSeconds = null, defaultValue = false) 
             if (countdownInterval) clearInterval(countdownInterval); // Clear the countdown interval
             confirmButton.removeEventListener('click', onConfirm);
             cancelButton.removeEventListener('click', onCancel);
-            dialog.remove(); // Remove the dialog from the DOM
+            try { overlay.remove(); } catch (_) { try { dialog.remove(); } catch (_) {} }
         };
 
         const onConfirm = () => {
@@ -129,6 +154,7 @@ window.confirm = async (message, timeoutInSeconds = null, defaultValue = false) 
 
 window.alert = async (message, timeoutInSeconds = null) => {
     return new Promise((resolve) => {
+        const overlay = document.createElement('div');
         const dialog = document.createElement('div');
         const messageDiv = document.createElement('div');
         const countdownDiv = document.createElement('div');
@@ -136,27 +162,39 @@ window.alert = async (message, timeoutInSeconds = null) => {
         const okButton = document.createElement('button');
 
         // Set up styles
+        Object.assign(overlay.style, overlayStyle);
         Object.assign(dialog.style, dialogStyle);
 
         messageDiv.textContent = message;
         // set style to preformatted text
         messageDiv.style.whiteSpace = 'pre-wrap';
+        messageDiv.style.marginBottom = '8px';
+        messageDiv.style.color = 'var(--text, #e6e6e6)';
 
         // Countdown indicator
         if (timeoutInSeconds && timeoutInSeconds > 0) {
             countdownDiv.textContent = `Time remaining: ${timeoutInSeconds} seconds`;
-            countdownDiv.style.marginBottom = '10px';
+            countdownDiv.style.marginBottom = '8px';
+            countdownDiv.style.fontSize = '12px';
+            countdownDiv.style.color = 'var(--muted, #9aa4b2)';
             dialog.appendChild(countdownDiv);
         }
 
         okButton.textContent = 'OK';
         Object.assign(okButton.style, confirmButtonStyle);
 
+        // Button container styling
+        buttonContainer.style.display = 'flex';
+        buttonContainer.style.justifyContent = 'flex-end';
+        buttonContainer.style.gap = '8px';
+        buttonContainer.style.marginTop = '12px';
+
         buttonContainer.appendChild(okButton);
 
         dialog.appendChild(messageDiv);
         dialog.appendChild(buttonContainer);
-        document.body.appendChild(dialog);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
 
         let timeout = null;
         let countdownInterval = null;
@@ -182,7 +220,7 @@ window.alert = async (message, timeoutInSeconds = null) => {
             if (timeout) clearTimeout(timeout); // Clear the timeout if it exists
             if (countdownInterval) clearInterval(countdownInterval); // Clear the countdown interval
             okButton.removeEventListener('click', onOk);
-            dialog.remove(); // Remove the dialog from the DOM
+            try { overlay.remove(); } catch (_) { try { dialog.remove(); } catch (_) {} }
         };
 
         const onOk = () => {
@@ -199,6 +237,7 @@ window.alert = async (message, timeoutInSeconds = null) => {
 
 window.prompt = async (message, defaultValue = '') => {
     return new Promise((resolve) => {
+        const overlay = document.createElement('div');
         const dialog = document.createElement('div');
         const messageDiv = document.createElement('div');
         const inputField = document.createElement('input');
@@ -207,20 +246,26 @@ window.prompt = async (message, defaultValue = '') => {
         const cancelButton = document.createElement('button');
 
         // Set up styles
+        Object.assign(overlay.style, overlayStyle);
         Object.assign(dialog.style, dialogStyle);
 
         messageDiv.textContent = message;
-        messageDiv.style.marginBottom = '10px';
         messageDiv.style.whiteSpace = 'pre-wrap';
+        messageDiv.style.marginBottom = '8px';
+        messageDiv.style.color = 'var(--text, #e6e6e6)';
 
         inputField.type = 'text';
         inputField.value = defaultValue;
         inputField.style.width = '100%';
-        inputField.style.padding = '10px';
-        inputField.style.border = '1px solid #ccc';
-        inputField.style.borderRadius = '5px';
+        inputField.style.boxSizing = 'border-box';
+        inputField.style.padding = '8px 10px';
+        inputField.style.border = '1px solid var(--border, #262b36)';
+        inputField.style.borderRadius = '10px';
         inputField.style.marginBottom = '10px';
-        inputField.style.fontSize = '16px';
+        inputField.style.fontSize = '14px';
+        inputField.style.background = 'var(--input-bg, #0b0e14)';
+        inputField.style.color = 'var(--text, #e6e6e6)';
+        inputField.style.outline = 'none';
 
         okButton.textContent = 'OK';
         Object.assign(okButton.style, confirmButtonStyle);
@@ -230,10 +275,17 @@ window.prompt = async (message, defaultValue = '') => {
         buttonContainer.appendChild(okButton);
         buttonContainer.appendChild(cancelButton);
 
+        // Button container styling
+        buttonContainer.style.display = 'flex';
+        buttonContainer.style.justifyContent = 'flex-end';
+        buttonContainer.style.gap = '8px';
+        buttonContainer.style.marginTop = '4px';
+
         dialog.appendChild(messageDiv);
         dialog.appendChild(inputField);
         dialog.appendChild(buttonContainer);
-        document.body.appendChild(dialog);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
 
         inputField.focus();
 
@@ -241,7 +293,7 @@ window.prompt = async (message, defaultValue = '') => {
             okButton.removeEventListener('click', onOk);
             cancelButton.removeEventListener('click', onCancel);
             inputField.removeEventListener('keydown', onEnter);
-            dialog.remove();
+            try { overlay.remove(); } catch (_) { try { dialog.remove(); } catch (_) {} }
         };
 
         const onOk = () => {

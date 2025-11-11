@@ -297,6 +297,10 @@ export class Solid extends THREE.Group {
     removeInternalTrianglesByWinding(options = {}) {
         return SolidMethods.removeInternalTrianglesByWinding.apply(this, [options]);
     }
+
+    fillet(options = {}) {
+        return SolidMethods.fillet.apply(this, [options]);
+    }
 }
 
 // --- Method-level time profiling for Solid -----------------------------------

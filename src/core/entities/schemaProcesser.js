@@ -70,6 +70,20 @@ export async function sanitizeInputParams(schema, inputParams, expressionsEvalua
                     targets,
                     biasDistance: Number.isFinite(bias) ? bias : 0.1,
                 };
+                // Optional: simplification controls
+                try {
+                    const sFlag = raw.simplify;
+                    const sTol = raw.simplifyTolerance;
+                    if (typeof sFlag === 'boolean') {
+                        out.simplify = sFlag;
+                    } else if (Number.isFinite(sFlag)) {
+                        out.simplify = true;
+                        out.simplifyTolerance = Number(sFlag);
+                    }
+                    if (Number.isFinite(sTol)) {
+                        out.simplifyTolerance = Number(sTol);
+                    }
+                } catch { /* ignore unsupported simplify fields */ }
                 if (offsetCapFlag !== undefined) out.offsetCoplanarCap = offsetCapFlag;
                 if (Number.isFinite(offsetDistance)) out.offsetDistance = offsetDistance;
                 sanitized[key] = out;
