@@ -1,3 +1,6 @@
+import * as THREE from 'three';
+import { combineBaseWithDeltaDeg } from '../../utils/xformMath.js';
+
 export function renderTransformField({ ui, key, def, id, controlWrap, valueAdapter = null }) {
     const inputEl = document.createElement('input');
     inputEl.type = 'hidden';
@@ -139,9 +142,15 @@ export function renderTransformField({ ui, key, def, id, controlWrap, valueAdapt
             try {
                 const active = ui.activeTransform;
                 if (active && active.inputEl === inputEl && active.target) {
-                    const toNum = (v) => (typeof v === 'number' ? v : (isNumericLike(v) ? Number(v) : 0));
-                    active.target.position.set(toNum(sanitized.position[0]), toNum(sanitized.position[1]), toNum(sanitized.position[2]));
-                    active.target.rotation.set(toNum(sanitized.rotationEuler[0]), toNum(sanitized.rotationEuler[1]), toNum(sanitized.rotationEuler[2]));
+                    const base = active.baseTransform || { position: [0,0,0], quaternion: [0,0,0,1], scale: [1,1,1] };
+                    const Mabs = combineBaseWithDeltaDeg(base, sanitized, THREE);
+                    const pos = new THREE.Vector3();
+                    const quat = new THREE.Quaternion();
+                    const scl = new THREE.Vector3();
+                    Mabs.decompose(pos, quat, scl);
+                    active.target.position.copy(pos);
+                    active.target.quaternion.copy(quat);
+                    active.target.scale.copy(scl);
                 }
             } catch (_) { }
         }
@@ -209,7 +218,7 @@ export function renderTransformField({ ui, key, def, id, controlWrap, valueAdapt
     };
     const curTRS = getTRS();
     addRow('Position', 'pos', curTRS.position);
-    addRow('Rotation', 'rot', curTRS.rotationEuler);
+    addRow('Rotation (deg)', 'rot', curTRS.rotationEuler);
 
     const resetBtn = document.createElement('button');
     resetBtn.type = 'button';

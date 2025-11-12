@@ -69,7 +69,12 @@ export class PrimitiveCylinderFeature {
             const r = Array.isArray(this.inputParams?.transform?.rotationEuler) ? this.inputParams.transform.rotationEuler : [0, 0, 0];
             const s = Array.isArray(this.inputParams?.transform?.scale) ? this.inputParams.transform.scale : [1, 1, 1];
             const pos = new THREE.Vector3(p[0] || 0, p[1] || 0, p[2] || 0);
-            const eul = new THREE.Euler(r[0] || 0, r[1] || 0, r[2] || 0, 'XYZ');
+            const eul = new THREE.Euler(
+                THREE.MathUtils.degToRad(r[0] || 0),
+                THREE.MathUtils.degToRad(r[1] || 0),
+                THREE.MathUtils.degToRad(r[2] || 0),
+                'XYZ'
+            );
             const quat = new THREE.Quaternion().setFromEuler(eul);
             const scl = new THREE.Vector3(s[0] || 1, s[1] || 1, s[2] || 1);
             const M = new THREE.Matrix4().compose(pos, quat, scl);

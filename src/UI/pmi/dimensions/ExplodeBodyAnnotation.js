@@ -427,7 +427,13 @@ function quaternionFromEuler(eulerArray) {
   const y = Number(euler[1]) || 0;
   const z = Number(euler[2]) || 0;
   try {
-    return new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z, 'XYZ'));
+    // rotationEuler is stored in degrees for human readability
+    return new THREE.Quaternion().setFromEuler(new THREE.Euler(
+      THREE.MathUtils.degToRad(x),
+      THREE.MathUtils.degToRad(y),
+      THREE.MathUtils.degToRad(z),
+      'XYZ'
+    ));
   } catch {
     return new THREE.Quaternion();
   }

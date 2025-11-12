@@ -573,7 +573,12 @@ export class SchemaForm {
             if (!base.quaternion) {
                 try {
                     const e = base.rotationEuler;
-                    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(e[0], e[1], e[2], 'XYZ'));
+                    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+                        THREE.MathUtils.degToRad(e[0] || 0),
+                        THREE.MathUtils.degToRad(e[1] || 0),
+                        THREE.MathUtils.degToRad(e[2] || 0),
+                        'XYZ'
+                    ));
                     base.quaternion = [q.x, q.y, q.z, q.w];
                 } catch (_) {
                     base.quaternion = [0, 0, 0, 1];
@@ -632,9 +637,9 @@ export class SchemaForm {
                 safeNumber(deltaTransform.position[2], 0),
             );
             const deltaQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-                safeNumber(deltaTransform.rotationEuler[0], 0),
-                safeNumber(deltaTransform.rotationEuler[1], 0),
-                safeNumber(deltaTransform.rotationEuler[2], 0),
+                THREE.MathUtils.degToRad(safeNumber(deltaTransform.rotationEuler[0], 0)),
+                THREE.MathUtils.degToRad(safeNumber(deltaTransform.rotationEuler[1], 0)),
+                THREE.MathUtils.degToRad(safeNumber(deltaTransform.rotationEuler[2], 0)),
                 'XYZ',
             ));
             const deltaScale = new THREE.Vector3(
@@ -799,7 +804,11 @@ export class SchemaForm {
 
             const next = {
                 position: [relPosVec.x, relPosVec.y, relPosVec.z],
-                rotationEuler: [relEuler.x, relEuler.y, relEuler.z],
+                rotationEuler: [
+                    THREE.MathUtils.radToDeg(relEuler.x),
+                    THREE.MathUtils.radToDeg(relEuler.y),
+                    THREE.MathUtils.radToDeg(relEuler.z)
+                ],
                 scale: [relScaleVec.x, relScaleVec.y, relScaleVec.z],
             };
             const stored = writeCurrentValue(next);
@@ -1119,8 +1128,8 @@ export class SchemaForm {
             case 'number': {
                 // Accept formulas or plain numbers. If the value is not purely numeric,
                 // render the input as text so the expression is visible.
-                const str = value == null ? '' : String(value);
-                const numericLike = /^\s*[-+]?((\d+(?:\.\d*)?)|(\.\d+))(?:[eE][-+]?\d+)?\s*$/.test(str);
+                const rawStr = value == null ? '' : String(value);
+                const numericLike = /^\s*[-+]?((\d+(?:\.\d*)?)|(\.\d+))(?:[eE][-+]?\d+)?\s*$/.test(rawStr);
                 try {
                     if (numericLike) {
                         if (el.type !== 'number') el.type = 'number';
@@ -1132,7 +1141,18 @@ export class SchemaForm {
                         if (el.type !== 'text') el.type = 'text';
                     }
                 } catch (_) { /* ignore */ }
-                el.value = str;
+                // Limit programmatically-set numeric text to 6 decimal places.
+                const format6 = (v) => {
+                    let n = Number(v);
+                    if (!Number.isFinite(n)) return rawStr;
+                    if (Math.abs(n) < 1e-12) n = 0; // avoid tiny scientific notation
+                    let s = n.toFixed(6);
+                    s = s.replace(/\.0+$/, ''); // trim trailing .000000
+                    s = s.replace(/(\.\d*?[1-9])0+$/, '$1'); // trim trailing zeros
+                    if (s === '-0') s = '0';
+                    return s;
+                };
+                el.value = numericLike ? format6(value) : rawStr;
                 break;
             }
             case 'options': {

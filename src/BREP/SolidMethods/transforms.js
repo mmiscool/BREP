@@ -1,4 +1,5 @@
 import { THREE } from "../SolidShared.js";
+import { composeTrsMatrixDeg } from "../../utils/xformMath.js";
 
 /**
  * Geometry transforms applied directly to authored data.
@@ -80,14 +81,7 @@ export function bakeTransform(matrix) {
  */
 export function bakeTRS(trs) {
     try {
-        const p = Array.isArray(trs?.position) ? trs.position : [0, 0, 0];
-        const r = Array.isArray(trs?.rotationEuler) ? trs.rotationEuler : [0, 0, 0];
-        const s = Array.isArray(trs?.scale) ? trs.scale : [1, 1, 1];
-        const pos = new THREE.Vector3(p[0] || 0, p[1] || 0, p[2] || 0);
-        const eul = new THREE.Euler(r[0] || 0, r[1] || 0, r[2] || 0, 'XYZ');
-        const quat = new THREE.Quaternion().setFromEuler(eul);
-        const scl = new THREE.Vector3(s[0] || 1, s[1] || 1, s[2] || 1);
-        const m = new THREE.Matrix4().compose(pos, quat, scl);
+        const m = composeTrsMatrixDeg(trs, THREE);
         return this.bakeTransform(m);
     } catch (_) { return this; }
 }
@@ -217,4 +211,3 @@ export function mirrorAcrossPlane(point, normal) {
         return mirrored;
     } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
 }
-

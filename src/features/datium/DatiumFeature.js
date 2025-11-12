@@ -61,7 +61,11 @@ export class DatiumFeature {
             const r = Array.isArray(trs.rotationEuler) ? trs.rotationEuler : [0, 0, 0];
             const s = Array.isArray(trs.scale) ? trs.scale : [1, 1, 1];
             group.position.set(Number(p[0] || 0), Number(p[1] || 0), Number(p[2] || 0));
-            group.rotation.set(Number(r[0] || 0), Number(r[1] || 0), Number(r[2] || 0));
+            group.rotation.set(
+                THREE.MathUtils.degToRad(Number(r[0] || 0)),
+                THREE.MathUtils.degToRad(Number(r[1] || 0)),
+                THREE.MathUtils.degToRad(Number(r[2] || 0))
+            );
             group.scale.set(Number(s[0] || 1), Number(s[1] || 1), Number(s[2] || 1));
         } catch (_) { /* ignore */ }
 
