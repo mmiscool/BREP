@@ -147,6 +147,7 @@ export class CombinedTransformControls extends THREE.Object3D {
     addAxis('Z', '#6aa9ff');
 
     // Rotation arcs: quarter circles in XY (Z axis), YZ (X axis), ZX (Y axis)
+    const rot = {};
     const addRotate = (axis) => {
       const grp = new THREE.Group();
       grp.name = `Rotate${axis}`;
@@ -165,6 +166,8 @@ export class CombinedTransformControls extends THREE.Object3D {
       const tDot = Math.PI / 4; // 45° along the arc
       const dot = new THREE.Mesh(gDot, mDot);
       dot.position.set(Math.cos(tDot) * r, Math.sin(tDot) * r, 0);
+      // Make the dot itself a rotate handle so dragging it feels natural
+      dot.userData.handle = { kind: 'rotate', axis };
       grp.add(dot);
 
       // Rotation picker: torus-like thick tube approximated by tube geometry via a swept circle replacement
@@ -179,13 +182,14 @@ export class CombinedTransformControls extends THREE.Object3D {
       // axis Z: default in XY plane
 
       root.add(grp);
+      rot[axis] = { group: grp, dot, radius: r };
     };
 
     addRotate('Z');
     addRotate('Y');
     addRotate('X');
 
-    return { root, picker, labels: axes.map(a => a.spr) };
+    return { root, picker, labels: axes.map(a => a.spr), rot };
   }
 
   _makeTextSprite(text, color = '#ffffff') {
@@ -256,8 +260,11 @@ export class CombinedTransformControls extends THREE.Object3D {
 
     this._drag = this._drag || {};
     this._drag.handle = h; // { kind, axis }
-    this._drag.startPos = this.target.getWorldPosition(new THREE.Vector3());
-    this._drag.startQuat = this.target.getWorldQuaternion(new THREE.Quaternion());
+    // Use the gizmo's current world pose as the drag reference so
+    // subsequent drags operate relative to the gizmo orientation/position
+    try { this.updateMatrixWorld(true); } catch {}
+    this._drag.startPos = this.getWorldPosition(new THREE.Vector3());
+    this._drag.startQuat = this.getWorldQuaternion(new THREE.Quaternion());
     this._drag.axis = this._axisWorld(h.axis);
 
     // Establish reference plane and initial point
@@ -270,6 +277,13 @@ export class CombinedTransformControls extends THREE.Object3D {
     }
     this._drag.startPoint = this._planeIntersect();
     if (!this._drag.startPoint) { this._drag = null; return; }
+
+    // For rotation, track incremental deltas so angles can exceed 180°
+    if (h.kind === 'rotate') {
+      this._drag.prevPoint = this._drag.startPoint.clone();
+      const rotRef = (this.gizmo && this.gizmo.rot) ? this.gizmo.rot[h.axis] : null;
+      this._drag.rotVis = rotRef || null;
+    }
 
     this.dragging = true;
     this.dispatchEvent({ type: 'dragging-changed', value: true });
@@ -288,13 +302,34 @@ export class CombinedTransformControls extends THREE.Object3D {
       const pos = this._tmpV2.copy(startPos).add(this._tmpV.copy(axis).multiplyScalar(amt));
       this.target.position.copy(pos);
     } else if (handle.kind === 'rotate') {
-      const v0 = this._tmpV.copy(startPoint).sub(startPos).normalize();
-      const v1 = this._tmpV2.copy(p).sub(startPos).normalize();
-      const cross = new THREE.Vector3().crossVectors(v0, v1);
-      const dot = THREE.MathUtils.clamp(v0.dot(v1), -1, 1);
-      const angle = Math.atan2(cross.dot(axis), dot);
-      const dq = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-      this.target.quaternion.copy(this._tmpQ.copy(startQuat).multiply(dq));
+      // Compute incremental angle since last move to avoid wrap-around at 180°
+      const prev = (this._drag.prevPoint || startPoint);
+      const vPrev = this._tmpV.copy(prev).sub(startPos).normalize();
+      const vNow = this._tmpV2.copy(p).sub(startPos).normalize();
+      const cross = new THREE.Vector3().crossVectors(vPrev, vNow);
+      const dot = THREE.MathUtils.clamp(vPrev.dot(vNow), -1, 1);
+      const dAngle = Math.atan2(cross.dot(axis), dot);
+      
+      // Apply incremental rotation using the current axis orientation
+      const currentAxis = this._axisWorld(handle.axis); // Get current axis orientation
+      const deltaQ = new THREE.Quaternion().setFromAxisAngle(currentAxis, dAngle);
+      this.target.quaternion.multiplyQuaternions(deltaQ, this.target.quaternion);
+      
+      this._drag.prevPoint = p.clone();
+
+      // Move the decorative dot along the circle perpendicular to the axis
+      try {
+        const rotVis = this._drag.rotVis;
+        if (rotVis && rotVis.dot && rotVis.group && handle.axis) {
+          const r = rotVis.radius || 0.9;
+          
+          // Keep the dot at a fixed position during drag to avoid jumping
+          // The visual feedback is primarily from the object rotation itself
+          // We could calculate the exact angle, but a fixed position works fine for UX
+          const fixedAngle = Math.PI / 4; // 45° - same as initial position
+          rotVis.dot.position.set(Math.cos(fixedAngle) * r, Math.sin(fixedAngle) * r, 0);
+        }
+      } catch {}
     }
 
     // Keep gizmo aligned with target (position + rotation)
