@@ -2,7 +2,8 @@
 
 import { SelectionFilter } from './SelectionFilter.js';
 import * as THREE from 'three';
-import { TransformControls as TransformControlsDirect } from 'three/examples/jsm/controls/TransformControls.js';
+// Use hybrid translate+rotate gizmo used by the Viewer
+import { TransformControls as TransformControlsDirect } from './controls/CombinedTransformControls.js';
 //import { TransformControls as TransformControlsAddons } from 'three/examples/jsm/Addons.js';
 import { getWidgetRenderer } from './featureDialogWidgets/index.js';
 import { normalizeReferenceList, normalizeReferenceName } from './featureDialogWidgets/utils.js';

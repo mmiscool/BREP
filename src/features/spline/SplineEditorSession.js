@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { TransformControls as TransformControlsDirect } from "three/examples/jsm/controls/TransformControls.js";
+import { TransformControls as TransformControlsDirect } from "../../UI/controls/CombinedTransformControls.js";
 import {
   DEFAULT_RESOLUTION,
   normalizeSplineData,
@@ -364,7 +364,7 @@ export class SplineEditorSession {
     control.showX = true;
     control.showY = true;
     control.showZ = true;
-    control.setSize(1);
+    control.setSize(1.6);
     control.enabled = false;
     control.attach(mesh);
     control.userData = control.userData || {};

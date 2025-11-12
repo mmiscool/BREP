@@ -5,7 +5,8 @@
 
 import * as THREE from 'three';
 import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls.js';
-import { TransformControls as TransformControlsDirect } from 'three/examples/jsm/controls/TransformControls.js';
+// Use custom combined translate+rotate gizmo (drop-in for three/examples TransformControls)
+import { TransformControls as TransformControlsDirect } from './controls/CombinedTransformControls.js';
 import { SceneListing } from './SceneListing.js';
 import { CADmaterials, CADmaterialWidget } from './CADmaterials.js';
 import { AccordionWidget } from './AccordionWidget.js';
