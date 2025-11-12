@@ -24,6 +24,17 @@ This project is actively evolving; expect rough edges while APIs settle.
 - [Recent Inspector Improvements](docs/inspector-improvements.md)
 - [Inspector Todo](docs/todo.md)
 
+## Using as an npm package
+
+- Install:
+  - `pnpm add brep-io-kernel`
+- Import options:
+  - `import { BREP, PartHistory } from 'brep-io-kernel';`
+  - `import { BREP } from 'brep-io-kernel/BREP';`
+  - `import { PartHistory } from 'brep-io-kernel/PartHistory';`
+  - `import { AssemblyConstraintHistory, AssemblyConstraintRegistry } from 'brep-io-kernel';`
+
+
 ## Feature Dialog Screenshots
 
 - Run `pnpm dev` and open `http://localhost:5173/feature-dialog-capture.html`.

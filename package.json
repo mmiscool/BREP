@@ -1,5 +1,5 @@
 {
-  "name": "brep-agent",
+  "name": "brep-io-kernel",
   "version": "1.0.0",
   "scripts": {
     "dev": "pnpm generateLicenses && vite --host 0.0.0.0",
@@ -12,6 +12,20 @@
     "capture": "node ./scripts/capture.js"
   },
   "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./BREP": "./src/BREP/BREP.js",
+    "./PartHistory": "./src/PartHistory.js",
+    "./AssemblyConstraintHistory": "./src/assemblyConstraints/AssemblyConstraintHistory.js",
+    "./AssemblyConstraintRegistry": "./src/assemblyConstraints/AssemblyConstraintRegistry.js"
+  },
+  "files": [
+    "src/**",
+    "README.md",
+    "LICENSE.md"
+  ],
   "keywords": [],
   "author": "",
   "license": "See licence.md",
