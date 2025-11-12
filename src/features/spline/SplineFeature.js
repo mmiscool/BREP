@@ -83,6 +83,8 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       display: flex;
       flex-direction: column;
       gap: 10px;
+      width: 100%;
+      box-sizing: border-box;
     }
     .spline-widget .spw-header {
       display: flex;
@@ -95,16 +97,29 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       display: flex;
       flex-direction: column;
       gap: 8px;
+      width: 100%;
+      box-sizing: border-box;
     }
     .spline-widget .spw-point-row,
     .spline-widget .spw-weight-row {
-      display: grid;
-      grid-template-columns: minmax(120px, 140px) minmax(0, 1fr) auto;
-      gap: 10px;
-      align-items: center;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: stretch;
       padding: 10px;
       border-radius: 6px;
       background: rgba(255, 255, 255, 0.04);
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .spline-widget .spw-row-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      width: 100%;
+      box-sizing: border-box;
     }
     .spline-widget .spw-selected {
       background: rgba(58, 74, 109, 0.35);
@@ -113,21 +128,36 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       font-weight: 600;
       font-size: 12px;
       color: rgba(255, 255, 255, 0.88);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .spline-widget .spw-posline {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.75);
     }
     .spline-widget .spw-coords {
-      display: flex;
+      display: grid;
+      grid-template-columns: 1fr;
       gap: 6px;
-      flex-wrap: wrap;
+      width: 100%;
+      box-sizing: border-box;
     }
     .spline-widget .spw-axis {
-      display: flex;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
       align-items: center;
-      gap: 4px;
+      gap: 6px;
       font-size: 12px;
       color: rgba(255, 255, 255, 0.7);
+      width: 100%;
+      box-sizing: border-box;
     }
     .spline-widget .spw-axis input {
-      width: 70px;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
       padding: 4px 6px;
       border-radius: 4px;
       border: 1px solid rgba(255, 255, 255, 0.15);
@@ -145,6 +175,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       display: flex;
       gap: 6px;
       justify-content: flex-end;
+      flex-wrap: wrap;
     }
     .spline-widget .spw-btn,
     .spline-widget .spw-icon-btn,
@@ -358,11 +389,13 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       rowEl.className = "spw-point-row";
       rowEl.dataset.pointId = String(pt.id);
 
+      // Header: title + actions
+      const headerEl = document.createElement('div');
+      headerEl.className = 'spw-row-header';
       const title = document.createElement("div");
       title.className = "spw-title";
-      const posLabel = pt.position.map((c) => formatNumber(c)).join(", ");
-      title.textContent = `Point ${index + 1} • [${posLabel}]`;
-      rowEl.appendChild(title);
+      title.textContent = `Point ${index + 1}`;
+      headerEl.appendChild(title);
 
       const coords = document.createElement("div");
       coords.className = "spw-coords";
@@ -390,8 +423,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         axisWrap.appendChild(input);
         coords.appendChild(axisWrap);
       });
-      rowEl.appendChild(coords);
-
+      // Actions live in header now
       const actions = document.createElement("div");
       actions.className = "spw-actions";
 
@@ -443,7 +475,18 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       });
       actions.appendChild(removeBtn);
 
-      rowEl.appendChild(actions);
+      headerEl.appendChild(actions);
+      rowEl.appendChild(headerEl);
+
+      // Vector line shown under header
+      const posLine = document.createElement('div');
+      posLine.className = 'spw-posline';
+      const posLabel = pt.position.map((c) => formatNumber(c)).join(", ");
+      posLine.textContent = `[${posLabel}]`;
+      rowEl.appendChild(posLine);
+
+      // Vertical axis inputs
+      rowEl.appendChild(coords);
       pointList.appendChild(rowEl);
       pointRowMap.set(keyId, rowEl);
     });
@@ -473,13 +516,13 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       rowEl.className = "spw-weight-row";
       rowEl.dataset.weightKey = keyName;
 
+      // Header: title + actions
+      const headerEl = document.createElement('div');
+      headerEl.className = 'spw-row-header';
       const title = document.createElement("div");
       title.className = "spw-title";
-      const posLabel = weight.position
-        ? weight.position.map((c) => formatNumber(c)).join(", ")
-        : "0, 0, 0";
-      title.textContent = `${label} • [${posLabel}]`;
-      rowEl.appendChild(title);
+      title.textContent = label;
+      headerEl.appendChild(title);
 
       const coords = document.createElement("div");
       coords.className = "spw-coords";
@@ -504,8 +547,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         axisWrap.appendChild(input);
         coords.appendChild(axisWrap);
       });
-      rowEl.appendChild(coords);
-
       const actions = document.createElement("div");
       actions.className = "spw-actions";
 
@@ -533,7 +574,20 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         resetWeight(keyName);
       });
       actions.appendChild(resetBtn);
-      rowEl.appendChild(actions);
+      headerEl.appendChild(actions);
+      rowEl.appendChild(headerEl);
+
+      // Vector line under header
+      const posLine = document.createElement('div');
+      posLine.className = 'spw-posline';
+      const posLabel = weight.position
+        ? weight.position.map((c) => formatNumber(c)).join(", ")
+        : "0, 0, 0";
+      posLine.textContent = `[${posLabel}]`;
+      rowEl.appendChild(posLine);
+
+      // Vertical fields container
+      rowEl.appendChild(coords);
 
       weightList.appendChild(rowEl);
       weightRowMap.set(key, rowEl);
