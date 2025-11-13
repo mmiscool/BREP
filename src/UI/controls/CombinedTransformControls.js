@@ -24,7 +24,7 @@ export class CombinedTransformControls extends THREE.Object3D {
     this.showX = true; this.showY = true; this.showZ = true;
     this.isTransformGizmo = true; // used by PartHistory cleanup logic
     this._sizeMultiplier = 3; // larger default on‑screen size
-    this.renderOrder = 10020; // Use same render order as overlay elements (centerlines, dimensions)
+    this.renderOrder = 50000; // Render on top of all other geometry
 
     this.target = null; // Object3D we drive
 
