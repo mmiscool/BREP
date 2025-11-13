@@ -24,6 +24,7 @@ export class CombinedTransformControls extends THREE.Object3D {
     this.showX = true; this.showY = true; this.showZ = true;
     this.isTransformGizmo = true; // used by PartHistory cleanup logic
     this._sizeMultiplier = 3; // larger default on‑screen size
+    this.renderOrder = 10020; // Use same render order as overlay elements (centerlines, dimensions)
 
     this.target = null; // Object3D we drive
 
@@ -90,17 +91,17 @@ export class CombinedTransformControls extends THREE.Object3D {
     const root = new THREE.Group();
     root.name = 'HybridXformGizmoRoot';
     root.userData.excludeFromFit = true;
+    root.renderOrder = this.renderOrder; // Ensure gizmo renders on top of all other geometry
 
     // For compatibility with the viewer's hover checks, expose picker roots.
     // Point them at the root so our oriented per-handle meshes are included.
     const picker = { translate: root, rotate: root };
 
-    // Materials
-    const mAxis = new THREE.MeshBasicMaterial({ color: 0xbfbfbf, toneMapped: false });
-    const mArrow = new THREE.MeshBasicMaterial({ color: 0xf2c14e, toneMapped: false });
-    const mArc = new THREE.MeshBasicMaterial({ color: 0xd6d6d6, toneMapped: false });
-    const mDot = new THREE.MeshBasicMaterial({ color: 0xf29e4c, toneMapped: false });
-    const mPick = new THREE.MeshBasicMaterial({ visible: false });
+    // Materials - using overlay pattern (depthTest: false, depthWrite: false)
+    const mAxis = new THREE.MeshBasicMaterial({ color: 0xbfbfbf, toneMapped: false, depthTest: false, depthWrite: false, transparent: true });
+    const mArrow = new THREE.MeshBasicMaterial({ color: 0xf2c14e, toneMapped: false, depthTest: false, depthWrite: false, transparent: true });
+    const mArc = new THREE.MeshBasicMaterial({ color: 0xd6d6d6, toneMapped: false, depthTest: false, depthWrite: false, transparent: true });
+    const mDot = new THREE.MeshBasicMaterial({ color: 0xf29e4c, toneMapped: false, depthTest: false, depthWrite: false, transparent: true });
 
     // Geometries (shared)
     const gRod = new THREE.CylinderGeometry(0.03, 0.03, 1.0, 16);
@@ -111,22 +112,19 @@ export class CombinedTransformControls extends THREE.Object3D {
     const axes = [];
     const addAxis = (axis, colorText, spriteLabel) => {
       const group = new THREE.Group();
+      group.renderOrder = this.renderOrder; // Ensure gizmo renders on top of all other geometry
       group.name = `Axis${axis}`;
 
       const rod = new THREE.Mesh(gRod, mAxis);
+      rod.renderOrder = this.renderOrder;
       rod.position.y = 0.5; // rod extends from center along +Y before orientation
       group.add(rod);
 
       const tip = new THREE.Mesh(gArrow, mArrow);
+      tip.renderOrder = this.renderOrder;
       tip.position.y = 1.0 + 0.125;
+      tip.userData.handle = { kind: 'translate', axis };
       group.add(tip);
-
-      // For picking: a thicker invisible cylinder
-      const pickG = new THREE.CylinderGeometry(0.15, 0.15, 1.4, 8);
-      const pick = new THREE.Mesh(pickG, mPick);
-      pick.position.y = 0.7;
-      pick.userData.handle = { kind: 'translate', axis };
-      group.add(pick);
 
       // Orient group
       if (axis === 'X') group.rotation.z = -Math.PI / 2;
@@ -151,6 +149,7 @@ export class CombinedTransformControls extends THREE.Object3D {
     const addRotate = (axis) => {
       const grp = new THREE.Group();
       grp.name = `Rotate${axis}`;
+      grp.renderOrder = this.renderOrder;
       const r = 0.9;
       const arcShape = new THREE.BufferGeometry().setFromPoints(
         Array.from({ length: 33 }, (_, i) => {
@@ -158,23 +157,19 @@ export class CombinedTransformControls extends THREE.Object3D {
           return new THREE.Vector3(Math.cos(t) * r, Math.sin(t) * r, 0);
         })
       );
-      const arcMat = new THREE.LineBasicMaterial({ color: 0xe0e0e0, linewidth: 2, toneMapped: false });
+      const arcMat = new THREE.LineBasicMaterial({ color: 0xe0e0e0, linewidth: 2, toneMapped: false, depthTest: false, depthWrite: false, transparent: true });
       const arc = new THREE.Line(arcShape, arcMat);
+      arc.renderOrder = this.renderOrder;
       grp.add(arc);
 
       // Single decorative dot along the arc (one per axis)
       const tDot = Math.PI / 4; // 45° along the arc
       const dot = new THREE.Mesh(gDot, mDot);
       dot.position.set(Math.cos(tDot) * r, Math.sin(tDot) * r, 0);
+      dot.renderOrder = this.renderOrder;
       // Make the dot itself a rotate handle so dragging it feels natural
       dot.userData.handle = { kind: 'rotate', axis };
       grp.add(dot);
-
-      // Rotation picker: torus-like thick tube approximated by tube geometry via a swept circle replacement
-      const pickRing = new THREE.TorusGeometry(r, 0.12, 8, 24, Math.PI / 2);
-      const pick = new THREE.Mesh(pickRing, mPick);
-      pick.userData.handle = { kind: 'rotate', axis };
-      grp.add(pick);
 
       // Orient to axis
       if (axis === 'X') grp.rotation.y = Math.PI / 2;      // arc in YZ plane -> rotate around X
@@ -193,7 +188,7 @@ export class CombinedTransformControls extends THREE.Object3D {
   }
 
   _makeTextSprite(text, color = '#ffffff') {
-    const size = 128;
+    const size = 256;
     const cvs = document.createElement('canvas');
     cvs.width = cvs.height = size;
     const ctx = cvs.getContext('2d');
@@ -207,9 +202,10 @@ export class CombinedTransformControls extends THREE.Object3D {
     ctx.fillText(String(text || ''), size / 2, size / 2);
     const tex = new THREE.CanvasTexture(cvs);
     tex.colorSpace = THREE.SRGBColorSpace;
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
     const spr = new THREE.Sprite(mat);
     spr.scale.setScalar(0.6);
+    spr.renderOrder = this.renderOrder;
     return spr;
   }
 
