@@ -133,6 +133,46 @@ export function buildHermitePolyline(spline, resolution = DEFAULT_RESOLUTION) {
     return { positions: [], polyline: [] };
   }
 
+  const samplesPerSegment = Math.max(4, Math.floor(resolution));
+  const positions = [];
+  const polyline = [];
+
+  // Helper function to calculate extension point
+  const calculateExtensionPoint = (anchor, pointData, isForward) => {
+    const rotation = pointData.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    let direction = new THREE.Vector3(rotation[0], rotation[1], rotation[2]);
+    
+    if (pointData.flipDirection) {
+      direction.multiplyScalar(-1);
+    }
+    
+    const distance = isForward ? pointData.forwardDistance : pointData.backwardDistance;
+    const extensionDir = isForward ? direction : direction.clone().multiplyScalar(-1);
+    
+    return anchor.clone().add(extensionDir.multiplyScalar(distance));
+  };
+
+  // Helper function to add straight line segment with specified number of samples
+  const addStraightSegment = (start, end, samples) => {
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples;
+      const point = start.clone().lerp(end, t);
+      positions.push(point.x, point.y, point.z);
+      polyline.push([point.x, point.y, point.z]);
+    }
+  };
+
+  // Helper function to add curved segment using hermite interpolation
+  const addCurvedSegment = (p0, p1, t0, t1, samples) => {
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples;
+      const point = hermitePoint(p0, p1, t0, t1, t);
+      positions.push(point.x, point.y, point.z);
+      polyline.push([point.x, point.y, point.z]);
+    }
+  };
+
+  // Convert control points to THREE.Vector3
   const anchors = pointsData.map(
     (pt) =>
       new THREE.Vector3(
@@ -142,22 +182,66 @@ export function buildHermitePolyline(spline, resolution = DEFAULT_RESOLUTION) {
       )
   );
 
-  const tangents = computeTangents(pointsData, anchors);
-  const samplesPerSegment = Math.max(4, Math.floor(resolution));
-  const positions = [];
-  const polyline = [];
+  // Build the complete spline with straight and curved segments
+  for (let i = 0; i < pointsData.length - 1; i++) {
+    const currentAnchor = anchors[i];
+    const nextAnchor = anchors[i + 1];
+    const currentData = pointsData[i];
+    const nextData = pointsData[i + 1];
 
-  for (let seg = 0; seg < anchors.length - 1; seg++) {
-    const a = anchors[seg];
-    const b = anchors[seg + 1];
-    const ta = tangents[seg];
-    const tb = tangents[seg + 1];
-    const localSamples = samplesPerSegment;
+    // Calculate extension points
+    const currentForwardExt = calculateExtensionPoint(currentAnchor, currentData, true);
+    const nextBackwardExt = calculateExtensionPoint(nextAnchor, nextData, false);
 
-    for (let i = 0; i <= localSamples; i++) {
-      if (seg > 0 && i === 0) continue;
-      const t = i / localSamples;
-      const point = hermitePoint(a, b, ta, tb, t);
+    // Use minimal samples for straight segments and maximum for curves
+    const straightSamples = Math.max(1, Math.floor(samplesPerSegment * 0.15)); // Only 15% for straight parts
+    const curvedSamples = Math.max(6, samplesPerSegment - (2 * straightSamples)); // Much more samples for smoother curves
+
+    // Segment 1: Straight line from current anchor to its forward extension point
+    if (i === 0) {
+      // For the first segment, include the starting point
+      addStraightSegment(currentAnchor, currentForwardExt, straightSamples);
+    } else {
+      // Skip the first point to avoid duplication
+      for (let j = 1; j <= straightSamples; j++) {
+        const t = j / straightSamples;
+        const point = currentAnchor.clone().lerp(currentForwardExt, t);
+        positions.push(point.x, point.y, point.z);
+        polyline.push([point.x, point.y, point.z]);
+      }
+    }
+
+    // Segment 2: Curved hermite interpolation from current forward extension to next backward extension
+    // Create tangent vectors for the curved segment
+    const currentExtDirection = currentForwardExt.clone().sub(currentAnchor).normalize();
+    const nextExtDirection = nextAnchor.clone().sub(nextBackwardExt).normalize();
+    
+    // Scale tangents for much smoother transitions with more slack
+    const extDistance = currentForwardExt.distanceTo(nextBackwardExt);
+    const avgExtDistance = (currentData.forwardDistance + nextData.backwardDistance) * 0.5;
+    
+    // Use a much larger tangent scale for smoother curves - increase the multipliers significantly
+    const baseScale = Math.max(extDistance * 0.8, avgExtDistance * 1.5); // Increased from 0.4 and 0.8
+    
+    // Add extra slack based on the curve length for very smooth transitions
+    const slackMultiplier = 1.5 + (extDistance / 20); // Additional scaling based on distance
+    const tangentScale = baseScale * slackMultiplier;
+    
+    const t0 = currentExtDirection.multiplyScalar(tangentScale);
+    const t1 = nextExtDirection.multiplyScalar(tangentScale);
+
+    // Add the curved segment (skip first point to avoid duplication)
+    for (let j = 1; j <= curvedSamples; j++) {
+      const t = j / curvedSamples;
+      const point = hermitePoint(currentForwardExt, nextBackwardExt, t0, t1, t);
+      positions.push(point.x, point.y, point.z);
+      polyline.push([point.x, point.y, point.z]);
+    }
+
+    // Segment 3: Straight line from next backward extension to next anchor
+    for (let j = 1; j <= straightSamples; j++) {
+      const t = j / straightSamples;
+      const point = nextBackwardExt.clone().lerp(nextAnchor, t);
       positions.push(point.x, point.y, point.z);
       polyline.push([point.x, point.y, point.z]);
     }

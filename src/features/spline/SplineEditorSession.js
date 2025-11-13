@@ -71,6 +71,24 @@ export class SplineEditorSession {
       if (control) {
         control.enabled = active;
         control.visible = active;
+        
+        // Ensure proper scene management - remove from scene when inactive
+        if (this.viewer?.scene) {
+          if (active) {
+            // Add to scene if not already present
+            if (!this.viewer.scene.children.includes(control)) {
+              this.viewer.scene.add(control);
+              console.log(`SplineEditorSession: added transform ${id} to scene`);
+            }
+          } else {
+            // Remove from scene when inactive
+            if (this.viewer.scene.children.includes(control)) {
+              this.viewer.scene.remove(control);
+              console.log(`SplineEditorSession: removed transform ${id} from scene`);
+            }
+          }
+        }
+        
         console.log(`SplineEditorSession: set transform ${id} enabled=${active}, visible=${active}`);
       }
     }
@@ -110,6 +128,7 @@ export class SplineEditorSession {
    * @param {Object} [options]
    * @param {Object} [options.featureRef]
    * @param {number} [options.previewResolution]
+   * @param {string} [options.initialSelection]
    * @returns {boolean}
    */
   activate(initialSpline = null, options = {}) {
@@ -140,7 +159,15 @@ export class SplineEditorSession {
     this._initMaterials();
     this._buildPreviewGroup();
     this._attachCanvasEvents();
-    this._rebuildAll({ preserveSelection: false });
+    
+    // Set up initial selection before rebuild
+    const initialSelection = options.initialSelection || null;
+    if (initialSelection) {
+      console.log(`SplineEditorSession: setting initial selection ${initialSelection} before rebuild`);
+      this._selectedId = initialSelection;
+    }
+    
+    this._rebuildAll({ preserveSelection: !!initialSelection });
 
     this._active = true;
     this._notifySelectionChange(this._selectedId);
@@ -207,7 +234,7 @@ export class SplineEditorSession {
   }
 
   selectObject(id, options = {}) {
-    console.log(`SplineEditorSession: selectObject called with id=${id}, current=${this._selectedId}`);
+    console.log(`SplineEditorSession: selectObject called with id=${id}, current=${this._selectedId}, active=${this._active}`);
     const selectStart = performance.now();
     
     const { silent = false } = options || {};
@@ -222,7 +249,7 @@ export class SplineEditorSession {
     }
     
     this._selectedId = nextId;
-    console.log(`SplineEditorSession: selection changed to ${nextId}`);
+    console.log(`SplineEditorSession: selection changed to ${nextId}, transforms available=${this._transformsById?.size || 0}`);
     
     const visualStart = performance.now();
     this._updateSelectionVisuals();
@@ -248,6 +275,50 @@ export class SplineEditorSession {
 
   hideGizmo() {
     this.clearSelection();
+  }
+
+  /**
+   * Force cleanup of any stale objects in the scene
+   */
+  forceCleanup() {
+    console.log(`SplineEditorSession: forceCleanup called`);
+    
+    if (!this.viewer?.scene) return;
+    
+    // Find and remove any stale transform controls
+    const toRemove = [];
+    this.viewer.scene.traverse((obj) => {
+      // Look for transform controls that might be stale
+      if (obj.type === 'CombinedTransformControls' || obj.isTransformGizmo) {
+        // Check if this control is in our current transforms map
+        let isValid = false;
+        if (this._transformsById) {
+          for (const entry of this._transformsById.values()) {
+            if (entry.control === obj) {
+              isValid = true;
+              break;
+            }
+          }
+        }
+        if (!isValid) {
+          toRemove.push(obj);
+          console.log(`SplineEditorSession: found stale transform control to remove`);
+        }
+      }
+    });
+    
+    // Remove stale objects
+    for (const obj of toRemove) {
+      try {
+        this.viewer.scene.remove(obj);
+        obj.dispose?.();
+        console.log(`SplineEditorSession: removed stale object from scene`);
+      } catch (error) {
+        console.warn(`SplineEditorSession: error removing stale object:`, error);
+      }
+    }
+    
+    this._renderOnce();
   }
 
   _renderOnce() {
@@ -322,7 +393,20 @@ export class SplineEditorSession {
     const scene = this.viewer?.scene;
     if (!scene) return;
 
-    this._previewGroup = new THREE.Group();
+    // Search the scene for an existing preview group and reuse it rather than creating a new one
+    const existingGroupName = `SplineEditorPreview:${this.featureID || ""}`;
+    const existingGroup = scene.getObjectByName(existingGroupName);
+    if (existingGroup) {
+      this._previewGroup = existingGroup;
+      // remove all children from existing group
+      while (this._previewGroup.children.length > 0) {
+        this._previewGroup.remove(this._previewGroup.children[0]);
+      }
+    } else {
+      this._previewGroup = new THREE.Group();
+    }
+
+
     this._previewGroup.name = `SplineEditorPreview:${this.featureID || ""}`;
     this._previewGroup.userData = this._previewGroup.userData || {};
     this._previewGroup.userData.excludeFromFit = true;
@@ -388,6 +472,8 @@ export class SplineEditorSession {
       this.viewer.camera,
       this.viewer.renderer.domElement
     );
+
+    control.name = `SplineEditorControl:${id}`;
     
     // Enable both translation and rotation
     control.setMode("translate");
@@ -433,6 +519,7 @@ export class SplineEditorSession {
   }
 
   _teardownAllTransforms() {
+  //  alert(`Tearing down all transforms`);
     console.log(`SplineEditorSession: _teardownAllTransforms called, transforms count=${this._transformsById?.size || 0}`);
     
     if (!this._transformsById?.size) {
@@ -571,6 +658,9 @@ export class SplineEditorSession {
   _rebuildAll({ preserveSelection }) {
     console.log(`SplineEditorSession: _rebuildAll called, preserveSelection=${preserveSelection}, currentSelection=${this._selectedId}`);
     
+    // Force cleanup of any stale objects before rebuild
+    this.forceCleanup();
+    
     const previousSelection = preserveSelection ? this._selectedId : null;
     
     console.log(`SplineEditorSession: calling _buildPointHandles - THIS TEARS DOWN TRANSFORMS!`);
@@ -598,19 +688,37 @@ export class SplineEditorSession {
     console.log(`SplineEditorSession: tearing down all transforms in _buildPointHandles`);
     this._teardownAllTransforms();
 
+    // More thorough cleanup of stale objects
     const stale = [];
     for (const entry of this._objectsById.values()) {
-      if (entry.mesh && entry.mesh.parent === this._previewGroup) {
+      if (entry.mesh) {
         stale.push(entry.mesh);
+        // Also dispose mesh geometry and materials to prevent memory leaks
+        try {
+          entry.mesh.geometry?.dispose();
+          entry.mesh.material?.dispose();
+        } catch {
+          /* noop */
+        }
       }
     }
+    
+    // Remove from preview group and scene
     for (const mesh of stale) {
       try {
-        this._previewGroup.remove(mesh);
-      } catch {
-        /* noop */
+        if (mesh.parent) {
+          mesh.parent.remove(mesh);
+        }
+        // Also remove directly from scene in case it's there
+        if (this.viewer?.scene?.children.includes(mesh)) {
+          this.viewer.scene.remove(mesh);
+        }
+        console.log(`SplineEditorSession: removed stale mesh`);
+      } catch (error) {
+        console.warn(`SplineEditorSession: error removing stale mesh:`, error);
       }
     }
+    
     this._objectsById.clear();
     this._removeExtensionLines();
 
@@ -659,6 +767,17 @@ export class SplineEditorSession {
 
   _rebuildPreviewLine() {
     if (!this._line) return;
+    
+    // Clean up old geometry to prevent memory leaks
+    const oldGeometry = this._line.geometry;
+    if (oldGeometry) {
+      // Clear old attributes
+      const positionAttr = oldGeometry.getAttribute("position");
+      if (positionAttr) {
+        positionAttr.needsUpdate = true;
+      }
+    }
+    
     const { positions } = buildHermitePolyline(
       this._splineData,
       this._previewResolution || DEFAULT_RESOLUTION
@@ -672,6 +791,8 @@ export class SplineEditorSession {
     if (positions.length >= 3) {
       this._line.geometry.computeBoundingSphere();
     }
+    
+    console.log(`SplineEditorSession: rebuilt preview line with ${positions.length / 3} points`);
   }
 
   _updateSelectionVisuals() {
