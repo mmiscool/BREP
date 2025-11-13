@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { TransformControls as TransformControlsDirect } from "../../UI/controls/CombinedTransformControls.js";
+import { CombinedTransformControls as TransformControlsDirect } from "../../UI/controls/CombinedTransformControls.js";
 import {
   DEFAULT_RESOLUTION,
   normalizeSplineData,
@@ -23,7 +23,7 @@ export class SplineEditorSession {
     );
 
     this._objectsById = new Map();
-    this._weightLines = { start: null, end: null };
+    this._extensionLines = new Map();
     this._selectedId = null;
     this._hiddenArtifacts = [];
     this._raycaster = new THREE.Raycaster();
@@ -33,12 +33,7 @@ export class SplineEditorSession {
     this._isTransformDragging = false;
     this._onCanvasPointerDown = null;
 
-    this._anchorBaseMaterial = null;
-    this._anchorSelectedMaterial = null;
-    this._weightBaseMaterial = null;
-    this._weightSelectedMaterial = null;
     this._weightLineMaterial = null;
-    this._sphereGeometry = null;
 
     this._previewGroup = null;
     this._line = null;
@@ -56,21 +51,45 @@ export class SplineEditorSession {
   }
 
   _updateTransformVisibility() {
-    if (!this._transformsById) return;
+    console.log(`SplineEditorSession: _updateTransformVisibility called, selectedId=${this._selectedId}, transforms count=${this._transformsById?.size || 0}`);
+    
+    if (!this._transformsById) {
+      console.log(`SplineEditorSession: no _transformsById map`);
+      return;
+    }
+    
     for (const [id, transformEntry] of this._transformsById.entries()) {
-      if (!transformEntry) continue;
-      const { control, helper } = transformEntry;
+      if (!transformEntry) {
+        console.log(`SplineEditorSession: no transformEntry for ${id}`);
+        continue;
+      }
+      const { control } = transformEntry;
       const active = id === this._selectedId;
-      if (control) control.enabled = active;
-      if (helper) helper.visible = active;
+      
+      console.log(`SplineEditorSession: updating transform ${id}, active=${active}, control exists=${!!control}`);
+      
+      if (control) {
+        control.enabled = active;
+        control.visible = active;
+        console.log(`SplineEditorSession: set transform ${id} enabled=${active}, visible=${active}`);
+      }
     }
     if (!this._selectedId) {
+      console.log(`SplineEditorSession: no selection, setting dragging to false`);
       this._isTransformDragging = false;
     }
   }
 
   isActive() {
     return this._active;
+  }
+
+  hasTransformControls() {
+    return this._transformsById && this._transformsById.size > 0;
+  }
+
+  getTransformControlCount() {
+    return this._transformsById ? this._transformsById.size : 0;
   }
 
   getSplineData() {
@@ -154,14 +173,32 @@ export class SplineEditorSession {
    * @param {string} [options.reason="manual"]
    */
   setSplineData(spline, options = {}) {
+    console.log(`SplineEditorSession: setSplineData called`, {
+      reason: options.reason,
+      silent: options.silent,
+      preserveSelection: options.preserveSelection
+    });
+    
     const {
       preserveSelection = true,
       silent = false,
       reason = "manual",
     } = options;
+    
     const normalized = normalizeSplineData(cloneSplineData(spline));
     this._splineData = normalized;
-    this._rebuildAll({ preserveSelection });
+    
+    // CRITICAL FIX: Don't rebuild everything if this is just a transform update
+    if (reason === "transform" && preserveSelection) {
+      console.log(`SplineEditorSession: transform update - skipping full rebuild to preserve controls`);
+      // Just update the preview line, don't rebuild point handles (which destroys transforms)
+      this._rebuildPreviewLine();
+      this._updateExtensionLines();
+    } else {
+      console.log(`SplineEditorSession: full rebuild required for reason=${reason}`);
+      this._rebuildAll({ preserveSelection });
+    }
+    
     if (!silent) {
       this._notifySplineChange(reason);
     } else {
@@ -170,21 +207,39 @@ export class SplineEditorSession {
   }
 
   selectObject(id, options = {}) {
+    console.log(`SplineEditorSession: selectObject called with id=${id}, current=${this._selectedId}`);
+    const selectStart = performance.now();
+    
     const { silent = false } = options || {};
     const nextId = id == null ? null : String(id);
+    
     if (this._selectedId === nextId) {
+      console.log(`SplineEditorSession: same selection, no change needed`);
       if (!silent) {
         this._notifySelectionChange(this._selectedId);
       }
       return;
     }
+    
     this._selectedId = nextId;
+    console.log(`SplineEditorSession: selection changed to ${nextId}`);
+    
+    const visualStart = performance.now();
     this._updateSelectionVisuals();
+    console.log(`SplineEditorSession: _updateSelectionVisuals took ${(performance.now() - visualStart).toFixed(1)}ms`);
+    
+    const transformStart = performance.now();
     this._updateTransformVisibility();
+    console.log(`SplineEditorSession: _updateTransformVisibility took ${(performance.now() - transformStart).toFixed(1)}ms`);
+    
     if (!silent) {
+      const notifyStart = performance.now();
       this._notifySelectionChange(this._selectedId);
+      console.log(`SplineEditorSession: _notifySelectionChange took ${(performance.now() - notifyStart).toFixed(1)}ms`);
     }
+    
     this._renderOnce();
+    console.log(`SplineEditorSession: selectObject completed in ${(performance.now() - selectStart).toFixed(1)}ms`);
   }
 
   clearSelection() {
@@ -243,24 +298,6 @@ export class SplineEditorSession {
   }
 
   _initMaterials() {
-    this._sphereGeometry = new THREE.SphereGeometry(0.2, 20, 16);
-    // add click event to the sphere geometry
-
-    this._sphereGeometry
-
-
-    this._anchorBaseMaterial = new THREE.MeshBasicMaterial({
-      color: 0x2b9bd8,
-    });
-    this._anchorSelectedMaterial = new THREE.MeshBasicMaterial({
-      color: 0xff679d,
-    });
-    this._weightBaseMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffb703,
-    });
-    this._weightSelectedMaterial = new THREE.MeshBasicMaterial({
-      color: 0xfccf03,
-    });
     this._weightLineMaterial = new THREE.LineDashedMaterial({
       color: 0xffb703,
       dashSize: 0.35,
@@ -270,26 +307,14 @@ export class SplineEditorSession {
       opacity: 0.85,
       depthTest: false,
     });
-
-    // add oncli
   }
 
   _disposeMaterials() {
     try {
-      this._sphereGeometry?.dispose?.();
-      this._anchorBaseMaterial?.dispose?.();
-      this._anchorSelectedMaterial?.dispose?.();
-      this._weightBaseMaterial?.dispose?.();
-      this._weightSelectedMaterial?.dispose?.();
       this._weightLineMaterial?.dispose?.();
     } catch {
       /* noop */
     }
-    this._sphereGeometry = null;
-    this._anchorBaseMaterial = null;
-    this._anchorSelectedMaterial = null;
-    this._weightBaseMaterial = null;
-    this._weightSelectedMaterial = null;
     this._weightLineMaterial = null;
   }
 
@@ -302,7 +327,6 @@ export class SplineEditorSession {
     this._previewGroup.userData = this._previewGroup.userData || {};
     this._previewGroup.userData.excludeFromFit = true;
     this._previewGroup.userData.preventRemove = true;
-    alert(this._previewGroup.name);
 
     const lineMaterial = new THREE.LineBasicMaterial({
       color: 0xffffff,
@@ -327,7 +351,7 @@ export class SplineEditorSession {
       return;
     }
     this._teardownAllTransforms();
-    this._removeWeightLines();
+    this._removeExtensionLines();
     try {
       if (this._line) {
         this._line.geometry?.dispose();
@@ -344,118 +368,150 @@ export class SplineEditorSession {
     this._previewGroup = null;
     this._line = null;
     this._objectsById.clear();
-    this._weightLines = { start: null, end: null };
+    this._extensionLines.clear();
   }
 
   _createTransformControl(id, mesh) {
-    console.log(this._previewGroup);
-    //this.viewerscene.add(this._previewGroup);
+    console.log(`SplineEditorSession: _createTransformControl called for ${id}, mesh exists=${!!mesh}`);
+    
     if (!this.viewer?.scene || !this.viewer?.camera || !this.viewer?.renderer) {
-      alert("Cannot create transform control: viewer is not properly initialized.");
+      console.warn("Cannot create transform control: viewer is not properly initialized.");
       return null;
     }
-    if (!TransformControlsDirect) return null;
+    if (!TransformControlsDirect) {
+      console.warn("TransformControlsDirect not available");
+      return null;
+    }
 
+    console.log(`SplineEditorSession: creating TransformControlsDirect for ${id}`);
     const control = new TransformControlsDirect(
       this.viewer.camera,
       this.viewer.renderer.domElement
     );
+    
+    // Enable both translation and rotation
     control.setMode("translate");
     control.showX = true;
     control.showY = true;
     control.showZ = true;
     control.setSize(1.6);
-    control.enabled = false;
+    control.enabled = false; // Will be enabled when selected
     control.attach(mesh);
     control.userData = control.userData || {};
     control.userData.excludeFromFit = true;
-    console.log(control);
 
-    const helper =
-      typeof control.getHelper === "function"
-        ? control.getHelper()
-        : null;
+    console.log(`SplineEditorSession: transform control created for ${id}, attached to mesh`);
 
+    // Add keyboard listener to switch between translate and rotate modes
+    const keyHandler = (event) => {
+      if (control.enabled && (event.key === 'r' || event.key === 'R')) {
+        event.preventDefault();
+        const currentMode = control.getMode();
+        control.setMode(currentMode === 'translate' ? 'rotate' : 'translate');
+        console.log(`SplineEditorSession: switched transform mode to ${control.getMode()} for ${id}`);
+      }
+    };
+    document.addEventListener('keydown', keyHandler);
+
+    // Add the transform control directly to the scene
+    this.viewer.scene.add(control);
+    console.log(`SplineEditorSession: transform control added to scene for ${id}`);
 
     const changeHandler = () => this._handleTransformChangeFor(id);
-    const dragHandler = (event) => this._handleTransformDragging(!!event?.value);
+    const dragHandler = (event) => {
+      console.log(`SplineEditorSession: drag event for ${id}, dragging=${!!event?.value}`);
+      this._handleTransformDragging(!!event?.value);
+    };
     control.addEventListener("change", changeHandler);
     control.addEventListener("dragging-changed", dragHandler);
 
-    this._transformsById.set(id, { control, helper });
+    this._transformsById.set(id, { control, keyHandler });
     this._transformListeners.set(id, { changeHandler, dragHandler });
-    helper.userData.preventRemove = true;
-
-    this.viewer.scene.add(helper);
-    console.log(this);
-    window.test = this.viewer.scene.children;
-    console.log(this.viewer.scene.children);
+    
+    console.log(`SplineEditorSession: transform control setup complete for ${id}`);
     return control;
   }
 
   _teardownAllTransforms() {
+    console.log(`SplineEditorSession: _teardownAllTransforms called, transforms count=${this._transformsById?.size || 0}`);
+    
     if (!this._transformsById?.size) {
+      console.log(`SplineEditorSession: no transforms to teardown`);
       this._isTransformDragging = false;
       return;
     }
+    
     for (const [id, transformEntry] of this._transformsById.entries()) {
+      console.log(`SplineEditorSession: tearing down transform ${id}`);
+      
       const control = transformEntry?.control || null;
-      const helper = transformEntry?.helper || null;
+      const keyHandler = transformEntry?.keyHandler || null;
       const listeners = this._transformListeners.get(id);
+      
       if (control && listeners) {
         try {
           control.removeEventListener("change", listeners.changeHandler);
-        } catch {
-          /* noop */
+          console.log(`SplineEditorSession: removed change listener for ${id}`);
+        } catch (error) {
+          console.warn(`SplineEditorSession: error removing change listener for ${id}:`, error);
         }
         try {
           control.removeEventListener("dragging-changed", listeners.dragHandler);
-        } catch {
-          /* noop */
+          console.log(`SplineEditorSession: removed drag listener for ${id}`);
+        } catch (error) {
+          console.warn(`SplineEditorSession: error removing drag listener for ${id}:`, error);
         }
       }
+      
+      // Remove keyboard listener
+      if (keyHandler) {
+        try {
+          document.removeEventListener('keydown', keyHandler);
+          console.log(`SplineEditorSession: removed keyboard listener for ${id}`);
+        } catch (error) {
+          console.warn(`SplineEditorSession: error removing keyboard listener for ${id}:`, error);
+        }
+      }
+      
       try {
         control?.detach?.();
-      } catch {
-        /* noop */
+        console.log(`SplineEditorSession: detached control for ${id}`);
+      } catch (error) {
+        console.warn(`SplineEditorSession: error detaching control for ${id}:`, error);
       }
+      
+      // Remove control from scene
+      if (control) {
+        try {
+          this.viewer?.scene?.remove(control);
+          console.log(`SplineEditorSession: removed control from scene for ${id}`);
+        } catch (error) {
+          console.warn(`SplineEditorSession: error removing control from scene for ${id}:`, error);
+        }
+      }
+      
       try {
         control?.dispose?.();
-      } catch {
-        /* noop */
-      }
-      if (helper) {
-        try {
-          this.viewer?.scene?.remove(helper);
-        } catch {
-          /* noop */
-        }
+        console.log(`SplineEditorSession: disposed control for ${id}`);
+      } catch (error) {
+        console.warn(`SplineEditorSession: error disposing control for ${id}:`, error);
       }
     }
     this._transformsById.clear();
     this._transformListeners.clear();
     this._isTransformDragging = false;
+    console.log(`SplineEditorSession: all transforms torn down`);
   }
 
   _attachCanvasEvents() {
-    const dom = this.viewer?.renderer?.domElement;
-    if (!dom) return;
-    this._onCanvasPointerDown = this._handlePointerDown.bind(this);
-    dom.addEventListener("pointerdown", this._onCanvasPointerDown, {
-      passive: false,
-      capture: true,
-    });
+    // Skip canvas event attachment since we're using UI buttons for selection
+    // This prevents performance issues from pointer event handling
+    return;
   }
 
   _detachCanvasEvents() {
-    const dom = this.viewer?.renderer?.domElement;
-    if (!dom) return;
-    if (this._onCanvasPointerDown) {
-      dom.removeEventListener("pointerdown", this._onCanvasPointerDown, {
-        capture: true,
-      });
-      this._onCanvasPointerDown = null;
-    }
+    // Canvas events are not attached, so nothing to detach
+    return;
   }
 
   _handlePointerDown(event) {
@@ -470,6 +526,7 @@ export class SplineEditorSession {
       return;
     }
 
+    // Only handle clicks on our objects, don't clear selection on blank clicks
     const dom = this.viewer?.renderer?.domElement;
     if (!dom) return;
     const rect = dom.getBoundingClientRect();
@@ -478,31 +535,6 @@ export class SplineEditorSession {
       y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
     };
     this._raycaster.setFromCamera(ndc, this.viewer.camera);
-
-    const activeTransform =
-      this._selectedId != null
-        ? this._transformsById.get(this._selectedId) || null
-        : null;
-    const activeHelper = activeTransform?.helper || null;
-    const isTransformClick = (() => {
-      if (!activeHelper || !activeHelper.visible) return false;
-      try {
-        const hits = this._raycaster.intersectObject(activeHelper, true);
-        return Array.isArray(hits) && hits.length > 0;
-      } catch {
-        return false;
-      }
-    })();
-
-    if (isTransformClick) return;
-
-    let consumed = false;
-
-    const consume = () => {
-      consumed = true;
-      event.stopImmediatePropagation();
-      event.preventDefault();
-    };
 
     const intersects = [];
     for (const entry of this._objectsById.values()) {
@@ -524,34 +556,46 @@ export class SplineEditorSession {
       if (picked) {
         for (const [id, entry] of this._objectsById.entries()) {
           if (entry.mesh === picked) {
-            consume();
+            event.stopImmediatePropagation();
+            event.preventDefault();
             this.selectObject(id);
             return;
           }
         }
       }
     }
-
-    if (!consumed && this._selectedId) {
-      consume();
-      this.selectObject(null);
-    }
+    
+    // Don't clear selection on blank clicks - removed this functionality
   }
 
   _rebuildAll({ preserveSelection }) {
+    console.log(`SplineEditorSession: _rebuildAll called, preserveSelection=${preserveSelection}, currentSelection=${this._selectedId}`);
+    
     const previousSelection = preserveSelection ? this._selectedId : null;
+    
+    console.log(`SplineEditorSession: calling _buildPointHandles - THIS TEARS DOWN TRANSFORMS!`);
     this._buildPointHandles();
+    
+    console.log(`SplineEditorSession: rebuilding preview line`);
     this._rebuildPreviewLine();
+    
     if (preserveSelection && previousSelection) {
+      console.log(`SplineEditorSession: restoring selection to ${previousSelection}`);
       this.selectObject(previousSelection, { silent: true });
     } else if (!preserveSelection) {
+      console.log(`SplineEditorSession: clearing selection`);
       this.selectObject(null, { silent: true });
     }
+    
+    console.log(`SplineEditorSession: _rebuildAll completed`);
   }
 
   _buildPointHandles() {
+    console.log(`SplineEditorSession: _buildPointHandles called - DANGER: this tears down all transforms!`);
+    
     if (!this._previewGroup) return;
 
+    console.log(`SplineEditorSession: tearing down all transforms in _buildPointHandles`);
     this._teardownAllTransforms();
 
     const stale = [];
@@ -568,28 +612,36 @@ export class SplineEditorSession {
       }
     }
     this._objectsById.clear();
-    this._removeWeightLines();
+    this._removeExtensionLines();
 
-    if (!this._sphereGeometry) this._initMaterials();
+    this._initMaterials();
 
-    const ensureGeometry = () =>
-      this._sphereGeometry || new THREE.SphereGeometry(0.2, 20, 16);
-
-    const geom = ensureGeometry();
-
-    this._splineData.points.forEach((pt) => {
-      const mesh = new THREE.Mesh(geom, this._anchorBaseMaterial);
-      mesh.position.set(
+    // Create handles for each point - no separate extension handles
+    this._splineData.points.forEach((pt, index) => {
+      // Create a simple point geometry for invisible click target
+      const pointGeometry = new THREE.BufferGeometry();
+      const position = new Float32Array([
         Number(pt.position[0]) || 0,
         Number(pt.position[1]) || 0,
         Number(pt.position[2]) || 0
-      );
+      ]);
+      pointGeometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
+      
+      // Create an invisible mesh for raycasting and transform attachment
+      const pointMaterial = new THREE.MeshBasicMaterial({ visible: false });
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), pointMaterial);
+      mesh.position.set(position[0], position[1], position[2]);
+      
+      // Apply stored rotation to the mesh
+      if (pt.rotation && Array.isArray(pt.rotation) && pt.rotation.length === 9) {
+        const rotMatrix = new THREE.Matrix3().fromArray(pt.rotation);
+        const matrix4 = new THREE.Matrix4().setFromMatrix3(rotMatrix);
+        mesh.setRotationFromMatrix(matrix4);
+      }
+      
       mesh.name = `SplinePoint:${pt.id}`;
       this._previewGroup.add(mesh);
-      mesh.onclick = () => {
-        alert(`Point ${pt.id} clicked`);
-        this.selectObject(`point:${pt.id}`);
-      }
+      
       const entryId = `point:${pt.id}`;
       const transform = this._createTransformControl(entryId, mesh);
       this._objectsById.set(entryId, {
@@ -600,45 +652,9 @@ export class SplineEditorSession {
       });
     });
 
-    const startMesh = new THREE.Mesh(geom, this._weightBaseMaterial);
-    startMesh.position.set(
-      Number(this._splineData.startWeight.position[0]) || 0,
-      Number(this._splineData.startWeight.position[1]) || 0,
-      Number(this._splineData.startWeight.position[2]) || 0
-    );
-    startMesh.name = "SplineWeightStart";
-    this._previewGroup.add(startMesh);
-    const startId = "weight:start";
-    const startTransform = this._createTransformControl(startId, startMesh);
-    this._objectsById.set(startId, {
-      type: "weight",
-      mesh: startMesh,
-      data: this._splineData.startWeight,
-      transform: startTransform,
-    });
-
-    const endMesh = new THREE.Mesh(geom, this._weightBaseMaterial);
-    endMesh.position.set(
-      Number(this._splineData.endWeight.position[0]) || 0,
-      Number(this._splineData.endWeight.position[1]) || 0,
-      Number(this._splineData.endWeight.position[2]) || 0
-    );
-    endMesh.name = "SplineWeightEnd";
-    this._previewGroup.add(endMesh);
-    const endId = "weight:end";
-    const endTransform = this._createTransformControl(endId, endMesh);
-    this._objectsById.set(endId, {
-      type: "weight",
-      mesh: endMesh,
-      data: this._splineData.endWeight,
-      transform: endTransform,
-    });
-
-    this._updateSelectionVisuals();
     this._updateTransformVisibility();
-    this._ensureWeightLine("start");
-    this._ensureWeightLine("end");
-    this._updateWeightLines();
+    this._ensureExtensionLines();
+    this._updateExtensionLines();
   }
 
   _rebuildPreviewLine() {
@@ -659,84 +675,91 @@ export class SplineEditorSession {
   }
 
   _updateSelectionVisuals() {
-    for (const [id, entry] of this._objectsById.entries()) {
-      if (!entry?.mesh) continue;
-      const selected = id === this._selectedId;
-      if (entry.type === "point") {
-        entry.mesh.material = selected
-          ? this._anchorSelectedMaterial
-          : this._anchorBaseMaterial;
-      } else {
-        entry.mesh.material = selected
-          ? this._weightSelectedMaterial
-          : this._weightBaseMaterial;
-      }
-    }
+    // Currently no visual selection indicators since we removed sphere visibility
+    // This method is kept for compatibility and future enhancements
   }
 
   _handleTransformChangeFor(id = null) {
+    console.log(`SplineEditorSession: _handleTransformChangeFor called for ${id}, dragging=${this._isTransformDragging}`);
+    
     const targetId =
       id && this._objectsById.has(id) ? id : this._selectedId;
     if (!targetId) return;
     const entry = this._objectsById.get(targetId);
     if (!entry || !entry.mesh || !entry.data) return;
+    
     const pos = entry.mesh.position;
-    entry.data.position = [pos.x, pos.y, pos.z];
+    const rot = entry.mesh.rotation;
+    
+    if (entry.type === "point") {
+      // Update point position
+      entry.data.position = [pos.x, pos.y, pos.z];
+      
+      // Update point rotation - extract rotation matrix from mesh
+      const rotMatrix = new THREE.Matrix3().setFromMatrix4(entry.mesh.matrix);
+      entry.data.rotation = rotMatrix.elements.slice(); // Store as flat array
+      
+      console.log(`SplineEditorSession: updated point ${id} position to [${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}]`);
+    }
+    
+    console.log(`SplineEditorSession: rebuilding preview (not full rebuild)`);
     this._rebuildPreviewLine();
-    this._updateWeightLines();
+    this._updateExtensionLines();
+    
+    console.log(`SplineEditorSession: notifying spline change - THIS MAY CAUSE REFRESH LOOP`);
     this._notifySplineChange("transform", { selection: targetId });
     this._renderOnce();
   }
 
   _handleTransformDragging(isDragging) {
     const dragging = !!isDragging;
+    console.log(`SplineEditorSession: _handleTransformDragging called, isDragging=${dragging}, current=${this._isTransformDragging}`);
+    
     this._isTransformDragging = dragging;
+    
     try {
       if (this.viewer?.controls) {
         this.viewer.controls.enabled = !dragging;
+        console.log(`SplineEditorSession: set viewer controls enabled=${!dragging}`);
       }
-    } catch {
-      /* noop */
+    } catch (error) {
+      console.warn(`SplineEditorSession: error setting viewer controls:`, error);
     }
+    
+    // Important: Do NOT clear transforms when dragging stops!
+    // This was causing the gizmos to disappear after dragging
+    console.log(`SplineEditorSession: transform dragging state updated, selectedId=${this._selectedId}`);
   }
 
-  _ensureWeightLine(kind) {
+  _ensureExtensionLines() {
     if (!this._previewGroup || !this._weightLineMaterial) return;
-    const isStart = kind === "start";
-    const anchor = isStart
-      ? this._splineData.points?.[0]?.position
-      : this._splineData.points?.[this._splineData.points.length - 1]?.position;
-    const weight = isStart
-      ? this._splineData.startWeight?.position
-      : this._splineData.endWeight?.position;
-    if (!anchor || !weight) return;
-
-    const existing = this._weightLines[kind];
-    if (existing) return;
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute(
-        [anchor[0], anchor[1], anchor[2], weight[0], weight[1], weight[2]],
-        3
-      )
-    );
-
-    const line = new THREE.LineSegments(geometry, this._weightLineMaterial);
-    line.computeLineDistances?.();
-    line.name = `SplineWeightLine:${kind}`;
-    this._previewGroup.add(line);
-    this._weightLines[kind] = line;
+    
+    this._splineData.points.forEach((pt, index) => {
+      const forwardKey = `forward-line:${pt.id}`;
+      const backwardKey = `backward-line:${pt.id}`;
+      
+      // Forward extension line
+      if (!this._extensionLines.has(forwardKey)) {
+        const geometry = new THREE.BufferGeometry();
+        const line = new THREE.LineSegments(geometry, this._weightLineMaterial);
+        line.name = `SplineForwardLine:${pt.id}`;
+        this._previewGroup.add(line);
+        this._extensionLines.set(forwardKey, line);
+      }
+      
+      // Backward extension line
+      if (!this._extensionLines.has(backwardKey)) {
+        const geometry = new THREE.BufferGeometry();
+        const line = new THREE.LineSegments(geometry, this._weightLineMaterial);
+        line.name = `SplineBackwardLine:${pt.id}`;
+        this._previewGroup.add(line);
+        this._extensionLines.set(backwardKey, line);
+      }
+    });
   }
 
-  _removeWeightLines(kind = null) {
-    if (!this._weightLines) {
-      this._weightLines = { start: null, end: null };
-    }
-    const keys = kind ? [kind] : ["start", "end"];
-    for (const key of keys) {
-      const line = this._weightLines[key];
+  _removeExtensionLines() {
+    for (const line of this._extensionLines.values()) {
       if (line) {
         try {
           this._previewGroup?.remove(line);
@@ -749,54 +772,80 @@ export class SplineEditorSession {
           /* noop */
         }
       }
-      this._weightLines[key] = null;
     }
+    this._extensionLines.clear();
   }
 
-  _updateWeightLines() {
-    const updateLine = (line, anchor, weight) => {
-      if (!line || !anchor || !weight) return;
+  _updateExtensionLines() {
+    const updateLine = (line, anchor, direction, distance) => {
+      if (!line || !anchor || !direction || distance <= 0) return;
       const posAttr = line.geometry.getAttribute("position");
+      const start = anchor;
+      const end = [
+        anchor[0] + direction[0] * distance,
+        anchor[1] + direction[1] * distance,
+        anchor[2] + direction[2] * distance
+      ];
+      
       if (!posAttr) {
         line.geometry.setAttribute(
           "position",
           new THREE.Float32BufferAttribute(
-            [anchor[0], anchor[1], anchor[2], weight[0], weight[1], weight[2]],
+            [start[0], start[1], start[2], end[0], end[1], end[2]],
             3
           )
         );
       } else {
         const arr = posAttr.array;
-        arr[0] = anchor[0];
-        arr[1] = anchor[1];
-        arr[2] = anchor[2];
-        arr[3] = weight[0];
-        arr[4] = weight[1];
-        arr[5] = weight[2];
+        arr[0] = start[0];
+        arr[1] = start[1];
+        arr[2] = start[2];
+        arr[3] = end[0];
+        arr[4] = end[1];
+        arr[5] = end[2];
         posAttr.needsUpdate = true;
       }
       line.computeLineDistances?.();
       line.geometry.computeBoundingSphere?.();
     };
 
-    const startAnchor = this._splineData.points?.[0]?.position;
-    const endAnchor =
-      this._splineData.points?.[this._splineData.points.length - 1]?.position;
-    const startWeight = this._splineData.startWeight?.position;
-    const endWeight = this._splineData.endWeight?.position;
-
-    if (startAnchor && startWeight) {
-      if (!this._weightLines.start) this._ensureWeightLine("start");
-      updateLine(this._weightLines?.start, startAnchor, startWeight);
-    } else {
-      this._removeWeightLines("start");
-    }
-
-    if (endAnchor && endWeight) {
-      if (!this._weightLines.end) this._ensureWeightLine("end");
-      updateLine(this._weightLines?.end, endAnchor, endWeight);
-    } else {
-      this._removeWeightLines("end");
-    }
+    this._splineData.points.forEach((pt, index) => {
+      const forwardLine = this._extensionLines.get(`forward-line:${pt.id}`);
+      const backwardLine = this._extensionLines.get(`backward-line:${pt.id}`);
+      
+      // Get X-axis direction from stored rotation matrix
+      const rotation = pt.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      let xAxisDirection = [rotation[0], rotation[1], rotation[2]]; // X-axis from rotation matrix
+      
+      // Normalize the direction (should already be normalized, but just in case)
+      const length = Math.sqrt(
+        xAxisDirection[0] * xAxisDirection[0] + 
+        xAxisDirection[1] * xAxisDirection[1] + 
+        xAxisDirection[2] * xAxisDirection[2]
+      );
+      if (length > 0) {
+        xAxisDirection = [
+          xAxisDirection[0] / length,
+          xAxisDirection[1] / length,
+          xAxisDirection[2] / length
+        ];
+      }
+      
+      // Apply flip if needed
+      const forwardDir = pt.flipDirection ? 
+        [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]] : 
+        xAxisDirection;
+      const backwardDir = pt.flipDirection ? 
+        xAxisDirection : 
+        [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]];
+      
+      if (forwardLine) {
+        updateLine(forwardLine, pt.position, forwardDir, pt.forwardDistance);
+      }
+      
+      if (backwardLine) {
+        updateLine(backwardLine, pt.position, backwardDir, pt.backwardDistance);
+      }
+    });
   }
 }

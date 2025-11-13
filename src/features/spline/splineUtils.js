@@ -3,7 +3,7 @@ const THREE = BREP.THREE;
 
 export const DEFAULT_RESOLUTION = 24;
 
-const ensurePoint = (point, fallbackId, fallbackPosition) => {
+const ensurePoint = (point, fallbackId, fallbackPosition, index = 0) => {
   const positionSource = Array.isArray(point?.position)
     ? point.position
     : Array.isArray(fallbackPosition)
@@ -14,31 +14,33 @@ const ensurePoint = (point, fallbackId, fallbackPosition) => {
     Number(positionSource[1]) || 0,
     Number(positionSource[2]) || 0,
   ];
+
+  // Ensure forward and backward extension distances
+  const forwardDistance = typeof point?.forwardDistance === "number" 
+    ? Math.max(0, Number(point.forwardDistance)) 
+    : 1.0; // Default forward distance
+
+  const backwardDistance = typeof point?.backwardDistance === "number" 
+    ? Math.max(0, Number(point.backwardDistance)) 
+    : 1.0; // Default backward distance
+
+  const flipDirection = typeof point?.flipDirection === "boolean" 
+    ? point.flipDirection 
+    : false;
+
+  // Store complete transformation matrix (position + rotation)
+  // Default to identity rotation (pointing along X-axis)
+  const rotation = Array.isArray(point?.rotation) && point.rotation.length === 9
+    ? point.rotation.slice() // Copy existing rotation matrix
+    : [1, 0, 0, 0, 1, 0, 0, 0, 1]; // Default identity rotation (X-axis forward)
+
   return {
     id: String(point?.id ?? fallbackId ?? `pt-${Math.random().toString(36).slice(2)}`),
     position,
-  };
-};
-
-const ensureWeight = (weight, fallbackId, anchor) => {
-  const anchorPos = Array.isArray(anchor?.position)
-    ? anchor.position
-    : [0, 0, 0];
-  const src = Array.isArray(weight?.position) ? weight.position : null;
-  const position = src
-    ? [
-        Number(src[0]) || 0,
-        Number(src[1]) || 0,
-        Number(src[2]) || 0,
-      ]
-    : [
-        (Number(anchorPos[0]) || 0) + 1,
-        Number(anchorPos[1]) || 0,
-        Number(anchorPos[2]) || 0,
-      ];
-  return {
-    id: String(weight?.id ?? fallbackId ?? `wt-${Math.random().toString(36).slice(2)}`),
-    position,
+    rotation, // 3x3 rotation matrix stored as flat array
+    forwardDistance,
+    backwardDistance,
+    flipDirection,
   };
 };
 
@@ -51,57 +53,59 @@ export function normalizeSplineData(rawSpline) {
   let points = Array.isArray(spline?.points) ? spline.points : null;
   if (!points || points.length < 2) {
     points = [
-      { id: "p0", position: [0, 0, 0] },
-      { id: "p1", position: [5, 0, 0] },
+      { 
+        id: "p0", 
+        position: [0, 0, 0],
+        rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity matrix
+        forwardDistance: 1.0,
+        backwardDistance: 1.0,
+        flipDirection: false
+      },
+      { 
+        id: "p1", 
+        position: [5, 0, 0],
+        rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1], // Identity matrix
+        forwardDistance: 1.0,
+        backwardDistance: 1.0,
+        flipDirection: false
+      },
     ];
   }
 
   const normalizedPoints = points.map((pt, index) =>
-    ensurePoint(pt, `p${index}`)
-  );
-
-  const startWeight = ensureWeight(
-    spline?.startWeight,
-    "ws",
-    normalizedPoints[0]
-  );
-  const endWeight = ensureWeight(
-    spline?.endWeight,
-    "we",
-    normalizedPoints[normalizedPoints.length - 1]
+    ensurePoint(pt, `p${index}`, null, index)
   );
 
   return {
     points: normalizedPoints,
-    startWeight,
-    endWeight,
   };
 }
 
-function computeTangents(points, startHandle, endHandle) {
+function computeTangents(pointsData, positions) {
   const tangents = [];
-  const count = points.length;
+  const count = positions.length;
+  
   for (let i = 0; i < count; i++) {
-    if (i === 0) {
-      const vec = new THREE.Vector3().subVectors(startHandle, points[0]).multiplyScalar(3);
-      if (vec.lengthSq() < 1e-6 && count >= 2) {
-        vec.subVectors(points[1], points[0]);
-      }
-      tangents.push(vec);
-      continue;
+    const pointData = pointsData[i];
+    
+    // Extract X-axis direction from the stored rotation matrix
+    const rotation = pointData.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    let direction = new THREE.Vector3(rotation[0], rotation[1], rotation[2]);
+    
+    // Apply flip if needed
+    if (pointData.flipDirection) {
+      direction.multiplyScalar(-1);
     }
-    if (i === count - 1) {
-      const vec = new THREE.Vector3().subVectors(points[i], endHandle).multiplyScalar(3);
-      if (vec.lengthSq() < 1e-6 && count >= 2) {
-        vec.subVectors(points[i], points[i - 1]);
-      }
-      tangents.push(vec);
-      continue;
-    }
-    const prev = points[i - 1];
-    const next = points[i + 1];
-    tangents.push(new THREE.Vector3().subVectors(next, prev).multiplyScalar(0.5));
+    
+    // Use the appropriate distance for scaling
+    const distance = i === 0 ? pointData.forwardDistance : 
+                    i === count - 1 ? pointData.backwardDistance :
+                    (pointData.forwardDistance + pointData.backwardDistance) * 0.5;
+    
+    const tangent = direction.multiplyScalar(distance);
+    tangents.push(tangent);
   }
+  
   return tangents;
 }
 
@@ -123,33 +127,22 @@ const hermitePoint = (p0, p1, t0, t1, t) => {
 };
 
 export function buildHermitePolyline(spline, resolution = DEFAULT_RESOLUTION) {
-  const anchors = Array.isArray(spline?.points)
-    ? spline.points.map(
-        (pt) =>
-          new THREE.Vector3(
-            Number(pt.position?.[0]) || 0,
-            Number(pt.position?.[1]) || 0,
-            Number(pt.position?.[2]) || 0,
-          )
-      )
-    : [];
-
-  if (anchors.length < 2) {
+  const pointsData = Array.isArray(spline?.points) ? spline.points : [];
+  
+  if (pointsData.length < 2) {
     return { positions: [], polyline: [] };
   }
 
-  const startHandle = new THREE.Vector3(
-    Number(spline?.startWeight?.position?.[0]) || anchors[0].x,
-    Number(spline?.startWeight?.position?.[1]) || anchors[0].y,
-    Number(spline?.startWeight?.position?.[2]) || anchors[0].z,
-  );
-  const endHandle = new THREE.Vector3(
-    Number(spline?.endWeight?.position?.[0]) || anchors[anchors.length - 1].x,
-    Number(spline?.endWeight?.position?.[1]) || anchors[anchors.length - 1].y,
-    Number(spline?.endWeight?.position?.[2]) || anchors[anchors.length - 1].z,
+  const anchors = pointsData.map(
+    (pt) =>
+      new THREE.Vector3(
+        Number(pt.position?.[0]) || 0,
+        Number(pt.position?.[1]) || 0,
+        Number(pt.position?.[2]) || 0,
+      )
   );
 
-  const tangents = computeTangents(anchors, startHandle, endHandle);
+  const tangents = computeTangents(pointsData, anchors);
   const samplesPerSegment = Math.max(4, Math.floor(resolution));
   const positions = [];
   const polyline = [];
