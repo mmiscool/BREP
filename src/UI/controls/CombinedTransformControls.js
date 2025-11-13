@@ -236,6 +236,18 @@ export class CombinedTransformControls extends THREE.Object3D {
 
   _intersections(root) {
     this._raycaster.setFromCamera(this._pointer, this.camera);
+    
+    // Fix ray origin - ensure it starts from behind the camera
+    const ray = this._raycaster.ray;
+    if (this.camera.isOrthographicCamera) {
+      // For orthographic cameras, move the origin back along the camera's forward direction
+      const backwardDistance = 1000; // Large distance to ensure we're behind all objects
+      ray.origin.add(ray.direction.clone().multiplyScalar(-backwardDistance));
+    } else if (this.camera.isPerspectiveCamera) {
+      // For perspective cameras, use the camera position as origin
+      ray.origin.copy(this.camera.position);
+    }
+    
     return this._raycaster.intersectObject(root, true) || [];
   }
 
@@ -356,6 +368,18 @@ export class CombinedTransformControls extends THREE.Object3D {
 
   _planeIntersect() {
     this._raycaster.setFromCamera(this._pointer, this.camera);
+    
+    // Fix ray origin - ensure it starts from behind the camera
+    const ray = this._raycaster.ray;
+    if (this.camera.isOrthographicCamera) {
+      // For orthographic cameras, move the origin back along the camera's forward direction
+      const backwardDistance = 1000; // Large distance to ensure we're behind all objects
+      ray.origin.add(ray.direction.clone().multiplyScalar(-backwardDistance));
+    } else if (this.camera.isPerspectiveCamera) {
+      // For perspective cameras, use the camera position as origin
+      ray.origin.copy(this.camera.position);
+    }
+    
     const p = new THREE.Vector3();
     const hit = this._raycaster.ray.intersectPlane(this._plane, p);
     return hit ? p.clone() : null;

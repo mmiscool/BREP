@@ -757,11 +757,17 @@ export class Viewer {
             this.raycaster.params.Points = this.raycaster.params.Points || {};
             this.raycaster.params.Points.threshold = Math.max(0.05, wpp * 6);
         } catch { }
-        // Shift the ray origin far behind the camera along the ray direction
+        // Fix ray origin - ensure it starts from behind the camera
         try {
-            const span = Math.abs((this.camera?.far ?? 0) - (this.camera?.near ?? 0)) || 1;
-            const back = Math.max(1e6, span * 1000);
-            this.raycaster.ray.origin.addScaledVector(this.raycaster.ray.direction, -back);
+            const ray = this.raycaster.ray;
+            if (this.camera.isOrthographicCamera) {
+                // For orthographic cameras, move the origin back along the camera's forward direction
+                const backwardDistance = 1000; // Large distance to ensure we're behind all objects
+                ray.origin.add(ray.direction.clone().multiplyScalar(-backwardDistance));
+            } else if (this.camera.isPerspectiveCamera) {
+                // For perspective cameras, use the camera position as origin
+                ray.origin.copy(this.camera.position);
+            }
         } catch { }
         // Intersect everything; raycaster will skip non-geometry nodes
         const intersects = this.raycaster.intersectObjects(this.scene.children, true);
