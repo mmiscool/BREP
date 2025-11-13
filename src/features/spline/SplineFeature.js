@@ -226,7 +226,9 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.className = "spw-btn";
-  addBtn.textContent = "Add Point";
+  addBtn.textContent = "+";
+  // tooltip for addBtn
+  addBtn.title = "Add a new point to the spline";
   header.appendChild(addBtn);
   host.appendChild(header);
 
@@ -286,117 +288,96 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
 
   const disposeSession = (force = false) => {
     //alert(`session ended`);
-    console.log(`SplineFeature: disposeSession called - existing=${!!state.session}, force=${force}`);
     if (!state.session) return;
-    
+
     // Don't dispose if this is a registered session unless forced (e.g., during destroy)
     const featureID = getFeatureID();
     if (!force && featureID && activeEditorSessions.has(featureID)) {
-      console.log(`SplineFeature: preserving registered session for ${featureID}`);
       return;
     }
-    
+
     try {
-      console.log(`SplineFeature: calling session.dispose()`);
       state.session.dispose();
-      console.log(`SplineFeature: session.dispose() completed`);
     } catch (error) {
-      console.error(`SplineFeature: error in session.dispose():`, error);
+      /* ignore */
     }
     state.session = null;
   };
 
   const handleSessionSelectionChange = (id) => {
-    console.log(`SplineFeature: handleSessionSelectionChange called with id=${id}`);
     const changeStart = performance.now();
-    
+
     if (state.destroyed || state.inSelectionChange) {
-      console.log(`SplineFeature: handleSessionSelectionChange skipped - destroyed=${state.destroyed}, inProgress=${state.inSelectionChange}`);
       return;
     }
-    
+
     // Guard against recursive calls
     state.inSelectionChange = true;
-    
+
     try {
       // CRITICAL FIX: Don't call session.selectObject from within a session selection change event!
       // This was causing infinite loops: session calls this handler -> we call selectObject -> triggers handler again
       state.selection = id || null;
-      
+
       const renderStart = performance.now();
       renderAll({ fromSession: true });
-      console.log(`SplineFeature: handleSessionSelectionChange renderAll took ${(performance.now() - renderStart).toFixed(1)}ms`);
     } finally {
       state.inSelectionChange = false;
     }
-    
-    console.log(`SplineFeature: handleSessionSelectionChange completed in ${(performance.now() - changeStart).toFixed(1)}ms`);
   };
 
   const handleSessionSplineChange = (nextData, reason = "transform") => {
-    console.log(`SplineFeature: handleSessionSplineChange called with reason=${reason} - PREVIEW MODE`);
     const changeStart = performance.now();
-    
+
     if (state.destroyed || state.inSplineChange) {
-      console.log(`SplineFeature: handleSessionSplineChange skipped - destroyed=${state.destroyed}, inProgress=${state.inSplineChange}`);
       return;
     }
-    
+
     // Guard against recursive calls
     state.inSplineChange = true;
-    
+
     try {
       const normalizeStart = performance.now();
       state.spline = cloneSplineData(normalizeSplineData(nextData));
-      console.log(`SplineFeature: spline normalization took ${(performance.now() - normalizeStart).toFixed(1)}ms`);
-      
+
       // CRITICAL CHANGE: Only update UI, don't trigger feature rebuild during editing
       // The session preview handles the visual updates, feature rebuild happens on dialog close
-      
+
       const renderStart = performance.now();
       renderAll({ fromSession: true });
-      console.log(`SplineFeature: handleSessionSplineChange renderAll took ${(performance.now() - renderStart).toFixed(1)}ms`);
-      
-      console.log(`SplineFeature: preview update completed - no feature rebuild triggered`);
     } finally {
       state.inSplineChange = false;
     }
-    
-    console.log(`SplineFeature: handleSessionSplineChange completed in ${(performance.now() - changeStart).toFixed(1)}ms`);
   };
 
   const ensureSession = () => {
     const viewer = getViewer();
     const featureID = getFeatureID();
-    
-    console.log(`SplineFeature: ensureSession called - existing=${!!state.session}, creating=${state.creatingSession}, destroyed=${state.destroyed}, viewer=${!!viewer}, featureID=${featureID}`);
     const sessionStart = performance.now();
-    
+
     // Prevent creating multiple sessions or infinite loops
     if (state.session || state.creatingSession || state.destroyed) {
-      console.log(`SplineFeature: ensureSession returning existing session`);
       return state.session;
     }
     if (!viewer || !featureID) {
-      console.log(`SplineFeature: ensureSession - missing viewer=${!!viewer} or featureID=${featureID}`);
       return null;
     }
-    
+
     state.creatingSession = true;
-    
+
     try {
-      console.log(`SplineFeature: disposing any existing session`);
+      
       // Dispose any existing session first
       disposeSession(true); // Force disposal when creating new session
-      
+
       const feature = getFeatureRef();
       if (!feature) {
-        console.log(`SplineFeature: ensureSession - no feature reference`);
+        
         state.creatingSession = false;
         return null;
       }
+
       
-      console.log(`SplineFeature: creating new SplineEditorSession`);
       const sessionCreateStart = performance.now();
       const session = new SplineEditorSession(viewer, featureID, {
         featureRef: feature,
@@ -404,122 +385,115 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         onSelectionChange: handleSessionSelectionChange,
         shouldIgnorePointerEvent,
       });
-      console.log(`SplineFeature: SplineEditorSession constructor took ${(performance.now() - sessionCreateStart).toFixed(1)}ms`);
-      state.session = session;
       
+      state.session = session;
+
       const res = Number(feature?.inputParams?.curveResolution);
       const preview = Number.isFinite(res) ? Math.max(4, Math.floor(res)) : undefined;
+
       
-      console.log(`SplineFeature: activating session with spline data, desired selection: ${state.selection}`);
       const activateStart = performance.now();
-      
+
       // Store desired selection before activation (since activation clears it)
       const desiredSelection = state.selection || (state.spline?.points?.[0] ? `point:${state.spline.points[0].id}` : null);
-      
+
       session.activate(state.spline, {
         featureRef: feature,
         previewResolution: preview,
         initialSelection: desiredSelection,
       });
-      console.log(`SplineFeature: session.activate took ${(performance.now() - activateStart).toFixed(1)}ms`);
       
+
       // After activation, restore or set the desired selection
       let currentSelection = desiredSelection;
-      
+
       if (currentSelection) {
-        console.log(`SplineFeature: setting desired selection ${currentSelection} after activation`);
+        
         session.selectObject(currentSelection);
       } else {
-        console.log(`SplineFeature: no selection to set after activation`);
+        
       }
-      
+
       state.selection = currentSelection;
-      
+
       // Force transform controls to be visible by triggering a rebuild
       // This ensures the controls appear immediately when the session is first created
       if (currentSelection) {
-        console.log(`SplineFeature: forcing transform controls visibility for selection ${currentSelection}`);
-        console.log(`SplineFeature: session state before rebuild - hasTransforms=${session.hasTransformControls()}, transformCount=${session.getTransformControlCount()}, selectedId=${session.getSelectedId()}`);
         
+
         session.setSplineData(state.spline, {
           preserveSelection: true,
           silent: true,
           reason: "initial-selection"
         });
+
         
-        console.log(`SplineFeature: session state after rebuild - hasTransforms=${session.hasTransformControls()}, transformCount=${session.getTransformControlCount()}, selectedId=${session.getSelectedId()}`);
-        
+
         // Double-check selection is active
         if (session.getSelectedId() !== currentSelection) {
-          console.log(`SplineFeature: selection lost during rebuild, restoring ${currentSelection}`);
+          
           session.selectObject(currentSelection);
         }
-        
+
         // Force transform visibility update as a final fallback
         if (session._updateTransformVisibility) {
-          console.log(`SplineFeature: calling _updateTransformVisibility directly as fallback`);
+          
           session._updateTransformVisibility();
         }
-        
+
         // Comprehensive debugging of session state and force rebuild if needed
         setTimeout(() => {
-          console.log(`SplineFeature: POST-CREATION SESSION DIAGNOSTICS:`);
-          console.log(`- Session active: ${session.isActive()}`);
-          console.log(`- Selected ID: ${session.getSelectedId()}`);
-          console.log(`- Has transform controls: ${session.hasTransformControls()}`);
-          console.log(`- Transform control count: ${session.getTransformControlCount()}`);
-          console.log(`- Session._transformsById size: ${session._transformsById?.size || 0}`);
-          console.log(`- Session._selectedId: ${session._selectedId}`);
           
+
           // Check if transform controls exist and are in scene
           let hasVisibleControls = false;
           if (session._transformsById) {
             for (const [id, entry] of session._transformsById.entries()) {
               const control = entry?.control;
               const inScene = !!(control && session.viewer?.scene && session.viewer.scene.children.includes(control));
-              console.log(`- Transform ${id}: exists=${!!control}, enabled=${control?.enabled}, visible=${control?.visible}, inScene=${inScene}`);
+              
               if (control?.enabled && control?.visible && inScene) {
                 hasVisibleControls = true;
               }
             }
           }
-          
+
           // If no visible controls but we have a selection, force another rebuild
           if (!hasVisibleControls && currentSelection && session.isActive()) {
-            console.log(`SplineFeature: No visible controls detected, forcing cleanup and rebuild`);
             
+
             // Force cleanup before rebuild
             if (session.forceCleanup) {
               session.forceCleanup();
             }
-            
+
             session.setSplineData(state.spline, {
               preserveSelection: true,
               silent: true,
               reason: "force-controls-visible"
             });
-            
+
             // Force selection again
             session.selectObject(currentSelection);
-            
+
             // Force visibility update
             if (session._updateTransformVisibility) {
               session._updateTransformVisibility();
             }
+
             
-            console.log(`SplineFeature: Force rebuild completed`);
           }
         }, 100);
       }
-      
+
     } catch (error) {
-      console.error('Failed to activate spline session:', error);
+      /* ignore */
       disposeSession(true); // Force disposal on error
     } finally {
       state.creatingSession = false;
     }
+
     
-    console.log(`SplineFeature: ensureSession completed in ${(performance.now() - sessionStart).toFixed(1)}ms`);
     return state.session;
   };
 
@@ -574,36 +548,28 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       const selectBtn = document.createElement("button");
       selectBtn.type = "button";
       selectBtn.className = "spw-btn";
-      selectBtn.textContent = "Select";
+      selectBtn.textContent = "🖉";
       selectBtn.addEventListener("click", () => {
-        console.log(`SplineFeature: selectBtn click started for ${keyId}`);
         const startTime = performance.now();
-        
+
         // Ensure session exists before selecting - this will create transform controls
         let activeSession = state.session;
         const viewer = getViewer();
         const featureID = getFeatureID();
         if (!activeSession && viewer && featureID && !state.creatingSession) {
-          console.log(`SplineFeature: creating session on select button click - viewer=${!!viewer}, featureID=${featureID}`);
           const sessionStart = performance.now();
           activeSession = ensureSession();
-          console.log(`SplineFeature: ensureSession on select took ${(performance.now() - sessionStart).toFixed(1)}ms`);
         }
-        
+
         if (activeSession) {
-          console.log(`SplineFeature: calling session.selectObject for ${keyId}`);
           activeSession.selectObject(keyId);
-          console.log(`SplineFeature: session.selectObject completed in ${(performance.now() - startTime).toFixed(1)}ms`);
         } else {
-          console.warn(`SplineFeature: Failed to create session for selectObject`);
+          /* ignore */
         }
         state.selection = keyId;
-        
+
         const styleStart = performance.now();
         updateSelectionStyles();
-        console.log(`SplineFeature: updateSelectionStyles took ${(performance.now() - styleStart).toFixed(1)}ms`);
-        
-        console.log(`SplineFeature: selectBtn click completed in ${(performance.now() - startTime).toFixed(1)}ms`);
       });
       actions.appendChild(selectBtn);
       pointButtonMap.set(keyId, selectBtn);
@@ -611,11 +577,10 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       const flipBtn = document.createElement("button");
       flipBtn.type = "button";
       flipBtn.className = "spw-btn";
-      flipBtn.textContent = pt.flipDirection ? "Flipped" : "Normal";
+      flipBtn.textContent = ">|<";
       flipBtn.title = "Toggle spline direction";
       flipBtn.addEventListener("click", () => {
         state.spline.points[index].flipDirection = !state.spline.points[index].flipDirection;
-        flipBtn.textContent = state.spline.points[index].flipDirection ? "Flipped" : "Normal";
         commit("flip-direction");
       });
       actions.appendChild(flipBtn);
@@ -666,7 +631,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
 
       const extensionCoords = document.createElement("div");
       extensionCoords.className = "spw-coords";
-      
+
       // Forward distance
       const forwardWrap = document.createElement("label");
       forwardWrap.className = "spw-axis";
@@ -687,7 +652,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       });
       forwardWrap.appendChild(forwardInput);
       extensionCoords.appendChild(forwardWrap);
-      
+
       // Backward distance
       const backwardWrap = document.createElement("label");
       backwardWrap.className = "spw-axis";
@@ -778,36 +743,28 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       const selectBtn = document.createElement("button");
       selectBtn.type = "button";
       selectBtn.className = "spw-btn";
-      selectBtn.textContent = "Select";
+      selectBtn.textContent = "🖉";
       selectBtn.addEventListener("click", () => {
-        console.log(`SplineFeature: weight selectBtn click started for ${key}`);
         const startTime = performance.now();
-        
+
         // Ensure session exists before selecting - this will create transform controls
         let activeSession = state.session;
         const viewer = getViewer();
         const featureID = getFeatureID();
         if (!activeSession && viewer && featureID && !state.creatingSession) {
-          console.log(`SplineFeature: creating session on weight select button click - viewer=${!!viewer}, featureID=${featureID}`);
           const sessionStart = performance.now();
           activeSession = ensureSession();
-          console.log(`SplineFeature: ensureSession on weight select took ${(performance.now() - sessionStart).toFixed(1)}ms`);
         }
-        
+
         if (activeSession) {
-          console.log(`SplineFeature: calling session.selectObject for weight ${key}`);
           activeSession.selectObject(key);
-          console.log(`SplineFeature: weight session.selectObject completed in ${(performance.now() - startTime).toFixed(1)}ms`);
         } else {
-          console.warn(`SplineFeature: Failed to create session for weight selectObject`);
+          /* ignore */
         }
         state.selection = key;
-        
+
         const styleStart = performance.now();
         updateSelectionStyles();
-        console.log(`SplineFeature: weight updateSelectionStyles took ${(performance.now() - styleStart).toFixed(1)}ms`);
-        
-        console.log(`SplineFeature: weight selectBtn click completed in ${(performance.now() - startTime).toFixed(1)}ms`);
       });
       actions.appendChild(selectBtn);
       weightButtonMap.set(key, selectBtn);
@@ -851,7 +808,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       const isSelected = selected === key;
       btn.style.background = isSelected ? 'rgba(58, 74, 109, 0.45)' : 'rgba(108, 195, 255, 0.12)';
       btn.style.opacity = isSelected ? '1' : '0.95';
-      btn.textContent = isSelected ? 'Editing' : 'Select';
     }
     for (const [key, rowEl] of weightRowMap.entries()) {
       rowEl.classList.toggle('spw-selected', selected === key);
@@ -860,57 +816,45 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       const isSelected = selected === key;
       btn.style.background = isSelected ? 'rgba(58, 74, 109, 0.45)' : 'rgba(108, 195, 255, 0.12)';
       btn.style.opacity = isSelected ? '1' : '0.95';
-      btn.textContent = isSelected ? 'Editing' : 'Select';
     }
   };
 
   const renderAll = ({ fromSession = false } = {}) => {
     const viewer = getViewer();
     const featureID = getFeatureID();
-    
-    console.log(`SplineFeature: renderAll called, fromSession=${fromSession}, viewer=${!!viewer}, featureID=${featureID}`);
     const renderStart = performance.now();
-    
+
     if (state.destroyed || state.creatingSession) {
-      console.log(`SplineFeature: renderAll skipped - destroyed=${state.destroyed}, creatingSession=${state.creatingSession}`);
       return;
     }
-    
+
     ensureState();
-    
+
     // Always ensure session exists when we have viewer and featureID (but not during updates from session)
     let activeSession = state.session;
     if (!fromSession && viewer && featureID && !state.creatingSession) {
       if (!activeSession) {
-        console.log(`SplineFeature: creating session in renderAll - viewer=${!!viewer}, featureID=${featureID}`);
         const sessionStart = performance.now();
         activeSession = ensureSession();
-        console.log(`SplineFeature: ensureSession took ${(performance.now() - sessionStart).toFixed(1)}ms`);
       } else {
-        console.log(`SplineFeature: session already exists, not recreating`);
       }
     } else {
-      console.log(`SplineFeature: not creating session - fromSession=${fromSession}, viewer=${!!viewer}, featureID=${featureID}, creatingSession=${state.creatingSession}`);
+      
     }
-    
+
     if (activeSession && !fromSession) {
       const selectionStart = performance.now();
       state.selection = activeSession.getSelectedId?.() || state.selection;
-      console.log(`SplineFeature: getSelectedId took ${(performance.now() - selectionStart).toFixed(1)}ms`);
     }
-    
+
     const pointsStart = performance.now();
     renderPointRows();
-    console.log(`SplineFeature: renderPointRows took ${(performance.now() - pointsStart).toFixed(1)}ms`);
-    
+
     const weightsStart = performance.now();
     renderWeights();
-    console.log(`SplineFeature: renderWeights took ${(performance.now() - weightsStart).toFixed(1)}ms`);
-    
+
     addBtn.disabled = !getFeatureRef();
     focusPendingPoint();
-    
-    console.log(`SplineFeature: renderAll completed in ${(performance.now() - renderStart).toFixed(1)}ms`);
   };
 
   const movePoint = (index, delta) => {
@@ -930,27 +874,24 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       ? state.spline.points
       : [];
     if (points.length <= 2) return;
+    
     const [removed] = points.splice(index, 1);
-    if (removed && removed.id && !state.pendingFocusId) {
+    
+    // Determine fallback selection after removal
+    let newSelection = null;
+    if (points.length > 0) {
       const fallbackIdx = Math.min(index, points.length - 1);
       const fallback = points[fallbackIdx];
-      state.pendingFocusId = fallback ? fallback.id : null;
-    }
-    if (!state.session && removed) {
-      const removedKey = `point:${removed.id}`;
-      if (state.selection === removedKey) state.selection = null;
-    }
-    if (points.length) {
-      const first = points[0];
-      const last = points[points.length - 1];
-      if (first) {
-        state.spline.startWeight.position = first.position.slice();
-      }
-      if (last) {
-        state.spline.endWeight.position = last.position.slice();
+      if (fallback) {
+        newSelection = `point:${fallback.id}`;
+        state.pendingFocusId = fallback.id;
       }
     }
-    commit("remove-point", { preserveSelection: true });
+    
+    commit("remove-point", { 
+      preserveSelection: false,
+      newSelection: newSelection
+    });
   };
 
   const resetWeight = (keyName) => {
@@ -966,15 +907,13 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   };
 
   const commitChangesToFeature = () => {
-    console.log(`SplineFeature: commitChangesToFeature called - finalizing spline changes`);
-    
+
     const normalized = normalizeSplineData(state.spline);
     state.spline = cloneSplineData(normalized);
-    
+
     const oldSignature = state.signature;
     state.signature = computeSignature(state.spline);
-    console.log(`SplineFeature: final commit signature change from ${oldSignature} to ${state.signature}`);
-    
+
     ui.params[key] = state.signature;
 
     const feature = getFeatureRef();
@@ -992,42 +931,34 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       }
     }
 
-    console.log(`SplineFeature: calling _emitParamsChange for final commit`);
     ui._emitParamsChange(key, {
       signature: state.signature,
       reason: "dialog-close",
       timestamp: Date.now(),
     });
-    
-    console.log(`SplineFeature: commitChangesToFeature completed`);
   };
 
   const commit = (reason, options = {}) => {
-    console.log(`SplineFeature: commit called with reason=${reason}`, {
-      skipSessionSync: options.skipSessionSync,
-      preserveSelection: options.preserveSelection,
-      newSelection: options.newSelection
-    });
-    
+
     const { skipSessionSync = false, preserveSelection = true, newSelection = null } = options;
     const focusId = state.pendingFocusId || null;
     const normalized = normalizeSplineData(state.spline);
     state.spline = cloneSplineData(normalized);
     state.pendingFocusId = focusId;
-    
+
     // For manual commits (add/remove/reorder points), we do need to update the feature
     // But for transform operations, we rely on preview mode
-    
+
     const oldSignature = state.signature;
     state.signature = computeSignature(state.spline);
-    console.log(`SplineFeature: commit signature change from ${oldSignature} to ${state.signature}`);
-    
+
     ui.params[key] = state.signature;
 
     const feature = getFeatureRef();
     markDirty(feature, state.spline);
 
     const ph = getPartHistory();
+    const featureID = getFeatureID();
     if (ph && Array.isArray(ph.features)) {
       for (const item of ph.features) {
         if (
@@ -1040,15 +971,33 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     }
 
     if (!skipSessionSync && !state.creatingSession) {
-      const session = ensureSession();
-      if (session) {
-        session.setFeatureRef(feature);
-        session.setSplineData(state.spline, {
-          preserveSelection,
-          silent: true,
-          reason,
-        });
-        if (newSelection) session.selectObject(newSelection);
+      // For structural changes (add/remove/reorder points), restart the session completely
+      const isStructuralChange = reason === "add-point" || reason === "remove-point" || reason === "reorder-point";
+      
+      if (isStructuralChange) {
+        console.log(`SplineWidget: Restarting session due to structural change: ${reason}`);
+        
+        // Completely dispose and recreate the session
+        disposeSession(true);
+        state.session = null;
+        
+        // Create new session with updated spline data
+        const session = ensureSession();
+        if (session && newSelection) {
+          session.selectObject(newSelection);
+        }
+      } else {
+        // For non-structural changes, just update the existing session
+        const session = ensureSession();
+        if (session) {
+          session.setFeatureRef(feature);
+          session.setSplineData(state.spline, {
+            preserveSelection,
+            silent: true,
+            reason,
+          });
+          if (newSelection) session.selectObject(newSelection);
+        }
       }
     }
     if (skipSessionSync && newSelection) {
@@ -1058,22 +1007,13 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       state.selection = newSelection;
     }
 
-    // Only trigger feature rebuild for structural changes (add/remove/reorder points)
-    // Transform operations stay in preview mode
-    if (reason !== "transform" && reason !== "update-forward-distance" && reason !== "update-backward-distance") {
-      console.log(`SplineFeature: commit calling _emitParamsChange for structural change: ${reason}`);
-      ui._emitParamsChange(key, {
-        signature: state.signature,
-        reason,
-        timestamp: Date.now(),
-      });
-    } else {
-      console.log(`SplineFeature: skipping feature rebuild for preview change: ${reason}`);
-    }
+    // CRITICAL: Never trigger feature rebuild while session is active!
+    // The session handles all preview updates. Feature rebuild only happens when dialog closes.
+    // This prevents Spline.run() from being called while editing, which would interfere with the session.
     
-    console.log(`SplineFeature: commit calling renderAll`);
+    // Only save the signature change, but don't emit params change to prevent feature rebuild
+    // Feature will be rebuilt when the dialog closes via commitChangesToFeature()
     renderAll();
-    console.log(`SplineFeature: commit completed`);
   };
 
   addBtn.addEventListener("click", () => {
@@ -1105,32 +1045,28 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   });
 
   ensureState();
-  
+
   // Set up initial selection to first point if no selection exists
   if (!state.selection && state.spline?.points?.length > 0) {
     const firstPoint = state.spline.points[0];
     state.selection = `point:${firstPoint.id}`;
-    console.log(`SplineFeature: initial selection set to first point: ${state.selection}`);
   }
-  
+
   renderAll();
-  
+
   // If session creation failed initially due to missing viewer/featureID, retry multiple times
   if (!state.session) {
-    console.log(`SplineFeature: initial session creation failed, scheduling retries`);
-    
+
     // Try multiple times with increasing delays
     const retryDelays = [50, 200, 500, 1000]; // Try at 50ms, 200ms, 500ms, and 1s
-    
+
     retryDelays.forEach((delay, index) => {
       setTimeout(() => {
         if (!state.session && !state.destroyed) {
-          console.log(`SplineFeature: retry ${index + 1} session creation after ${delay}ms`);
           renderAll();
-          
+
           // If we successfully created a session and have a selection, make sure transform controls are visible
           if (state.session && state.selection) {
-            console.log(`SplineFeature: retry ${index + 1} - session created, ensuring selection is active`);
             state.session.selectObject(state.selection);
           }
         }
@@ -1144,19 +1080,13 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     skipDefaultRefresh: true,
     refreshFromParams() {
       if (state.destroyed || state.creatingSession || state.refreshing) return;
-      
+
       const viewer = getViewer();
       const featureID = getFeatureID();
-      
+
       const stack = new Error().stack;
-      console.log("SplineFeature: refreshFromParams called", { 
-        viewer: !!viewer,
-        featureID,
-        hasSession: !!state.session,
-        stackTrace: stack.split('\n').slice(1, 4).join('\n') 
-      });
       state.refreshing = true;
-      
+
       try {
         const next = loadFromSource();
         const nextSig = computeSignature(next);
@@ -1164,7 +1094,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
           state.spline = next;
           state.signature = nextSig;
           ui.params[key] = state.signature;
-          
+
           // Only update existing session, don't create new one during refresh
           if (state.session) {
             state.session.setFeatureRef(getFeatureRef());
@@ -1180,34 +1110,30 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
           state.session.setFeatureRef(getFeatureRef());
           renderAll({ fromSession: true });
         }
-        
+
         // Try to create session if it doesn't exist and viewer/featureID are now available
         if (!state.session && viewer && featureID && !state.creatingSession) {
-          console.log(`SplineFeature: viewer/featureID now available during refresh, creating session`);
           renderAll(); // This will create the session
         }
       } catch (error) {
-        console.error("Error in refreshFromParams:", error);
+        /* ignore */
       } finally {
         // Use setTimeout to prevent rapid successive calls - increase delay to break loops
         setTimeout(() => {
-          console.log(`SplineFeature: refreshing flag cleared`);
           state.refreshing = false;
         }, 200); // Increased from 50ms to 200ms to break refresh loops
       }
     },
     destroy() {
-      console.log(`SplineFeature: destroy called - committing final changes`);
-      
       // CRITICAL: Commit all changes to the feature when dialog closes
       if (!state.destroyed && state.spline) {
         commitChangesToFeature();
       }
-      
+
       state.destroyed = true;
-      
-      
-      
+
+
+
       disposeSession(true); // Force disposal during destroy
 
 
@@ -1247,15 +1173,12 @@ export class SplineFeature {
   }
 
   destroy() {
-    console.log(`SplineFeature: destroy called - committing final changes`);
-    
     // Dispose the spline session if it exists to remove preview and transform controls
     if (this._splineSession) {
-      console.log(`SplineFeature: disposing spline session to clean up scene`);
       this._splineSession.dispose();
       this._splineSession = null;
     }
-    
+
     // Mark as destroyed to prevent further operations
     this._destroyed = true;
   }
@@ -1331,7 +1254,7 @@ export class SplineFeature {
           pt.position[1] + pt.backwardExtension[1],
           pt.position[2] + pt.backwardExtension[2]
         ];
-        
+
         const forwardVertex = new BREP.Vertex(forwardPos, {
           name: `${featureId}:F${idx}`,
         });
@@ -1340,7 +1263,7 @@ export class SplineFeature {
           splinePointId: pt.id,
           extensionType: "forward",
         };
-        
+
         const backwardVertex = new BREP.Vertex(backwardPos, {
           name: `${featureId}:B${idx}`,
         });
@@ -1349,7 +1272,7 @@ export class SplineFeature {
           splinePointId: pt.id,
           extensionType: "backward",
         };
-        
+
         sceneGroup.add(forwardVertex);
         sceneGroup.add(backwardVertex);
       });
@@ -1360,11 +1283,9 @@ export class SplineFeature {
     this.persistentData = this.persistentData || {};
     this.persistentData.spline = cloneSplineData(spline);
 
-    console.log(`SplineFeature: run() completed for ${featureId} - feature geometry built`);
-
     // remove all children of the scene that have a name starting with "SplineEditorPreview"
     const existingPreviews = partHistory.scene.children.filter(child =>
-      
+
       child.name.startsWith("SplineEditor")
     );
     for (const preview of existingPreviews) {

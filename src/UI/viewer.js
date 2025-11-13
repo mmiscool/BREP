@@ -478,7 +478,18 @@ export class Viewer {
         } catch { }
     }
 
+    // ————————————————————————————————————————
+    // Spline Mode API
+    // ————————————————————————————————————————
+    startSplineMode(splineSession) {
+        console.log('Starting Spline Mode for session:', splineSession);
+        this._splineMode = splineSession;
+    }
 
+    endSplineMode() {
+        console.log('Ending Spline Mode');
+        this._splineMode = null;
+    }
 
     // ————————————————————————————————————————
     // PMI Edit Mode API
@@ -740,7 +751,66 @@ export class Viewer {
     _pickAtEvent(event) {
         // While Sketch Mode is active, suppress normal scene picking
         // SketchMode3D manages its own picking for sketch points/curves and model edges.
-        if (this._sketchMode || this._splineMode) return { hit: null, target: null };
+        if (this._sketchMode) return { hit: null, target: null };
+        
+        // DEBUG: Log current mode
+        //console.log(`_pickAtEvent called - splineMode active: ${!!this._splineMode}, sketchMode active: ${!!this._sketchMode}`);
+        
+        // In spline mode, allow picking only spline vertices, suppress other scene picking
+        if (this._splineMode) {
+            if (!event) return { hit: null, target: null };
+            const ndc = this._getPointerNDC(event);
+            this.raycaster.setFromCamera(ndc, this.camera);
+            // Set up raycaster params for vertex picking
+            try {
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                const wpp = this._worldPerPixel(this.camera, rect.width, rect.height);
+                this.raycaster.params.Points = this.raycaster.params.Points || {};
+                this.raycaster.params.Points.threshold = Math.max(0.05, wpp * 6);
+            } catch { }
+            
+            // Only intersect spline vertices
+            const intersects = this.raycaster.intersectObjects(this.scene.children, true);
+            
+            // DEBUG: Log all objects under mouse pointer
+            // console.log(`SPLINE MODE CLICK DEBUG:`);
+            // console.log(`- Mouse NDC: (${ndc.x.toFixed(3)}, ${ndc.y.toFixed(3)})`);
+            // console.log(`- Total intersections found: ${intersects.length}`);
+            // intersects.forEach((it, idx) => {
+            //     const obj = it.object;
+            //     console.log(`  [${idx}] Object:`, {
+            //         name: obj.name,
+            //         type: obj.type,
+            //         constructor: obj.constructor.name,
+            //         distance: it.distance?.toFixed(3),
+            //         hasOnClick: typeof obj.onClick === 'function',
+            //         userData: obj.userData,
+            //         isSplineVertex: obj.userData?.isSplineVertex,
+            //         isSplineWeight: obj.userData?.isSplineWeight,
+            //         visible: obj.visible,
+            //         parent: obj.parent?.name
+            //     });
+            // });
+            
+            for (const it of intersects) {
+                if (!it || !it.object) continue;
+                
+                // Check if this is a spline vertex by looking at userData
+                if (it.object.userData?.isSplineVertex || it.object.userData?.isSplineWeight) {
+                    const target = it.object;
+                    //console.log(`SPLINE MODE: Found spline vertex/weight to select:`, target.name);
+                    if (typeof target.onClick === 'function') {
+                        //console.log(`SPLINE MODE: Vertex has onClick handler, returning as target`);
+                        return { hit: it, target };
+                    } else {
+                       // console.log(`SPLINE MODE: Vertex missing onClick handler!`);
+                    }
+                }
+            }
+            //console.log(`SPLINE MODE: No spline vertices found under cursor`);
+            return { hit: null, target: null };
+        }
+        
         if (!event) return { hit: null, target: null };
         const ndc = this._getPointerNDC(event);
         this.raycaster.setFromCamera(ndc, this.camera);
@@ -771,7 +841,26 @@ export class Viewer {
         } catch { }
         // Intersect everything; raycaster will skip non-geometry nodes
         const intersects = this.raycaster.intersectObjects(this.scene.children, true);
-        //console.log('Pick intersects: wooooooooooooooooooooo', intersects);
+        
+        // DEBUG: Log all objects under mouse pointer in normal mode
+        if (intersects.length > 0) {
+            console.log(`NORMAL MODE CLICK DEBUG:`);
+            console.log(`- Mouse NDC: (${ndc.x.toFixed(3)}, ${ndc.y.toFixed(3)})`);
+            console.log(`- Total intersections found: ${intersects.length}`);
+            intersects.slice(0, 5).forEach((it, idx) => { // Only log first 5 to avoid spam
+                const obj = it.object;
+                console.log(`  [${idx}] Object:`, {
+                    name: obj.name,
+                    type: obj.type,
+                    constructor: obj.constructor.name,
+                    distance: it.distance?.toFixed(3),
+                    hasOnClick: typeof obj.onClick === 'function',
+                    visible: obj.visible,
+                    parent: obj.parent?.name
+                });
+            });
+        }
+        
         for (const it of intersects) {
             // skip entities that are not visible (or have invisible parents)
             if (!it || !it.object) continue;
