@@ -1117,8 +1117,8 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         .slice(2, 6)}`,
       position: newPosition,
       rotation: newRotation,
-      forwardDistance: 0,
-      backwardDistance: 0,
+      forwardDistance: 0.1,
+      backwardDistance: 0.1,
     };
 
     // Insert the point at the calculated position

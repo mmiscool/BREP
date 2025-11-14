@@ -669,8 +669,16 @@ export class Viewer {
         this._wireframeEnabled = !!enabled;
         try {
             this.scene.traverse((obj) => {
-                // Exclude edge/loop/line objects from wireframe toggling
                 if (!obj) return;
+                // Exclude transform gizmo hierarchy from wireframe toggling
+                try {
+                    let p = obj;
+                    while (p) {
+                        if (p.isTransformGizmo) return;
+                        p = p.parent;
+                    }
+                } catch { }
+                // Exclude edge/loop/line objects from wireframe toggling
                 if (obj.type === 'EDGE' || obj.type === 'LOOP' || obj.isLine || obj.isLine2 || obj.isLineSegments || obj.isLineLoop) return;
 
                 const apply = (mat) => { if (mat && 'wireframe' in mat) mat.wireframe = !!enabled; };
