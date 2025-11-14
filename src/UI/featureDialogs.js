@@ -3,8 +3,7 @@
 import { SelectionFilter } from './SelectionFilter.js';
 import * as THREE from 'three';
 // Use hybrid translate+rotate gizmo used by the Viewer
-import { TransformControls as TransformControlsDirect } from './controls/CombinedTransformControls.js';
-//import { TransformControls as TransformControlsAddons } from 'three/examples/jsm/Addons.js';
+import { CombinedTransformControls } from './controls/CombinedTransformControls.js';
 import { getWidgetRenderer } from './featureDialogWidgets/index.js';
 import { normalizeReferenceList, normalizeReferenceName } from './featureDialogWidgets/utils.js';
 
@@ -58,11 +57,11 @@ export class SchemaForm {
             // Detach and dispose controls
             s.controls.detach();
             if (s.viewer && s.viewer.scene) {
-                try { if (s.controls && s.controls.isObject3D) s.viewer.scene.remove(s.controls); } catch (_) {}
-                try { if (s.controls && s.controls.__helper && s.controls.__helper.isObject3D) s.viewer.scene.remove(s.controls.__helper); } catch (_) {}
-                try { if (s.group && s.group.isObject3D) s.viewer.scene.remove(s.group); } catch (_) {}
+                try { if (s.controls && s.controls.isObject3D) s.viewer.scene.remove(s.controls); } catch (_) { }
+                try { if (s.controls && s.controls.__helper && s.controls.__helper.isObject3D) s.viewer.scene.remove(s.controls.__helper); } catch (_) { }
+                try { if (s.group && s.group.isObject3D) s.viewer.scene.remove(s.group); } catch (_) { }
             }
-            try { s.controls.dispose(); } catch (_) {}
+            try { s.controls.dispose(); } catch (_) { }
         } catch (_) { }
         try {
             // Remove any capture-phase event listeners installed during activation
@@ -315,8 +314,8 @@ export class SchemaForm {
                         const prec = a >= 100 ? 0 : (a >= 10 ? 1 : 2);
                         return String(x.toFixed(prec));
                     };
-                    const p = Array.isArray(v?.position) ? v.position : [0,0,0];
-                    const r = Array.isArray(v?.rotationEuler) ? v.rotationEuler : [0,0,0];
+                    const p = Array.isArray(v?.position) ? v.position : [0, 0, 0];
+                    const r = Array.isArray(v?.rotationEuler) ? v.rotationEuler : [0, 0, 0];
                     info.textContent = `pos(${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])})  rot(${fmt(r[0])}, ${fmt(r[1])}, ${fmt(r[2])})`;
                 }
                 continue;
@@ -517,7 +516,7 @@ export class SchemaForm {
 
     // Activate a TransformControls session for a transform widget
     _activateTransformWidget({ inputEl, wrapEl, key, def, valueAdapter = null }) {
-        try { this._stopActiveReferenceSelection(); } catch (_) {}
+        try { this._stopActiveReferenceSelection(); } catch (_) { }
         // Toggle logic: if already active for this input, stop and hide
         try {
             const s = SchemaForm.__activeXform;
@@ -665,7 +664,7 @@ export class SchemaForm {
         viewer.scene.add(target);
 
         // Prefer the direct controls build; fallback to Addons
-        let TCctor = TransformControlsDirect || TransformControlsAddons;
+        let TCctor = CombinedTransformControls || TransformControlsAddons;
         try {
             if (!TCctor) TCctor = TransformControlsAddons;
         } catch (_) { /* no-op */ }
@@ -730,7 +729,7 @@ export class SchemaForm {
                     const ud = node.userData || (node.userData = {});
                     if (ud.__brepOverlayHook) return;
                     const prev = node.onBeforeRender;
-                    node.onBeforeRender = function(renderer, scene, camera, geometry, material, group) {
+                    node.onBeforeRender = function (renderer, scene, camera, geometry, material, group) {
                         try { renderer.clearDepth(); } catch (_) { }
                         if (typeof prev === 'function') {
                             prev.call(this, renderer, scene, camera, geometry, material, group);
@@ -762,23 +761,23 @@ export class SchemaForm {
             } catch (_) { }
             refreshOverlay();
         };
-        try { updateForCamera(); } catch (_) {}
+        try { updateForCamera(); } catch (_) { }
         try {
             if (viewer?.controls && typeof viewer.controls.addEventListener === 'function') {
                 viewer.controls.addEventListener('change', updateForCamera);
             }
         } catch (_) { }
 
-        try { tc.addEventListener('mouseDown', () => { try { if (viewer.controls) viewer.controls.enabled = false; } catch (_) {} refreshOverlay(); }); } catch (_) {}
-        try { tc.addEventListener('mouseUp',   () => { try { if (viewer.controls) viewer.controls.enabled = true;  } catch (_) {} commitTransform(); refreshOverlay(); }); } catch (_) {}
+        try { tc.addEventListener('mouseDown', () => { try { if (viewer.controls) viewer.controls.enabled = false; } catch (_) { } refreshOverlay(); }); } catch (_) { }
+        try { tc.addEventListener('mouseUp', () => { try { if (viewer.controls) viewer.controls.enabled = true; } catch (_) { } commitTransform(); refreshOverlay(); }); } catch (_) { }
         // Backward/compat: older builds fire dragging-changed
         try {
             tc.addEventListener('dragging-changed', (ev) => {
-                try { if (viewer.controls) viewer.controls.enabled = !ev.value; } catch (_) {}
+                try { if (viewer.controls) viewer.controls.enabled = !ev.value; } catch (_) { }
                 if (!ev.value) commitTransform();
                 refreshOverlay();
             });
-        } catch (_) {}
+        } catch (_) { }
 
         const updateParamFromTarget = () => {
             const basePosVec = new THREE.Vector3(
@@ -846,7 +845,7 @@ export class SchemaForm {
         };
         tc.addEventListener('change', (ev) => { updateParamFromTarget(ev); refreshOverlay(); });
         // Fallback commit for cases where mouseUp/dragging-changed are unreliable (some builds)
-        try { tc.addEventListener('objectChange', () => { try { if (!tc.dragging) commitTransform(); } catch (_) {} refreshOverlay(); }); } catch (_) {}
+        try { tc.addEventListener('objectChange', () => { try { if (!tc.dragging) commitTransform(); } catch (_) { } refreshOverlay(); }); } catch (_) { }
 
         // Expose an isOver helper for Viewer to suppress its own handlers when interacting with gizmo
         const isOver = (ev) => {
@@ -891,12 +890,12 @@ export class SchemaForm {
             // Preferred modern API: helper root on the controls
             const helper = (typeof tc.getHelper === 'function') ? tc.getHelper() : null;
             if (helper && helper.isObject3D) {
-                try { helper.userData = helper.userData || {}; helper.userData.excludeFromFit = true; } catch (_) {}
+                try { helper.userData = helper.userData || {}; helper.userData.excludeFromFit = true; } catch (_) { }
                 markOverlay(helper);
                 viewer.scene.add(helper); addedToScene = true; tc.__helper = helper;
             }
             else if (tc && tc.isObject3D) {
-                try { tc.userData = tc.userData || {}; tc.userData.excludeFromFit = true; } catch (_) {}
+                try { tc.userData = tc.userData || {}; tc.userData.excludeFromFit = true; } catch (_) { }
                 markOverlay(tc);
                 viewer.scene.add(tc); addedToScene = true;
             }
@@ -909,10 +908,10 @@ export class SchemaForm {
                 const candidates = [tc?.gizmo, tc?._gizmo, tc?.picker, tc?._picker, tc?.helper, tc?._helper];
                 let attached = 0;
                 for (const cand of candidates) {
-                    if (cand && cand.isObject3D) { try { group.add(cand); attached++; } catch (_) {} }
+                    if (cand && cand.isObject3D) { try { group.add(cand); attached++; } catch (_) { } }
                 }
                 if (attached > 0) {
-                    try { group.userData = group.userData || {}; group.userData.excludeFromFit = true; } catch (_) {}
+                    try { group.userData = group.userData || {}; group.userData.excludeFromFit = true; } catch (_) { }
                     markOverlay(group);
                     viewer.scene.add(group); addedToScene = true; tc.__fallbackGroup = group;
                 }
@@ -924,7 +923,7 @@ export class SchemaForm {
         }
         try { tc.showX = true; tc.showY = true; tc.showZ = true; } catch (_) { }
         try { tc.setSpace('world'); } catch (_) { }
-        try { tc.addEventListener('change', () => { try { viewer.render(); } catch (_) {} }); } catch (_) { }
+        try { tc.addEventListener('change', () => { try { viewer.render(); } catch (_) { } }); } catch (_) { }
         try { tc.attach(target); markOverlay(tc); markOverlay(tc.__helper); markOverlay(tc.__fallbackGroup); } catch (_) { }
 
         // Mark active

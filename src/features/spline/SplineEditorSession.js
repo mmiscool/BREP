@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { CombinedTransformControls as TransformControlsDirect } from "../../UI/controls/CombinedTransformControls.js";
+import { CombinedTransformControls  } from "../../UI/controls/CombinedTransformControls.js";
 import { BREP } from "../../BREP/BREP.js";
 import {
   DEFAULT_RESOLUTION,
@@ -563,11 +563,11 @@ export class SplineEditorSession {
 
       return null;
     }
-    if (!TransformControlsDirect) {
+    if (!CombinedTransformControls) {
 
       return null;
     }
-    const control = new TransformControlsDirect(
+    const control = new CombinedTransformControls(
       this.viewer.camera,
       this.viewer.renderer.domElement
     );

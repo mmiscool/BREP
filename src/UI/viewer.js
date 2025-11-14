@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { ArcballControls } from 'three/examples/jsm/controls/ArcballControls.js';
 // Use custom combined translate+rotate gizmo (drop-in for three/examples TransformControls)
-import { TransformControls as TransformControlsDirect } from './controls/CombinedTransformControls.js';
+import { CombinedTransformControls } from './controls/CombinedTransformControls.js';
 import { SceneListing } from './SceneListing.js';
 import { CADmaterials, CADmaterialWidget } from './CADmaterials.js';
 import { AccordionWidget } from './AccordionWidget.js';
@@ -752,10 +752,10 @@ export class Viewer {
         // While Sketch Mode is active, suppress normal scene picking
         // SketchMode3D manages its own picking for sketch points/curves and model edges.
         if (this._sketchMode) return { hit: null, target: null };
-        
+
         // DEBUG: Log current mode
         //console.log(`_pickAtEvent called - splineMode active: ${!!this._splineMode}, sketchMode active: ${!!this._sketchMode}`);
-        
+
         // In spline mode, allow picking only spline vertices, suppress other scene picking
         if (this._splineMode) {
             if (!event) return { hit: null, target: null };
@@ -768,10 +768,10 @@ export class Viewer {
                 this.raycaster.params.Points = this.raycaster.params.Points || {};
                 this.raycaster.params.Points.threshold = Math.max(0.05, wpp * 6);
             } catch { }
-            
+
             // Only intersect spline vertices
             const intersects = this.raycaster.intersectObjects(this.scene.children, true);
-            
+
             // DEBUG: Log all objects under mouse pointer
             // console.log(`SPLINE MODE CLICK DEBUG:`);
             // console.log(`- Mouse NDC: (${ndc.x.toFixed(3)}, ${ndc.y.toFixed(3)})`);
@@ -791,10 +791,10 @@ export class Viewer {
             //         parent: obj.parent?.name
             //     });
             // });
-            
+
             for (const it of intersects) {
                 if (!it || !it.object) continue;
-                
+
                 // Check if this is a spline vertex by looking at userData
                 if (it.object.userData?.isSplineVertex || it.object.userData?.isSplineWeight) {
                     const target = it.object;
@@ -803,14 +803,14 @@ export class Viewer {
                         //console.log(`SPLINE MODE: Vertex has onClick handler, returning as target`);
                         return { hit: it, target };
                     } else {
-                       // console.log(`SPLINE MODE: Vertex missing onClick handler!`);
+                        // console.log(`SPLINE MODE: Vertex missing onClick handler!`);
                     }
                 }
             }
             //console.log(`SPLINE MODE: No spline vertices found under cursor`);
             return { hit: null, target: null };
         }
-        
+
         if (!event) return { hit: null, target: null };
         const ndc = this._getPointerNDC(event);
         this.raycaster.setFromCamera(ndc, this.camera);
@@ -841,7 +841,7 @@ export class Viewer {
         } catch { }
         // Intersect everything; raycaster will skip non-geometry nodes
         const intersects = this.raycaster.intersectObjects(this.scene.children, true);
-        
+
         // DEBUG: Log all objects under mouse pointer in normal mode
         if (intersects.length > 0) {
             console.log(`NORMAL MODE CLICK DEBUG:`);
@@ -860,7 +860,7 @@ export class Viewer {
                 // });
             });
         }
-        
+
         for (const it of intersects) {
             // skip entities that are not visible (or have invisible parents)
             if (!it || !it.object) continue;
@@ -1039,7 +1039,7 @@ export class Viewer {
     _activateComponentTransform(component) {
         if (!component) return;
         if (component.fixed) return;
-        const TCctor = TransformControlsDirect;
+        const TCctor = CombinedTransformControls;
         if (!TCctor) {
             console.warn('[Viewer] TransformControls unavailable; cannot activate component gizmo.');
             return;
