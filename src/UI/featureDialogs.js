@@ -663,13 +663,9 @@ export class SchemaForm {
         } catch (_) { }
         viewer.scene.add(target);
 
-        // Prefer the direct controls build; fallback to Addons
-        let TCctor = CombinedTransformControls || TransformControlsAddons;
-        try {
-            if (!TCctor) TCctor = TransformControlsAddons;
-        } catch (_) { /* no-op */ }
+        const TCctor = CombinedTransformControls;
         if (!TCctor) {
-            console.warn('[TransformControls] Not available from imports; skipping gizmo.');
+            console.warn('[TransformControls] CombinedTransformControls not available; skipping gizmo.');
             return;
         }
         const tc = new TCctor(viewer.camera, viewer.renderer.domElement);

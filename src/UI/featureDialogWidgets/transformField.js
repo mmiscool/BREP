@@ -80,42 +80,6 @@ export function renderTransformField({ ui, key, def, id, controlWrap, valueAdapt
 
     const modes = document.createElement('div');
     modes.className = 'transform-modes';
-    const mkModeBtn = (label, mode) => {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'btn btn-slim';
-        b.textContent = label;
-        b.dataset.mode = mode;
-        b.addEventListener('click', () => {
-            inputEl.dataset.xformMode = mode;
-            try { ui.setActiveTransformMode?.(inputEl, mode); } catch (_) { }
-            modes.querySelectorAll('button[data-mode]').forEach((x) => x.classList.toggle('selected', x === b));
-        });
-        return b;
-    };
-    const bT = mkModeBtn('Move', 'translate');
-    const bR = mkModeBtn('Rotate', 'rotate');
-    bT.setAttribute('data-mode', 'translate');
-    bR.setAttribute('data-mode', 'rotate');
-    modes.appendChild(bT);
-    modes.appendChild(bR);
-    const defMode = inputEl.dataset.xformMode || 'translate';
-    ({ translate: bT, rotate: bR }[defMode] || bT).classList.add('selected');
-
-    const numericPattern = /^-?\d*\.?\d*$/;
-    const isNumericLike = (value) => {
-        if (value === '' || value == null) return true;
-        return numericPattern.test(String(value));
-    };
-    const onFocusToggleType = (el) => {
-        try {
-            if (isNumericLike(el.value)) {
-                el.type = 'number';
-            } else {
-                el.type = 'text';
-            }
-        } catch (_) { }
-    };
 
     const getTRS = () => readTRS();
     const setTRS = (next, applyTarget = true, options = {}) => {

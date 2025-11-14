@@ -105,8 +105,8 @@ export class CombinedTransformControls extends THREE.Object3D {
 
     // Geometries (shared)
     const gRod = new THREE.CylinderGeometry(0.03, 0.03, 1.0, 16);
-    const gArrow = new THREE.ConeGeometry(0.1, 0.4, 20);
-    const gDot = new THREE.SphereGeometry(0.1, 16, 12);
+    const gArrow = new THREE.ConeGeometry(0.12, 0.4, 20);
+    const gDot = new THREE.SphereGeometry(0.12, 16, 12);
 
     // Axis builders
     const axes = [];
