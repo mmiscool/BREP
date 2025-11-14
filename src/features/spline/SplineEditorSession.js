@@ -55,18 +55,21 @@ export class SplineEditorSession {
     if (!this._transformsById) {
       return;
     }
-    
+
+    // Check if preview group exists, if not rebuild it
+    this._ensurePreviewGroup();
+
     for (const [id, transformEntry] of this._transformsById.entries()) {
       if (!transformEntry) {
         continue;
       }
       const { control } = transformEntry;
       const active = id === this._selectedId;
-      
+
       if (control) {
         control.enabled = active;
         control.visible = active;
-        
+
         // Ensure proper scene management - remove from scene when inactive
         if (this.viewer?.scene) {
           if (active) {
@@ -149,22 +152,25 @@ export class SplineEditorSession {
     this._initMaterials();
     this._buildPreviewGroup();
     this._attachCanvasEvents();
-    
+
     // Set up initial selection before rebuild
     const initialSelection = options.initialSelection || null;
     if (initialSelection) {
       this._selectedId = initialSelection;
     }
-    
+
     this._rebuildAll({ preserveSelection: !!initialSelection });
 
     this._active = true;
-    
+
     // Register with viewer to enable spline mode (suppress normal scene picking)
     if (this.viewer && typeof this.viewer.startSplineMode === 'function') {
       this.viewer.startSplineMode(this);
     }
-    
+
+    // Hook into viewer's controls change event to update transform controls
+    this._setupControlsListener();
+
     this._notifySelectionChange(this._selectedId);
     this._renderOnce();
     return true;
@@ -178,7 +184,10 @@ export class SplineEditorSession {
     if (this.viewer && typeof this.viewer.endSplineMode === 'function') {
       this.viewer.endSplineMode();
     }
-    
+
+    // Remove controls change listener
+    this._teardownControlsListener();
+
     this._detachCanvasEvents();
     this._teardownAllTransforms();
     this._destroyPreviewGroup();
@@ -200,16 +209,19 @@ export class SplineEditorSession {
    * @param {string} [options.reason="manual"]
    */
   setSplineData(spline, options = {}) {
-    
+
     const {
       preserveSelection = true,
       silent = false,
       reason = "manual",
     } = options;
-    
+
     const normalized = normalizeSplineData(cloneSplineData(spline));
     this._splineData = normalized;
-    
+
+    // Update the feature's persistent data immediately
+    this._updateFeaturePersistentData();
+
     // CRITICAL FIX: Don't rebuild everything if this is just a transform update
     if (reason === "transform" && preserveSelection) {
       // Just update the preview line, don't rebuild point handles (which destroys transforms)
@@ -218,7 +230,7 @@ export class SplineEditorSession {
     } else {
       this._rebuildAll({ preserveSelection });
     }
-    
+
     if (!silent) {
       this._notifySplineChange(reason);
     } else {
@@ -228,30 +240,38 @@ export class SplineEditorSession {
 
   selectObject(id, options = {}) {
     const selectStart = performance.now();
-    
-    const { silent = false } = options || {};
+
+    const { silent = false, forceRedraw = false } = options || {};
     const nextId = id == null ? null : String(id);
-    
-    if (this._selectedId === nextId) {
+
+    if (this._selectedId === nextId && !forceRedraw) {
       if (!silent) {
         this._notifySelectionChange(this._selectedId);
       }
       return;
     }
-    
+
+    // Ensure preview group exists before changing selection
+    this._ensurePreviewGroup();
+
     this._selectedId = nextId;
-    
+
+    // If forcing redraw, rebuild everything to ensure fresh state
+    if (forceRedraw) {
+      this._rebuildAll({ preserveSelection: true });
+    }
+
     const visualStart = performance.now();
     this._updateSelectionVisuals();
-    
+
     const transformStart = performance.now();
     this._updateTransformVisibility();
-    
+
     if (!silent) {
       const notifyStart = performance.now();
       this._notifySelectionChange(this._selectedId);
     }
-    
+
     this._renderOnce();
   }
 
@@ -267,9 +287,9 @@ export class SplineEditorSession {
    * Force cleanup of any stale objects in the scene
    */
   forceCleanup() {
-    
+
     if (!this.viewer?.scene) return;
-    
+
     // Find and remove any stale transform controls
     const toRemove = [];
     this.viewer.scene.traverse((obj) => {
@@ -290,7 +310,7 @@ export class SplineEditorSession {
         }
       }
     });
-    
+
     // Remove stale objects
     for (const obj of toRemove) {
       try {
@@ -300,7 +320,7 @@ export class SplineEditorSession {
         /* ignore */
       }
     }
-    
+
     this._renderOnce();
   }
 
@@ -312,11 +332,60 @@ export class SplineEditorSession {
     }
   }
 
+  _setupControlsListener() {
+    // Listen to camera/controls changes to update transform controls screen size
+    this._controlsChangeHandler = () => {
+      if (this._transformsById) {
+        for (const [id, transformEntry] of this._transformsById.entries()) {
+          const control = transformEntry?.control;
+          if (control && typeof control.update === 'function') {
+            try {
+              control.update();
+            } catch (error) {
+              console.warn(`SplineEditorSession: Failed to update transform control ${id}:`, error);
+            }
+          }
+        }
+      }
+    };
+
+    // Hook into the viewer's controls change event
+    if (this.viewer?.controls && typeof this.viewer.controls.addEventListener === 'function') {
+      this.viewer.controls.addEventListener('change', this._controlsChangeHandler);
+      this.viewer.controls.addEventListener('end', this._controlsChangeHandler);
+    }
+  }
+
+  _teardownControlsListener() {
+    if (this._controlsChangeHandler && this.viewer?.controls) {
+      try {
+        this.viewer.controls.removeEventListener('change', this._controlsChangeHandler);
+        this.viewer.controls.removeEventListener('end', this._controlsChangeHandler);
+      } catch (error) {
+        console.warn('SplineEditorSession: Failed to remove controls listeners:', error);
+      }
+    }
+    this._controlsChangeHandler = null;
+  }
+
   _notifySplineChange(reason, extra = null) {
     try {
       this._onSplineChange(this.getSplineData(), reason, extra);
     } catch {
       /* ignore listener errors */
+    }
+  }
+
+  _updateFeaturePersistentData() {
+    // Update the feature's persistent data immediately
+    if (this._featureRef) {
+      this._featureRef.persistentData = this._featureRef.persistentData || {};
+      this._featureRef.persistentData.spline = cloneSplineData(this._splineData);
+      
+      // Mark the feature as dirty for rebuild
+      this._featureRef.lastRunInputParams = {};
+      this._featureRef.timestamp = 0;
+      this._featureRef.dirty = true;
     }
   }
 
@@ -376,6 +445,15 @@ export class SplineEditorSession {
     const scene = this.viewer?.scene;
     if (!scene) return;
 
+
+
+    // remove the actual spline from the scene. The spline generated by the feature it self, not the preview
+    // The object to be removed from the scene will have the same name as the feature ID
+    const existingSpline = scene.getObjectByName(this.featureID);
+    if (existingSpline) {
+      scene.remove(existingSpline);
+    }
+
     // Search the scene for an existing preview group and reuse it rather than creating a new one
     const existingGroupName = `SplineEditorPreview:${this.featureID || ""}`;
     const existingGroup = scene.getObjectByName(existingGroupName);
@@ -412,6 +490,43 @@ export class SplineEditorSession {
     scene.add(this._previewGroup);
   }
 
+  _ensurePreviewGroup() {
+    const scene = this.viewer.scene;
+    // remove the actual spline from the scene. The spline generated by the feature it self
+
+    // search the scene children for the 
+
+
+
+    // Check if the preview group still exists in the scene
+    if (!this._previewGroup || !this.viewer?.scene) {
+      this._buildPreviewGroup();
+      return;
+    }
+
+    // Check if the preview group was removed from the scene
+
+    const existingGroupName = `SplineEditorPreview:${this.featureID || ""}`;
+    const foundInScene = scene.getObjectByName(existingGroupName);
+
+    if (!foundInScene) {
+      // Preview group was removed, sync with latest persistent data and rebuild
+      const latestSplineData = this._featureRef?.persistentData?.spline;
+      if (latestSplineData) {
+        this._splineData = normalizeSplineData(cloneSplineData(latestSplineData));
+      }
+
+      // Update preview resolution from current feature parameters
+      const resCandidate = Number(this._featureRef?.inputParams?.curveResolution);
+      if (Number.isFinite(resCandidate) && resCandidate >= 4) {
+        this._previewResolution = Math.max(4, Math.floor(resCandidate));
+      }
+
+      this._buildPreviewGroup();
+      this._rebuildAll({ preserveSelection: true });
+    }
+  }
+
   _destroyPreviewGroup() {
     if (!this._previewGroup || !this.viewer?.scene) {
       this._teardownAllTransforms();
@@ -440,11 +555,11 @@ export class SplineEditorSession {
 
   _createTransformControl(id, mesh) {
     if (!this.viewer?.scene || !this.viewer?.camera || !this.viewer?.renderer) {
-      
+
       return null;
     }
     if (!TransformControlsDirect) {
-      
+
       return null;
     }
     const control = new TransformControlsDirect(
@@ -453,7 +568,7 @@ export class SplineEditorSession {
     );
 
     control.name = `SplineEditorControl:${id}`;
-    
+
     // Enable both translation and rotation
     control.setMode("translate");
     control.showX = true;
@@ -490,19 +605,19 @@ export class SplineEditorSession {
   }
 
   _teardownAllTransforms() {
-  //  alert(`Tearing down all transforms`);
-    
+    //  alert(`Tearing down all transforms`);
+
     if (!this._transformsById?.size) {
       this._isTransformDragging = false;
       return;
     }
-    
+
     for (const [id, transformEntry] of this._transformsById.entries()) {
-      
+
       const control = transformEntry?.control || null;
       const keyHandler = transformEntry?.keyHandler || null;
       const listeners = this._transformListeners.get(id);
-      
+
       if (control && listeners) {
         try {
           control.removeEventListener("change", listeners.changeHandler);
@@ -515,7 +630,7 @@ export class SplineEditorSession {
           /* ignore */
         }
       }
-      
+
       // Remove keyboard listener
       if (keyHandler) {
         try {
@@ -524,13 +639,13 @@ export class SplineEditorSession {
           /* ignore */
         }
       }
-      
+
       try {
         control?.detach?.();
       } catch (error) {
         /* ignore */
       }
-      
+
       // Remove control from scene
       if (control) {
         try {
@@ -539,7 +654,7 @@ export class SplineEditorSession {
           /* ignore */
         }
       }
-      
+
       try {
         control?.dispose?.();
       } catch (error) {
@@ -612,33 +727,33 @@ export class SplineEditorSession {
         }
       }
     }
-    
+
     // Don't clear selection on blank clicks - removed this functionality
   }
 
   _rebuildAll({ preserveSelection }) {
-    
+
     // Force cleanup of any stale objects before rebuild
     this.forceCleanup();
-    
+
     const previousSelection = preserveSelection ? this._selectedId : null;
-    
+
     this._buildPointHandles();
-    
+
     this._rebuildPreviewLine();
-    
+
     if (preserveSelection && previousSelection) {
       this.selectObject(previousSelection, { silent: true });
     } else if (!preserveSelection) {
       this.selectObject(null, { silent: true });
     }
-    
+
   }
 
   _buildPointHandles() {
-    
+
     if (!this._previewGroup) return;
-    
+
     this._teardownAllTransforms();
 
     // More thorough cleanup of stale objects
@@ -655,7 +770,7 @@ export class SplineEditorSession {
         }
       }
     }
-    
+
     // Remove from preview group and scene
     for (const mesh of stale) {
       try {
@@ -670,7 +785,7 @@ export class SplineEditorSession {
         /* ignore */
       }
     }
-    
+
     this._objectsById.clear();
     this._removeExtensionLines();
 
@@ -686,38 +801,38 @@ export class SplineEditorSession {
         Number(pt.position[2]) || 0
       ]);
       pointGeometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
-      
+
       // Create an invisible mesh for raycasting and transform attachment
       const pointMaterial = new THREE.MeshBasicMaterial({ visible: false });
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), pointMaterial);
       mesh.position.set(position[0], position[1], position[2]);
-      
+
       // Apply stored rotation to the mesh
       if (pt.rotation && Array.isArray(pt.rotation) && pt.rotation.length === 9) {
         const rotMatrix = new THREE.Matrix3().fromArray(pt.rotation);
         const matrix4 = new THREE.Matrix4().setFromMatrix3(rotMatrix);
         mesh.setRotationFromMatrix(matrix4);
       }
-      
+
       mesh.name = `SplinePoint:${pt.id}`;
       this._previewGroup.add(mesh);
-      
+
       // Create a clickable vertex at the same position using BREP.Vertex
       const vertex = new BREP.Vertex([position[0], position[1], position[2]], {
         name: `SplineVertex:${pt.id}`,
       });
-      
+
       // Add click handler to the vertex to trigger selection
       vertex.onClick = () => {
         this.selectObject(`point:${pt.id}`);
       };
-      
+
       // Store reference to the point for identification - set on both vertex and internal point
       vertex.userData = vertex.userData || {};
       vertex.userData.splineFeatureId = this.featureID;
       vertex.userData.splinePointId = pt.id;
       vertex.userData.isSplineVertex = true;
-      
+
       // Also set userData on the internal Points object that gets hit by raycaster
       if (vertex._point) {
         vertex._point.userData = vertex._point.userData || {};
@@ -727,10 +842,10 @@ export class SplineEditorSession {
         // Copy the onClick handler to the internal point
         vertex._point.onClick = vertex.onClick;
       }
-      
+
       // Add vertex to preview group
       this._previewGroup.add(vertex);
-      
+
       const entryId = `point:${pt.id}`;
       const transform = this._createTransformControl(entryId, mesh);
       this._objectsById.set(entryId, {
@@ -750,36 +865,36 @@ export class SplineEditorSession {
 
     weights.forEach(({ key, keyName, data }) => {
       if (!data || !data.position) return;
-      
+
       const position = new Float32Array([
         Number(data.position[0]) || 0,
         Number(data.position[1]) || 0,
         Number(data.position[2]) || 0
       ]);
-      
+
       // Create an invisible mesh for raycasting and transform attachment
       const weightMaterial = new THREE.MeshBasicMaterial({ visible: false });
       const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), weightMaterial);
       mesh.position.set(position[0], position[1], position[2]);
       mesh.name = `SplineWeight:${keyName}`;
       this._previewGroup.add(mesh);
-      
+
       // Create a clickable vertex at the same position using BREP.Vertex
       const vertex = new BREP.Vertex([position[0], position[1], position[2]], {
         name: `SplineWeightVertex:${keyName}`,
       });
-      
+
       // Add click handler to the vertex to trigger selection
       vertex.onClick = () => {
         this.selectObject(key);
       };
-      
+
       // Store reference to the weight for identification - set on both vertex and internal point
       vertex.userData = vertex.userData || {};
       vertex.userData.splineFeatureId = this.featureID;
       vertex.userData.splineWeightKey = keyName;
       vertex.userData.isSplineWeight = true;
-      
+
       // Also set userData on the internal Points object that gets hit by raycaster
       if (vertex._point) {
         vertex._point.userData = vertex._point.userData || {};
@@ -789,10 +904,10 @@ export class SplineEditorSession {
         // Copy the onClick handler to the internal point
         vertex._point.onClick = vertex.onClick;
       }
-      
+
       // Add vertex to preview group
       this._previewGroup.add(vertex);
-      
+
       const transform = this._createTransformControl(key, mesh);
       this._objectsById.set(key, {
         type: "weight",
@@ -811,7 +926,7 @@ export class SplineEditorSession {
 
   _rebuildPreviewLine() {
     if (!this._line) return;
-    
+
     // Clean up old geometry to prevent memory leaks
     const oldGeometry = this._line.geometry;
     if (oldGeometry) {
@@ -821,10 +936,15 @@ export class SplineEditorSession {
         positionAttr.needsUpdate = true;
       }
     }
-    
+
+    const bendRadius = Number.isFinite(Number(this._featureRef?.inputParams?.bendRadius))
+      ? Math.max(0.1, Math.min(5.0, Number(this._featureRef.inputParams.bendRadius)))
+      : 1.0;
+
     const { positions } = buildHermitePolyline(
       this._splineData,
-      this._previewResolution || DEFAULT_RESOLUTION
+      this._previewResolution || DEFAULT_RESOLUTION,
+      bendRadius
     );
 
     const array = new Float32Array(positions);
@@ -835,7 +955,7 @@ export class SplineEditorSession {
     if (positions.length >= 3) {
       this._line.geometry.computeBoundingSphere();
     }
-    
+
   }
 
   _updateSelectionVisuals() {
@@ -849,40 +969,43 @@ export class SplineEditorSession {
   }
 
   _handleTransformChangeFor(id = null) {
-    
+
     const targetId =
       id && this._objectsById.has(id) ? id : this._selectedId;
     if (!targetId) return;
     const entry = this._objectsById.get(targetId);
     if (!entry || !entry.mesh || !entry.data) return;
-    
+
     const pos = entry.mesh.position;
     const rot = entry.mesh.rotation;
-    
+
     if (entry.type === "point") {
       // Update point position
       entry.data.position = [pos.x, pos.y, pos.z];
-      
+
       // Update point rotation - extract rotation matrix from mesh
       const rotMatrix = new THREE.Matrix3().setFromMatrix4(entry.mesh.matrix);
       entry.data.rotation = rotMatrix.elements.slice(); // Store as flat array
-      
+
       // Update the vertex position to match the mesh
       if (entry.vertex) {
         entry.vertex.position.set(pos.x, pos.y, pos.z);
       }
-      
+
     } else if (entry.type === "weight") {
       // Update weight position
       entry.data.position = [pos.x, pos.y, pos.z];
-      
+
       // Update the vertex position to match the mesh
       if (entry.vertex) {
         entry.vertex.position.set(pos.x, pos.y, pos.z);
       }
-      
+
     }
-    
+
+    // Update persistent data immediately after transform changes
+    this._updateFeaturePersistentData();
+
     this._rebuildPreviewLine();
     this._updateExtensionLines();
     this._notifySplineChange("transform", { selection: targetId });
@@ -891,9 +1014,9 @@ export class SplineEditorSession {
 
   _handleTransformDragging(isDragging) {
     const dragging = !!isDragging;
-    
+
     this._isTransformDragging = dragging;
-    
+
     try {
       if (this.viewer?.controls) {
         this.viewer.controls.enabled = !dragging;
@@ -901,18 +1024,18 @@ export class SplineEditorSession {
     } catch (error) {
       /* ignore */
     }
-    
+
     // Important: Do NOT clear transforms when dragging stops!
     // This was causing the gizmos to disappear after dragging
   }
 
   _ensureExtensionLines() {
     if (!this._previewGroup || !this._weightLineMaterial) return;
-    
+
     this._splineData.points.forEach((pt, index) => {
       const forwardKey = `forward-line:${pt.id}`;
       const backwardKey = `backward-line:${pt.id}`;
-      
+
       // Forward extension line
       if (!this._extensionLines.has(forwardKey)) {
         const geometry = new THREE.BufferGeometry();
@@ -921,7 +1044,7 @@ export class SplineEditorSession {
         this._previewGroup.add(line);
         this._extensionLines.set(forwardKey, line);
       }
-      
+
       // Backward extension line
       if (!this._extensionLines.has(backwardKey)) {
         const geometry = new THREE.BufferGeometry();
@@ -961,7 +1084,7 @@ export class SplineEditorSession {
         anchor[1] + direction[1] * distance,
         anchor[2] + direction[2] * distance
       ];
-      
+
       if (!posAttr) {
         line.geometry.setAttribute(
           "position",
@@ -987,15 +1110,15 @@ export class SplineEditorSession {
     this._splineData.points.forEach((pt, index) => {
       const forwardLine = this._extensionLines.get(`forward-line:${pt.id}`);
       const backwardLine = this._extensionLines.get(`backward-line:${pt.id}`);
-      
+
       // Get X-axis direction from stored rotation matrix
       const rotation = pt.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
       let xAxisDirection = [rotation[0], rotation[1], rotation[2]]; // X-axis from rotation matrix
-      
+
       // Normalize the direction (should already be normalized, but just in case)
       const length = Math.sqrt(
-        xAxisDirection[0] * xAxisDirection[0] + 
-        xAxisDirection[1] * xAxisDirection[1] + 
+        xAxisDirection[0] * xAxisDirection[0] +
+        xAxisDirection[1] * xAxisDirection[1] +
         xAxisDirection[2] * xAxisDirection[2]
       );
       if (length > 0) {
@@ -1005,19 +1128,19 @@ export class SplineEditorSession {
           xAxisDirection[2] / length
         ];
       }
-      
+
       // Apply flip if needed
-      const forwardDir = pt.flipDirection ? 
-        [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]] : 
+      const forwardDir = pt.flipDirection ?
+        [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]] :
         xAxisDirection;
-      const backwardDir = pt.flipDirection ? 
-        xAxisDirection : 
+      const backwardDir = pt.flipDirection ?
+        xAxisDirection :
         [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]];
-      
+
       if (forwardLine) {
         updateLine(forwardLine, pt.position, forwardDir, pt.forwardDistance);
       }
-      
+
       if (backwardLine) {
         updateLine(backwardLine, pt.position, backwardDir, pt.backwardDistance);
       }

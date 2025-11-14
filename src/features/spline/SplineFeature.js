@@ -340,6 +340,13 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       const normalizeStart = performance.now();
       state.spline = cloneSplineData(normalizeSplineData(nextData));
 
+      // CRITICAL FIX: Always update persistent data when spline changes
+      // This ensures transform changes are preserved when parameters change
+      const feature = getFeatureRef();
+      if (feature) {
+        markDirty(feature, state.spline);
+      }
+
       // CRITICAL CHANGE: Only update UI, don't trigger feature rebuild during editing
       // The session preview handles the visual updates, feature rebuild happens on dialog close
 
@@ -509,6 +516,46 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     state.pendingFocusId = null;
   };
 
+  // Centralized function to activate a point (same as clicking edit button)
+  const activatePoint = (pointId) => {
+    const keyId = `point:${pointId}`;
+    
+    // Ensure session exists before selecting - this will create transform controls
+    let activeSession = state.session;
+    const viewer = getViewer();
+    const featureID = getFeatureID();
+    if (!activeSession && viewer && featureID && !state.creatingSession) {
+      activeSession = ensureSession();
+    }
+
+    if (activeSession) {
+      // Always force redraw to ensure preview and transform controls are rebuilt
+      activeSession.selectObject(keyId, { forceRedraw: true });
+    }
+    
+    state.selection = keyId;
+    updateSelectionStyles();
+  };
+
+  // Centralized function to activate a weight (same as clicking edit button)
+  const activateWeight = (weightKey) => {
+    // Ensure session exists before selecting - this will create transform controls
+    let activeSession = state.session;
+    const viewer = getViewer();
+    const featureID = getFeatureID();
+    if (!activeSession && viewer && featureID && !state.creatingSession) {
+      activeSession = ensureSession();
+    }
+
+    if (activeSession) {
+      // Always force redraw to ensure preview and transform controls are rebuilt
+      activeSession.selectObject(weightKey, { forceRedraw: true });
+    }
+    
+    state.selection = weightKey;
+    updateSelectionStyles();
+  };
+
   const renderPointRows = () => {
     pointList.textContent = "";
     pointRowMap = new Map();
@@ -550,26 +597,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       selectBtn.className = "spw-btn";
       selectBtn.textContent = "🖉";
       selectBtn.addEventListener("click", () => {
-        const startTime = performance.now();
-
-        // Ensure session exists before selecting - this will create transform controls
-        let activeSession = state.session;
-        const viewer = getViewer();
-        const featureID = getFeatureID();
-        if (!activeSession && viewer && featureID && !state.creatingSession) {
-          const sessionStart = performance.now();
-          activeSession = ensureSession();
-        }
-
-        if (activeSession) {
-          activeSession.selectObject(keyId);
-        } else {
-          /* ignore */
-        }
-        state.selection = keyId;
-
-        const styleStart = performance.now();
-        updateSelectionStyles();
+        activatePoint(pt.id);
       });
       actions.appendChild(selectBtn);
       pointButtonMap.set(keyId, selectBtn);
@@ -580,6 +608,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       flipBtn.textContent = ">|<";
       flipBtn.title = "Toggle spline direction";
       flipBtn.addEventListener("click", () => {
+        activatePoint(pt.id);
         state.spline.points[index].flipDirection = !state.spline.points[index].flipDirection;
         commit("flip-direction");
       });
@@ -592,6 +621,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       upBtn.title = "Move up";
       if (index === 0) upBtn.disabled = true;
       upBtn.addEventListener("click", () => {
+        activatePoint(pt.id);
         movePoint(index, -1);
       });
       actions.appendChild(upBtn);
@@ -603,6 +633,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       downBtn.title = "Move down";
       if (index === points.length - 1) downBtn.disabled = true;
       downBtn.addEventListener("click", () => {
+        activatePoint(pt.id);
         movePoint(index, 1);
       });
       actions.appendChild(downBtn);
@@ -614,6 +645,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       removeBtn.title = "Remove point";
       if (points.length <= 2) removeBtn.disabled = true;
       removeBtn.addEventListener("click", () => {
+        activatePoint(pt.id);
         removePoint(index);
       });
       actions.appendChild(removeBtn);
@@ -642,6 +674,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       forwardInput.min = "0";
       forwardInput.value = formatNumber(pt.forwardDistance ?? 1.0);
       forwardInput.addEventListener("change", () => {
+        activatePoint(pt.id);
         const next = Math.max(0, normalizeNumber(forwardInput.value));
         if (pt.forwardDistance === next) return;
         state.spline.points[index].forwardDistance = next;
@@ -663,6 +696,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       backwardInput.min = "0";
       backwardInput.value = formatNumber(pt.backwardDistance ?? 1.0);
       backwardInput.addEventListener("change", () => {
+        activatePoint(pt.id);
         const next = Math.max(0, normalizeNumber(backwardInput.value));
         if (pt.backwardDistance === next) return;
         state.spline.points[index].backwardDistance = next;
@@ -726,6 +760,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         input.dataset.axis = String(axis);
         input.value = formatNumber(weight.position?.[axis] ?? 0);
         input.addEventListener("change", () => {
+          activateWeight(key);
           const next = normalizeNumber(input.value);
           if (weight.position?.[axis] === next) return;
           state.spline[keyName].position[axis] = next;
@@ -745,26 +780,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       selectBtn.className = "spw-btn";
       selectBtn.textContent = "🖉";
       selectBtn.addEventListener("click", () => {
-        const startTime = performance.now();
-
-        // Ensure session exists before selecting - this will create transform controls
-        let activeSession = state.session;
-        const viewer = getViewer();
-        const featureID = getFeatureID();
-        if (!activeSession && viewer && featureID && !state.creatingSession) {
-          const sessionStart = performance.now();
-          activeSession = ensureSession();
-        }
-
-        if (activeSession) {
-          activeSession.selectObject(key);
-        } else {
-          /* ignore */
-        }
-        state.selection = key;
-
-        const styleStart = performance.now();
-        updateSelectionStyles();
+        activateWeight(key);
       });
       actions.appendChild(selectBtn);
       weightButtonMap.set(key, selectBtn);
@@ -775,6 +791,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       resetBtn.textContent = "Reset to anchor";
       resetBtn.disabled = !anchor;
       resetBtn.addEventListener("click", () => {
+        activateWeight(key);
         resetWeight(keyName);
       });
       actions.appendChild(resetBtn);
@@ -1154,6 +1171,14 @@ const inputParamsSchema = {
     default_value: DEFAULT_RESOLUTION,
     hint: "Samples per segment used to visualize the spline",
   },
+  bendRadius: {
+    type: "number",
+    default_value: 1.0,
+    label: "Bend Radius",
+    hint: "Controls the smoothness of curve transitions. Lower values create sharper bends, higher values create smoother curves.",
+    min: 0.1,
+    step: 0.5,
+  },
   splinePoints: {
     type: "string",
     label: "Spline Points",
@@ -1208,7 +1233,11 @@ export class SplineFeature {
       ? Math.max(4, Number(this.inputParams.curveResolution))
       : DEFAULT_RESOLUTION;
 
-    const { positions, polyline } = buildHermitePolyline(spline, resolution);
+    const bendRadius = Number.isFinite(Number(this.inputParams?.bendRadius))
+      ? Math.max(0.1, Math.min(5.0, Number(this.inputParams.bendRadius)))
+      : 1.0;
+
+    const { positions, polyline } = buildHermitePolyline(spline, resolution, bendRadius);
 
     if (positions.length >= 6) {
       const geometry = new LineGeometry();

@@ -126,7 +126,7 @@ const hermitePoint = (p0, p1, t0, t1, t) => {
   return out;
 };
 
-export function buildHermitePolyline(spline, resolution = DEFAULT_RESOLUTION) {
+export function buildHermitePolyline(spline, resolution = DEFAULT_RESOLUTION, bendRadius = 1.0) {
   const pointsData = Array.isArray(spline?.points) ? spline.points : [];
   
   if (pointsData.length < 2) {
@@ -136,6 +136,9 @@ export function buildHermitePolyline(spline, resolution = DEFAULT_RESOLUTION) {
   const samplesPerSegment = Math.max(4, Math.floor(resolution));
   const positions = [];
   const polyline = [];
+
+  // Clamp bend radius to reasonable range
+  const clampedBendRadius = Math.max(0.1, Math.min(5.0, Number(bendRadius) || 1.0));
 
   // Helper function to calculate extension point
   const calculateExtensionPoint = (anchor, pointData, isForward) => {
@@ -216,16 +219,14 @@ export function buildHermitePolyline(spline, resolution = DEFAULT_RESOLUTION) {
     const currentExtDirection = currentForwardExt.clone().sub(currentAnchor).normalize();
     const nextExtDirection = nextAnchor.clone().sub(nextBackwardExt).normalize();
     
-    // Scale tangents for much smoother transitions with more slack
+    // Calculate tangent scale based on user-controlled bend radius
     const extDistance = currentForwardExt.distanceTo(nextBackwardExt);
     const avgExtDistance = (currentData.forwardDistance + nextData.backwardDistance) * 0.5;
     
-    // Use a much larger tangent scale for smoother curves - increase the multipliers significantly
-    const baseScale = Math.max(extDistance * 0.8, avgExtDistance * 1.5); // Increased from 0.4 and 0.8
-    
-    // Add extra slack based on the curve length for very smooth transitions
-    const slackMultiplier = 1.5 + (extDistance / 20); // Additional scaling based on distance
-    const tangentScale = baseScale * slackMultiplier;
+    // Use the bend radius to control curve smoothness
+    // Lower bend radius = tighter curves, higher bend radius = smoother curves
+    const baseScale = Math.max(extDistance * 0.3, avgExtDistance * 0.5); // Much more conservative base
+    const tangentScale = baseScale * clampedBendRadius;
     
     const t0 = currentExtDirection.multiplyScalar(tangentScale);
     const t1 = nextExtDirection.multiplyScalar(tangentScale);

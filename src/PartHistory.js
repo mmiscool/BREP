@@ -124,10 +124,10 @@ export class PartHistory {
     // remove all objects from the scene except lights, camera and transform gizmos
     const toRemove = this.scene.children.slice().filter(ch => !ch.isLight && !ch.isCamera && !ch.isTransformGizmo);
     for (const ch of toRemove) {
-      console.log("Removing from scene before runHistory:", ch);
-      // print the object type and name
-      console.log("Object type:", ch.type);
-      console.log("Object name:", ch.name);
+      // console.log("Removing from scene before runHistory:", ch);
+      // // print the object type and name
+      // console.log("Object type:", ch.type);
+      // console.log("Object name:", ch.name);
       this.scene.remove(ch);
     }
 

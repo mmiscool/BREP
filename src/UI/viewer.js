@@ -849,15 +849,15 @@ export class Viewer {
             console.log(`- Total intersections found: ${intersects.length}`);
             intersects.slice(0, 5).forEach((it, idx) => { // Only log first 5 to avoid spam
                 const obj = it.object;
-                console.log(`  [${idx}] Object:`, {
-                    name: obj.name,
-                    type: obj.type,
-                    constructor: obj.constructor.name,
-                    distance: it.distance?.toFixed(3),
-                    hasOnClick: typeof obj.onClick === 'function',
-                    visible: obj.visible,
-                    parent: obj.parent?.name
-                });
+                // console.log(`  [${idx}] Object:`, {
+                //     name: obj.name,
+                //     type: obj.type,
+                //     constructor: obj.constructor.name,
+                //     distance: it.distance?.toFixed(3),
+                //     hasOnClick: typeof obj.onClick === 'function',
+                //     visible: obj.visible,
+                //     parent: obj.parent?.name
+                // });
             });
         }
         
