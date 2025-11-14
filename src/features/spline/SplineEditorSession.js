@@ -24,6 +24,7 @@ export class SplineEditorSession {
     );
 
     this._objectsById = new Map();
+    this._extensionLines = new Map();
     this._selectedId = null;
     this._hiddenArtifacts = [];
     this._raycaster = new THREE.Raycaster();
@@ -32,6 +33,8 @@ export class SplineEditorSession {
     this._transformListeners = new Map();
     this._isTransformDragging = false;
     this._onCanvasPointerDown = null;
+
+    this._extensionLineMaterial = null;
 
     this._previewGroup = null;
     this._line = null;
@@ -122,7 +125,9 @@ export class SplineEditorSession {
    * @returns {boolean}
    */
   activate(initialSpline = null, options = {}) {
-    if (!this.viewer) return false;
+    if (!this.viewer) {
+      return false;
+    }
 
     if (this._active) {
       this.dispose();
@@ -223,6 +228,7 @@ export class SplineEditorSession {
     if (reason === "transform" && preserveSelection) {
       // Just update the preview line, don't rebuild point handles (which destroys transforms)
       this._rebuildPreviewLine();
+      this._updateExtensionLinesForAllPoints();
     } else {
       this._rebuildAll({ preserveSelection });
     }
@@ -417,11 +423,23 @@ export class SplineEditorSession {
   }
 
   _initMaterials() {
-    // No materials needed currently
+    // Extension line material - thicker than the main spline
+    this._extensionLineMaterial = new THREE.LineBasicMaterial({
+      color: "blue",
+      linewidth: 3, // Thicker than the main spline
+      transparent: true,
+      opacity: 0.85,
+      depthTest: false,
+    });
   }
 
   _disposeMaterials() {
-    // No materials to dispose currently
+    try {
+      this._extensionLineMaterial?.dispose?.();
+    } catch {
+      /* noop */
+    }
+    this._extensionLineMaterial = null;
   }
 
   _buildPreviewGroup() {
@@ -526,13 +544,18 @@ export class SplineEditorSession {
       /* noop */
     }
     try {
-      //this.viewer.scene.remove(this._previewGroup);
+      // Clear the preventRemove flag before removing from scene
+      if (this._previewGroup.userData) {
+        this._previewGroup.userData.preventRemove = false;
+      }
+      this.viewer.scene.remove(this._previewGroup);
     } catch {
       /* noop */
     }
     this._previewGroup = null;
     this._line = null;
     this._objectsById.clear();
+    this._extensionLines.clear();
   }
 
   _createTransformControl(id, mesh) {
@@ -738,40 +761,34 @@ export class SplineEditorSession {
 
     this._teardownAllTransforms();
 
-    // More thorough cleanup of stale objects
-    const stale = [];
-    for (const entry of this._objectsById.values()) {
-      if (entry.mesh) {
-        stale.push(entry.mesh);
-        // Also dispose mesh geometry and materials to prevent memory leaks
-        try {
-          entry.mesh.geometry?.dispose();
-          entry.mesh.material?.dispose();
-        } catch {
-          /* noop */
-        }
-      }
-    }
-
-    // Remove from preview group and scene
-    for (const mesh of stale) {
+    // Clear EVERYTHING from the preview group - no preservation
+    while (this._previewGroup.children.length > 0) {
+      const child = this._previewGroup.children[0];
+      this._previewGroup.remove(child);
       try {
-        if (mesh.parent) {
-          mesh.parent.remove(mesh);
-        }
-        // Also remove directly from scene in case it's there
-        if (this.viewer?.scene?.children.includes(mesh)) {
-          this.viewer.scene.remove(mesh);
-        }
-      } catch (error) {
-        /* ignore */
+        child.geometry?.dispose();
+        child.material?.dispose();
+      } catch {
+        /* noop */
       }
     }
 
+    // Clear all tracking maps completely
     this._objectsById.clear();
-    this._removeExtensionLines();
+    this._extensionLines.clear();
 
     this._initMaterials();
+
+    // Create fresh spline line
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      linewidth: 2,
+    });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
+    this._line = new THREE.Line(geometry, lineMaterial);
+    this._line.name = "SplinePreviewLine";
+    this._previewGroup.add(this._line);
 
     // Create handles for each point - no separate extension handles
     this._splineData.points.forEach((pt, index) => {
@@ -837,9 +854,72 @@ export class SplineEditorSession {
         data: pt,
         transform,
       });
+
+      // Create extension lines for this point
+      const forwardKey = `forward-line:${pt.id}`;
+      const backwardKey = `backward-line:${pt.id}`;
+
+      // Forward extension line
+      const forwardGeometry = new THREE.BufferGeometry();
+      const forwardLine = new THREE.Line(forwardGeometry, this._extensionLineMaterial);
+      forwardLine.name = `SplineForwardLine:${pt.id}`;
+      forwardLine.visible = true;
+      forwardLine.frustumCulled = false;
+      this._previewGroup.add(forwardLine);
+      this._extensionLines.set(forwardKey, forwardLine);
+
+      // Backward extension line  
+      const backwardGeometry = new THREE.BufferGeometry();
+      const backwardLine = new THREE.Line(backwardGeometry, this._extensionLineMaterial);
+      backwardLine.name = `SplineBackwardLine:${pt.id}`;
+      backwardLine.visible = true;
+      backwardLine.frustumCulled = false;
+      this._previewGroup.add(backwardLine);
+      this._extensionLines.set(backwardKey, backwardLine);
+
+      // Set the geometry for the extension lines
+      const rotation = pt.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      let xAxisDirection = [rotation[0], rotation[1], rotation[2]];
+      
+      const length = Math.sqrt(xAxisDirection[0] * xAxisDirection[0] + xAxisDirection[1] * xAxisDirection[1] + xAxisDirection[2] * xAxisDirection[2]);
+      if (length > 0) {
+        xAxisDirection = [xAxisDirection[0] / length, xAxisDirection[1] / length, xAxisDirection[2] / length];
+      }
+
+      const forwardDir = pt.flipDirection ? [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]] : xAxisDirection;
+      const backwardDir = pt.flipDirection ? xAxisDirection : [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]];
+
+      // Forward line geometry
+      if (pt.forwardDistance > 0) {
+        const forwardEnd = [
+          pt.position[0] + forwardDir[0] * pt.forwardDistance,
+          pt.position[1] + forwardDir[1] * pt.forwardDistance,
+          pt.position[2] + forwardDir[2] * pt.forwardDistance
+        ];
+        forwardGeometry.setAttribute("position", new THREE.Float32BufferAttribute([
+          pt.position[0], pt.position[1], pt.position[2],
+          forwardEnd[0], forwardEnd[1], forwardEnd[2]
+        ], 3));
+      }
+
+      // Backward line geometry
+      if (pt.backwardDistance > 0) {
+        const backwardEnd = [
+          pt.position[0] + backwardDir[0] * pt.backwardDistance,
+          pt.position[1] + backwardDir[1] * pt.backwardDistance,
+          pt.position[2] + backwardDir[2] * pt.backwardDistance
+        ];
+        backwardGeometry.setAttribute("position", new THREE.Float32BufferAttribute([
+          pt.position[0], pt.position[1], pt.position[2],
+          backwardEnd[0], backwardEnd[1], backwardEnd[2]
+        ], 3));
+      }
     });
 
     this._updateTransformVisibility();
+    
+    // Rebuild the spline curve as well
+    this._rebuildPreviewLine();
   }
 
   _rebuildPreviewLine() {
@@ -915,6 +995,7 @@ export class SplineEditorSession {
     this._updateFeaturePersistentData();
 
     this._rebuildPreviewLine();
+    this._updateExtensionLinesForAllPoints();
     this._notifySplineChange("transform", { selection: targetId });
     this._renderOnce();
   }
@@ -934,6 +1015,79 @@ export class SplineEditorSession {
 
     // Important: Do NOT clear transforms when dragging stops!
     // This was causing the gizmos to disappear after dragging
+  }
+
+  _updateExtensionLinesForAllPoints() {
+    // Update extension lines for all points based on current spline data
+    this._splineData.points.forEach((pt) => {
+      this._updateExtensionLinesForPoint(pt);
+    });
+  }
+
+  _updateExtensionLinesForPoint(pt) {
+    const forwardKey = `forward-line:${pt.id}`;
+    const backwardKey = `backward-line:${pt.id}`;
+    
+    const forwardLine = this._extensionLines.get(forwardKey);
+    const backwardLine = this._extensionLines.get(backwardKey);
+
+    if (!forwardLine || !backwardLine) return;
+
+    // Get direction from rotation matrix
+    const rotation = pt.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    let xAxisDirection = [rotation[0], rotation[1], rotation[2]];
+    
+    const length = Math.sqrt(xAxisDirection[0] * xAxisDirection[0] + xAxisDirection[1] * xAxisDirection[1] + xAxisDirection[2] * xAxisDirection[2]);
+    if (length > 0) {
+      xAxisDirection = [xAxisDirection[0] / length, xAxisDirection[1] / length, xAxisDirection[2] / length];
+    }
+
+    const forwardDir = pt.flipDirection ? [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]] : xAxisDirection;
+    const backwardDir = pt.flipDirection ? xAxisDirection : [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]];
+
+    // Update forward line geometry
+    if (pt.forwardDistance > 0) {
+      const forwardEnd = [
+        pt.position[0] + forwardDir[0] * pt.forwardDistance,
+        pt.position[1] + forwardDir[1] * pt.forwardDistance,
+        pt.position[2] + forwardDir[2] * pt.forwardDistance
+      ];
+      
+      const forwardPosAttr = forwardLine.geometry.getAttribute("position");
+      if (!forwardPosAttr) {
+        forwardLine.geometry.setAttribute("position", new THREE.Float32BufferAttribute([
+          pt.position[0], pt.position[1], pt.position[2],
+          forwardEnd[0], forwardEnd[1], forwardEnd[2]
+        ], 3));
+      } else {
+        const arr = forwardPosAttr.array;
+        arr[0] = pt.position[0]; arr[1] = pt.position[1]; arr[2] = pt.position[2];
+        arr[3] = forwardEnd[0]; arr[4] = forwardEnd[1]; arr[5] = forwardEnd[2];
+        forwardPosAttr.needsUpdate = true;
+      }
+    }
+
+    // Update backward line geometry
+    if (pt.backwardDistance > 0) {
+      const backwardEnd = [
+        pt.position[0] + backwardDir[0] * pt.backwardDistance,
+        pt.position[1] + backwardDir[1] * pt.backwardDistance,
+        pt.position[2] + backwardDir[2] * pt.backwardDistance
+      ];
+      
+      const backwardPosAttr = backwardLine.geometry.getAttribute("position");
+      if (!backwardPosAttr) {
+        backwardLine.geometry.setAttribute("position", new THREE.Float32BufferAttribute([
+          pt.position[0], pt.position[1], pt.position[2],
+          backwardEnd[0], backwardEnd[1], backwardEnd[2]
+        ], 3));
+      } else {
+        const arr = backwardPosAttr.array;
+        arr[0] = pt.position[0]; arr[1] = pt.position[1]; arr[2] = pt.position[2];
+        arr[3] = backwardEnd[0]; arr[4] = backwardEnd[1]; arr[5] = backwardEnd[2];
+        backwardPosAttr.needsUpdate = true;
+      }
+    }
   }
 
 }
