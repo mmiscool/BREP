@@ -903,66 +903,120 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       return;
     }
 
-    // Helper function to calculate a point along the Hermite curve at parameter t (0 to 1)
-    const calculateHermitePoint = (p0, p1, t0, t1, t) => {
-      // Hermite basis functions
-      const h00 = 2 * t * t * t - 3 * t * t + 1;
-      const h10 = t * t * t - 2 * t * t + t;
-      const h01 = -2 * t * t * t + 3 * t * t;
-      const h11 = t * t * t - t * t;
-
-      // Calculate position using Hermite interpolation
-      const x = h00 * p0[0] + h10 * t0[0] + h01 * p1[0] + h11 * t1[0];
-      const y = h00 * p0[1] + h10 * t0[1] + h01 * p1[1] + h11 * t1[1];
-      const z = h00 * p0[2] + h10 * t0[2] + h01 * p1[2] + h11 * t1[2];
-
-      return [x, y, z];
-    };
-
-    // Helper function to calculate tangent at parameter t along the Hermite curve
-    const calculateHermiteTangent = (p0, p1, t0, t1, t) => {
-      // Derivatives of Hermite basis functions
-      const dh00 = 6 * t * t - 6 * t;
-      const dh10 = 3 * t * t - 4 * t + 1;
-      const dh01 = -6 * t * t + 6 * t;
-      const dh11 = 3 * t * t - 2 * t;
-
-      // Calculate tangent vector using derivatives
-      const tx = dh00 * p0[0] + dh10 * t0[0] + dh01 * p1[0] + dh11 * t1[0];
-      const ty = dh00 * p0[1] + dh10 * t0[1] + dh01 * p1[1] + dh11 * t1[1];
-      const tz = dh00 * p0[2] + dh10 * t0[2] + dh01 * p1[2] + dh11 * t1[2];
-
-      // Normalize the tangent
-      const length = Math.sqrt(tx * tx + ty * ty + tz * tz);
-      if (length > 0) {
-        return [tx / length, ty / length, tz / length];
+    // Helper function to find midpoint along polyline and get segment direction
+    const findPolylineMidpoint = (p0, p1, t0, t1) => {
+      // Generate the polyline between these two points using current spline settings
+      const tempSpline = {
+        points: [p0, p1]
+      };
+      
+      const bendRadius = Number.isFinite(Number(state.spline?.bendRadius))
+        ? Math.max(0.1, Math.min(5.0, Number(state.spline.bendRadius)))
+        : 1.0;
+      
+      // Use buildHermitePolyline to get the actual line segments
+      const { positions } = buildHermitePolyline(tempSpline, 20, bendRadius); // Use reasonable resolution
+      
+      if (positions.length < 6) {
+        // Not enough points, fall back to simple midpoint
+        return {
+          position: [
+            (p0.position[0] + p1.position[0]) / 2,
+            (p0.position[1] + p1.position[1]) / 2,
+            (p0.position[2] + p1.position[2]) / 2
+          ],
+          direction: [1, 0, 0] // Default direction
+        };
       }
-      return [1, 0, 0]; // Default to X-axis if tangent is zero
+      
+      // Calculate total polyline length
+      let totalLength = 0;
+      const segmentLengths = [];
+      for (let i = 0; i < positions.length - 3; i += 3) {
+        const dx = positions[i + 3] - positions[i];
+        const dy = positions[i + 4] - positions[i + 1];
+        const dz = positions[i + 5] - positions[i + 2];
+        const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        segmentLengths.push(length);
+        totalLength += length;
+      }
+      
+      // Find segment at 50% distance
+      const targetDistance = totalLength * 0.5;
+      let accumulatedDistance = 0;
+      
+      for (let i = 0; i < segmentLengths.length; i++) {
+        if (accumulatedDistance + segmentLengths[i] >= targetDistance) {
+          // This segment contains the midpoint
+          const segmentStart = i * 3;
+          const segmentEnd = segmentStart + 3;
+          
+          // Calculate position along this segment
+          const remainingDistance = targetDistance - accumulatedDistance;
+          const t = remainingDistance / segmentLengths[i];
+          
+          const startPos = [positions[segmentStart], positions[segmentStart + 1], positions[segmentStart + 2]];
+          const endPos = [positions[segmentEnd], positions[segmentEnd + 1], positions[segmentEnd + 2]];
+          
+          const position = [
+            startPos[0] + t * (endPos[0] - startPos[0]),
+            startPos[1] + t * (endPos[1] - startPos[1]),
+            startPos[2] + t * (endPos[2] - startPos[2])
+          ];
+          
+          // Calculate segment direction
+          const direction = [
+            endPos[0] - startPos[0],
+            endPos[1] - startPos[1],
+            endPos[2] - startPos[2]
+          ];
+          
+          // Normalize direction
+          const length = Math.sqrt(direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]);
+          if (length > 0) {
+            direction[0] /= length;
+            direction[1] /= length;
+            direction[2] /= length;
+          } else {
+            direction[0] = 1; direction[1] = 0; direction[2] = 0;
+          }
+          
+          return { position, direction };
+        }
+        accumulatedDistance += segmentLengths[i];
+      }
+      
+      // Fallback to end of polyline
+      const lastIndex = positions.length - 3;
+      return {
+        position: [positions[lastIndex], positions[lastIndex + 1], positions[lastIndex + 2]],
+        direction: [1, 0, 0]
+      };
     };
 
-    // Helper function to create rotation matrix from tangent direction
-    const createRotationFromTangent = (tangent) => {
-      // Use tangent as X-axis (forward direction)
-      const xAxis = [...tangent];
-
-      // Create Y-axis perpendicular to tangent
-      // Try Y-up first, but use Z-up if tangent is already along Y
+    // Helper function to create rotation matrix from direction vector
+    const createRotationFromDirection = (direction) => {
+      // Use direction as X-axis (forward direction)
+      const xAxis = [...direction];
+      
+      // Create Y-axis perpendicular to direction
+      // Try Y-up first, but use Z-up if direction is already along Y
       let yAxis;
-      if (Math.abs(tangent[1]) < 0.9) {
-        // Tangent is not along Y, use Y-up
+      if (Math.abs(direction[1]) < 0.9) {
+        // Direction is not along Y, use Y-up
         yAxis = [0, 1, 0];
       } else {
-        // Tangent is along Y, use Z-up
+        // Direction is along Y, use Z-up
         yAxis = [0, 0, 1];
       }
-
+      
       // Cross product to get perpendicular axis
       const cross = (a, b) => [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0]
       ];
-
+      
       // Calculate Z-axis = X cross Y
       let zAxis = cross(xAxis, yAxis);
       let zLength = Math.sqrt(zAxis[0] * zAxis[0] + zAxis[1] * zAxis[1] + zAxis[2] * zAxis[2]);
@@ -971,7 +1025,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       } else {
         zAxis = [0, 0, 1];
       }
-
+      
       // Recalculate Y-axis = Z cross X to ensure orthogonality
       yAxis = cross(zAxis, xAxis);
       let yLength = Math.sqrt(yAxis[0] * yAxis[0] + yAxis[1] * yAxis[1] + yAxis[2] * yAxis[2]);
@@ -980,16 +1034,14 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       } else {
         yAxis = [0, 1, 0];
       }
-
+      
       // Return rotation matrix as flat array
       return [
         xAxis[0], xAxis[1], xAxis[2],
         yAxis[0], yAxis[1], yAxis[2],
         zAxis[0], zAxis[1], zAxis[2]
       ];
-    };
-
-    // Helper function to calculate tangent vector from point data
+    };    // Helper function to calculate tangent vector from point data
     const calculateTangent = (pointData, isForward) => {
       const rotation = pointData.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
       let direction = [rotation[0], rotation[1], rotation[2]]; // X-axis from rotation matrix
@@ -1030,15 +1082,14 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         // Keep default orientation for second point
       } else {
         insertIndex = points.length - 1; // Insert before last
-        // Calculate point at 50% along curve between second-to-last and last point
+        // Find point and direction along polyline between second-to-last and last point
         const p0 = points[points.length - 2];
         const p1 = points[points.length - 1];
         const t0 = calculateTangent(p0, true); // Forward tangent of first point
         const t1 = calculateTangent(p1, false); // Backward tangent of second point
-        newPosition = calculateHermitePoint(p0.position, p1.position, t0, t1, 0.5);
-        // Calculate orientation based on curve tangent at midpoint
-        const curveTangent = calculateHermiteTangent(p0.position, p1.position, t0, t1, 0.5);
-        newRotation = createRotationFromTangent(curveTangent);
+        const result = findPolylineMidpoint(p0, p1, t0, t1);
+        newPosition = result.position;
+        newRotation = createRotationFromDirection(result.direction);
       }
     } else {
       // Insert after selected point
@@ -1049,15 +1100,14 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         newPosition = [base[0] + 2, base[1], base[2]];
         // Keep default orientation when adding at end
       } else {
-        // Calculate point at 50% along curve between selected point and next point
+        // Find point and direction along polyline between selected point and next point
         const p0 = points[selectedIndex];
         const p1 = points[selectedIndex + 1];
         const t0 = calculateTangent(p0, true); // Forward tangent of first point
         const t1 = calculateTangent(p1, false); // Backward tangent of second point
-        newPosition = calculateHermitePoint(p0.position, p1.position, t0, t1, 0.5);
-        // Calculate orientation based on curve tangent at midpoint
-        const curveTangent = calculateHermiteTangent(p0.position, p1.position, t0, t1, 0.5);
-        newRotation = createRotationFromTangent(curveTangent);
+        const result = findPolylineMidpoint(p0, p1, t0, t1);
+        newPosition = result.position;
+        newRotation = createRotationFromDirection(result.direction);
       }
     }
 

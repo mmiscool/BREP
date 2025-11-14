@@ -579,7 +579,7 @@ export class SplineEditorSession {
     control.showX = true;
     control.showY = true;
     control.showZ = true;
-    control.setSize(1.6);
+    //control.setSize(1.6);
     control.enabled = false; // Will be enabled when selected
     control.attach(mesh);
     control.userData = control.userData || {};

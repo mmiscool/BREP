@@ -23,7 +23,7 @@ export class CombinedTransformControls extends THREE.Object3D {
     this.mode = 'translate'; // kept for compatibility; both gizmos are active
     this.showX = true; this.showY = true; this.showZ = true;
     this.isTransformGizmo = true; // used by PartHistory cleanup logic
-    this._sizeMultiplier = 3; // larger default on‑screen size
+    this._sizeMultiplier = 2; // larger default on‑screen size
     this.renderOrder = 50000; // Render on top of all other geometry
 
     this.target = null; // Object3D we drive
@@ -105,7 +105,7 @@ export class CombinedTransformControls extends THREE.Object3D {
 
     // Geometries (shared)
     const gRod = new THREE.CylinderGeometry(0.03, 0.03, 1.0, 16);
-    const gArrow = new THREE.ConeGeometry(0.08, 0.25, 20);
+    const gArrow = new THREE.ConeGeometry(0.1, 0.3, 20);
     const gDot = new THREE.SphereGeometry(0.06, 16, 12);
 
     // Axis builders
