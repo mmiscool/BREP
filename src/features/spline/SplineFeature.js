@@ -359,18 +359,18 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     state.creatingSession = true;
 
     try {
-      
+
       // Dispose any existing session first
       disposeSession(true); // Force disposal when creating new session
 
       const feature = getFeatureRef();
       if (!feature) {
-        
+
         state.creatingSession = false;
         return null;
       }
 
-      
+
       const sessionCreateStart = performance.now();
       const session = new SplineEditorSession(viewer, featureID, {
         featureRef: feature,
@@ -378,13 +378,13 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         onSelectionChange: handleSessionSelectionChange,
         shouldIgnorePointerEvent,
       });
-      
+
       state.session = session;
 
       const res = Number(feature?.inputParams?.curveResolution);
       const preview = Number.isFinite(res) ? Math.max(4, Math.floor(res)) : undefined;
 
-      
+
       const activateStart = performance.now();
 
       // Store desired selection before activation (since activation clears it)
@@ -395,16 +395,16 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         previewResolution: preview,
         initialSelection: desiredSelection,
       });
-      
+
 
       // After activation, restore or set the desired selection
       let currentSelection = desiredSelection;
 
       if (currentSelection) {
-        
+
         session.selectObject(currentSelection);
       } else {
-        
+
       }
 
       state.selection = currentSelection;
@@ -412,7 +412,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       // Force transform controls to be visible by triggering a rebuild
       // This ensures the controls appear immediately when the session is first created
       if (currentSelection) {
-        
+
 
         session.setSplineData(state.spline, {
           preserveSelection: true,
@@ -420,23 +420,23 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
           reason: "initial-selection"
         });
 
-        
+
 
         // Double-check selection is active
         if (session.getSelectedId() !== currentSelection) {
-          
+
           session.selectObject(currentSelection);
         }
 
         // Force transform visibility update as a final fallback
         if (session._updateTransformVisibility) {
-          
+
           session._updateTransformVisibility();
         }
 
         // Comprehensive debugging of session state and force rebuild if needed
         setTimeout(() => {
-          
+
 
           // Check if transform controls exist and are in scene
           let hasVisibleControls = false;
@@ -444,7 +444,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
             for (const [id, entry] of session._transformsById.entries()) {
               const control = entry?.control;
               const inScene = !!(control && session.viewer?.scene && session.viewer.scene.children.includes(control));
-              
+
               if (control?.enabled && control?.visible && inScene) {
                 hasVisibleControls = true;
               }
@@ -453,7 +453,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
 
           // If no visible controls but we have a selection, force another rebuild
           if (!hasVisibleControls && currentSelection && session.isActive()) {
-            
+
 
             // Force cleanup before rebuild
             if (session.forceCleanup) {
@@ -474,7 +474,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
               session._updateTransformVisibility();
             }
 
-            
+
           }
         }, 100);
       }
@@ -486,7 +486,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       state.creatingSession = false;
     }
 
-    
+
     return state.session;
   };
 
@@ -505,7 +505,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   // Centralized function to activate a point (same as clicking edit button)
   const activatePoint = (pointId) => {
     const keyId = `point:${pointId}`;
-    
+
     // Ensure session exists before selecting - this will create transform controls
     let activeSession = state.session;
     const viewer = getViewer();
@@ -518,7 +518,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       // Always force redraw to ensure preview and transform controls are rebuilt
       activeSession.selectObject(keyId, { forceRedraw: true });
     }
-    
+
     state.selection = keyId;
     updateSelectionStyles();
   };
@@ -716,7 +716,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       } else {
       }
     } else {
-      
+
     }
 
     if (activeSession && !fromSession) {
@@ -748,9 +748,9 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       ? state.spline.points
       : [];
     if (points.length <= 2) return;
-    
+
     const [removed] = points.splice(index, 1);
-    
+
     // Determine fallback selection after removal
     let newSelection = null;
     if (points.length > 0) {
@@ -761,8 +761,8 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         state.pendingFocusId = fallback.id;
       }
     }
-    
-    commit("remove-point", { 
+
+    commit("remove-point", {
       preserveSelection: false,
       newSelection: newSelection
     });
@@ -835,14 +835,14 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     if (!skipSessionSync && !state.creatingSession) {
       // For structural changes (add/remove/reorder points), restart the session completely
       const isStructuralChange = reason === "add-point" || reason === "remove-point" || reason === "reorder-point";
-      
+
       if (isStructuralChange) {
         console.log(`SplineWidget: Restarting session due to structural change: ${reason}`);
-        
+
         // Completely dispose and recreate the session
         disposeSession(true);
         state.session = null;
-        
+
         // Create new session with updated spline data
         const session = ensureSession();
         if (session && newSelection) {
@@ -872,7 +872,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     // CRITICAL: Never trigger feature rebuild while session is active!
     // The session handles all preview updates. Feature rebuild only happens when dialog closes.
     // This prevents Spline.run() from being called while editing, which would interfere with the session.
-    
+
     // Only save the signature change, but don't emit params change to prevent feature rebuild
     // Feature will be rebuilt when the dialog closes via commitChangesToFeature()
     renderAll();
@@ -883,22 +883,196 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     const points = Array.isArray(state.spline?.points)
       ? state.spline.points
       : [];
-    const last = points[points.length - 1];
-    const base = last?.position || [0, 0, 0];
-    const viewer = getViewer();
-    const viewerTarget = viewer?.controls?.target || null;
-    const defaultPos = viewerTarget
-      ? [viewerTarget.x, viewerTarget.y, viewerTarget.z]
-      : [base[0] + 1, base[1], base[2]];
+
+    if (points.length === 0) {
+      // If no points exist, add first point at origin
+      const newPoint = {
+        id: `p${Date.now().toString(36)}${Math.random()
+          .toString(36)
+          .slice(2, 6)}`,
+        position: [0, 0, 0],
+        forwardDistance: 1.0,
+        backwardDistance: 1.0,
+      };
+      points.push(newPoint);
+      state.pendingFocusId = newPoint.id;
+      commit("add-point", {
+        preserveSelection: false,
+        newSelection: `point:${newPoint.id}`
+      });
+      return;
+    }
+
+    // Helper function to calculate a point along the Hermite curve at parameter t (0 to 1)
+    const calculateHermitePoint = (p0, p1, t0, t1, t) => {
+      // Hermite basis functions
+      const h00 = 2 * t * t * t - 3 * t * t + 1;
+      const h10 = t * t * t - 2 * t * t + t;
+      const h01 = -2 * t * t * t + 3 * t * t;
+      const h11 = t * t * t - t * t;
+
+      // Calculate position using Hermite interpolation
+      const x = h00 * p0[0] + h10 * t0[0] + h01 * p1[0] + h11 * t1[0];
+      const y = h00 * p0[1] + h10 * t0[1] + h01 * p1[1] + h11 * t1[1];
+      const z = h00 * p0[2] + h10 * t0[2] + h01 * p1[2] + h11 * t1[2];
+
+      return [x, y, z];
+    };
+
+    // Helper function to calculate tangent at parameter t along the Hermite curve
+    const calculateHermiteTangent = (p0, p1, t0, t1, t) => {
+      // Derivatives of Hermite basis functions
+      const dh00 = 6 * t * t - 6 * t;
+      const dh10 = 3 * t * t - 4 * t + 1;
+      const dh01 = -6 * t * t + 6 * t;
+      const dh11 = 3 * t * t - 2 * t;
+
+      // Calculate tangent vector using derivatives
+      const tx = dh00 * p0[0] + dh10 * t0[0] + dh01 * p1[0] + dh11 * t1[0];
+      const ty = dh00 * p0[1] + dh10 * t0[1] + dh01 * p1[1] + dh11 * t1[1];
+      const tz = dh00 * p0[2] + dh10 * t0[2] + dh01 * p1[2] + dh11 * t1[2];
+
+      // Normalize the tangent
+      const length = Math.sqrt(tx * tx + ty * ty + tz * tz);
+      if (length > 0) {
+        return [tx / length, ty / length, tz / length];
+      }
+      return [1, 0, 0]; // Default to X-axis if tangent is zero
+    };
+
+    // Helper function to create rotation matrix from tangent direction
+    const createRotationFromTangent = (tangent) => {
+      // Use tangent as X-axis (forward direction)
+      const xAxis = [...tangent];
+
+      // Create Y-axis perpendicular to tangent
+      // Try Y-up first, but use Z-up if tangent is already along Y
+      let yAxis;
+      if (Math.abs(tangent[1]) < 0.9) {
+        // Tangent is not along Y, use Y-up
+        yAxis = [0, 1, 0];
+      } else {
+        // Tangent is along Y, use Z-up
+        yAxis = [0, 0, 1];
+      }
+
+      // Cross product to get perpendicular axis
+      const cross = (a, b) => [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0]
+      ];
+
+      // Calculate Z-axis = X cross Y
+      let zAxis = cross(xAxis, yAxis);
+      let zLength = Math.sqrt(zAxis[0] * zAxis[0] + zAxis[1] * zAxis[1] + zAxis[2] * zAxis[2]);
+      if (zLength > 0) {
+        zAxis = [zAxis[0] / zLength, zAxis[1] / zLength, zAxis[2] / zLength];
+      } else {
+        zAxis = [0, 0, 1];
+      }
+
+      // Recalculate Y-axis = Z cross X to ensure orthogonality
+      yAxis = cross(zAxis, xAxis);
+      let yLength = Math.sqrt(yAxis[0] * yAxis[0] + yAxis[1] * yAxis[1] + yAxis[2] * yAxis[2]);
+      if (yLength > 0) {
+        yAxis = [yAxis[0] / yLength, yAxis[1] / yLength, yAxis[2] / yLength];
+      } else {
+        yAxis = [0, 1, 0];
+      }
+
+      // Return rotation matrix as flat array
+      return [
+        xAxis[0], xAxis[1], xAxis[2],
+        yAxis[0], yAxis[1], yAxis[2],
+        zAxis[0], zAxis[1], zAxis[2]
+      ];
+    };
+
+    // Helper function to calculate tangent vector from point data
+    const calculateTangent = (pointData, isForward) => {
+      const rotation = pointData.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      let direction = [rotation[0], rotation[1], rotation[2]]; // X-axis from rotation matrix
+
+      if (pointData.flipDirection) {
+        direction = [-direction[0], -direction[1], -direction[2]];
+      }
+
+      const distance = isForward ? pointData.forwardDistance : pointData.backwardDistance;
+      const tangentDir = isForward ? direction : [-direction[0], -direction[1], -direction[2]];
+
+      return [
+        tangentDir[0] * distance,
+        tangentDir[1] * distance,
+        tangentDir[2] * distance
+      ];
+    };
+
+    // Find the currently selected point
+    let selectedIndex = -1;
+    const selectedId = state.selection?.replace("point:", "") || null;
+    if (selectedId) {
+      selectedIndex = points.findIndex(p => p.id === selectedId);
+    }
+
+    // Determine insertion position and calculate new point position
+    let insertIndex;
+    let newPosition;
+    let newRotation = [1, 0, 0, 0, 1, 0, 0, 0, 1]; // Default identity matrix
+
+    if (selectedIndex === -1 || selectedIndex === points.length - 1) {
+      // No selection or last point selected - insert before last point
+      if (points.length === 1) {
+        // Only one point exists, add second point offset from first
+        const base = points[0].position;
+        newPosition = [base[0] + 2, base[1], base[2]];
+        insertIndex = points.length; // Add at end
+        // Keep default orientation for second point
+      } else {
+        insertIndex = points.length - 1; // Insert before last
+        // Calculate point at 50% along curve between second-to-last and last point
+        const p0 = points[points.length - 2];
+        const p1 = points[points.length - 1];
+        const t0 = calculateTangent(p0, true); // Forward tangent of first point
+        const t1 = calculateTangent(p1, false); // Backward tangent of second point
+        newPosition = calculateHermitePoint(p0.position, p1.position, t0, t1, 0.5);
+        // Calculate orientation based on curve tangent at midpoint
+        const curveTangent = calculateHermiteTangent(p0.position, p1.position, t0, t1, 0.5);
+        newRotation = createRotationFromTangent(curveTangent);
+      }
+    } else {
+      // Insert after selected point
+      insertIndex = selectedIndex + 1;
+      if (insertIndex >= points.length) {
+        // Selected point is last, add at end offset from selected
+        const base = points[selectedIndex].position;
+        newPosition = [base[0] + 2, base[1], base[2]];
+        // Keep default orientation when adding at end
+      } else {
+        // Calculate point at 50% along curve between selected point and next point
+        const p0 = points[selectedIndex];
+        const p1 = points[selectedIndex + 1];
+        const t0 = calculateTangent(p0, true); // Forward tangent of first point
+        const t1 = calculateTangent(p1, false); // Backward tangent of second point
+        newPosition = calculateHermitePoint(p0.position, p1.position, t0, t1, 0.5);
+        // Calculate orientation based on curve tangent at midpoint
+        const curveTangent = calculateHermiteTangent(p0.position, p1.position, t0, t1, 0.5);
+        newRotation = createRotationFromTangent(curveTangent);
+      }
+    }
+
     const newPoint = {
       id: `p${Date.now().toString(36)}${Math.random()
         .toString(36)
         .slice(2, 6)}`,
-      position: defaultPos,
-      forwardDistance: 1.0,
-      backwardDistance: 1.0,
+      position: newPosition,
+      rotation: newRotation,
+      forwardDistance: 0,
+      backwardDistance: 0,
     };
-    points.push(newPoint);
+
+    // Insert the point at the calculated position
+    points.splice(insertIndex, 0, newPoint);
     state.pendingFocusId = newPoint.id;
     commit("add-point", {
       preserveSelection: false,
