@@ -24,7 +24,6 @@ export class SplineEditorSession {
     );
 
     this._objectsById = new Map();
-    this._extensionLines = new Map();
     this._selectedId = null;
     this._hiddenArtifacts = [];
     this._raycaster = new THREE.Raycaster();
@@ -33,8 +32,6 @@ export class SplineEditorSession {
     this._transformListeners = new Map();
     this._isTransformDragging = false;
     this._onCanvasPointerDown = null;
-
-    this._weightLineMaterial = null;
 
     this._previewGroup = null;
     this._line = null;
@@ -226,7 +223,6 @@ export class SplineEditorSession {
     if (reason === "transform" && preserveSelection) {
       // Just update the preview line, don't rebuild point handles (which destroys transforms)
       this._rebuildPreviewLine();
-      this._updateExtensionLines();
     } else {
       this._rebuildAll({ preserveSelection });
     }
@@ -421,24 +417,11 @@ export class SplineEditorSession {
   }
 
   _initMaterials() {
-    this._weightLineMaterial = new THREE.LineDashedMaterial({
-      color: 0xffb703,
-      dashSize: 0.35,
-      gapSize: 0.2,
-      linewidth: 1,
-      transparent: true,
-      opacity: 0.85,
-      depthTest: false,
-    });
+    // No materials needed currently
   }
 
   _disposeMaterials() {
-    try {
-      this._weightLineMaterial?.dispose?.();
-    } catch {
-      /* noop */
-    }
-    this._weightLineMaterial = null;
+    // No materials to dispose currently
   }
 
   _buildPreviewGroup() {
@@ -550,7 +533,6 @@ export class SplineEditorSession {
     this._previewGroup = null;
     this._line = null;
     this._objectsById.clear();
-    this._extensionLines.clear();
   }
 
   _createTransformControl(id, mesh) {
@@ -857,71 +839,7 @@ export class SplineEditorSession {
       });
     });
 
-    // Create handles for start and end weights
-    const weights = [
-      { key: "weight:start", keyName: "startWeight", data: this._splineData.startWeight },
-      { key: "weight:end", keyName: "endWeight", data: this._splineData.endWeight }
-    ];
-
-    weights.forEach(({ key, keyName, data }) => {
-      if (!data || !data.position) return;
-
-      const position = new Float32Array([
-        Number(data.position[0]) || 0,
-        Number(data.position[1]) || 0,
-        Number(data.position[2]) || 0
-      ]);
-
-      // Create an invisible mesh for raycasting and transform attachment
-      const weightMaterial = new THREE.MeshBasicMaterial({ visible: false });
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), weightMaterial);
-      mesh.position.set(position[0], position[1], position[2]);
-      mesh.name = `SplineWeight:${keyName}`;
-      this._previewGroup.add(mesh);
-
-      // Create a clickable vertex at the same position using BREP.Vertex
-      const vertex = new BREP.Vertex([position[0], position[1], position[2]], {
-        name: `SplineWeightVertex:${keyName}`,
-      });
-
-      // Add click handler to the vertex to trigger selection
-      vertex.onClick = () => {
-        this.selectObject(key);
-      };
-
-      // Store reference to the weight for identification - set on both vertex and internal point
-      vertex.userData = vertex.userData || {};
-      vertex.userData.splineFeatureId = this.featureID;
-      vertex.userData.splineWeightKey = keyName;
-      vertex.userData.isSplineWeight = true;
-
-      // Also set userData on the internal Points object that gets hit by raycaster
-      if (vertex._point) {
-        vertex._point.userData = vertex._point.userData || {};
-        vertex._point.userData.splineFeatureId = this.featureID;
-        vertex._point.userData.splineWeightKey = keyName;
-        vertex._point.userData.isSplineWeight = true;
-        // Copy the onClick handler to the internal point
-        vertex._point.onClick = vertex.onClick;
-      }
-
-      // Add vertex to preview group
-      this._previewGroup.add(vertex);
-
-      const transform = this._createTransformControl(key, mesh);
-      this._objectsById.set(key, {
-        type: "weight",
-        mesh,
-        vertex, // Store reference to the clickable vertex
-        data,
-        keyName, // Store the key name for easy access
-        transform,
-      });
-    });
-
     this._updateTransformVisibility();
-    this._ensureExtensionLines();
-    this._updateExtensionLines();
   }
 
   _rebuildPreviewLine() {
@@ -991,23 +909,12 @@ export class SplineEditorSession {
       if (entry.vertex) {
         entry.vertex.position.set(pos.x, pos.y, pos.z);
       }
-
-    } else if (entry.type === "weight") {
-      // Update weight position
-      entry.data.position = [pos.x, pos.y, pos.z];
-
-      // Update the vertex position to match the mesh
-      if (entry.vertex) {
-        entry.vertex.position.set(pos.x, pos.y, pos.z);
-      }
-
     }
 
     // Update persistent data immediately after transform changes
     this._updateFeaturePersistentData();
 
     this._rebuildPreviewLine();
-    this._updateExtensionLines();
     this._notifySplineChange("transform", { selection: targetId });
     this._renderOnce();
   }
@@ -1029,121 +936,4 @@ export class SplineEditorSession {
     // This was causing the gizmos to disappear after dragging
   }
 
-  _ensureExtensionLines() {
-    if (!this._previewGroup || !this._weightLineMaterial) return;
-
-    this._splineData.points.forEach((pt, index) => {
-      const forwardKey = `forward-line:${pt.id}`;
-      const backwardKey = `backward-line:${pt.id}`;
-
-      // Forward extension line
-      if (!this._extensionLines.has(forwardKey)) {
-        const geometry = new THREE.BufferGeometry();
-        const line = new THREE.LineSegments(geometry, this._weightLineMaterial);
-        line.name = `SplineForwardLine:${pt.id}`;
-        this._previewGroup.add(line);
-        this._extensionLines.set(forwardKey, line);
-      }
-
-      // Backward extension line
-      if (!this._extensionLines.has(backwardKey)) {
-        const geometry = new THREE.BufferGeometry();
-        const line = new THREE.LineSegments(geometry, this._weightLineMaterial);
-        line.name = `SplineBackwardLine:${pt.id}`;
-        this._previewGroup.add(line);
-        this._extensionLines.set(backwardKey, line);
-      }
-    });
-  }
-
-  _removeExtensionLines() {
-    for (const line of this._extensionLines.values()) {
-      if (line) {
-        try {
-          this._previewGroup?.remove(line);
-        } catch {
-          /* noop */
-        }
-        try {
-          line.geometry?.dispose();
-        } catch {
-          /* noop */
-        }
-      }
-    }
-    this._extensionLines.clear();
-  }
-
-  _updateExtensionLines() {
-    const updateLine = (line, anchor, direction, distance) => {
-      if (!line || !anchor || !direction || distance <= 0) return;
-      const posAttr = line.geometry.getAttribute("position");
-      const start = anchor;
-      const end = [
-        anchor[0] + direction[0] * distance,
-        anchor[1] + direction[1] * distance,
-        anchor[2] + direction[2] * distance
-      ];
-
-      if (!posAttr) {
-        line.geometry.setAttribute(
-          "position",
-          new THREE.Float32BufferAttribute(
-            [start[0], start[1], start[2], end[0], end[1], end[2]],
-            3
-          )
-        );
-      } else {
-        const arr = posAttr.array;
-        arr[0] = start[0];
-        arr[1] = start[1];
-        arr[2] = start[2];
-        arr[3] = end[0];
-        arr[4] = end[1];
-        arr[5] = end[2];
-        posAttr.needsUpdate = true;
-      }
-      line.computeLineDistances?.();
-      line.geometry.computeBoundingSphere?.();
-    };
-
-    this._splineData.points.forEach((pt, index) => {
-      const forwardLine = this._extensionLines.get(`forward-line:${pt.id}`);
-      const backwardLine = this._extensionLines.get(`backward-line:${pt.id}`);
-
-      // Get X-axis direction from stored rotation matrix
-      const rotation = pt.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
-      let xAxisDirection = [rotation[0], rotation[1], rotation[2]]; // X-axis from rotation matrix
-
-      // Normalize the direction (should already be normalized, but just in case)
-      const length = Math.sqrt(
-        xAxisDirection[0] * xAxisDirection[0] +
-        xAxisDirection[1] * xAxisDirection[1] +
-        xAxisDirection[2] * xAxisDirection[2]
-      );
-      if (length > 0) {
-        xAxisDirection = [
-          xAxisDirection[0] / length,
-          xAxisDirection[1] / length,
-          xAxisDirection[2] / length
-        ];
-      }
-
-      // Apply flip if needed
-      const forwardDir = pt.flipDirection ?
-        [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]] :
-        xAxisDirection;
-      const backwardDir = pt.flipDirection ?
-        xAxisDirection :
-        [-xAxisDirection[0], -xAxisDirection[1], -xAxisDirection[2]];
-
-      if (forwardLine) {
-        updateLine(forwardLine, pt.position, forwardDir, pt.forwardDistance);
-      }
-
-      if (backwardLine) {
-        updateLine(backwardLine, pt.position, backwardDir, pt.backwardDistance);
-      }
-    });
-  }
 }

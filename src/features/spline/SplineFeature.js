@@ -83,16 +83,14 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       gap: 8px;
       flex-wrap: wrap;
     }
-    .spline-widget .spw-point-list,
-    .spline-widget .spw-weight-list {
+    .spline-widget .spw-point-list {
       display: flex;
       flex-direction: column;
       gap: 8px;
       width: 100%;
       box-sizing: border-box;
     }
-    .spline-widget .spw-point-row,
-    .spline-widget .spw-weight-row {
+    .spline-widget .spw-point-row {
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -236,10 +234,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   pointList.className = "spw-point-list";
   host.appendChild(pointList);
 
-  const weightList = document.createElement("div");
-  weightList.className = "spw-weight-list";
-  host.appendChild(weightList);
-
   controlWrap.appendChild(host);
 
   const state = {
@@ -258,8 +252,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
 
   let pointRowMap = new Map();
   let pointButtonMap = new Map();
-  let weightRowMap = new Map();
-  let weightButtonMap = new Map();
 
   const loadFromSource = () => {
     const feature = getFeatureRef();
@@ -287,15 +279,9 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   };
 
   const disposeSession = (force = false) => {
-    //alert(`session ended`);
     if (!state.session) return;
 
-    // Don't dispose if this is a registered session unless forced (e.g., during destroy)
-    const featureID = getFeatureID();
-    if (!force && featureID && activeEditorSessions.has(featureID)) {
-      return;
-    }
-
+    // Always dispose when explicitly requested or forced
     try {
       state.session.dispose();
     } catch (error) {
@@ -537,25 +523,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     updateSelectionStyles();
   };
 
-  // Centralized function to activate a weight (same as clicking edit button)
-  const activateWeight = (weightKey) => {
-    // Ensure session exists before selecting - this will create transform controls
-    let activeSession = state.session;
-    const viewer = getViewer();
-    const featureID = getFeatureID();
-    if (!activeSession && viewer && featureID && !state.creatingSession) {
-      activeSession = ensureSession();
-    }
-
-    if (activeSession) {
-      // Always force redraw to ensure preview and transform controls are rebuilt
-      activeSession.selectObject(weightKey, { forceRedraw: true });
-    }
-    
-    state.selection = weightKey;
-    updateSelectionStyles();
-  };
-
   const renderPointRows = () => {
     pointList.textContent = "";
     pointRowMap = new Map();
@@ -717,119 +684,12 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     updateSelectionStyles();
   };
 
-  const renderWeights = () => {
-    weightList.textContent = "";
-    weightRowMap = new Map();
-    weightButtonMap = new Map();
-    const points = Array.isArray(state.spline?.points)
-      ? state.spline.points
-      : [];
-    const pairs = [
-      { keyName: "startWeight", label: "Start Weight", anchor: points[0], key: "weight:start" },
-      {
-        keyName: "endWeight",
-        label: "End Weight",
-        anchor: points[points.length - 1],
-        key: "weight:end",
-      },
-    ];
-    pairs.forEach(({ keyName, label, anchor, key }) => {
-      const weight = state.spline?.[keyName];
-      if (!weight) return;
-      const rowEl = document.createElement("div");
-      rowEl.className = "spw-weight-row";
-      rowEl.dataset.weightKey = keyName;
-
-      // Header: title + actions
-      const headerEl = document.createElement('div');
-      headerEl.className = 'spw-row-header';
-      const title = document.createElement("div");
-      title.className = "spw-title";
-      title.textContent = label;
-      headerEl.appendChild(title);
-
-      const coords = document.createElement("div");
-      coords.className = "spw-coords";
-      ["X", "Y", "Z"].forEach((axisLabel, axis) => {
-        const axisWrap = document.createElement("label");
-        axisWrap.className = "spw-axis";
-        axisWrap.textContent = `${axisLabel}:`;
-        const input = document.createElement("input");
-        input.type = "number";
-        input.step = "0.1";
-        input.dataset.axis = String(axis);
-        input.value = formatNumber(weight.position?.[axis] ?? 0);
-        input.addEventListener("change", () => {
-          activateWeight(key);
-          const next = normalizeNumber(input.value);
-          if (weight.position?.[axis] === next) return;
-          state.spline[keyName].position[axis] = next;
-          commit("update-weight");
-        });
-        input.addEventListener("focus", () => {
-          input.select?.();
-        });
-        axisWrap.appendChild(input);
-        coords.appendChild(axisWrap);
-      });
-      const actions = document.createElement("div");
-      actions.className = "spw-actions";
-
-      const selectBtn = document.createElement("button");
-      selectBtn.type = "button";
-      selectBtn.className = "spw-btn";
-      selectBtn.textContent = "🖉";
-      selectBtn.addEventListener("click", () => {
-        activateWeight(key);
-      });
-      actions.appendChild(selectBtn);
-      weightButtonMap.set(key, selectBtn);
-
-      const resetBtn = document.createElement("button");
-      resetBtn.type = "button";
-      resetBtn.className = "spw-link";
-      resetBtn.textContent = "Reset to anchor";
-      resetBtn.disabled = !anchor;
-      resetBtn.addEventListener("click", () => {
-        activateWeight(key);
-        resetWeight(keyName);
-      });
-      actions.appendChild(resetBtn);
-      headerEl.appendChild(actions);
-      rowEl.appendChild(headerEl);
-
-      // Vector line under header
-      const posLine = document.createElement('div');
-      posLine.className = 'spw-posline';
-      const posLabel = weight.position
-        ? weight.position.map((c) => formatNumber(c)).join(", ")
-        : "0, 0, 0";
-      posLine.textContent = `[${posLabel}]`;
-      rowEl.appendChild(posLine);
-
-      // Vertical fields container
-      rowEl.appendChild(coords);
-
-      weightList.appendChild(rowEl);
-      weightRowMap.set(key, rowEl);
-    });
-    updateSelectionStyles();
-  };
-
   const updateSelectionStyles = () => {
     const selected = state.selection || null;
     for (const [key, rowEl] of pointRowMap.entries()) {
       rowEl.classList.toggle('spw-selected', selected === key);
     }
     for (const [key, btn] of pointButtonMap.entries()) {
-      const isSelected = selected === key;
-      btn.style.background = isSelected ? 'rgba(58, 74, 109, 0.45)' : 'rgba(108, 195, 255, 0.12)';
-      btn.style.opacity = isSelected ? '1' : '0.95';
-    }
-    for (const [key, rowEl] of weightRowMap.entries()) {
-      rowEl.classList.toggle('spw-selected', selected === key);
-    }
-    for (const [key, btn] of weightButtonMap.entries()) {
       const isSelected = selected === key;
       btn.style.background = isSelected ? 'rgba(58, 74, 109, 0.45)' : 'rgba(108, 195, 255, 0.12)';
       btn.style.opacity = isSelected ? '1' : '0.95';
@@ -866,9 +726,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
 
     const pointsStart = performance.now();
     renderPointRows();
-
-    const weightsStart = performance.now();
-    renderWeights();
 
     addBtn.disabled = !getFeatureRef();
     focusPendingPoint();
@@ -909,18 +766,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       preserveSelection: false,
       newSelection: newSelection
     });
-  };
-
-  const resetWeight = (keyName) => {
-    const points = Array.isArray(state.spline?.points)
-      ? state.spline.points
-      : [];
-    if (!points.length) return;
-    const anchor =
-      keyName === "startWeight" ? points[0] : points[points.length - 1];
-    if (!anchor) return;
-    state.spline[keyName].position = anchor.position.slice();
-    commit("reset-weight", { preserveSelection: true });
   };
 
   const commitChangesToFeature = () => {
@@ -1182,7 +1027,7 @@ const inputParamsSchema = {
   splinePoints: {
     type: "string",
     label: "Spline Points",
-    hint: "Add, reorder, and position spline anchors and weights",
+    hint: "Add, reorder, and position spline anchors",
     renderWidget: renderSplinePointsWidget,
   },
 };
