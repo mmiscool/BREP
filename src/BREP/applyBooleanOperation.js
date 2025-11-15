@@ -513,6 +513,12 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
       targetCount: tools.length,
     });
 
+    // alert(baseSolid.getFaceNames());
+    // alert(op === 'SUBTRACT');
+    // alert(baseSolid);
+    // alert(typeof baseSolid.getFaceNames === 'function');
+    //alert((op === 'SUBTRACT' && baseSolid && typeof baseSolid.getFaceNames === 'function'));
+
     // Optional: Offset sweep start/end cap faces on the tool when coplanar with target faces.
     // Applies only for SUBTRACT where `baseSolid` acts as the tool against scene targets.
     // Configuration:
@@ -850,6 +856,26 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
         results: results.map(__booleanDebugSummarizeSolid),
         removed: removed.map(__booleanDebugSummarizeSolid),
       });
+
+
+      // // loop over each of the added solids and apply ._weldVerticesByEpsilon(0.2); 
+      // for (const resSolid of results) {
+      //   try {
+      //     if (resSolid && typeof resSolid._weldVerticesByEpsilon === 'function') {
+      //       await resSolid._manifoldize();
+      //       await resSolid._weldVerticesByEpsilon(0.002);
+      //       await resSolid._manifoldize();
+      //       await resSolid.removeDegenerateTriangles();
+      //       await resSolid._manifoldize();
+      //       await resSolid.visualize();
+      //     }
+      //   } catch (_) {console.log(_) }
+      // }
+
+
+
+
+
       return { added: results.length ? results : [baseSolid], removed };
     }
 

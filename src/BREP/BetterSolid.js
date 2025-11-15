@@ -273,6 +273,14 @@ export class Solid extends THREE.Group {
     }
 
     /**
+     * Remove degenerate triangles (triangles with duplicate or collinear vertices).
+     * Returns the number of triangles removed.
+     */
+    removeDegenerateTriangles() {
+        return SolidMethods.removeDegenerateTriangles.apply(this, arguments);
+    }
+
+    /**
      * Remove internal triangles by rebuilding from the Manifold surface.
      * Keeps only exterior triangles, preserving face IDs. In-place.
      * Returns the number of triangles removed.

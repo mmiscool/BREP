@@ -66,7 +66,7 @@ export function setTolerance(tolerance) {
     return out;
 }
 //3284
-export function simplify(tolerance = undefined) {
+export function simplify(tolerance = undefined, updateInPlace = false) {
     const Solid = this.constructor;
     const m = this._manifoldize();
 
@@ -139,8 +139,13 @@ export function simplify(tolerance = undefined) {
         try { if (meshOut && typeof meshOut.delete === 'function') meshOut.delete(); } catch { }
     }
 
+    console.log(`Simplification complete.`);
+
+    const returnObject = updateInPlace ? this : Solid._fromManifold(outM, this._idToFaceName);
+
+    this._manifoldize();
     // Return the mutated Solid (chainable)
-    return this;
+    return returnObject;
 }
 
 export function _expandTriIDsFromMesh(mesh) {

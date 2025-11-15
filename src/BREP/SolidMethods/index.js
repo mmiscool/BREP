@@ -34,6 +34,7 @@ export {
     collapseTinyTriangles,
     remesh,
     splitSelfIntersectingTriangles,
+    removeDegenerateTriangles,
     removeInternalTriangles,
     removeInternalTrianglesByRaycast,
     removeInternalTrianglesByWinding,

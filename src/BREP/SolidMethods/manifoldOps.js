@@ -230,6 +230,8 @@ export function _weldVerticesByEpsilon(eps) {
     }
     this._dirty = true;
     this._faceIndex = null;
+    this._manifoldize();
+    return this;
 }
 
 /**
