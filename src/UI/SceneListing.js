@@ -20,11 +20,9 @@ export class SceneListing {
         // Toolbar (minimal)
         this.toolbar = document.createElement("div");
         this.toolbar.className = "scene-tree__toolbar";
-        //     this.toolbar.innerHTML = `
-        //   <button type="button" class="st-btn st-expand" title="Expand all">▾</button>
-        //   <button type="button" class="st-btn st-collapse" title="Collapse all">▸</button>
-        // `;
         this.uiElement.appendChild(this.toolbar);
+
+        this.#attachTypeVisibilityButtons();
 
         // Tree container
         this.treeRoot = document.createElement("ul");
@@ -307,6 +305,49 @@ export class SceneListing {
 
     // ---- UI helpers -----------------------------------------------------------
 
+    #attachTypeVisibilityButtons() {
+        const makeTypeButton = (label, title, predicate) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "st-btn st-btn--type";
+            btn.textContent = label;
+            btn.title = title;
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                this.#toggleVisibility(predicate);
+            });
+            return btn;
+        };
+
+        const isFace = (obj) => this.#isFace(obj);
+        const isEdge = (obj) => this.#isEdge(obj);
+        const isVertex = (obj) => this.#isVertex(obj);
+
+        this.toolbar.appendChild(makeTypeButton("Face", "Toggle visibility of all Faces", isFace));
+        this.toolbar.appendChild(makeTypeButton("Edge", "Toggle visibility of all Edges", isEdge));
+        this.toolbar.appendChild(makeTypeButton("Point", "Toggle visibility of all Points", isVertex));
+    }
+
+    #toggleVisibility(predicate) {
+        // Decide target: if any matching obj is visible, hide all; otherwise show all.
+        let anyVisible = false;
+        for (const info of this.nodes.values()) {
+            const obj = info.obj;
+            if (predicate(obj) && obj && obj.visible !== false) {
+                anyVisible = true;
+                break;
+            }
+        }
+        const target = !anyVisible;
+        for (const info of this.nodes.values()) {
+            const obj = info.obj;
+            if (predicate(obj) && obj) {
+                if (typeof obj.visible !== "undefined") obj.visible = target;
+            }
+        }
+        this.#syncAttributes();
+    }
+
     #labelFor(obj) {
         const base =
             this.#isSolid(obj) ? (obj.name || "Solid") :
@@ -393,11 +434,15 @@ export class SceneListing {
   overflow:auto;
 }
 .scene-tree__toolbar{
-  display:flex; gap:6px; margin-bottom:6px;
+  display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap;
 }
 .st-btn{
   background:#0f1722; color:var(--fg); border:1px solid var(--border);
   padding:4px; border-radius:8px; cursor:pointer;
+}
+.st-btn--type{
+  font-size:11px;
+  padding:2px 8px;
 }
 .st-btn:hover{ background:var(--hover); }
 .scene-tree__list{
