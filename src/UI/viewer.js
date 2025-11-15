@@ -415,14 +415,14 @@ export class Viewer {
             const ph = this.partHistory.getObjectByName(featureID);
             if (ph) ph.visible = false;
         } catch (e) {
-            console.log(e);
-            console.log(this.viewer);
+            debugLog(e);
+            debugLog(this.viewer);
         }
 
-        console.log('Starting Sketch Mode for featureID:', featureID);
-        console.log(this.partHistory.scene);
-        console.log(this.partHistory);
-        console.log(this);
+        debugLog('Starting Sketch Mode for featureID:', featureID);
+        debugLog(this.partHistory.scene);
+        debugLog(this.partHistory);
+        debugLog(this);
 
         try { if (this._sketchMode) this._sketchMode.dispose(); } catch { }
         this._sketchMode = new SketchMode3D(this, featureID);
@@ -482,12 +482,12 @@ export class Viewer {
     // Spline Mode API
     // ————————————————————————————————————————
     startSplineMode(splineSession) {
-        console.log('Starting Spline Mode for session:', splineSession);
+        debugLog('Starting Spline Mode for session:', splineSession);
         this._splineMode = splineSession;
     }
 
     endSplineMode() {
-        console.log('Ending Spline Mode');
+        debugLog('Ending Spline Mode');
         this._splineMode = null;
     }
 
@@ -734,7 +734,7 @@ export class Viewer {
                 p = p.parent;
             }
         }
-        //console.log('Picked object:', obj);
+        //debugLog('Picked object:', obj);
 
         // If the object (or its ancestors) doesn't expose onClick, climb to one that does
         let target = obj;
@@ -762,7 +762,7 @@ export class Viewer {
         if (this._sketchMode) return { hit: null, target: null };
 
         // DEBUG: Log current mode
-        //console.log(`_pickAtEvent called - splineMode active: ${!!this._splineMode}, sketchMode active: ${!!this._sketchMode}`);
+        //debugLog(`_pickAtEvent called - splineMode active: ${!!this._splineMode}, sketchMode active: ${!!this._sketchMode}`);
 
         // In spline mode, allow picking only spline vertices, suppress other scene picking
         if (this._splineMode) {
@@ -781,12 +781,12 @@ export class Viewer {
             const intersects = this.raycaster.intersectObjects(this.scene.children, true);
 
             // DEBUG: Log all objects under mouse pointer
-            // console.log(`SPLINE MODE CLICK DEBUG:`);
-            // console.log(`- Mouse NDC: (${ndc.x.toFixed(3)}, ${ndc.y.toFixed(3)})`);
-            // console.log(`- Total intersections found: ${intersects.length}`);
+            // debugLog(`SPLINE MODE CLICK DEBUG:`);
+            // debugLog(`- Mouse NDC: (${ndc.x.toFixed(3)}, ${ndc.y.toFixed(3)})`);
+            // debugLog(`- Total intersections found: ${intersects.length}`);
             // intersects.forEach((it, idx) => {
             //     const obj = it.object;
-            //     console.log(`  [${idx}] Object:`, {
+            //     debugLog(`  [${idx}] Object:`, {
             //         name: obj.name,
             //         type: obj.type,
             //         constructor: obj.constructor.name,
@@ -806,16 +806,16 @@ export class Viewer {
                 // Check if this is a spline vertex by looking at userData
                 if (it.object.userData?.isSplineVertex || it.object.userData?.isSplineWeight) {
                     const target = it.object;
-                    //console.log(`SPLINE MODE: Found spline vertex/weight to select:`, target.name);
+                    //debugLog(`SPLINE MODE: Found spline vertex/weight to select:`, target.name);
                     if (typeof target.onClick === 'function') {
-                        //console.log(`SPLINE MODE: Vertex has onClick handler, returning as target`);
+                        //debugLog(`SPLINE MODE: Vertex has onClick handler, returning as target`);
                         return { hit: it, target };
                     } else {
-                        // console.log(`SPLINE MODE: Vertex missing onClick handler!`);
+                        // debugLog(`SPLINE MODE: Vertex missing onClick handler!`);
                     }
                 }
             }
-            //console.log(`SPLINE MODE: No spline vertices found under cursor`);
+            //debugLog(`SPLINE MODE: No spline vertices found under cursor`);
             return { hit: null, target: null };
         }
 
@@ -852,12 +852,12 @@ export class Viewer {
 
         // DEBUG: Log all objects under mouse pointer in normal mode
         if (intersects.length > 0) {
-            console.log(`NORMAL MODE CLICK DEBUG:`);
-            console.log(`- Mouse NDC: (${ndc.x.toFixed(3)}, ${ndc.y.toFixed(3)})`);
-            console.log(`- Total intersections found: ${intersects.length}`);
+            debugLog(`NORMAL MODE CLICK DEBUG:`);
+            debugLog(`- Mouse NDC: (${ndc.x.toFixed(3)}, ${ndc.y.toFixed(3)})`);
+            debugLog(`- Total intersections found: ${intersects.length}`);
             intersects.slice(0, 5).forEach((it, idx) => { // Only log first 5 to avoid spam
                 const obj = it.object;
-                // console.log(`  [${idx}] Object:`, {
+                // debugLog(`  [${idx}] Object:`, {
                 //     name: obj.name,
                 //     type: obj.type,
                 //     constructor: obj.constructor.name,
@@ -874,20 +874,20 @@ export class Viewer {
             if (!it || !it.object) continue;
             const testVisible = (obj) => {
                 if (obj.parent === null) {
-                    //console.log('Reached scene root during visibility test.');
+                    //debugLog('Reached scene root during visibility test.');
                     return true;
                 }
                 if (obj.visible === false) return false;
                 return testVisible(obj.parent);
             }
-            //console.log('Testing intersect object visibility:', testVisible(it.object), it.object.name);
+            //debugLog('Testing intersect object visibility:', testVisible(it.object), it.object.name);
 
             const visibleResult = testVisible(it.object);
 
             if (visibleResult) {
 
-                //console.log('Intersect object visibility result:', visibleResult, it.object.name);
-                //console.log('Pick intersect object:', it.object);
+                //debugLog('Intersect object visibility result:', visibleResult, it.object.name);
+                //debugLog('Pick intersect object:', it.object);
                 const target = this._mapIntersectionToTarget(it);
                 if (target) return { hit: it, target };
             }
@@ -1901,5 +1901,16 @@ export class Viewer {
         const dist = camera.position.length();
         const fovRad = (camera.fov * Math.PI) / 180;
         return (2 * Math.tan(fovRad / 2) * dist) / height;
+    }
+}
+
+
+
+window.DEBUG_MODE = false;
+
+// function for debug logging that checks if we are in debug mode 
+function debugLog(...args) {
+    if (window.DEBUG_MODE) {
+        console.log(...args);
     }
 }
