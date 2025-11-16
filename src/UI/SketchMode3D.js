@@ -525,19 +525,24 @@ export class SketchMode3D {
         consumed = true;
         return;
       }
+
+      // Point tool: drop a new point directly on the sketch plane
+      if (this._tool === "point") {
+        const pid = this.#createPointAtCursor(e);
+        if (pid != null) {
+          this._selection.clear();
+          this.#refreshLists();
+          this.#refreshContextBar();
+        }
+        try { e.preventDefault(); e.stopImmediatePropagation?.(); e.stopPropagation(); } catch { }
+        consumed = true;
+        return;
+      }
+
       const hit = this.#hitTestPoint(e);
       let pid = hit;
       if (pid == null) {
-        // Create a new point at cursor on sketch plane
-        const uv = this.#pointerToPlaneUV(e);
-        if (uv) {
-          const s = this._solver.sketchObject;
-          const nextId = Math.max(0, ...s.points.map((p) => +p.id || 0)) + 1;
-          s.points.push({ id: nextId, x: uv.u, y: uv.v, fixed: false });
-          pid = nextId;
-          this._solver.solveSketch("full");
-          this.#rebuildSketchGraphics();
-        }
+        pid = this.#createPointAtCursor(e);
       }
       if (pid != null) {
         // Geometry creation flows
@@ -943,6 +948,20 @@ export class SketchMode3D {
     const by = this._lock.basis.y;
     const d = hit.clone().sub(o);
     return { u: d.dot(bx), v: d.dot(by) };
+  }
+
+  #createPointAtCursor(e) {
+    if (!this._solver) return null;
+    const s = this._solver.sketchObject;
+    if (!s) return null;
+    const uv = this.#pointerToPlaneUV(e);
+    if (!uv) return null;
+    const pts = Array.isArray(s.points) ? s.points : (s.points = []);
+    const nextId = Math.max(0, ...pts.map((p) => +p.id || 0)) + 1;
+    pts.push({ id: nextId, x: uv.u, y: uv.v, fixed: false });
+    try { this._solver.solveSketch("full"); } catch { }
+    this.#rebuildSketchGraphics();
+    return nextId;
   }
 
   // Helper: set ray from camera and shift origin far behind camera along ray direction
@@ -1596,26 +1615,37 @@ export class SketchMode3D {
     // Track buttons to reflect active tool
     this._toolButtons = this._toolButtons || new Map();
 
-    const mk = (label, tool) => {
+    const mk = ({ label, tool, tooltip }) => {
       const b = document.createElement("button");
       b.textContent = label;
+      if (tooltip) {
+        b.title = tooltip;
+        b.setAttribute("aria-label", tooltip);
+      }
       b.style.color = "#ddd";
       b.style.background = "transparent";
       b.style.border = "1px solid #364053";
       b.style.borderRadius = "6px";
       b.style.padding = "4px 8px";
+      b.style.minWidth = label && label.length === 1 ? "36px" : "auto";
+      b.style.fontSize = label && label.length === 1 ? "16px" : "13px";
+      b.style.lineHeight = "18px";
       b.setAttribute("data-tool", tool);
       b.onclick = () => { this.#setTool(tool); };
       this._toolButtons.set(tool, b);
       return b;
     };
-    bar.appendChild(mk("Select", "select"));
-    bar.appendChild(mk("Line", "line"));
-    bar.appendChild(mk("Rectangle", "rect"));
-    bar.appendChild(mk("Circle", "circle"));
-    bar.appendChild(mk("Arc", "arc"));
-    bar.appendChild(mk("Bezier", "bezier"));
-    bar.appendChild(mk("Link external edge", "pickEdges"));
+    const buttons = [
+      { label: "👆", tool: "select", tooltip: "Select and edit sketch items" },
+      { label: "⌖", tool: "point", tooltip: "Create point" },
+      { label: "/", tool: "line", tooltip: "Create line" },
+      { label: "☐", tool: "rect", tooltip: "Create rectangle" },
+      { label: "◯", tool: "circle", tooltip: "Create circle" },
+      { label: "◠", tool: "arc", tooltip: "Create arc" },
+      { label: "∿", tool: "bezier", tooltip: "Create Bezier curve" },
+      { label: "🔗", tool: "pickEdges", tooltip: "Link external edge" },
+    ];
+    buttons.forEach((btn) => bar.appendChild(mk(btn)));
     this._topbar = bar;
     host.appendChild(bar);
 
