@@ -130,6 +130,10 @@ export class Solid extends THREE.Group {
         return SolidMethods.mirrorAcrossPlane.apply(this, arguments);
     }
 
+    pushFace(faceName, distance) {
+        return SolidMethods.pushFace.apply(this, arguments);
+    }
+
     removeTinyBoundaryTriangles(areaThreshold, maxIterations = 1) {
         return SolidMethods.removeTinyBoundaryTriangles.apply(this, arguments);
     }
@@ -311,9 +315,53 @@ export class Solid extends THREE.Group {
     }
 }
 
+// Helper to include the owning feature ID in Solid profiling logs
+const __solidProfilingOwnerTag = (solidInstance) => {
+    try {
+        const owner = solidInstance?.owningFeatureID ?? solidInstance?.ID ?? null;
+        return owner ? ` owningFeature=${owner}` : '';
+    } catch {
+        return '';
+    }
+};
+
+const __solidSlowMethodThresholdMs = 1000;
+
+const __solidProfilingFormatMessage = (prefix, methodName, phase, durationMs) => {
+    const rounded = Math.round(durationMs);
+    const label = `${prefix} ${methodName}`;
+    switch (phase) {
+        case 'resolved': return `${label} resolved in ${rounded} ms`;
+        case 'rejected': return `${label} rejected in ${rounded} ms`;
+        case 'completed': return `${label} in ${rounded} ms`;
+        case 'threw': return `${label} threw in ${rounded} ms`;
+        default: return null;
+    }
+};
+
+const __solidProfilingLogTiming = (prefix, methodName, phase, durationMs) => {
+    const message = __solidProfilingFormatMessage(prefix, methodName, phase, durationMs);
+    if (!message) return;
+    if (debugMode) {
+        try { console.log(message); } catch { }
+    }
+    if (durationMs >= __solidSlowMethodThresholdMs) {
+        const slowMsg = `${message} (SLOW > ${__solidSlowMethodThresholdMs} ms)`;
+        try {
+            if (typeof console !== 'undefined') {
+                const warnFn = (typeof console.warn === 'function')
+                    ? console.warn
+                    : (typeof console.log === 'function' ? console.log : null);
+                if (warnFn) warnFn.call(console, slowMsg);
+            }
+        } catch { }
+    }
+};
+
 // --- Method-level time profiling for Solid -----------------------------------
 // Wrap all prototype methods (except constructor and _manifoldize, which is
-// already instrumented) to log execution time when debugMode is true.
+// already instrumented) to log execution time when debugMode is true, and
+// always flag calls that exceed __solidSlowMethodThresholdMs.
 (() => {
     try {
         if (Solid.__profiled) return;
@@ -327,20 +375,24 @@ export class Solid extends THREE.Group {
             if (!desc || typeof desc.value !== 'function') continue;
             const fn = desc.value;
             const wrapped = function (...args) {
-                if (!debugMode) return fn.apply(this, args);
+                const prefix = `[Solid${__solidProfilingOwnerTag(this)}]`;
                 const t0 = nowMs();
+                const logPhase = (phase) => {
+                    const duration = nowMs() - t0;
+                    __solidProfilingLogTiming(prefix, name, phase, duration);
+                };
                 try {
                     const ret = fn.apply(this, args);
                     if (ret && typeof ret.then === 'function') {
                         return ret.then(
-                            (val) => { try { if (debugMode) console.log(`[Solid] ${name} resolved in ${Math.round(nowMs() - t0)} ms`); } catch { } return val; },
-                            (err) => { try { if (debugMode) console.log(`[Solid] ${name} rejected in ${Math.round(nowMs() - t0)} ms`); } catch { } throw err; }
+                            (val) => { logPhase('resolved'); return val; },
+                            (err) => { logPhase('rejected'); throw err; }
                         );
                     }
-                    try { if (debugMode) console.log(`[Solid] ${name} in ${Math.round(nowMs() - t0)} ms`); } catch { }
+                    logPhase('completed');
                     return ret;
                 } catch (e) {
-                    try { if (debugMode) console.log(`[Solid] ${name} threw in ${Math.round(nowMs() - t0)} ms`); } catch { }
+                    logPhase('threw');
                     throw e;
                 }
             };

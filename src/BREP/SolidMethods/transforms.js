@@ -211,3 +211,78 @@ export function mirrorAcrossPlane(point, normal) {
         return mirrored;
     } finally { try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { } }
 }
+
+/**
+ * Push a named face outward by the specified distance.
+ * Simple implementation: calculate face normal, create displacement vector, apply to all vertices.
+ * 
+ * @param {string} faceName - Name of the face to push
+ * @param {number} distance - Distance to push the face (positive = outward along normal)
+ * @returns {Solid} this for chaining
+ */
+export function pushFace(faceName, distance = 0.001) {
+    const dist = Number(distance);
+    if (!faceName || !Number.isFinite(dist) || dist === 0) return this;
+
+    const faceID = this._faceNameToID.get(faceName);
+    if (faceID === undefined) {
+        console.warn(`pushFace: Face "${faceName}" not found`);
+        return this;
+    }
+
+    const triIDs = this._triIDs;
+    const triVerts = this._triVerts;
+    const vp = this._vertProperties;
+    if (!triIDs || !triVerts || !vp) return this;
+
+    const triCount = Math.min(triIDs.length, (triVerts.length / 3) | 0);
+    let nx = 0, ny = 0, nz = 0;
+    const affected = new Set();
+
+    for (let t = 0; t < triCount; t++) {
+        if (triIDs[t] !== faceID) continue;
+        const base = t * 3;
+        const i0 = triVerts[base + 0] >>> 0;
+        const i1 = triVerts[base + 1] >>> 0;
+        const i2 = triVerts[base + 2] >>> 0;
+        affected.add(i0); affected.add(i1); affected.add(i2);
+
+        const ax = vp[i0 * 3 + 0], ay = vp[i0 * 3 + 1], az = vp[i0 * 3 + 2];
+        const bx = vp[i1 * 3 + 0], by = vp[i1 * 3 + 1], bz = vp[i1 * 3 + 2];
+        const cx = vp[i2 * 3 + 0], cy = vp[i2 * 3 + 1], cz = vp[i2 * 3 + 2];
+        const ux = bx - ax, uy = by - ay, uz = bz - az;
+        const vx = cx - ax, vy = cy - ay, vz = cz - az;
+        nx += uy * vz - uz * vy;
+        ny += uz * vx - ux * vz;
+        nz += ux * vy - uy * vx;
+    }
+
+    if (affected.size === 0) return this;
+
+    const len = Math.hypot(nx, ny, nz);
+    if (!(len > 0)) {
+        console.warn(`pushFace: Invalid normal for face "${faceName}"`);
+        return this;
+    }
+
+    const dx = (nx / len) * dist;
+    const dy = (ny / len) * dist;
+    const dz = (nz / len) * dist;
+
+    for (const idx of affected) {
+        const base = idx * 3;
+        vp[base + 0] += dx;
+        vp[base + 1] += dy;
+        vp[base + 2] += dz;
+    }
+
+    this._vertKeyToIndex = new Map();
+    for (let i = 0; i < vp.length; i += 3) {
+        const x = vp[i], y = vp[i + 1], z = vp[i + 2];
+        this._vertKeyToIndex.set(`${x},${y},${z}`, (i / 3) | 0);
+    }
+    this._dirty = true;
+    this._faceIndex = null;
+    this._manifold = null;
+    return this;
+}

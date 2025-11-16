@@ -18,6 +18,7 @@ export {
     bakeTRS,
     offsetFace,
     mirrorAcrossPlane,
+    pushFace,
 } from "./transforms.js";
 export {
     _manifoldize,

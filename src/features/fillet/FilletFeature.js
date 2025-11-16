@@ -22,7 +22,7 @@ const inputParamsSchema = {
     inflate: {
         type: "number",
         step: 0.1,
-        default_value: 0.1,
+        default_value: 0,
         hint: "Grow the cutting solid by this amount (units). Keep tiny (e.g. 0.0005). Closed loops ignore inflation to avoid self‑intersection.",
     },
     direction: {
@@ -80,7 +80,7 @@ export class FilletFeature {
         const r = Number(this.inputParams.radius);
         if (!Number.isFinite(r) || !(r > 0)) return { added: [], removed: [] };
 
-        const fid = this.inputParams?.featureID || 'FILLET';
+        const fid = this.inputParams.featureID;
         const result = await targetSolid.fillet({
             radius: r,
             edges: edgeObjs,

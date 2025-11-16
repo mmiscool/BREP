@@ -63,7 +63,20 @@ export async function fillet(opts = {}) {
   for (const e of unique) {
     const name = `${featureID}_FILLET_${idx++}`;
     const res = filletSolid({ edgeToFillet: e, radius, sideMode: dir, inflate, debug, name }) || {};
+    
+    // Handle debug solids even on failure
+    if (debug || !res.finalSolid) {
+      try { if (res.tube) debugAdded.push(res.tube); } catch { }
+      try { if (res.wedge) debugAdded.push(res.wedge); } catch { }
+      
+      // If there was an error, log it and add debug info
+      if (res.error) {
+        console.warn(`Fillet failed for edge ${e?.name || idx}: ${res.error}`);
+      }
+    }
+    
     if (!res.finalSolid) continue;
+    
     const tangents = [];
     // Use actual tangent polylines returned from builder for accurate snapping and overlays
     try {
@@ -92,7 +105,7 @@ export async function fillet(opts = {}) {
     try { result.name = this.name; } catch { }
   }
 
-  
+
   // Optional seam snapping (INSET only) using provided tangents
   if (dir === 'INSET' && snapSeam) {
     try {
@@ -109,7 +122,23 @@ export async function fillet(opts = {}) {
   // Attach debug artifacts for callers that want to add them to the scene
   if (debug && debugAdded.length) {
     try { result.__debugAddedSolids = debugAdded; } catch { }
+    console.log(`🐛 Debug: Added ${debugAdded.length} debug solids to result`);
+  } else if (debugAdded.length) {
+    // Always attach debug solids if any were created (even on failure)
+    try { result.__debugAddedSolids = debugAdded; } catch { }
+    console.log(`⚠️ Failure Debug: Added ${debugAdded.length} debug solids to result`);
   }
+
+
+  // await result._manifoldize();
+  // await result._weldVerticesByEpsilon(0.07);
+  // await result._manifoldize();
+  // await result._weldVerticesByEpsilon(.1);
+  // await result._manifoldize();
+  // await result.simplify(1, true);
+  // await result._manifoldize();
+  // await result.visualize();
+
 
   return result;
 }

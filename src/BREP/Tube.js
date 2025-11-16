@@ -550,13 +550,6 @@ export class TubeSolid extends Solid {
       }
     }
 
-    // // Clean up self-intersections and cull interior soup before using Manifold
-    // this.splitSelfIntersectingTriangles();
-    // // Keep only boundary triangles using generalized winding (two-sided test)
-    // this.removeInternalTrianglesByWinding();
-    // // Finalize by rebuilding from Manifold's exterior surface if available
-    // try { this.removeInternalTriangles(); } catch { /* ignore if not manifold yet */ }
-
 
     try {
       const auxPath = smoothed.map(p => [p.x, p.y, p.z]);
