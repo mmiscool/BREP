@@ -30,6 +30,9 @@ export class HistoryCollectionWidget {
     this._onFormReady = typeof onFormReady === 'function' ? onFormReady : null;
     this._autoSyncOpenState = Boolean(autoSyncOpenState);
     this._createEntryFunc = typeof createEntry === 'function' ? createEntry : null;
+    this._addBtn = null;
+    this._addMenu = null;
+    this._onGlobalClick = null;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = 'history-collection-widget-host';
@@ -46,6 +49,23 @@ export class HistoryCollectionWidget {
 
     this._footer = this._buildFooter();
     this._container.appendChild(this._footer);
+
+    this._onGlobalClick = (ev) => {
+      if (!this._footer) return;
+      const target = ev?.target || null;
+      const canCheckNode = typeof Node !== 'undefined';
+      if (this.uiElement && target && canCheckNode && target instanceof Node) {
+        if (this.uiElement === target || this.uiElement.contains(target)) {
+          return;
+        }
+      }
+      this._toggleAddMenu(false);
+    };
+    try {
+      document.addEventListener('mousedown', this._onGlobalClick, true);
+    } catch {
+      this._onGlobalClick = null;
+    }
 
     this._expandedId = null;
     this._titleEls = new Map();
@@ -66,6 +86,12 @@ export class HistoryCollectionWidget {
     this._expandedId = null;
     this._titleEls.clear();
     this._forms.clear();
+    this._addBtn = null;
+    this._addMenu = null;
+    if (this._onGlobalClick) {
+      try { document.removeEventListener('mousedown', this._onGlobalClick, true); } catch (_) { /* ignore */ }
+    }
+    this._onGlobalClick = null;
   }
 
   setHistory(history) {
@@ -85,6 +111,7 @@ export class HistoryCollectionWidget {
   }
 
   render() {
+    this._toggleAddMenu(false);
     this._refreshAddMenu();
     this._titleEls.clear();
     this._forms.clear();
@@ -374,6 +401,7 @@ export class HistoryCollectionWidget {
   }
 
   async _handleAddEntry(typeStr) {
+    this._toggleAddMenu(false);
     if (!typeStr) return;
     if (typeof this._createEntryFunc === 'function') {
       let entry = null;
@@ -542,20 +570,18 @@ export class HistoryCollectionWidget {
   }
 
   _refreshAddMenu() {
-    if (!this._footer) return;
-    const select = this._footer.querySelector('.hc-add-select');
-    if (!select) return;
-    select.textContent = '';
-    const placeholder = document.createElement('option');
-    placeholder.value = '';
-    placeholder.textContent = 'Add…';
-    placeholder.disabled = true;
-    placeholder.selected = true;
-    select.appendChild(placeholder);
+    if (!this._addMenu || !this._addBtn) return;
+    const menu = this._addMenu;
+    menu.textContent = '';
     const history = this.history;
-    if (!history || !history.registry) return;
-    const entries = this._getEntries();
-    const existingTypes = new Set(entries.map((entry) => entry?.type || entry?.entityType).filter(Boolean));
+    if (!history || !history.registry) {
+      this._addBtn.disabled = true;
+      const empty = document.createElement('div');
+      empty.className = 'hc-menu-empty';
+      empty.textContent = 'No entries available';
+      menu.appendChild(empty);
+      return;
+    }
     const available = typeof history.registry.listAvailable === 'function'
       ? history.registry.listAvailable()
       : Array.isArray(history.registry.entityClasses)
@@ -563,36 +589,96 @@ export class HistoryCollectionWidget {
         : (history.registry.entityClasses instanceof Map
           ? Array.from(history.registry.entityClasses.values())
           : []);
-    if (!Array.isArray(available)) return;
+    if (!Array.isArray(available)) {
+      this._addBtn.disabled = true;
+      const empty = document.createElement('div');
+      empty.className = 'hc-menu-empty';
+      empty.textContent = 'No entries available';
+      menu.appendChild(empty);
+      return;
+    }
+    const items = [];
     for (const info of available) {
       if (!info) continue;
-      const type = info.type || info.entityType || info.shortName;
-      if (!type) continue;
-      const opt = document.createElement('option');
-      opt.value = type;
-      const has = existingTypes.has(type);
-      opt.textContent = has ? `${info.longName || info.featureName || type} (existing)` : (info.longName || info.featureName || type);
-      select.appendChild(opt);
+      let rawType = null;
+      let rawLabel = null;
+      if (typeof info === 'string') {
+        rawType = info;
+        rawLabel = info;
+      } else {
+        const source = (typeof info === 'function' || typeof info === 'object') ? info : null;
+        if (source) {
+          rawType = source.type || source.entityType || source.shortName || source.featureShortName || source.featureName || source.name;
+          rawLabel = source.longName || source.featureName || source.featureShortName || source.shortName || source.entityType || source.type || source.name;
+        }
+      }
+      if (!rawType) continue;
+      const normalizedType = String(rawType);
+      const labelText = rawLabel ? String(rawLabel) : normalizedType;
+      items.push({ type: normalizedType, text: labelText });
+    }
+    if (!items.length) {
+      this._addBtn.disabled = true;
+      const empty = document.createElement('div');
+      empty.className = 'hc-menu-empty';
+      empty.textContent = 'No entries available';
+      menu.appendChild(empty);
+      return;
+    }
+    this._addBtn.disabled = false;
+    for (const { type, text } of items) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hc-menu-item';
+      btn.setAttribute('role', 'menuitem');
+      btn.textContent = text;
+      btn.dataset.type = type;
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        await this._handleAddEntry(type);
+      });
+      menu.appendChild(btn);
     }
   }
 
   _buildFooter() {
     const footer = document.createElement('div');
     footer.className = 'hc-footer';
-    const label = document.createElement('span');
-    label.className = 'hc-add-label';
-    label.textContent = 'Add annotation';
-    footer.appendChild(label);
-    const select = document.createElement('select');
-    select.className = 'hc-add-select';
-    select.addEventListener('change', async () => {
-      const value = select.value;
-      select.value = '';
-      await this._handleAddEntry(value);
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'hc-add-btn';
+    addBtn.setAttribute('aria-expanded', 'false');
+    addBtn.setAttribute('aria-label', 'Add entry');
+    addBtn.title = 'Add entry';
+    addBtn.textContent = '+';
+    footer.appendChild(addBtn);
+
+    const menu = document.createElement('div');
+    menu.className = 'hc-add-menu';
+    menu.setAttribute('role', 'menu');
+    menu.hidden = true;
+    footer.appendChild(menu);
+
+    addBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const isOpen = addBtn.getAttribute('aria-expanded') === 'true';
+      this._toggleAddMenu(!isOpen);
     });
-    footer.appendChild(select);
+
+    this._addBtn = addBtn;
+    this._addMenu = menu;
     this._refreshAddMenu();
     return footer;
+  }
+
+  _toggleAddMenu(open) {
+    if (!this._addBtn || !this._addMenu) return;
+    const willOpen = Boolean(open);
+    this._addBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    this._addMenu.hidden = !willOpen;
+    if (this._footer) {
+      this._footer.classList.toggle('menu-open', willOpen);
+    }
   }
 
   _subscribeToHistory(history) {

@@ -115,28 +115,72 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     border-radius: 10px;
   }
   .hc-footer {
+    position: relative;
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 4px 2px;
-    border-top: 1px solid rgba(255,255,255,0.04);
-    margin-top: 2px;
+    justify-content: center;
   }
-  .hc-add-label {
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .hc-add-select {
-    flex: 1 1 auto;
-    background: var(--input-bg);
+  .hc-add-btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02));
     color: var(--text);
+    border-radius: 9999px;
+    padding: 6px 10px;
+    width: 36px;
+    height: 36px;
+    line-height: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .05s ease;
+  }
+  .hc-footer.menu-open .hc-add-btn,
+  .hc-add-btn:hover {
+    border-color: var(--focus);
+    box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+  }
+  .hc-add-btn:active {
+    transform: translateY(1px);
+  }
+  .hc-add-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+    box-shadow: none;
+    border-color: var(--border);
+  }
+  .hc-add-menu {
+    position: absolute;
+    bottom: 48px;
+    width: 100%;
+    background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 8px 10px;
-    font-size: 13px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+    padding: 6px;
+    z-index: 5;
   }
-  .hc-add-select:focus-visible {
-    outline: 2px solid var(--focus);
-    outline-offset: 2px;
+  .hc-menu-item {
+    appearance: none;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    color: var(--text);
+    border: 0;
+    border-radius: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    transition: background-color .12s ease, color .12s ease;
+  }
+  .hc-menu-item:hover {
+    background: rgba(110,168,254,.12);
+    color: #fff;
+  }
+  .hc-menu-empty {
+    padding: 10px;
+    color: var(--muted);
+    text-align: center;
   }
 `;
