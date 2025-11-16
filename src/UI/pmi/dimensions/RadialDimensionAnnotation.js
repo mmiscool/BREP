@@ -266,6 +266,17 @@ function computeRadialPoints(pmimode, ann, ctx) {
       }
     }
 
+    if ((!center || !axis || !Number.isFinite(radius) || radius <= 0) && owner) {
+      const pipeData = inferPipeFaceDataFromAuxEdges(owner, faceObj);
+      if (pipeData) {
+        center = pipeData.center;
+        axis = pipeData.axis;
+        radius = pipeData.radius;
+        radiusPoint = pipeData.radiusPoint;
+        perpendicular = pipeData.perpendicular;
+      }
+    }
+
     if (!center || !axis || !Number.isFinite(radius) || radius <= 0) {
       const inferred = inferCylinderFromGeometry(faceObj);
       if (!inferred) return null;
@@ -359,6 +370,180 @@ function computeRadialLabelPosition(pmimode, ann, center, radiusPoint, planeNorm
   } catch {
     return radiusPoint ? radiusPoint.clone() : null;
   }
+}
+
+function inferPipeFaceDataFromAuxEdges(owner, faceObj) {
+  try {
+    if (!owner || !faceObj) return null;
+    const auxEdges = Array.isArray(owner._auxEdges) ? owner._auxEdges : null;
+    if (!auxEdges || auxEdges.length === 0) return null;
+    const faceName = (faceObj.name || faceObj.userData?.faceName || '').trim();
+    if (!faceName) return null;
+    const baseName = pipeFaceBaseName(faceName);
+    if (!baseName) return null;
+    const aux = findAuxEdgeByName(auxEdges, `${baseName}_PATH`);
+    if (!aux || !Array.isArray(aux.points) || aux.points.length < 2) return null;
+
+    owner.updateMatrixWorld?.(true);
+    faceObj.updateMatrixWorld?.(true);
+
+    const polyline = buildAuxPolylineWorld(aux, owner);
+    if (!polyline || polyline.length < 2) return null;
+    const samples = collectFaceSamplePoints(faceObj, 16);
+    if (!samples.length) return null;
+
+    let best = null;
+    for (const sample of samples) {
+      const info = closestPointOnPolyline(sample, polyline, !!aux.closedLoop);
+      if (!info || !info.point) continue;
+      const radialVec = new THREE.Vector3().subVectors(sample, info.point);
+      const lenSq = radialVec.lengthSq();
+      if (!(lenSq > 1e-10)) continue;
+      const radius = Math.sqrt(lenSq);
+      radialVec.normalize();
+      if (!best || radius > best.radius) {
+        best = {
+          center: info.point.clone(),
+          axis: info.direction ? info.direction.clone() : null,
+          radius,
+          radiusPoint: info.point.clone().addScaledVector(radialVec, radius),
+          perpendicular: radialVec.clone(),
+        };
+      }
+    }
+
+    if (!best) return null;
+    if (!best.axis || best.axis.lengthSq() < 1e-10) {
+      best.axis = estimatePolylineTangent(polyline, best.center, !!aux.closedLoop) || new THREE.Vector3(0, 1, 0);
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
+
+function findAuxEdgeByName(auxEdges, name) {
+  if (!Array.isArray(auxEdges) || !name) return null;
+  for (const aux of auxEdges) {
+    if (aux?.name === name) return aux;
+  }
+  const lower = name.toLowerCase();
+  for (const aux of auxEdges) {
+    if (typeof aux?.name === 'string' && aux.name.toLowerCase() === lower) return aux;
+  }
+  return null;
+}
+
+function buildAuxPolylineWorld(aux, owner) {
+  try {
+    const pts = [];
+    const matrix = (!aux.polylineWorld && owner?.matrixWorld) ? owner.matrixWorld : null;
+    const tmp = new THREE.Vector3();
+    for (const p of aux.points) {
+      if (Array.isArray(p) && p.length >= 3) {
+        tmp.set(p[0], p[1], p[2]);
+      } else if (p && typeof p === 'object') {
+        tmp.set(Number(p.x) || 0, Number(p.y) || 0, Number(p.z) || 0);
+      } else {
+        continue;
+      }
+      if (matrix) tmp.applyMatrix4(matrix);
+      pts.push(tmp.clone());
+    }
+    return pts;
+  } catch {
+    return null;
+  }
+}
+
+function collectFaceSamplePoints(faceObj, maxSamples = 16) {
+  try {
+    const geom = faceObj?.geometry;
+    if (!geom) return [];
+    const pos = typeof geom.getAttribute === 'function' ? geom.getAttribute('position') : null;
+    const matrix = faceObj.matrixWorld || new THREE.Matrix4();
+    const samples = [];
+    const tmp = new THREE.Vector3();
+    if (pos && pos.count > 0) {
+      const step = Math.max(1, Math.floor(pos.count / maxSamples));
+      for (let i = 0; i < pos.count && samples.length < maxSamples; i += step) {
+        tmp.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(matrix);
+        samples.push(tmp.clone());
+      }
+    }
+    if (!samples.length) {
+      try {
+        geom.computeBoundingSphere?.();
+        if (geom.boundingSphere) {
+          tmp.copy(geom.boundingSphere.center).applyMatrix4(matrix);
+          samples.push(tmp.clone());
+        }
+      } catch { /* ignore */ }
+    }
+    return samples;
+  } catch {
+    return [];
+  }
+}
+
+function closestPointOnPolyline(point, polyline, closedLoop = false) {
+  if (!point || !Array.isArray(polyline) || polyline.length < 2) return null;
+  const proj = new THREE.Vector3();
+  const seg = new THREE.Vector3();
+  const delta = new THREE.Vector3();
+  let bestPoint = null;
+  let bestDir = null;
+  let bestDist = Infinity;
+  const count = polyline.length;
+  const limit = closedLoop ? count : count - 1;
+  for (let i = 0; i < limit; i++) {
+    const a = polyline[i];
+    const b = polyline[(i + 1) % count];
+    if (!a || !b) continue;
+    seg.copy(b).sub(a);
+    const lenSq = seg.lengthSq();
+    if (lenSq < 1e-14) continue;
+    delta.copy(point).sub(a);
+    let t = delta.dot(seg) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    proj.copy(a).addScaledVector(seg, t);
+    const distSq = proj.distanceToSquared(point);
+    if (distSq < bestDist) {
+      bestDist = distSq;
+      bestPoint = proj.clone();
+      bestDir = seg.clone().normalize();
+    }
+  }
+  if (!bestPoint) return null;
+  return { point: bestPoint, direction: bestDir, distanceSq: bestDist };
+}
+
+function estimatePolylineTangent(polyline, center, closedLoop = false) {
+  if (!Array.isArray(polyline) || polyline.length < 2 || !center) return null;
+  let closest = null;
+  let bestDist = Infinity;
+  const mid = new THREE.Vector3();
+  const seg = new THREE.Vector3();
+  const count = polyline.length;
+  const limit = closedLoop ? count : count - 1;
+  for (let i = 0; i < limit; i++) {
+    const a = polyline[i];
+    const b = polyline[(i + 1) % count];
+    if (!a || !b) continue;
+    mid.copy(a).add(b).multiplyScalar(0.5);
+    const dist = mid.distanceToSquared(center);
+    if (dist < bestDist) {
+      bestDist = dist;
+      seg.copy(b).sub(a);
+      closest = seg.lengthSq() > 1e-14 ? seg.clone().normalize() : null;
+    }
+  }
+  return closest;
+}
+
+function pipeFaceBaseName(faceName) {
+  const match = /^(.*?)(_Outer|_Inner|_CapStart|_CapEnd)$/i.exec(faceName);
+  return match ? match[1] : null;
 }
 
 function inferCylinderFromGeometry(faceObj) {

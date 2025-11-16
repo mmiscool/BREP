@@ -21,8 +21,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(root, 'index.html'),
-        randomTests: resolve(root, 'offsetSurfaceMeshTest.html'),
-        // Note: docs are served as static files from public/docs
       },
     },
   },
