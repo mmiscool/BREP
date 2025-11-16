@@ -237,9 +237,11 @@ function computeRadialPoints(pmimode, ann, ctx) {
     let radiusPoint = null;
     let perpendicular = null;
     const originalCenter = new THREE.Vector3();
+    let metadata = null;
+    let radiusOverride = null;
 
     if (owner && typeof owner.getFaceMetadata === 'function') {
-      const metadata = owner.getFaceMetadata(ann.cylindricalFaceRef);
+      metadata = owner.getFaceMetadata(ann.cylindricalFaceRef);
       if (metadata && (metadata.type === 'cylindrical' || metadata.type === 'conical')) {
         if (metadata.type === 'cylindrical') {
           center = new THREE.Vector3(metadata.center[0], metadata.center[1], metadata.center[2]);
@@ -264,6 +266,13 @@ function computeRadialPoints(pmimode, ann, ctx) {
           radiusPoint = center.clone().addScaledVector(perpendicular, radius);
         }
       }
+
+      if (metadata && typeof metadata === 'object') {
+        const overrideCandidate = metadata.pmiRadiusOverride ?? metadata.radiusOverride;
+        if (Number.isFinite(overrideCandidate) && overrideCandidate > 0) {
+          radiusOverride = Math.abs(overrideCandidate);
+        }
+      }
     }
 
     if ((!center || !axis || !Number.isFinite(radius) || radius <= 0) && owner) {
@@ -285,6 +294,21 @@ function computeRadialPoints(pmimode, ann, ctx) {
       radius = inferred.radius;
       radiusPoint = inferred.radiusPoint;
       perpendicular = new THREE.Vector3().subVectors(radiusPoint, center).normalize();
+    }
+
+    if (radiusOverride && center) {
+      let dir = null;
+      if (perpendicular && perpendicular.lengthSq() > 1e-12) {
+        dir = perpendicular.clone().normalize();
+      } else if (radiusPoint) {
+        dir = new THREE.Vector3().subVectors(radiusPoint, center);
+        if (dir.lengthSq() > 1e-12) dir.normalize();
+      }
+      radius = radiusOverride;
+      if (dir) {
+        perpendicular = dir.clone();
+        radiusPoint = center.clone().addScaledVector(dir, radius);
+      }
     }
 
     originalCenter.copy(center);

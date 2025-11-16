@@ -5,6 +5,8 @@
 
 import { captureCameraSnapshot, applyCameraSnapshot, adjustOrthographicFrustum } from './annUtils.js';
 
+const UPDATE_CAMERA_TOOLTIP = 'Update this view to match the current camera';
+
 export class PMIViewsWidget {
   constructor(viewer) {
     this.viewer = viewer;
@@ -13,6 +15,8 @@ export class PMIViewsWidget {
     this._ensureStyles();
 
     this.views = [];
+    this._activeMenu = null;
+    this._menuOutsideHandler = null;
     this._onHistoryViewsChanged = (views) => {
       this.views = Array.isArray(views) ? views : this._getViewsFromHistory();
       this._renderList();
@@ -35,6 +39,7 @@ export class PMIViewsWidget {
       try { this._removeHistoryListener(); } catch {}
     }
     this._removeHistoryListener = null;
+    this._closeActiveMenu();
   }
 
   refreshFromHistory() {
@@ -67,13 +72,14 @@ export class PMIViewsWidget {
     style.id = 'pmi-views-widget-styles';
     style.textContent = `
       .pmi-views-root { padding: 6px; }
-      .pmi-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid #1f2937; background: transparent; transition: background-color .12s ease; }
+      .pmi-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-bottom: 1px solid #1f2937; background: transparent; transition: background-color .12s ease; position: relative; }
       .pmi-row:hover { background: #0f172a; }
       .pmi-row.header { background: #111827; border-bottom: 1px solid #1f2937; padding-bottom: 8px; margin-bottom: 6px; border-radius: 4px; }
       .pmi-grow { flex: 1 1 auto; min-width: 0; }
       .pmi-input { width: 100%; box-sizing: border-box; padding: 6px 8px; background: #0b0e14; color: #e5e7eb; border: 1px solid #374151; border-radius: 8px; outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
       .pmi-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
       .pmi-btn { background: rgba(255,255,255,.03); color: #f9fafb; border: 1px solid #374151; padding: 4px 8px; border-radius: 8px; cursor: pointer; font-weight: 700; font-size: 12px; line-height: 1; height: 26px; display: inline-flex; align-items: center; justify-content: center; transition: border-color .15s ease, background-color .15s ease, transform .05s ease; }
+      .pmi-btn.icon { width: 26px; padding: 0; font-size: 16px; }
       .pmi-btn:hover { border-color: #3b82f6; background: rgba(59,130,246,.12); }
       .pmi-btn:active { transform: translateY(1px); }
       .pmi-btn.danger { border-color: #7f1d1d; color: #fecaca; }
@@ -83,6 +89,12 @@ export class PMIViewsWidget {
       .pmi-name-btn { background: none; border: none; padding: 0; margin: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; display: block; width: 100%; }
       .pmi-name-btn:hover { color: #93c5fd; }
       .pmi-name-btn:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+      .pmi-row-menu { position: absolute; right: 6px; top: calc(100% + 4px); background: #0b1120; border: 1px solid #1f2937; border-radius: 10px; padding: 8px; display: none; flex-direction: column; gap: 6px; min-width: 180px; box-shadow: 0 12px 24px rgba(0,0,0,.45); z-index: 20; }
+      .pmi-row-menu.open { display: flex; }
+      .pmi-row-menu .pmi-btn { width: 100%; justify-content: flex-start; }
+      .pmi-row-menu .pmi-btn.danger { justify-content: center; }
+      .pmi-row-menu-wireframe { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #e5e7eb; }
+      .pmi-row-menu hr { border: none; border-top: 1px solid #1f2937; margin: 4px 0; }
     `;
     document.head.appendChild(style);
   }
@@ -113,13 +125,13 @@ export class PMIViewsWidget {
   }
 
   _renderList() {
+    this._closeActiveMenu();
     this.listEl.textContent = '';
     const views = Array.isArray(this.views) ? this.views : [];
     views.forEach((v, idx) => {
       const row = document.createElement('div');
       row.className = 'pmi-row';
 
-      // View name displayed as clickable text
       const viewName = this._resolveViewName(v, idx);
       const nameButton = document.createElement('button');
       nameButton.type = 'button';
@@ -128,19 +140,12 @@ export class PMIViewsWidget {
       nameButton.title = 'Click to edit annotations for this view';
       nameButton.addEventListener('click', () => {
         this._enterEditMode(v, idx);
-        // Wait 200 ms and re-enter edit mode to ensure PMI mode is active
-        setTimeout(() => {
-          this._enterEditMode(v, idx);
-        }, 200);
+        setTimeout(() => this._enterEditMode(v, idx), 200);
       });
       row.appendChild(nameButton);
 
-      // Rename button swaps the name into an inline editor
-      const renameBtn = document.createElement('button');
-      renameBtn.className = 'pmi-btn';
-      renameBtn.title = 'Rename this view';
-      renameBtn.textContent = '✎';
-      renameBtn.addEventListener('click', () => {
+      const startRename = () => {
+        this._closeActiveMenu();
         if (!row.contains(nameButton)) {
           const existingInput = row.querySelector('input.pmi-input');
           if (existingInput) {
@@ -192,14 +197,9 @@ export class PMIViewsWidget {
         row.replaceChild(nameInput, nameButton);
         nameInput.focus();
         nameInput.select();
-      });
-      row.appendChild(renameBtn);
-      // Delete
-      const delBtn = document.createElement('button');
-      delBtn.className = 'pmi-btn danger';
-      delBtn.title = 'Delete this view';
-      delBtn.textContent = '×';
-      delBtn.addEventListener('click', () => {
+      };
+
+      const deleteView = () => {
         const manager = this.viewer?.partHistory?.pmiViewsManager;
         const removed = manager?.removeView?.(idx);
         if (!removed) {
@@ -207,19 +207,104 @@ export class PMIViewsWidget {
           this.refreshFromHistory();
         }
         this._renderList();
-      });
-      row.appendChild(delBtn);
+      };
 
-      // Double-click anywhere on row to apply
+      const menuBtn = document.createElement('button');
+      menuBtn.type = 'button';
+      menuBtn.className = 'pmi-btn icon';
+      menuBtn.title = 'View options';
+      menuBtn.setAttribute('aria-label', 'View options');
+      menuBtn.textContent = '⋯';
+
+      const menu = document.createElement('div');
+      menu.className = 'pmi-row-menu';
+
+      const makeMenuButton = (label, handler, opts = {}) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `pmi-btn${opts.danger ? ' danger' : ''}`;
+        btn.textContent = label;
+        if (opts.title) btn.title = opts.title;
+        btn.addEventListener('click', (evt) => {
+          evt.stopPropagation();
+          handler();
+          this._closeActiveMenu();
+        });
+        return btn;
+      };
+
+      menu.appendChild(makeMenuButton('Update Camera', () => this._updateViewCamera(idx), { title: UPDATE_CAMERA_TOOLTIP }));
+      menu.appendChild(makeMenuButton('Rename View', startRename));
+      menu.appendChild(makeMenuButton('Delete View', deleteView, { danger: true, title: 'Delete this view' }));
+      const divider = document.createElement('hr');
+      menu.appendChild(divider);
+
+      const wireframeLabel = document.createElement('label');
+      wireframeLabel.className = 'pmi-row-menu-wireframe';
+      const wireframeCheckbox = document.createElement('input');
+      wireframeCheckbox.type = 'checkbox';
+      const storedWireframe = (v.viewSettings || v.settings)?.wireframe;
+      wireframeCheckbox.checked = (typeof storedWireframe === 'boolean') ? storedWireframe : false;
+      wireframeCheckbox.addEventListener('change', (evt) => {
+        evt.stopPropagation();
+        this._setViewWireframe(idx, Boolean(wireframeCheckbox.checked));
+      });
+      const wireframeText = document.createElement('span');
+      wireframeText.textContent = 'Wireframe';
+      wireframeLabel.appendChild(wireframeCheckbox);
+      wireframeLabel.appendChild(wireframeText);
+      menu.appendChild(wireframeLabel);
+
+      menuBtn.addEventListener('click', (evt) => {
+        evt.stopPropagation();
+        this._toggleRowMenu(menu, menuBtn);
+      });
+
+      row.appendChild(menuBtn);
+      row.appendChild(menu);
+
       row.addEventListener('dblclick', (e) => {
         const target = e.target;
         const tagName = target?.tagName;
-        if (target === delBtn || target === renameBtn || tagName === 'INPUT') return; // ignore if dblclick on control buttons or inline editor
+        if (menu.contains(target) || target === menuBtn || tagName === 'INPUT') return;
         this._applyView(v);
       });
 
       this.listEl.appendChild(row);
     });
+  }
+
+  _toggleRowMenu(menu, trigger) {
+    if (this._activeMenu && this._activeMenu !== menu) {
+      this._closeActiveMenu();
+    }
+    if (menu.classList.contains('open')) {
+      this._closeActiveMenu();
+      return;
+    }
+    menu.classList.add('open');
+    this._activeMenu = menu;
+    this._menuOutsideHandler = (evt) => {
+      if (!this._activeMenu) return;
+      if (this._activeMenu.contains(evt.target) || trigger.contains(evt.target)) return;
+      this._closeActiveMenu();
+    };
+    setTimeout(() => {
+      if (this._menuOutsideHandler) {
+        document.addEventListener('mousedown', this._menuOutsideHandler);
+      }
+    }, 0);
+  }
+
+  _closeActiveMenu() {
+    if (this._activeMenu) {
+      this._activeMenu.classList.remove('open');
+      this._activeMenu = null;
+    }
+    if (this._menuOutsideHandler) {
+      document.removeEventListener('mousedown', this._menuOutsideHandler);
+      this._menuOutsideHandler = null;
+    }
   }
 
   // ---- Actions ----
@@ -307,6 +392,70 @@ export class PMIViewsWidget {
         }
       } catch { }
       try { this.viewer.render(); } catch { }
+    } catch { /* ignore */ }
+  }
+
+  _setViewWireframe(index, isWireframe) {
+    const applyFlag = (entry) => {
+      if (!entry || typeof entry !== 'object') return entry;
+      if (!entry.viewSettings || typeof entry.viewSettings !== 'object') {
+        entry.viewSettings = {};
+      }
+      entry.viewSettings.wireframe = isWireframe;
+      return entry;
+    };
+
+    let updated = false;
+    const manager = this.viewer?.partHistory?.pmiViewsManager;
+    if (manager && typeof manager.updateView === 'function') {
+      const result = manager.updateView(index, (entry) => applyFlag(entry));
+      updated = Boolean(result);
+    } else if (Array.isArray(this.views) && this.views[index]) {
+      applyFlag(this.views[index]);
+      updated = true;
+      this.refreshFromHistory();
+    }
+
+    if (!updated) {
+      this.refreshFromHistory();
+      this._renderList();
+    }
+
+    const activePMI = this.viewer?._pmiMode;
+    if (activePMI && Number.isInteger(activePMI.viewIndex) && activePMI.viewIndex === index) {
+      try {
+        this._applyWireframe(this.viewer?.scene, isWireframe);
+      } catch { /* ignore */ }
+    }
+  }
+
+  _updateViewCamera(index) {
+    try {
+      const camera = this.viewer?.camera;
+      if (!camera) return;
+      const ctrls = this.viewer?.controls;
+      const snap = captureCameraSnapshot(camera, { controls: ctrls });
+      if (!snap) return;
+
+      let updated = false;
+      const manager = this.viewer?.partHistory?.pmiViewsManager;
+      if (manager && typeof manager.updateView === 'function') {
+        const result = manager.updateView(index, (entry) => {
+          if (!entry || typeof entry !== 'object') return entry;
+          entry.camera = snap;
+          return entry;
+        });
+        updated = Boolean(result);
+      } else if (Array.isArray(this.views) && this.views[index]) {
+        this.views[index].camera = snap;
+        updated = true;
+        this.refreshFromHistory();
+      }
+
+      if (!updated) {
+        this.refreshFromHistory();
+        this._renderList();
+      }
     } catch { /* ignore */ }
   }
 

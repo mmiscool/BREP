@@ -1049,13 +1049,32 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 }
             }
 
+            const inflatedTubeRadius = radius * 1.01;
             filletTube = new TubeSolid({
                 points: tubePoints,
-                radius: radius * 1.01,
+                radius: inflatedTubeRadius,
                 innerRadius: 0,
                 resolution: 32,
                 name: `${name}_TUBE`
             });
+
+            // Store PMI metadata on the outer pipe face so downstream annotations
+            // can recover the user radius instead of the inflated geometry value.
+            try {
+                const faceTag = `${name}_TUBE_Outer`;
+                const overrideMeta = {
+                    type: 'pipe',
+                    source: 'FilletFeature',
+                    featureID: name,
+                    inflatedRadius: inflatedTubeRadius,
+                    pmiRadiusOverride: radius,
+                    radiusOverride: radius,
+                };
+                if (edgeToFillet?.name) overrideMeta.edgeReference = edgeToFillet.name;
+                filletTube.setFaceMetadata(faceTag, overrideMeta);
+            } catch {
+                // Best-effort – lack of metadata should not abort fillet creation.
+            }
         } catch (tubeError) {
             console.error('TubeSolid creation failed:', tubeError?.message || tubeError);
 

@@ -10,7 +10,6 @@ import * as THREE from 'three';
 import { annotationRegistry } from './AnnotationRegistry.js';
 import { AnnotationHistory } from './AnnotationHistory.js';
 import { LabelOverlay } from './LabelOverlay.js';
-import { captureCameraSnapshot, applyCameraSnapshot, adjustOrthographicFrustum } from './annUtils.js';
 import { AnnotationCollectionWidget } from './AnnotationCollectionWidget.js';
 
 const cssEscape = (value) => {
@@ -53,7 +52,6 @@ export class PMIMode {
     this._pmiModeViewsSection = null;
     this._pmiViewsDomRestore = null;
     this._pmiAnnotationsSection = null;
-    this._pmiViewSettingsSection = null;
     this._pmiToolOptionsSection = null;
     this._sectionCreationPromises = [];
     this._opts = { noteText: '', leaderText: 'TEXT HERE', dimDecimals: 3 };
@@ -440,7 +438,7 @@ export class PMIMode {
       this._pmiViewsDomRestore = null;
 
       // First, try to use the stored section references for direct removal
-      const storedSections = [this._pmiModeViewsSection, this._pmiAnnotationsSection, this._pmiViewSettingsSection, this._pmiToolOptionsSection];
+      const storedSections = [this._pmiModeViewsSection, this._pmiAnnotationsSection, this._pmiToolOptionsSection];
       storedSections.forEach((section, index) => {
         if (section && section.uiElement) {
           try {
@@ -532,7 +530,6 @@ export class PMIMode {
       // Clear stored section references
       this._pmiModeViewsSection = null;
       this._pmiAnnotationsSection = null;
-      this._pmiViewSettingsSection = null;
       this._pmiToolOptionsSection = null;
       this._sectionCreationPromises = [];
 
@@ -606,21 +603,6 @@ export class PMIMode {
       });
       this._sectionCreationPromises.push(annotationsPromise);
 
-      // View Settings section
-      this._viewSettingsEl = document.createElement('div');
-      this._viewSettingsEl.style.padding = '6px';
-      const viewSettingsPromise = this._acc.addSection('View Settings').then((sec) => {
-        try {
-          sec.uiElement.appendChild(this._viewSettingsEl);
-          this.#renderViewSettings();
-          this._pmiViewSettingsSection = sec;
-          this.#applyPMIPanelLayout();
-        } catch (e) {
-          console.warn('Failed to setup view settings section:', e);
-        }
-      });
-      this._sectionCreationPromises.push(viewSettingsPromise);
-
       // Tool Options section
       this._toolOptsEl = document.createElement('div');
       this._toolOptsEl.style.padding = '6px';
@@ -650,7 +632,6 @@ export class PMIMode {
         this._pmiModeViewsSection,
         this._pmiAnnotationsSection,
         this._pmiToolOptionsSection,
-        this._pmiViewSettingsSection,
       ];
       const fragment = document.createDocumentFragment();
       let hasAny = false;
@@ -757,124 +738,6 @@ export class PMIMode {
     el.appendChild(makeVField('Dim decimals', dimDec));
   }
 
-  #renderViewSettings() {
-    const el = this._viewSettingsEl;
-    if (!el) return;
-    el.textContent = '';
-
-    const makeVField = (label, input) => {
-      const wrap = document.createElement('div');
-      wrap.className = 'pmi-vfield';
-      const lab = document.createElement('div');
-      lab.className = 'pmi-vlabel';
-      lab.textContent = label;
-      wrap.appendChild(lab);
-      wrap.appendChild(input);
-      return wrap;
-    };
-
-    // View name input
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.value = this.#getViewDisplayName('');
-    nameInput.placeholder = 'View name';
-    nameInput.style.flex = '1 1 auto';
-    nameInput.style.background = '#0b0e14';
-    nameInput.style.color = '#e5e7eb';
-    nameInput.style.border = '1px solid #374151';
-    nameInput.style.borderRadius = '6px';
-    nameInput.style.padding = '4px 6px';
-    nameInput.addEventListener('change', () => {
-      if (!this.viewEntry) return;
-      const finalName = nameInput.value.trim() || 'View';
-      this.viewEntry.viewName = finalName;
-      this.viewEntry.name = finalName;
-      // Update accordion section title
-      this.#updateAnnotationSectionTitle();
-      this.#notifyViewMutated(true);
-    });
-    nameInput.className = 'pmi-input';
-    el.appendChild(makeVField('View Name', nameInput));
-
-    // Wireframe toggle
-    const wireframeToggle = document.createElement('input');
-    wireframeToggle.type = 'checkbox';
-    wireframeToggle.id = 'pmi-wireframe-toggle';
-    // Prefer stored view setting if available
-    const storedWireframe = (this.viewEntry?.viewSettings || this.viewEntry?.settings)?.wireframe;
-    wireframeToggle.checked = (typeof storedWireframe === 'boolean') ? storedWireframe : this.#isWireframeMode();
-    wireframeToggle.style.accentColor = '#3b82f6';
-    wireframeToggle.addEventListener('change', () => {
-      const on = Boolean(wireframeToggle.checked);
-      this.#toggleWireframeMode(on);
-      try {
-        // Persist into the view entry
-        if (!this.viewEntry.viewSettings) this.viewEntry.viewSettings = {};
-        this.viewEntry.viewSettings.wireframe = on;
-        this.#notifyViewMutated(true);
-      } catch { }
-    });
-
-    const toggleLabel = document.createElement('label');
-    toggleLabel.htmlFor = 'pmi-wireframe-toggle';
-    toggleLabel.textContent = 'Wireframe';
-    toggleLabel.style.color = '#e5e7eb';
-    toggleLabel.style.cursor = 'pointer';
-
-    const toggleContainer = document.createElement('div');
-    toggleContainer.style.display = 'flex';
-    toggleContainer.style.alignItems = 'center';
-    toggleContainer.style.gap = '8px';
-    toggleContainer.className = 'pmi-vcheck';
-    toggleContainer.appendChild(wireframeToggle);
-    toggleContainer.appendChild(toggleLabel);
-    el.appendChild(makeVField('Render Mode', toggleContainer));
-
-    // Update camera button
-    const updateCameraBtn = document.createElement('button');
-    updateCameraBtn.textContent = 'Update Camera';
-    updateCameraBtn.className = 'pmi-btn';
-    updateCameraBtn.style.width = '100%';
-    updateCameraBtn.addEventListener('click', () => {
-      this.#updateStoredCamera(updateCameraBtn);
-    });
-
-    // Restore camera button
-    const restoreCameraBtn = document.createElement('button');
-    restoreCameraBtn.textContent = 'Restore Camera';
-    restoreCameraBtn.className = 'pmi-btn';
-    restoreCameraBtn.style.width = '100%';
-    restoreCameraBtn.style.marginTop = '8px';
-    restoreCameraBtn.addEventListener('click', () => {
-      this.#restoreStoredCamera(restoreCameraBtn);
-    });
-
-    const btnRow = document.createElement('div');
-    btnRow.style.margin = '8px 0';
-    btnRow.appendChild(updateCameraBtn);
-    btnRow.appendChild(restoreCameraBtn);
-    el.appendChild(btnRow);
-  }
-
-  #isWireframeMode() {
-    try {
-      // Check if the scene materials are in wireframe mode
-      const scene = this.viewer?.scene;
-      if (!scene) return false;
-
-      // Check if any mesh has wireframe enabled
-      let hasWireframe = false;
-      scene.traverse((obj) => {
-        if (obj.material && obj.material.wireframe === true) {
-          hasWireframe = true;
-        }
-      });
-      return hasWireframe;
-    } catch {
-      return false;
-    }
-  }
-
   #toggleWireframeMode(isWireframe) {
     try {
       const scene = this.viewer?.scene;
@@ -896,144 +759,6 @@ export class PMIMode {
       // Trigger a render update
       if (this.viewer?.render) {
         this.viewer.render();
-      }
-    } catch { }
-  }
-
-  #logCameraState(label, camera, controls) {
-    try {
-      if (!camera) {
-        return;
-      }
-      const snapshot = captureCameraSnapshot(camera, { controls });
-    } catch (err) {
-      console.warn(`[PMI Camera] Failed to log camera for ${label}`, err);
-    }
-  }
-
-  #updateStoredCamera(btnEl) {
-    try {
-      const camera = this.viewer?.camera;
-      if (!camera || !this.viewEntry) return;
-
-      const ctrls = this.viewer?.controls;
-      const snap = captureCameraSnapshot(camera, { controls: ctrls });
-      if (!snap) return;
-      this.#logCameraState('Update Camera -> actual camera state (pre-save)', camera, ctrls);
-      this.viewEntry.camera = snap;
-      this.#notifyViewMutated();
-
-      // Visual feedback - briefly flash the button
-      const btn = btnEl || document.querySelector('.pmi-btn');
-      if (btn) {
-        const originalText = btn.textContent;
-        btn.textContent = 'Camera Updated';
-        btn.style.background = 'rgba(34, 197, 94, 0.25)';
-        setTimeout(() => {
-          btn.textContent = originalText;
-          btn.style.background = '';
-        }, 1000);
-      }
-    } catch { }
-  }
-
-  #restoreStoredCamera(btnEl) {
-    try {
-      const camera = this.viewer?.camera;
-      const ctrls = this.viewer?.controls;
-      const storedCamera = this.viewEntry?.camera;
-
-      if (!camera || !storedCamera) {
-        // Visual feedback - show error if no stored camera
-        const btn = btnEl || document.querySelector('.pmi-btn');
-        if (btn) {
-          const originalText = btn.textContent;
-          btn.textContent = 'No Stored Camera';
-          btn.style.background = 'rgba(239, 68, 68, 0.25)';
-          setTimeout(() => {
-            btn.textContent = originalText;
-            btn.style.background = '';
-          }, 1000);
-        }
-        return;
-      }
-
-
-      const dom = this.viewer?.renderer?.domElement;
-      const rect = dom?.getBoundingClientRect?.();
-      const viewport = {
-        width: rect?.width || dom?.width || 1,
-        height: rect?.height || dom?.height || 1,
-      };
-      const restored = applyCameraSnapshot(camera, storedCamera, { controls: ctrls, respectParent: true, syncControls: false, viewport });
-
-      if (!restored) {
-        if (storedCamera.position) {
-          camera.position.set(
-            storedCamera.position.x,
-            storedCamera.position.y,
-            storedCamera.position.z
-          );
-        }
-
-        if (storedCamera.quaternion) {
-          camera.quaternion.set(
-            storedCamera.quaternion.x,
-            storedCamera.quaternion.y,
-            storedCamera.quaternion.z,
-            storedCamera.quaternion.w
-          );
-        }
-
-        if (storedCamera.up) {
-          camera.up.set(
-            storedCamera.up.x,
-            storedCamera.up.y,
-            storedCamera.up.z
-          );
-        }
-
-        if (typeof storedCamera.zoom === 'number') {
-          camera.zoom = storedCamera.zoom;
-        }
-
-        if (ctrls && ctrls.target && storedCamera.target) {
-          ctrls.target.set(
-            storedCamera.target.x,
-            storedCamera.target.y,
-            storedCamera.target.z
-          );
-        }
-
-        adjustOrthographicFrustum(camera, storedCamera?.projection || null, viewport);
-        ctrls?.update?.();
-      }
-
-      adjustOrthographicFrustum(camera, storedCamera?.projection || null, viewport);
-      try { ctrls?.updateMatrixState?.(); } catch {}
-      if (!restored) {
-        // Ensure matrix world reflects fallback changes
-        camera.updateMatrixWorld?.(true);
-      }
-
-      this.#logCameraState('Restore Camera -> actual camera state (immediate)', camera, ctrls);
-      setTimeout(() => this.#logCameraState('Restore Camera -> actual camera state (+1s)', camera, ctrls), 1000);
-
-      // Trigger a render
-      if (this.viewer?.render) {
-        this.viewer.render();
-      }
-
-      // Visual feedback - briefly flash the button
-      const btn = btnEl || document.querySelector('.pmi-btn');
-      if (btn) {
-        const originalText = btn.textContent;
-        btn.textContent = 'Camera Restored';
-        btn.style.background = 'rgba(34, 197, 94, 0.25)';
-        setTimeout(() => {
-          btn.textContent = originalText;
-          btn.style.background = '';
-        }, 1000);
       }
     } catch { }
   }
