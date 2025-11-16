@@ -3,13 +3,6 @@ import { HISTORY_COLLECTION_WIDGET_CSS } from './historyCollectionWidget.css.js'
 
 const noop = () => {};
 
-const cssEscape = (value) => {
-  if (window.CSS && typeof window.CSS.escape === 'function') {
-    return window.CSS.escape(value);
-  }
-  return String(value).replace(/"/g, '\\"');
-};
-
 /**
  * Generic collection widget that renders HistoryCollectionBase-like lists using SchemaForm.
  * Supports optional hooks for form customization, expansion state, and toggle notifications.
@@ -54,7 +47,7 @@ export class HistoryCollectionWidget {
     this._footer = this._buildFooter();
     this._container.appendChild(this._footer);
 
-    this._expandedIds = new Set();
+    this._expandedId = null;
     this._titleEls = new Map();
     this._forms = new Map();
     this._boundHistoryListener = null;
@@ -70,7 +63,7 @@ export class HistoryCollectionWidget {
     }
     this._listenerUnsub = null;
     this._boundHistoryListener = null;
-    this._expandedIds.clear();
+    this._expandedId = null;
     this._titleEls.clear();
     this._forms.clear();
   }
@@ -87,7 +80,7 @@ export class HistoryCollectionWidget {
     this._boundHistoryListener = null;
     this.history = history || null;
     if (this.history) this._subscribeToHistory(this.history);
-    this._expandedIds.clear();
+    this._expandedId = null;
     this.render();
   }
 
@@ -96,7 +89,6 @@ export class HistoryCollectionWidget {
     this._titleEls.clear();
     this._forms.clear();
     const entries = this._getEntries();
-    const validIds = new Set();
     this._listEl.textContent = '';
 
     if (!entries.length) {
@@ -108,24 +100,37 @@ export class HistoryCollectionWidget {
     }
 
     const determineExpanded = this._determineExpanded || (this._autoSyncOpenState ? this._defaultDetermineExpanded.bind(this) : null);
+    const entryIds = entries.map((entry, index) => this._extractEntryId(entry, index));
+    const validIds = new Set(entryIds);
+    let targetId = (this._expandedId && validIds.has(this._expandedId)) ? this._expandedId : null;
+
+    if (determineExpanded) {
+      let determinedId = null;
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        try {
+          const shouldOpen = !!determineExpanded(entry, i);
+          if (shouldOpen) {
+            determinedId = entryIds[i];
+            break;
+          }
+        } catch (_) { /* ignore */ }
+      }
+      if (determinedId != null) {
+        targetId = determinedId;
+      }
+    }
+
+    if (targetId && !validIds.has(targetId)) {
+      targetId = null;
+    }
+    this._expandedId = targetId;
 
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
-      const id = this._extractEntryId(entry, i);
-      if (determineExpanded) {
-        try {
-          const shouldOpen = !!determineExpanded(entry, i);
-          if (shouldOpen) this._expandedIds.add(id);
-          else this._expandedIds.delete(id);
-        } catch (_) { /* ignore */ }
-      }
-      validIds.add(id);
-      const itemEl = this._renderEntry(entry, id, i);
+      const id = entryIds[i];
+      const itemEl = this._renderEntry(entry, id, i, targetId === id);
       this._listEl.appendChild(itemEl);
-    }
-
-    for (const id of Array.from(this._expandedIds)) {
-      if (!validIds.has(id)) this._expandedIds.delete(id);
     }
   }
 
@@ -138,6 +143,19 @@ export class HistoryCollectionWidget {
     if (Array.isArray(this.history.entries)) return this.history.entries;
     if (Array.isArray(this.history.features)) return this.history.features;
     return [];
+  }
+
+  _findEntryInfoById(targetId) {
+    if (targetId == null) return null;
+    const id = String(targetId);
+    const entries = this._getEntries();
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (this._extractEntryId(entry, i) === id) {
+        return { entry, index: i };
+      }
+    }
+    return null;
   }
 
   _extractEntryId(entry, index) {
@@ -173,8 +191,7 @@ export class HistoryCollectionWidget {
     );
   }
 
-  _renderEntry(entry, id, index) {
-    const isOpen = this._expandedIds.has(id);
+  _renderEntry(entry, id, index, isOpen = false) {
     const item = document.createElement('div');
     item.className = 'hc-item';
     item.dataset.entryId = id;
@@ -247,40 +264,42 @@ export class HistoryCollectionWidget {
     body.className = 'hc-body';
     body.hidden = !isOpen;
 
-    const schema = this._resolveSchema(entry);
-    if (!schema) {
-      const missing = document.createElement('div');
-      missing.className = 'hc-missing';
-      missing.textContent = `No schema available for "${this._guessTypeLabel(entry) || 'entity'}".`;
-      body.appendChild(missing);
-    } else {
-      const params = entry && entry.inputParams ? entry.inputParams : {};
-      const contextInfo = {
-        entry,
-        id,
-        index,
-        schema,
-        params,
-      };
-      let formRef = null;
-      const options = this._composeFormOptions(contextInfo, () => formRef);
+    if (isOpen) {
+      const schema = this._resolveSchema(entry);
+      if (!schema) {
+        const missing = document.createElement('div');
+        missing.className = 'hc-missing';
+        missing.textContent = `No schema available for "${this._guessTypeLabel(entry) || 'entity'}".`;
+        body.appendChild(missing);
+      } else {
+        const params = entry && entry.inputParams ? entry.inputParams : {};
+        const contextInfo = {
+          entry,
+          id,
+          index,
+          schema,
+          params,
+        };
+        let formRef = null;
+        const options = this._composeFormOptions(contextInfo, () => formRef);
 
-      if (!Object.prototype.hasOwnProperty.call(options, 'viewer')) {
-        options.viewer = this.viewer || null;
-      }
-      if (!Object.prototype.hasOwnProperty.call(options, 'scene')) {
-        options.scene = this.viewer && this.viewer.scene ? this.viewer.scene : null;
-      }
-      if (!Object.prototype.hasOwnProperty.call(options, 'partHistory')) {
-        options.partHistory = this.history || null;
-      }
+        if (!Object.prototype.hasOwnProperty.call(options, 'viewer')) {
+          options.viewer = this.viewer || null;
+        }
+        if (!Object.prototype.hasOwnProperty.call(options, 'scene')) {
+          options.scene = this.viewer && this.viewer.scene ? this.viewer.scene : null;
+        }
+        if (!Object.prototype.hasOwnProperty.call(options, 'partHistory')) {
+          options.partHistory = this.history || null;
+        }
 
-      const form = new SchemaForm(schema, params, options);
-      formRef = form;
-      body.appendChild(form.uiElement);
-      this._forms.set(String(id), form);
-      if (this._onFormReady) {
-        try { this._onFormReady({ id, index, entry, form }); } catch (_) { /* ignore */ }
+        const form = new SchemaForm(schema, params, options);
+        formRef = form;
+        body.appendChild(form.uiElement);
+        this._forms.set(String(id), form);
+        if (this._onFormReady) {
+          try { this._onFormReady({ id, index, entry, form }); } catch (_) { /* ignore */ }
+        }
       }
     }
 
@@ -289,35 +308,38 @@ export class HistoryCollectionWidget {
   }
 
   _toggleEntry(id) {
-    if (!id) return;
-    const had = this._expandedIds.has(id);
-    if (had) this._expandedIds.delete(id);
-    else this._expandedIds.add(id);
-    const selector = `[data-entry-id="${cssEscape(id)}"]`;
-    const item = this._listEl.querySelector(selector);
-    if (!item) {
+    if (id == null) return;
+    const targetId = String(id);
+    const currentId = this._expandedId;
+    const targetInfo = this._findEntryInfoById(targetId);
+    const targetEntry = targetInfo?.entry || null;
+
+    if (currentId === targetId) {
+      if (this._autoSyncOpenState && targetEntry) {
+        this._applyOpenState(targetEntry, false);
+      }
+      this._expandedId = null;
       this.render();
+      this._notifyEntryToggle(targetEntry, false);
       return;
     }
-    const isOpen = this._expandedIds.has(id);
-    let entry = null;
+
+    const previousInfo = currentId ? this._findEntryInfoById(currentId) : null;
+    if (this._autoSyncOpenState) {
+      if (previousInfo?.entry) this._applyOpenState(previousInfo.entry, false);
+      if (targetEntry) this._applyOpenState(targetEntry, true);
+    }
+    this._expandedId = targetEntry ? targetId : null;
+    this.render();
+    if (previousInfo?.entry) this._notifyEntryToggle(previousInfo.entry, false);
+    if (targetEntry) this._notifyEntryToggle(targetEntry, true);
+  }
+
+  _notifyEntryToggle(entry, isOpen) {
+    if (!this._onEntryToggle) return;
     try {
-      const entries = this._getEntries();
-      entry = entries.find((en, idx) => this._extractEntryId(en, idx) === id) || null;
-    } catch (_) { entry = null; }
-    if (this._autoSyncOpenState && entry) {
-      this._applyOpenState(entry, isOpen);
-    }
-    item.classList.toggle('open', isOpen);
-    const toggle = item.querySelector('.hc-toggle');
-    if (toggle) toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    const body = item.querySelector('.hc-body');
-    if (body) body.hidden = !isOpen;
-    if (this._onEntryToggle) {
-      try {
-        this._onEntryToggle(entry || null, isOpen);
-      } catch (_) { /* ignore toggle hook errors */ }
-    }
+      this._onEntryToggle(entry || null, isOpen);
+    } catch (_) { /* ignore toggle hook errors */ }
   }
 
   async _moveEntry(id, delta) {
@@ -329,8 +351,8 @@ export class HistoryCollectionWidget {
     if (target < 0 || target >= entries.length) return;
     const [entry] = entries.splice(idx, 1);
     entries.splice(target, 0, entry);
+    if (id != null) this._expandedId = String(id);
     this.render();
-    this._expandedIds.add(id);
     this._emitCollectionChange('reorder', entry);
   }
 
@@ -340,8 +362,13 @@ export class HistoryCollectionWidget {
     const idx = entries.findIndex((entry, i) => this._extractEntryId(entry, i) === id);
     if (idx < 0) return;
     const [removed] = entries.splice(idx, 1);
-    this._expandedIds.delete(id);
+    if (this._expandedId && String(id) === this._expandedId) {
+      this._expandedId = null;
+    }
     this._forms.delete(String(id));
+    if (this._autoSyncOpenState && removed) {
+      this._applyOpenState(removed, false);
+    }
     this.render();
     this._emitCollectionChange('remove', removed);
   }
@@ -362,8 +389,14 @@ export class HistoryCollectionWidget {
         const idx = entries.indexOf(entry);
         const id = this._extractEntryId(entry, idx >= 0 ? idx : entries.length - 1);
         if (id != null) {
-          this._expandedIds.add(String(id));
+          const normalizedId = String(id);
+          const previousId = this._expandedId;
+          if (this._autoSyncOpenState && previousId && previousId !== normalizedId) {
+            const prevInfo = this._findEntryInfoById(previousId);
+            if (prevInfo?.entry) this._applyOpenState(prevInfo.entry, false);
+          }
           if (this._autoSyncOpenState) this._applyOpenState(entry, true);
+          this._expandedId = normalizedId;
         }
       } catch (_) { /* ignore */ }
       this.render();
@@ -375,8 +408,16 @@ export class HistoryCollectionWidget {
     const entries = this._getEntries();
     entries.push(entry);
     const id = this._extractEntryId(entry, entries.length - 1);
-    this._expandedIds.add(id);
-    if (this._autoSyncOpenState) this._applyOpenState(entry, true);
+    if (id != null) {
+      const normalizedId = String(id);
+      const previousId = this._expandedId;
+      if (this._autoSyncOpenState && previousId && previousId !== normalizedId) {
+        const prevInfo = this._findEntryInfoById(previousId);
+        if (prevInfo?.entry) this._applyOpenState(prevInfo.entry, false);
+      }
+      if (this._autoSyncOpenState) this._applyOpenState(entry, true);
+      this._expandedId = normalizedId;
+    }
     this.render();
     this._emitCollectionChange('add', entry);
   }
@@ -451,10 +492,6 @@ export class HistoryCollectionWidget {
     entry.inputParams.type = entry.inputParams.type || entry.type || typeStr;
     const defaults = this._defaultsFromSchema(entry.constructor);
     entry.setParams({ ...defaults, ...entry.inputParams });
-    this._expandedIds.add(String(id));
-    if (this._autoSyncOpenState) this._applyOpenState(entry, true);
-    this.render();
-    this._emitCollectionChange('add', entry);
     return entry;
   }
 

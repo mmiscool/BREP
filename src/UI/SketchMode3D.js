@@ -1051,18 +1051,13 @@ export class SketchMode3D {
     if (!host) return;
     const wrap = document.createElement("div");
     wrap.style.position = "absolute";
-    wrap.style.left = "8px";
-    wrap.style.top = "8px";
+    wrap.style.left = "0px";
+    wrap.style.top = "0px";
     wrap.style.width = "300px";
-    wrap.style.maxHeight = "85%";
+    wrap.style.margin = "8px";
+    wrap.style.maxHeight = "calc(100% - 2 * 8px)";
     wrap.style.overflow = "auto";
     wrap.style.zIndex = "6";
-    const title = document.createElement("div");
-    title.textContent = "Sketch";
-    title.style.color = "#e6e6e6";
-    title.style.margin = "0 0 6px 2px";
-    title.style.font = "600 12px system-ui, sans-serif";
-    wrap.appendChild(title);
     const acc = new AccordionWidget();
     wrap.appendChild(acc.uiElement);
     host.appendChild(wrap);
@@ -1681,11 +1676,15 @@ export class SketchMode3D {
     ctx.style.right = "8px";
     ctx.style.display = "flex";
     ctx.style.gap = "6px";
+    ctx.style.flexDirection = "column";
+    ctx.style.alignItems = "stretch";
     ctx.style.background = "rgba(20,24,30,.85)";
     ctx.style.border = "1px solid #262b36";
     ctx.style.borderRadius = "8px";
     ctx.style.padding = "6px";
     ctx.style.color = "#ddd";
+    ctx.style.minWidth = "40px";
+    ctx.style.maxWidth = "150px";
     host.appendChild(ctx);
     this._ctxBar = ctx;
     this.#refreshContextBar();
@@ -1810,21 +1809,47 @@ export class SketchMode3D {
     const pointCount = points.size;
 
     this._ctxBar.innerHTML = "";
-    const mk = (label, type) => {
-      const b = document.createElement("button");
-      b.textContent = label;
-      b.style.color = "#ddd";
-      b.style.background = "transparent";
-      b.style.border = "1px solid #364053";
-      b.style.borderRadius = "6px";
-      b.style.padding = "4px 8px";
-      b.onclick = () => {
-        this._solver.createConstraint(type, items);
-        this.#refreshLists();
-        this.#refreshContextBar();
-      };
-      return b;
+    const appendButton = ({ label, tooltip, variant = "default", onClick }) => {
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      if (tooltip) {
+        btn.title = tooltip;
+        btn.setAttribute("aria-label", tooltip);
+      }
+      btn.style.background = "transparent";
+      btn.style.borderRadius = "6px";
+      btn.style.padding = "4px 8px";
+      btn.style.width = "100%";
+      btn.style.minHeight = "34px";
+      btn.style.boxSizing = "border-box";
+      if (variant === "danger") {
+        btn.style.color = "#ff8b8b";
+        btn.style.border = "1px solid #5b2b2b";
+      } else {
+        btn.style.color = "#ddd";
+        btn.style.border = "1px solid #364053";
+      }
+      btn.onclick = onClick;
+      this._ctxBar.appendChild(btn);
+      return btn;
     };
+    const addConstraintButton = ({ label, type, tooltip }) =>
+      appendButton({
+        label,
+        tooltip,
+        onClick: () => {
+          this._solver.createConstraint(type, items);
+          this.#refreshLists();
+          this.#refreshContextBar();
+        },
+      });
+    const addDeleteButton = () =>
+      appendButton({
+        label: "🗑",
+        tooltip: "Delete selection",
+        variant: "danger",
+        onClick: () => this.#deleteSelection(),
+      });
 
     // Constraint-specific actions
     const constraintItems = items.filter((i) => i.type === "constraint");
@@ -1837,52 +1862,37 @@ export class SketchMode3D {
       selectedAngleConstraint = s.constraints.find((c) => Number(c.id) === cid) || null;
     }
     if (selectedAngleConstraint && selectedAngleConstraint.type === "∠") {
-      const btn = document.createElement("button");
-      btn.textContent = "Reverse Angle";
-      btn.title = "Swap the angle measurement to the opposite side";
-      btn.style.color = "#ddd";
-      btn.style.background = "transparent";
-      btn.style.border = "1px solid #364053";
-      btn.style.borderRadius = "6px";
-      btn.style.padding = "4px 8px";
-      btn.onclick = () => {
-        this.#reverseAngleConstraint(Number(selectedAngleConstraint.id));
-      };
-      this._ctxBar.appendChild(btn);
+      appendButton({
+        label: "Reverse Angle",
+        tooltip: "Swap the angle measurement to the opposite side",
+        onClick: () => {
+          this.#reverseAngleConstraint(Number(selectedAngleConstraint.id));
+        },
+      });
 
-      const alt = document.createElement("button");
-      alt.textContent = "Alternative Angle";
-      alt.title = "Flip the first line direction and measure the other arc";
-      alt.style.color = "#ddd";
-      alt.style.background = "transparent";
-      alt.style.border = "1px solid #364053";
-      alt.style.borderRadius = "6px";
-      alt.style.padding = "4px 8px";
-      alt.onclick = () => {
-        this.#alternativeAngleConstraint(Number(selectedAngleConstraint.id));
-      };
-      this._ctxBar.appendChild(alt);
+      appendButton({
+        label: "Alternative Angle",
+        tooltip: "Flip the first line direction and measure the other arc",
+        onClick: () => {
+          this.#alternativeAngleConstraint(Number(selectedAngleConstraint.id));
+        },
+      });
     }
 
     // Construction toggle for selected geometry
     if (geos.length > 0) {
       const allCons = geos.every((g) => !!g.construction);
-      const btn = document.createElement("button");
-      btn.textContent = allCons ? "Make Regular" : "Make Construction";
-      btn.title = "Toggle construction on selected curves";
-      btn.style.color = "#ddd";
-      btn.style.background = "transparent";
-      btn.style.border = "1px solid #364053";
-      btn.style.borderRadius = "6px";
-      btn.style.padding = "4px 8px";
-      btn.onclick = () => {
-        try { this._solver.toggleConstruction(); } catch { }
-        try { this._solver.solveSketch("full"); } catch { }
-        this.#rebuildSketchGraphics();
-        this.#refreshLists();
-        this.#refreshContextBar();
-      };
-      this._ctxBar.appendChild(btn);
+      appendButton({
+        label: "◐",
+        tooltip: allCons ? "Convert to regular geometry" : "Convert to construction geometry",
+        onClick: () => {
+          try { this._solver.toggleConstruction(); } catch { }
+          try { this._solver.solveSketch("full"); } catch { }
+          this.#rebuildSketchGraphics();
+          this.#refreshLists();
+          this.#refreshContextBar();
+        },
+      });
     }
 
     // Arc/Circle → Radius / Diameter
@@ -1890,53 +1900,30 @@ export class SketchMode3D {
       geos.length === 1 &&
       (geos[0]?.type === "arc" || geos[0]?.type === "circle");
     if (oneArc) {
-      const mkAct = (label, mode) => {
-        const b = document.createElement("button");
-        b.textContent = label;
-        b.style.color = "#ddd";
-        b.style.background = "transparent";
-        b.style.border = "1px solid #364053";
-        b.style.borderRadius = "6px";
-        b.style.padding = "4px 8px";
-        b.onclick = () => {
-          this.#addRadialDimension(mode, items);
-        };
-        return b;
-      };
-      this._ctxBar.appendChild(mkAct("Radius", "radius"));
-      this._ctxBar.appendChild(mkAct("Diameter", "diameter"));
+      const mkAct = (label, mode, tooltip) =>
+        appendButton({
+          label,
+          tooltip,
+          onClick: () => {
+            this.#addRadialDimension(mode, items);
+          },
+        });
+      mkAct("R", "radius", "Create radius dimension");
+      mkAct("⌀", "diameter", "Create diameter dimension");
       // Also allow delete
-      const del = document.createElement("button");
-      del.textContent = "Delete";
-      del.style.color = "#ff8b8b";
-      del.style.background = "transparent";
-      del.style.border = "1px solid #5b2b2b";
-      del.style.borderRadius = "6px";
-      del.style.padding = "4px 8px";
-      del.onclick = () => this.#deleteSelection();
-      this._ctxBar.appendChild(del);
+      addDeleteButton();
       return;
     }
 
     // Geometry x Geometry (2 lines) → Parallel / Perp / Angle / Equal Length
     const twoLines = geos.length === 2 && geos.every((g) => g?.type === "line");
     if (twoLines) {
-      this._ctxBar.appendChild(mk("Parallel ∥", "∥"));
-      this._ctxBar.appendChild(mk("Perpendicular ⟂", "⟂"));
-      this._ctxBar.appendChild(mk("Angle ∠", "∠"));
-      this._ctxBar.appendChild(mk("Equal Distance ⇌", "⇌"));
+      addConstraintButton({ label: "∥", type: "∥", tooltip: "Parallel" });
+      addConstraintButton({ label: "⟂", type: "⟂", tooltip: "Perpendicular" });
+      addConstraintButton({ label: "∠", type: "∠", tooltip: "Angle" });
+      addConstraintButton({ label: "⇌", type: "⇌", tooltip: "Equal distance" });
       // Also allow delete when any selection exists
-      if (items.length) {
-        const del = document.createElement("button");
-        del.textContent = "Delete";
-        del.style.color = "#ff8b8b";
-        del.style.background = "transparent";
-        del.style.border = "1px solid #5b2b2b";
-        del.style.borderRadius = "6px";
-        del.style.padding = "4px 8px";
-        del.onclick = () => this.#deleteSelection();
-        this._ctxBar.appendChild(del);
-      }
+      if (items.length) addDeleteButton();
       return;
     }
 
@@ -1944,19 +1931,9 @@ export class SketchMode3D {
     const twoRadial = geos.length === 2 && geos.every((g) => g && (g.type === "arc" || g.type === "circle"));
     if (twoRadial) {
       // Equal distance between center→rim pairs implies equal radii
-      this._ctxBar.appendChild(mk("Equal Distance ⇌", "⇌"));
+      addConstraintButton({ label: "⇌", type: "⇌", tooltip: "Equal radius" });
       // Also allow delete when any selection exists
-      if (items.length) {
-        const del = document.createElement("button");
-        del.textContent = "Delete";
-        del.style.color = "#ff8b8b";
-        del.style.background = "transparent";
-        del.style.border = "1px solid #5b2b2b";
-        del.style.borderRadius = "6px";
-        del.style.padding = "4px 8px";
-        del.onclick = () => this.#deleteSelection();
-        this._ctxBar.appendChild(del);
-      }
+      if (items.length) addDeleteButton();
       return;
     }
 
@@ -1965,46 +1942,26 @@ export class SketchMode3D {
       ((geos[0]?.type === "line" && (geos[1]?.type === "arc" || geos[1]?.type === "circle")) ||
         (geos[1]?.type === "line" && (geos[0]?.type === "arc" || geos[0]?.type === "circle")));
     if (lineAndRadial) {
-      this._ctxBar.appendChild(mk("Tangent ⟠", "⟂"));
+      addConstraintButton({ label: "⟠", type: "⟂", tooltip: "Tangent" });
       // Also allow delete when any selection exists
-      if (items.length) {
-        const del = document.createElement("button");
-        del.textContent = "Delete";
-        del.style.color = "#ff8b8b";
-        del.style.background = "transparent";
-        del.style.border = "1px solid #5b2b2b";
-        del.style.borderRadius = "6px";
-        del.style.padding = "4px 8px";
-        del.onclick = () => this.#deleteSelection();
-        this._ctxBar.appendChild(del);
-      }
+      if (items.length) addDeleteButton();
       return;
     }
 
-    if (pointCount === 1) this._ctxBar.appendChild(mk("Ground ⏚", "⏚"));
+    if (pointCount === 1) addConstraintButton({ label: "⏚", type: "⏚", tooltip: "Ground (fix point)" });
     if (pointCount === 2) {
-      this._ctxBar.appendChild(mk("H ━", "━"));
-      this._ctxBar.appendChild(mk("V │", "│"));
-      this._ctxBar.appendChild(mk("Coincident ≡", "≡"));
-      this._ctxBar.appendChild(mk("Distance ⟺", "⟺"));
+      addConstraintButton({ label: "━", type: "━", tooltip: "Horizontal" });
+      addConstraintButton({ label: "│", type: "│", tooltip: "Vertical" });
+      addConstraintButton({ label: "≡", type: "≡", tooltip: "Coincident" });
+      addConstraintButton({ label: "⟺", type: "⟺", tooltip: "Distance" });
     }
     if (pointCount === 3) {
-      this._ctxBar.appendChild(mk("Point On Line ⏛", "⏛"));
-      this._ctxBar.appendChild(mk("Angle ∠", "∠"));
+      addConstraintButton({ label: "⏛", type: "⏛", tooltip: "Point on line" });
+      addConstraintButton({ label: "∠", type: "∠", tooltip: "Angle" });
     }
 
     // Generic Delete: show if any selection (points, curves, constraints)
-    if (items.length) {
-      const del = document.createElement("button");
-      del.textContent = "Delete";
-      del.style.color = "#ff8b8b";
-      del.style.background = "transparent";
-      del.style.border = "1px solid #5b2b2b";
-      del.style.borderRadius = "6px";
-      del.style.padding = "4px 8px";
-      del.onclick = () => this.#deleteSelection();
-      this._ctxBar.appendChild(del);
-    }
+    if (items.length) addDeleteButton();
   }
 
   // Remove selected items (geometries first, then points) and refresh
