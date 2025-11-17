@@ -438,7 +438,7 @@ export class PartHistory {
     const features = this.features.map(f => ({
       type: f.type,
       inputParams: f.inputParams,
-      persistentData: f.persistentData,
+      persistentData: this._sanitizePersistentDataForExport(f.persistentData),
       timestamp: f.timestamp || null,
     }));
     const pmiViews = this.pmiViewsManager.toSerializable();
@@ -452,6 +452,14 @@ export class PartHistory {
       assemblyConstraints: constraintsSnapshot.constraints,
       assemblyConstraintIdCounter: constraintsSnapshot.idCounter,
     }, null, 2);
+  }
+
+  _sanitizePersistentDataForExport(raw) {
+    if (!raw || typeof raw !== 'object') return raw;
+    if (!Object.prototype.hasOwnProperty.call(raw, 'lastProfileDiagnostics')) return raw;
+    const clone = deepClone(raw);
+    delete clone.lastProfileDiagnostics;
+    return clone;
   }
 
   async fromJSON(jsonString) {

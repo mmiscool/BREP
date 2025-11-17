@@ -157,8 +157,10 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     padding-top: 10px;
     border-top: 1px dashed var(--border);
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 10px;
   }
   .hc-add-btn {
     appearance: none;
@@ -189,15 +191,15 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     border-color: var(--border);
   }
   .hc-add-menu {
-    position: absolute;
-    bottom: 48px;
+    position: static;
+    align-self: stretch;
     width: 100%;
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 10px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+    box-shadow: 0 6px 20px rgba(0,0,0,.3);
     padding: 6px;
-    z-index: 5;
+    box-sizing: border-box;
   }
   .hc-menu-item {
     appearance: none;

@@ -333,6 +333,7 @@ export class FileManagerWidget {
             this.nameInput.value = name;
             this._saveLastName(name);
             await this.viewer.partHistory.runHistory();
+            try { this.viewer?.historyWidget?.render?.(); } catch {}
             return;
           }
         }
@@ -345,6 +346,7 @@ export class FileManagerWidget {
             feat.inputParams.centerMesh = true;
           }
           await this.viewer?.partHistory?.runHistory?.();
+          try { this.viewer?.historyWidget?.render?.(); } catch {}
           if (seq !== this._loadSeq) return;
           this.currentName = name;
           this.nameInput.value = name;
@@ -371,6 +373,7 @@ export class FileManagerWidget {
     this.nameInput.value = name;
     this._saveLastName(name);
     await this.viewer.partHistory.runHistory();
+    try { this.viewer?.historyWidget?.render?.(); } catch {}
   }
 
   deleteModel(name) {

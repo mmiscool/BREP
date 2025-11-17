@@ -60,8 +60,10 @@ export class HistoryCollectionWidget {
       if (!this._footer) return;
       const target = ev?.target || null;
       const canCheckNode = typeof Node !== 'undefined';
-      if (this.uiElement && target && canCheckNode && target instanceof Node) {
-        if (this.uiElement === target || this.uiElement.contains(target)) {
+      if (target && canCheckNode && target instanceof Node) {
+        const isInMenu = this._addMenu && this._addMenu.contains(target);
+        const isAddButton = this._addBtn && this._addBtn.contains(target);
+        if (isInMenu || isAddButton) {
           return;
         }
       }
@@ -814,7 +816,11 @@ export class HistoryCollectionWidget {
       btn.dataset.type = type;
       btn.addEventListener('click', async (ev) => {
         ev.stopPropagation();
-        await this._handleAddEntry(type);
+        try {
+          await this._handleAddEntry(type);
+        } finally {
+          this._toggleAddMenu(false);
+        }
       });
       menu.appendChild(btn);
     }
