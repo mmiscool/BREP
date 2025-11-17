@@ -36,9 +36,9 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     overflow: hidden;
   }
   .hc-header-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
+    display: flex;
     align-items: stretch;
+    gap: 6px;
   }
   .hc-toggle {
     appearance: none;
@@ -49,12 +49,22 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     text-align: left;
     cursor: pointer;
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
   }
   .hc-toggle:focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
+  }
+  .hc-toggle-main {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    flex: 1 1 auto;
   }
   .hc-title {
     font-size: 14px;
@@ -71,6 +81,16 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     align-items: center;
     gap: 4px;
     padding: 6px;
+    margin-left: auto;
+  }
+  .hc-meta {
+    display: inline-flex;
+    align-items: center;
+    font-size: 12px;
+    color: var(--muted);
+    gap: 6px;
+    padding-right: 4px;
+    white-space: nowrap;
   }
   .hc-btn {
     appearance: none;

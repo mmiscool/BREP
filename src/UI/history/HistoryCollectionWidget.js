@@ -19,6 +19,8 @@ export class HistoryCollectionWidget {
     onFormReady = null,
     autoSyncOpenState = false,
     createEntry = null,
+    decorateEntryHeader = null,
+    buildEntryControls = null,
   } = {}) {
     this.history = null;
     this.viewer = viewer || null;
@@ -30,6 +32,8 @@ export class HistoryCollectionWidget {
     this._onFormReady = typeof onFormReady === 'function' ? onFormReady : null;
     this._autoSyncOpenState = Boolean(autoSyncOpenState);
     this._createEntryFunc = typeof createEntry === 'function' ? createEntry : null;
+    this._decorateEntryHeader = typeof decorateEntryHeader === 'function' ? decorateEntryHeader : null;
+    this._buildEntryControls = typeof buildEntryControls === 'function' ? buildEntryControls : null;
     this._addBtn = null;
     this._addMenu = null;
     this._onGlobalClick = null;
@@ -156,7 +160,7 @@ export class HistoryCollectionWidget {
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       const id = entryIds[i];
-      const itemEl = this._renderEntry(entry, id, i, targetId === id);
+      const itemEl = this._renderEntry(entry, id, i, targetId === id, entries.length);
       this._listEl.appendChild(itemEl);
     }
   }
@@ -218,10 +222,11 @@ export class HistoryCollectionWidget {
     );
   }
 
-  _renderEntry(entry, id, index, isOpen = false) {
+  _renderEntry(entry, id, index, isOpen = false, totalCount = 0) {
+    const entryId = id != null ? String(id) : `entry-${index}`;
     const item = document.createElement('div');
     item.className = 'hc-item';
-    item.dataset.entryId = id;
+    item.dataset.entryId = entryId;
     if (isOpen) item.classList.add('open');
 
     const headerRow = document.createElement('div');
@@ -231,61 +236,57 @@ export class HistoryCollectionWidget {
     toggle.type = 'button';
     toggle.className = 'hc-toggle';
     toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    toggle.addEventListener('click', () => { this._toggleEntry(id); });
+    toggle.addEventListener('click', () => { this._toggleEntry(entryId); });
 
     const title = document.createElement('span');
     title.className = 'hc-title';
-    title.textContent = this._guessEntryLabel(entry, index);
-    this._titleEls.set(id, title);
+    title.textContent = entryId || this._guessEntryLabel(entry, index);
+    this._titleEls.set(entryId, title);
     toggle.appendChild(title);
+
+    const meta = document.createElement('span');
+    meta.className = 'hc-meta';
+    meta.textContent = this._guessEntryLabel(entry, index);
+    toggle.appendChild(meta);
+
+    const toggleMain = document.createElement('span');
+    toggleMain.className = 'hc-toggle-main';
 
     const badge = document.createElement('span');
     badge.className = 'hc-type';
     badge.textContent = this._guessTypeLabel(entry);
-    toggle.appendChild(badge);
+    toggleMain.appendChild(badge);
 
+    toggle.appendChild(toggleMain);
     headerRow.appendChild(toggle);
 
     const controls = document.createElement('div');
     controls.className = 'hc-controls';
-
-    const upBtn = document.createElement('button');
-    upBtn.type = 'button';
-    upBtn.className = 'hc-btn';
-    upBtn.title = 'Move up';
-    upBtn.textContent = '↑';
-    if (index === 0) upBtn.disabled = true;
-    upBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      this._moveEntry(id, -1);
-    });
-    controls.appendChild(upBtn);
-
-    const downBtn = document.createElement('button');
-    downBtn.type = 'button';
-    downBtn.className = 'hc-btn';
-    downBtn.title = 'Move down';
-    downBtn.textContent = '↓';
-    if (index === this._getEntries().length - 1) downBtn.disabled = true;
-    downBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      this._moveEntry(id, 1);
-    });
-    controls.appendChild(downBtn);
-
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'hc-btn danger';
-    delBtn.title = 'Delete';
-    delBtn.textContent = '✕';
-    delBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      this._deleteEntry(id);
-    });
-    controls.appendChild(delBtn);
-
     headerRow.appendChild(controls);
     item.appendChild(headerRow);
+
+    const renderContext = this._createEntryRenderContext({
+      entry,
+      id: entryId,
+      index,
+      isOpen,
+      totalCount,
+      item,
+    });
+    renderContext.elements = {
+      item,
+      headerRow,
+      toggle,
+      toggleMain,
+      titleEl: title,
+      typeEl: badge,
+      metaEl: meta,
+      controlsEl: controls,
+      bodyEl: null,
+    };
+
+    const controlsConfig = this._buildControlsForEntry(renderContext);
+    this._renderControls(controls, controlsConfig, renderContext);
 
     const body = document.createElement('div');
     body.className = 'hc-body';
@@ -302,13 +303,17 @@ export class HistoryCollectionWidget {
         const params = entry && entry.inputParams ? entry.inputParams : {};
         const contextInfo = {
           entry,
-          id,
+          id: entryId,
           index,
           schema,
           params,
         };
         let formRef = null;
         const options = this._composeFormOptions(contextInfo, () => formRef);
+        options.excludeKeys = Array.isArray(options.excludeKeys) ? options.excludeKeys : [];
+        if (!options.excludeKeys.includes('id')) {
+          options.excludeKeys = [...options.excludeKeys, 'id'];
+        }
 
         if (!Object.prototype.hasOwnProperty.call(options, 'viewer')) {
           options.viewer = this.viewer || null;
@@ -323,12 +328,15 @@ export class HistoryCollectionWidget {
         const form = new SchemaForm(schema, params, options);
         formRef = form;
         body.appendChild(form.uiElement);
-        this._forms.set(String(id), form);
+        this._forms.set(entryId, form);
         if (this._onFormReady) {
-          try { this._onFormReady({ id, index, entry, form }); } catch (_) { /* ignore */ }
+          try { this._onFormReady({ id: entryId, index, entry, form }); } catch (_) { /* ignore */ }
         }
       }
     }
+
+    renderContext.elements.bodyEl = body;
+    this._applyEntryHeaderDecorators(renderContext);
 
     item.appendChild(body);
     return item;
@@ -360,6 +368,122 @@ export class HistoryCollectionWidget {
     this.render();
     if (previousInfo?.entry) this._notifyEntryToggle(previousInfo.entry, false);
     if (targetEntry) this._notifyEntryToggle(targetEntry, true);
+  }
+
+  _createEntryRenderContext({
+    entry = null,
+    id = null,
+    index = 0,
+    isOpen = false,
+    totalCount = 0,
+    item = null,
+  } = {}) {
+    const entryId = id != null ? String(id) : null;
+    const baseContext = {
+      widget: this,
+      history: this.history || null,
+      viewer: this.viewer || null,
+      entry,
+      id: entryId,
+      index,
+      isOpen,
+      totalCount,
+      item,
+      getForm: () => {
+        if (entryId == null) return null;
+        return this.getFormForEntry(entryId);
+      },
+      getHelpers: () => this._createHelperContext({
+        entry,
+        id: entryId,
+        index,
+        form: entryId == null ? null : this.getFormForEntry(entryId),
+      }),
+    };
+    return baseContext;
+  }
+
+  _buildControlsForEntry(context) {
+    const defaults = this._defaultControlDescriptors(context);
+    if (typeof this._buildEntryControls === 'function') {
+      try {
+        const clone = defaults.map((descriptor) => ({ ...descriptor }));
+        const custom = this._buildEntryControls(context, clone);
+        if (Array.isArray(custom)) return custom;
+        if (custom === null) return [];
+      } catch (_) { /* ignore custom control errors */ }
+    }
+    return defaults;
+  }
+
+  _defaultControlDescriptors(context = {}) {
+    const { id = null, index = 0, totalCount = 0 } = context;
+    if (id == null) return [];
+    const descriptors = [];
+    descriptors.push({
+      key: 'move-up',
+      label: '↑',
+      title: 'Move up',
+      disabled: index <= 0,
+      onClick: () => { this._moveEntry(id, -1); },
+    });
+    descriptors.push({
+      key: 'move-down',
+      label: '↓',
+      title: 'Move down',
+      disabled: index >= totalCount - 1,
+      onClick: () => { this._moveEntry(id, 1); },
+    });
+    descriptors.push({
+      key: 'delete',
+      label: '✕',
+      title: 'Delete',
+      className: 'hc-btn danger',
+      onClick: () => { this._deleteEntry(id); },
+    });
+    return descriptors;
+  }
+
+  _renderControls(container, descriptors, context) {
+    container.textContent = '';
+    let count = 0;
+    if (Array.isArray(descriptors)) {
+      for (const descriptor of descriptors) {
+        if (!descriptor) continue;
+        if (descriptor instanceof HTMLElement) {
+          container.appendChild(descriptor);
+          count += 1;
+          continue;
+        }
+        const btn = document.createElement(descriptor.tagName || 'button');
+        if (btn.tagName === 'BUTTON') {
+          btn.type = descriptor.type || 'button';
+        }
+        btn.className = descriptor.className || 'hc-btn';
+        if (descriptor.title) btn.title = descriptor.title;
+        if (descriptor.label != null) btn.textContent = descriptor.label;
+        if (descriptor.disabled) btn.disabled = true;
+        if (!descriptor.disabled && typeof descriptor.onClick === 'function') {
+          btn.addEventListener('click', (ev) => {
+            if (descriptor.stopPropagation !== false) {
+              ev.preventDefault();
+              ev.stopPropagation();
+            }
+            try { descriptor.onClick(ev, context); } catch (_) { /* ignore */ }
+          });
+        }
+        container.appendChild(btn);
+        count += 1;
+      }
+    }
+    container.hidden = count === 0;
+  }
+
+  _applyEntryHeaderDecorators(context) {
+    if (!this._decorateEntryHeader) return;
+    try {
+      this._decorateEntryHeader(context);
+    } catch (_) { /* ignore decorator errors */ }
   }
 
   _notifyEntryToggle(entry, isOpen) {
