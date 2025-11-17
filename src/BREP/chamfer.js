@@ -68,6 +68,9 @@ export class ChamferSolid extends Solid {
         const railP = [];
         const railA = []; // on faceA (offset inward/outward per face)
         const railB = []; // on faceB (offset inward/outward per face)
+        const normalsA = [];
+        const normalsB = [];
+        const tangents = [];
 
         // Decide a global offset sign sSign ∈ {+1,-1} so the bevel consistently
         // goes INSET (toward inward) or OUTSET (toward outward) along the edge.
@@ -105,8 +108,8 @@ export class ChamferSolid extends Solid {
             if (t.lengthSq() < 1e-14) continue;
             t.normalize();
 
-            const nA = localFaceNormalAtPoint(solid, faceA.name, p) || nAavg;
-            const nB = localFaceNormalAtPoint(solid, faceB.name, p) || nBavg;
+            const nA = (localFaceNormalAtPoint(solid, faceA.name, p) || nAavg).clone();
+            const nB = (localFaceNormalAtPoint(solid, faceB.name, p) || nBavg).clone();
             let vA3 = nA.clone().cross(t);
             let vB3 = nB.clone().cross(t);
             if (vA3.lengthSq() < 1e-12 || vB3.lengthSq() < 1e-12) continue;
@@ -117,6 +120,9 @@ export class ChamferSolid extends Solid {
             railP.push(p.clone());
             railA.push(Ai);
             railB.push(Bi);
+            normalsA.push(nA.normalize());
+            normalsB.push(nB.normalize());
+            tangents.push(t.clone());
 
             if (this.debug && (i % this.debugStride === 0)) {
                 const scene = this.operationTargetSolid?.parent;
@@ -139,20 +145,32 @@ export class ChamferSolid extends Solid {
 
         const closeLoop = !!isClosed;
         const baseName = `CHAMFER_${faceA.name}|${faceB.name}`;
+        let railPused = railP;
+        let railAused = railA;
+        let railBused = railB;
+        if (Math.abs(this.inflate) > 1e-12) {
+            const inflated = inflateChamferRails({
+                railP,
+                railA,
+                railB,
+                normalsA,
+                normalsB,
+                tangents,
+                inflate: this.inflate,
+            });
+            if (inflated) {
+                railPused = inflated.railP;
+                railAused = inflated.railA;
+                railBused = inflated.railB;
+            }
+        }
         // Build a closed triangular prism and tag faces: _SIDE_A, _SIDE_B, _BEVEL, _CAP0, _CAP1
-        buildChamferPrismNamed(this, baseName, railP, railA, railB, closeLoop);
+        buildChamferPrismNamed(this, baseName, railPused, railAused, railBused, closeLoop);
         // use pushFace to push end caps out by a tiny amount to avoid z-fighting with original faces
-        const tinyPush = -(this.distance * 1e-4 + 1e-7);
+        const tinyPush = 0.0001;
         this.pushFace(`${baseName}_CAP0`, tinyPush);
         this.pushFace(`${baseName}_CAP1`, tinyPush);
 
-        // Inflate only the two side faces (on original faces) to avoid slivers; bevel remains untouched
-        if (Math.abs(this.inflate) > 0) {
-            inflateSolidFacesInPlace(this, this.inflate, (name) => {
-                if (typeof name !== 'string') return false;
-                return name.includes('_SIDE_A') || name.includes('_SIDE_B');
-            });
-        }
     }
 }
 
@@ -404,6 +422,86 @@ function triangulateEndCapTriangle(solid, faceName, P, A, B, flip = false) {
     } else {
         solid.addTriangle(faceName, vToArr(P), vToArr(B), vToArr(A));
     }
+}
+
+function inflateChamferRails({ railP, railA, railB, normalsA, normalsB, tangents, inflate }) {
+    if (!Number.isFinite(inflate) || inflate === 0) return null;
+    const count = Math.min(
+        railP.length,
+        railA.length,
+        railB.length,
+        normalsA.length,
+        normalsB.length,
+        tangents.length
+    );
+    if (count < 2) return null;
+    const outP = new Array(count);
+    const outA = new Array(count);
+    const outB = new Array(count);
+    const ab = new THREE.Vector3();
+    const bevelNormal = new THREE.Vector3();
+    const tangent = new THREE.Vector3();
+    for (let i = 0; i < count; i++) {
+        const P = railP[i];
+        const A = railA[i];
+        const B = railB[i];
+        const nA = normalsA[i];
+        const nB = normalsB[i];
+        outP[i] = shiftEdgePoint(P, nA, nB, inflate);
+
+        if (!A || !B) {
+            outA[i] = A ? A.clone() : new THREE.Vector3();
+            outB[i] = B ? B.clone() : new THREE.Vector3();
+            continue;
+        }
+
+        const t = tangents[i];
+        if (!t || t.lengthSq() < 1e-14) {
+            outA[i] = A.clone();
+            outB[i] = B.clone();
+            continue;
+        }
+        tangent.copy(t).normalize();
+        ab.copy(B).sub(A);
+        if (ab.lengthSq() < 1e-18) {
+            outA[i] = A.clone();
+            outB[i] = B.clone();
+            continue;
+        }
+        bevelNormal.crossVectors(ab, tangent);
+        const len = bevelNormal.length();
+        if (len < 1e-18) {
+            outA[i] = A.clone();
+            outB[i] = B.clone();
+            continue;
+        }
+        bevelNormal.multiplyScalar(1 / len);
+        outA[i] = translatePointWithinPlane(A, nA, bevelNormal, inflate);
+        outB[i] = translatePointWithinPlane(B, nB, bevelNormal, inflate);
+    }
+    return { railP: outP, railA: outA, railB: outB };
+}
+
+function shiftEdgePoint(point, normalA, normalB, inflate) {
+    if (!point) return new THREE.Vector3();
+    if (!normalA || !normalB) return point.clone();
+    const nA = normalA.clone().normalize();
+    const nB = normalB.clone().normalize();
+    const sum = nA.clone().add(nB);
+    const denom = 1 + nA.dot(nB);
+    if (Math.abs(denom) < 1e-9 || sum.lengthSq() < 1e-18) return point.clone();
+    return point.clone().addScaledVector(sum, inflate / denom);
+}
+
+function translatePointWithinPlane(point, faceNormal, planeNormal, inflate) {
+    if (!point) return new THREE.Vector3();
+    if (!faceNormal || !planeNormal) return point.clone();
+    const n = faceNormal.clone().normalize();
+    const plane = planeNormal.clone().normalize();
+    const dir = n.sub(plane.clone().multiplyScalar(plane.dot(n)));
+    const lenSq = dir.lengthSq();
+    if (lenSq < 1e-18) return point.clone();
+    return point.clone().addScaledVector(dir, inflate / lenSq);
 }
 
 // Inflate whole solid along outward vertex normals by a small distance.
