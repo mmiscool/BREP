@@ -143,6 +143,16 @@ export class ChamferSolid extends Solid {
             }
         }
 
+        reorderChamferRailSamples({
+            railP,
+            railA,
+            railB,
+            normalsA,
+            normalsB,
+            tangents,
+            isClosed,
+        });
+
         const closeLoop = !!isClosed;
         const baseName = `CHAMFER_${faceA.name}|${faceB.name}`;
         let railPused = railP;
@@ -164,6 +174,8 @@ export class ChamferSolid extends Solid {
                 railBused = inflated.railB;
             }
         }
+        resolveChamferSelfIntersections([railPused, railAused, railBused], closeLoop);
+
         // Build a closed triangular prism and tag faces: _SIDE_A, _SIDE_B, _BEVEL, _CAP0, _CAP1
         buildChamferPrismNamed(this, baseName, railPused, railAused, railBused, closeLoop);
         // use pushFace to push end caps out by a tiny amount to avoid z-fighting with original faces
@@ -199,6 +211,207 @@ function signNonZero(x) { return (x >= 0) ? +1 : -1; }
 function polylineLength(pts) {
     let L = 0;
     for (let i = 1; i < pts.length; i++) L += pts[i].distanceTo(pts[i - 1]);
+    return L;
+}
+
+function resolveChamferSelfIntersections(railGroup, isClosed) {
+    if (isClosed || !Array.isArray(railGroup) || railGroup.length === 0) return;
+    const baseLen = railGroup[0]?.length || 0;
+    if (baseLen < 4) return;
+    for (const rail of railGroup) {
+        if (!Array.isArray(rail) || rail.length !== baseLen) return;
+    }
+    const maxIterations = Math.min(4096, baseLen * baseLen * railGroup.length);
+    for (let iter = 0; iter < maxIterations; iter++) {
+        let best = null;
+        for (let r = 0; r < railGroup.length; r++) {
+            const hit = nextRailSelfIntersection(railGroup[r]);
+            if (!hit) continue;
+            if (!best || hit.i < best.i || (hit.i === best.i && hit.j < best.j)) {
+                best = { ...hit };
+            }
+        }
+        if (!best) break;
+        collapseRailsAtIntersection(railGroup, best);
+    }
+}
+
+function nextRailSelfIntersection(points) {
+    const projection = projectPolylineToPlane(points);
+    if (!projection) return null;
+    const coords = projection.planar;
+    const n = coords.length;
+    if (n < 4) return null;
+    for (let i = 0; i < n - 3; i++) {
+        const a0 = coords[i];
+        const a1 = coords[i + 1];
+        for (let j = i + 2; j < n - 1; j++) {
+            if (j === i + 1) continue;
+            const b0 = coords[j];
+            const b1 = coords[j + 1];
+            const hit = segmentIntersection2D(a0, a1, b0, b1);
+            if (hit) return { i, j, t: clamp01(hit.t), u: clamp01(hit.u) };
+        }
+    }
+    return null;
+}
+
+function collapseRailsAtIntersection(railGroup, { i, j, t, u }) {
+    if (!(j > i + 1)) return;
+    const removeCount = j - i;
+    for (const arr of railGroup) {
+        if (!Array.isArray(arr) || arr.length <= j) return;
+    }
+    for (const arr of railGroup) {
+        const merged = averagePointOnSegments(arr, i, t, j, u);
+        arr.splice(i + 1, removeCount, merged);
+    }
+}
+
+function averagePointOnSegments(arr, i, t, j, u) {
+    const a0 = arr[i];
+    const a1 = arr[i + 1];
+    const b0 = arr[j];
+    const b1 = arr[j + 1];
+    if (!a0 || !a1 || !b0 || !b1) return a0 ? a0.clone() : new THREE.Vector3();
+    const pA = a0.clone().lerp(a1, t);
+    const pB = b0.clone().lerp(b1, u);
+    return pA.add(pB).multiplyScalar(0.5);
+}
+
+function segmentIntersection2D(a1, a2, b1, b2, tol = 1e-12) {
+    const r = { x: a2.x - a1.x, y: a2.y - a1.y };
+    const s = { x: b2.x - b1.x, y: b2.y - b1.y };
+    const denom = r.x * s.y - r.y * s.x;
+    if (Math.abs(denom) < tol) return null;
+    const dx = b1.x - a1.x;
+    const dy = b1.y - a1.y;
+    const t = (dx * s.y - dy * s.x) / denom;
+    const u = (dx * r.y - dy * r.x) / denom;
+    if (t >= -tol && t <= 1 + tol && u >= -tol && u <= 1 + tol) {
+        return { t, u };
+    }
+    return null;
+}
+
+function clamp01(v) {
+    return Math.max(0, Math.min(1, v));
+}
+
+function projectPolylineToPlane(points) {
+    if (!Array.isArray(points) || points.length < 2) return null;
+    const origin = points[0].clone();
+    let axisU = null;
+    for (let i = 1; i < points.length; i++) {
+        const v = points[i].clone().sub(origin);
+        if (v.lengthSq() > 1e-12) { axisU = v.normalize(); break; }
+    }
+    if (!axisU) return null;
+    const normal = new THREE.Vector3();
+    const tmp1 = new THREE.Vector3();
+    const tmp2 = new THREE.Vector3();
+    for (let i = 0; i < points.length - 2; i++) {
+        tmp1.subVectors(points[i + 1], points[i]);
+        tmp2.subVectors(points[i + 2], points[i + 1]);
+        const cross = new THREE.Vector3().crossVectors(tmp1, tmp2);
+        if (cross.lengthSq() > 1e-16) normal.add(cross);
+    }
+    if (normal.lengthSq() < 1e-16) {
+        const fallback = Math.abs(axisU.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+        normal.crossVectors(axisU, fallback);
+        if (normal.lengthSq() < 1e-16) normal.set(0, 0, 1);
+    }
+    normal.normalize();
+    const axisV = new THREE.Vector3().crossVectors(normal, axisU);
+    if (axisV.lengthSq() < 1e-16) return null;
+    axisV.normalize();
+    const planar = points.map((p) => {
+        const rel = p.clone().sub(origin);
+        return {
+            x: rel.dot(axisU),
+            y: rel.dot(axisV),
+        };
+    });
+    return { origin, axisU, axisV, planar };
+}
+
+function reorderChamferRailSamples({ railP, railA, railB, normalsA, normalsB, tangents, isClosed }) {
+    const order = computeChamferRailOrder(railP, isClosed);
+    if (!order) return;
+    const apply = (arr) => {
+        if (!Array.isArray(arr) || arr.length !== order.length) return;
+        const re = new Array(order.length);
+        for (let i = 0; i < order.length; i++) re[i] = arr[order[i]];
+        arr.length = 0;
+        for (const item of re) arr.push(item);
+    };
+    apply(railP);
+    apply(railA);
+    apply(railB);
+    apply(normalsA);
+    apply(normalsB);
+    apply(tangents);
+}
+
+function computeChamferRailOrder(points, isClosed) {
+    if (isClosed || !Array.isArray(points) || points.length < 3) return null;
+    const first = points[0];
+    const last = points[points.length - 1];
+    if (!first || !last) return null;
+    if (first.distanceTo(last) < 1e-9) return null;
+
+    const n = points.length;
+    const used = new Array(n).fill(false);
+    const order = [];
+    const pushIdx = (idx) => {
+        order.push(idx);
+        used[idx] = true;
+    };
+    pushIdx(0);
+    used[n - 1] = true; // keep final endpoint reserved
+    while (order.length < n - 1) {
+        const curr = points[order[order.length - 1]];
+        if (!curr) break;
+        let best = -1;
+        let bestDist = Infinity;
+        for (let i = 1; i < n - 1; i++) {
+            if (used[i]) continue;
+            const candidate = points[i];
+            if (!candidate) continue;
+            const dist = curr.distanceTo(candidate);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = i;
+            }
+        }
+        if (best === -1) break;
+        pushIdx(best);
+    }
+    order.push(n - 1);
+    if (order.length !== n) return null;
+
+    let changed = false;
+    for (let i = 0; i < n; i++) {
+        if (order[i] !== i) { changed = true; break; }
+    }
+    if (!changed) return null;
+
+    const originalLength = polylineLength(points);
+    const reorderedLength = polylineLengthFromOrder(points, order);
+    const tolerance = Math.max(1e-6, originalLength * 1e-4);
+    if (!(reorderedLength + tolerance < originalLength)) return null;
+    return order;
+}
+
+function polylineLengthFromOrder(points, order) {
+    if (!Array.isArray(points) || !Array.isArray(order) || order.length < 2) return 0;
+    let L = 0;
+    for (let i = 1; i < order.length; i++) {
+        const a = points[order[i - 1]];
+        const b = points[order[i]];
+        if (!a || !b) continue;
+        L += a.distanceTo(b);
+    }
     return L;
 }
 

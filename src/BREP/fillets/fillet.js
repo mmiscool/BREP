@@ -1254,30 +1254,6 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                         let endCapFirstTB = firstTB;
                         let endCapFirstE = firstE;
 
-                        // Apply 0.001 offset for INSET fillets
-                        if (false) { // Use pushFace method instead - this block is kept for reference
-                            // Calculate outward direction from center to edge
-                            const dx = firstE.x - firstC.x;
-                            const dy = firstE.y - firstC.y;
-                            const dz = firstE.z - firstC.z;
-                            const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-                            if (len > 1e-12) {
-                                const nx = dx / len;
-                                const ny = dy / len;
-                                const nz = dz / len;
-
-                                // Use a much smaller offset to avoid manifold issues - scale with geometry
-                                const offset = Math.min(0.001, len * 0.001, radius * 0.001);
-                                console.log(`Applying end cap offset: ${offset} units (geometry scale: ${len}, radius: ${radius})`);
-
-                                endCapFirstC = { x: firstC.x + nx * offset, y: firstC.y + ny * offset, z: firstC.z + nz * offset };
-                                endCapFirstTA = { x: firstTA.x + nx * offset, y: firstTA.y + ny * offset, z: firstTA.z + nz * offset };
-                                endCapFirstTB = { x: firstTB.x + nx * offset, y: firstTB.y + ny * offset, z: firstTB.z + nz * offset };
-                                endCapFirstE = { x: firstE.x + nx * offset, y: firstE.y + ny * offset, z: firstE.z + nz * offset };
-                            }
-                        }
-
                         // Create triangular fan from centerline to form end cap
                         if (isValidTriangle(endCapFirstC, endCapFirstTB, endCapFirstTA) && addTriangleWithValidation(`${name}_END_CAP_1`, endCapFirstC, endCapFirstTB, endCapFirstTA)) validTriangles++; else skippedTriangles++;
                         if (isValidTriangle(endCapFirstTA, endCapFirstTB, endCapFirstE) && addTriangleWithValidation(`${name}_END_CAP_1`, endCapFirstTA, endCapFirstTB, endCapFirstE)) validTriangles++; else skippedTriangles++;
@@ -1295,30 +1271,6 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                         let endCapLastTA = lastTA;
                         let endCapLastTB = lastTB;
                         let endCapLastE = lastE;
-
-                        // Apply 0.001 offset for INSET fillets
-                        if (false) { // Use pushFace method instead - this block is kept for reference
-                            // Calculate outward direction from center to edge
-                            const dx = lastE.x - lastC.x;
-                            const dy = lastE.y - lastC.y;
-                            const dz = lastE.z - lastC.z;
-                            const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-                            if (len > 1e-12) {
-                                const nx = dx / len;
-                                const ny = dy / len;
-                                const nz = dz / len;
-
-                                // Use a much smaller offset to avoid manifold issues - scale with geometry
-                                const offset = Math.min(0.001, len * 0.001, radius * 0.001);
-                                console.log(`Applying end cap offset (last): ${offset} units (geometry scale: ${len}, radius: ${radius})`);
-
-                                endCapLastC = { x: lastC.x + nx * offset, y: lastC.y + ny * offset, z: lastC.z + nz * offset };
-                                endCapLastTA = { x: lastTA.x + nx * offset, y: lastTA.y + ny * offset, z: lastTA.z + nz * offset };
-                                endCapLastTB = { x: lastTB.x + nx * offset, y: lastTB.y + ny * offset, z: lastTB.z + nz * offset };
-                                endCapLastE = { x: lastE.x + nx * offset, y: lastE.y + ny * offset, z: lastE.z + nz * offset };
-                            }
-                        }
 
                         // Create triangular fan from centerline to form end cap (reversed winding for proper normal)
                         if (isValidTriangle(endCapLastC, endCapLastTA, endCapLastTB) && addTriangleWithValidation(`${name}_END_CAP_2`, endCapLastC, endCapLastTA, endCapLastTB)) validTriangles++; else skippedTriangles++;
@@ -1369,6 +1321,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         const triangleCount = wedgeSolid._triVerts ? wedgeSolid._triVerts.length / 3 : 0;
         console.log('Wedge solid created with', triangleCount, 'triangles (raw count)');
         try { wedgeSolid.visualize(); } catch { }
+
+        console.log(wedgeSolid);
 
         wedgeSolid.pushFace(`${name}_FACE_A`, 0.0001);
         wedgeSolid.pushFace(`${name}_FACE_B`, 0.0001);
