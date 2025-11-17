@@ -38,14 +38,14 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
   .hc-header-row {
     display: flex;
     align-items: stretch;
-    gap: 6px;
+    gap: 0px;
   }
   .hc-toggle {
     appearance: none;
     background: transparent;
     color: var(--text);
     border: 0;
-    padding: 10px 12px;
+    padding: 0px;
     text-align: left;
     cursor: pointer;
     display: flex;
@@ -91,6 +91,23 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     gap: 6px;
     padding-right: 4px;
     white-space: nowrap;
+  }
+  .hc-entry-toggle {
+    display: inline-flex;
+    align-items: center;
+    padding-left: 4px;
+    padding-right: 2px;
+  }
+  .hc-entry-toggle-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+  }
+  .hc-item.annotation-disabled .hc-title,
+  .hc-item.annotation-disabled .hc-type,
+  .hc-item.annotation-disabled .hc-meta {
+    opacity: 0.55;
   }
   .hc-btn {
     appearance: none;

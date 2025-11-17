@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { genFeatureUI } from '../featureDialogs.js';
 import { SelectionFilter } from '../SelectionFilter.js';
 import { LabelOverlay } from '../pmi/LabelOverlay.js';
 import { resolveSelectionObject } from './constraintSelectionUtils.js';
@@ -14,6 +13,7 @@ import { extractWorldPoint } from './constraintPointUtils.js';
 import { constraintStatusInfo } from './constraintStatusUtils.js';
 import { constraintLabelText } from './constraintLabelUtils.js';
 import { AssemblyConstraintControlsWidget } from './AssemblyConstraintControlsWidget.js';
+import { AssemblyConstraintCollectionWidget } from './AssemblyConstraintCollectionWidget.js';
 import { MODEL_STORAGE_PREFIX } from '../../services/componentLibrary.js';
 import './AssemblyConstraintsWidget.css';
 
@@ -29,7 +29,6 @@ export class AssemblyConstraintsWidget {
     this.history = this.partHistory?.assemblyConstraintHistory || null;
     if (this.history) this.history.setPartHistory?.(this.partHistory);
 
-    this._sections = new Map();
     this._highlighted = new Map();
     this._highlightPalette = ['#ffd60a', '#30d158', '#0a84ff', '#ff3b30',];
 
@@ -45,9 +44,7 @@ export class AssemblyConstraintsWidget {
     this._constraintGraphicsCheckbox = null;
     this._hoverHighlights = new Map();
     this._activeHoverConstraintId = null;
-    this._idsSignature = '';
     this._syncScheduled = false;
-    this._emptyStateEl = null;
     this._solverRun = null;
     this._startButton = null;
     this._stopButton = null;
@@ -70,6 +67,7 @@ export class AssemblyConstraintsWidget {
     this._ignoreFullSolveChangeCount = 0;
     this._fullSolveCheckbox = null;
     this._pmiVisibilityLock = 0;
+    this._constraintList = null;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = ROOT_CLASS;
@@ -129,20 +127,21 @@ export class AssemblyConstraintsWidget {
       this._onStorageEvent = null;
     }
 
-    this._accordion = document.createElement('div');
-    this._accordion.className = 'accordion';
-    this.uiElement.appendChild(this._accordion);
-
-    this._footer = this._buildAddConstraintFooter();
-    this.uiElement.appendChild(this._footer);
+    this._constraintList = new AssemblyConstraintCollectionWidget({
+      history: this.history,
+      viewer: this.viewer,
+      partHistory: this.partHistory,
+      onBeforeConstraintChange: () => this._stopSolver({ wait: true }),
+      onHighlightRequest: (entry) => {
+        if (!entry) return;
+        const cls = this._resolveConstraintClass(entry);
+        this._highlightConstraint(entry, cls);
+      },
+      onClearHighlight: () => { this._clearHighlights(); },
+    });
+    this.uiElement.appendChild(this._constraintList.uiElement);
 
     this._unsubscribe = this.history?.onChange(() => this.#handleHistoryChange()) || null;
-
-    this._onGlobalClick = (ev) => {
-      const path = typeof ev.composedPath === 'function' ? ev.composedPath() : [];
-      if (!path.includes(this._footer)) this._toggleAddMenu(false);
-    };
-    document.addEventListener('mousedown', this._onGlobalClick, true);
 
     this.render();
   }
@@ -170,7 +169,6 @@ export class AssemblyConstraintsWidget {
       try { this._unsubscribe(); } catch { /* ignore */ }
       this._unsubscribe = null;
     }
-    document.removeEventListener('mousedown', this._onGlobalClick, true);
     const stopPromise = this._stopSolver({ wait: false });
     if (stopPromise?.catch) {
       try { stopPromise.catch(() => { }); } catch { /* ignore */ }
@@ -194,18 +192,8 @@ export class AssemblyConstraintsWidget {
     this._ignoreFullSolveChangeCount = 0;
     this._controlsWidget?.dispose?.();
     this._controlsWidget = null;
-    for (const section of this._sections.values()) {
-      this.#teardownSectionForm(section);
-      try {
-        if (section?.root?.parentNode) section.root.parentNode.removeChild(section.root);
-      } catch { /* ignore */ }
-    }
-    this._sections.clear();
-    this._idsSignature = '';
-    if (this._emptyStateEl?.parentNode) {
-      try { this._emptyStateEl.parentNode.removeChild(this._emptyStateEl); } catch { /* ignore */ }
-    }
-    this._emptyStateEl = null;
+    this._constraintList?.dispose?.();
+    this._constraintList = null;
   }
 
   render() {
@@ -293,405 +281,12 @@ export class AssemblyConstraintsWidget {
   }
 
   _syncNow() {
-    this._toggleAddMenu(false);
     this._refreshUpdateComponentsButton();
     this._clearHighlights();
-
-    const entries = this.history ? this.history.list() : [];
+    const entries = this.history?.list?.();
     const list = Array.isArray(entries) ? entries : [];
-    const idToEntry = new Map();
-    const newIds = [];
-
-    for (let index = 0; index < list.length; index += 1) {
-      const entry = list[index];
-      if (!entry) continue;
-      const rawId = entry?.inputParams?.constraintID;
-      const constraintID = rawId ? String(rawId) : `constraint-${index}`;
-      newIds.push(constraintID);
-      idToEntry.set(constraintID, entry);
-    }
-
-    if (newIds.length === 0) {
-      this._clearAllSections();
-      this._showEmptyState();
-      this._clearConstraintVisuals();
-      this._idsSignature = '';
-      this.#requestViewerRender();
-      return;
-    }
-
-    this._hideEmptyState();
-
-    for (const id of Array.from(this._sections.keys())) {
-      if (!idToEntry.has(id)) {
-        this._removeSection(id);
-      }
-    }
-
-    for (const id of newIds) {
-      if (!this._sections.has(id)) {
-        const entry = idToEntry.get(id);
-        this._addSection(id, entry);
-      }
-    }
-
-    const newSig = newIds.join('|');
-    if (newSig !== this._idsSignature) {
-      this._reorderSections(newIds);
-    }
-    this._idsSignature = newSig;
-
-    this._refreshSections(idToEntry);
     this._updateConstraintVisuals(list);
     this.#requestViewerRender();
-  }
-
-  _showEmptyState() {
-    if (!this._emptyStateEl) {
-      const empty = document.createElement('div');
-      empty.className = 'empty';
-      empty.textContent = 'No assembly constraints yet.';
-      this._emptyStateEl = empty;
-    }
-    if (!this._emptyStateEl.parentNode) {
-      this._accordion.appendChild(this._emptyStateEl);
-    }
-  }
-
-  _hideEmptyState() {
-    if (this._emptyStateEl?.parentNode) {
-      this._emptyStateEl.parentNode.removeChild(this._emptyStateEl);
-    }
-  }
-
-  _clearAllSections() {
-    for (const id of Array.from(this._sections.keys())) {
-      this._removeSection(id);
-    }
-  }
-
-  _addSection(id, entry) {
-    if (!id) return;
-    const constraintId = String(id);
-    const ConstraintClass = this._resolveConstraintClass(entry);
-    const statusInfo = constraintStatusInfo(entry);
-    const isOpen = entry?.__open !== false;
-
-    const item = document.createElement('div');
-    item.className = 'acc-item';
-    item.dataset.constraintId = constraintId;
-    if (statusInfo.error) item.classList.add('has-error');
-    if (entry?.enabled === false) item.classList.add('constraint-disabled');
-
-    const headerRow = document.createElement('div');
-    headerRow.className = 'acc-header-row';
-    item.appendChild(headerRow);
-
-    const toggleWrap = document.createElement('label');
-    toggleWrap.className = 'acc-enabled-toggle';
-    toggleWrap.title = 'Enable or disable this constraint';
-
-    const enabledToggle = document.createElement('input');
-    enabledToggle.type = 'checkbox';
-    enabledToggle.className = 'acc-enabled-checkbox';
-    enabledToggle.checked = entry?.enabled !== false;
-    enabledToggle.setAttribute('aria-label', 'Enable constraint');
-    enabledToggle.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-    });
-    enabledToggle.addEventListener('change', (ev) => {
-      ev.stopPropagation();
-      this.history?.setConstraintEnabled?.(constraintId, !!enabledToggle.checked);
-    });
-    toggleWrap.appendChild(enabledToggle);
-
-    const headerBtn = document.createElement('button');
-    headerBtn.type = 'button';
-    headerBtn.className = 'acc-header';
-    headerBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-
-    const title = document.createElement('span');
-    title.className = 'acc-title';
-    title.textContent = entry?.inputParams?.label
-      || ConstraintClass?.constraintShortName
-      || ConstraintClass?.constraintName
-      || constraintId;
-    headerBtn.appendChild(title);
-
-    const status = document.createElement('span');
-    status.className = 'acc-status';
-    status.textContent = statusInfo.label;
-    if (statusInfo.title) status.title = statusInfo.title;
-    status.style.color = statusInfo.color || '';
-    headerBtn.appendChild(status);
-
-    headerRow.appendChild(toggleWrap);
-    headerRow.appendChild(headerBtn);
-
-    const actions = document.createElement('div');
-    actions.className = 'acc-actions';
-    headerRow.appendChild(actions);
-
-    const upBtn = document.createElement('button');
-    upBtn.type = 'button';
-    upBtn.className = 'icon-btn';
-    upBtn.textContent = '▲';
-    upBtn.title = 'Move up';
-    upBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      this.history?.moveConstraint(constraintId, -1);
-    });
-    actions.appendChild(upBtn);
-
-    const downBtn = document.createElement('button');
-    downBtn.type = 'button';
-    downBtn.className = 'icon-btn';
-    downBtn.textContent = '▼';
-    downBtn.title = 'Move down';
-    downBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      this.history?.moveConstraint(constraintId, 1);
-    });
-    actions.appendChild(downBtn);
-
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'icon-btn danger';
-    removeBtn.textContent = '✕';
-    removeBtn.title = 'Remove constraint';
-    removeBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      this.history?.removeConstraint(constraintId);
-    });
-    actions.appendChild(removeBtn);
-
-    const content = document.createElement('div');
-    content.className = 'acc-content';
-    content.hidden = !isOpen;
-    item.appendChild(content);
-
-    const body = document.createElement('div');
-    body.className = 'acc-body';
-    content.appendChild(body);
-
-    const formContainer = document.createElement('div');
-    formContainer.className = 'constraint-form-container';
-    body.appendChild(formContainer);
-
-    const actionsWrap = document.createElement('div');
-    actionsWrap.className = 'constraint-dialog-actions';
-
-    const highlightBtn = document.createElement('button');
-    highlightBtn.type = 'button';
-    highlightBtn.className = 'btn highlight-btn';
-    highlightBtn.textContent = 'Highlight Selection';
-    highlightBtn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const latest = this._getConstraintEntryById(constraintId);
-      const latestClass = this._resolveConstraintClass(latest);
-      if (latest) this._highlightConstraint(latest, latestClass);
-    });
-    actionsWrap.appendChild(highlightBtn);
-
-    const clearBtn = document.createElement('button');
-    clearBtn.type = 'button';
-    clearBtn.className = 'btn';
-    clearBtn.textContent = 'Clear Highlight';
-    clearBtn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      this._clearHighlights();
-    });
-    actionsWrap.appendChild(clearBtn);
-
-    body.appendChild(actionsWrap);
-
-    const section = {
-      id: constraintId,
-      root: item,
-      headerBtn,
-      titleEl: title,
-      statusEl: status,
-      content,
-      formContainer,
-      form: null,
-      isOpen: false,
-      constraintClass: ConstraintClass,
-      enabledCheckbox: enabledToggle,
-    };
-
-    headerBtn.addEventListener('click', () => {
-      const next = !section.isOpen;
-      this.history?.setOpenState(constraintId, next);
-    });
-
-    this._sections.set(constraintId, section);
-    this._accordion.appendChild(item);
-    this.#setSectionOpen(section, isOpen, entry);
-  }
-
-  _removeSection(id) {
-    if (id == null) return;
-    const key = String(id);
-    const section = this._sections.get(key);
-    if (!section) return;
-    this.#teardownSectionForm(section);
-    if (section.root?.parentNode) {
-      section.root.parentNode.removeChild(section.root);
-    }
-    this._sections.delete(key);
-  }
-
-  _reorderSections(targetOrder) {
-    if (!Array.isArray(targetOrder)) return;
-    for (const id of targetOrder) {
-      const section = this._sections.get(id);
-      if (!section?.root) continue;
-      this._accordion.appendChild(section.root);
-    }
-  }
-
-  _refreshSections(idToEntry) {
-    for (const [id, section] of this._sections) {
-      const entry = idToEntry.get(id);
-      if (!entry) continue;
-      const ConstraintClass = this._resolveConstraintClass(entry);
-      section.constraintClass = ConstraintClass;
-
-      if (entry?.inputParams) entry.inputParams.applyImmediately = true;
-
-      if (section.titleEl) {
-        section.titleEl.textContent = entry?.inputParams?.label
-          || ConstraintClass?.constraintShortName
-          || ConstraintClass?.constraintName
-          || id;
-      }
-
-      const statusInfo = constraintStatusInfo(entry);
-      if (section.statusEl) {
-        section.statusEl.textContent = statusInfo.label;
-        if (statusInfo.title) section.statusEl.title = statusInfo.title;
-        else section.statusEl.removeAttribute('title');
-        section.statusEl.style.color = statusInfo.color || '';
-      }
-      if (section.enabledCheckbox) {
-        section.enabledCheckbox.checked = entry.enabled !== false;
-      }
-      if (section.root) {
-        section.root.dataset.constraintId = id;
-        section.root.classList.toggle('has-error', !!statusInfo.error);
-        section.root.classList.toggle('constraint-disabled', entry.enabled === false);
-      }
-
-      const shouldOpen = entry.__open !== false;
-      this.#setSectionOpen(section, shouldOpen, entry);
-    }
-  }
-
-  _getConstraintEntryById(constraintID) {
-    const id = constraintID ? String(constraintID) : '';
-    if (!id) return null;
-    if (typeof this.history?.findById === 'function') {
-      const entry = this.history.findById(id);
-      if (entry) return entry;
-    }
-    try {
-      const list = this.history?.list?.();
-      if (Array.isArray(list)) {
-        return list.find((entry) => (entry?.inputParams?.constraintID ? String(entry.inputParams.constraintID) : '') === id) || null;
-      }
-    } catch { /* ignore */ }
-    return null;
-  }
-
-  #setSectionOpen(section, open, entry) {
-    if (!section) return;
-    const next = !!open;
-    const prev = !!section.isOpen;
-    section.isOpen = next;
-
-    if (section.headerBtn) {
-      section.headerBtn.setAttribute('aria-expanded', next ? 'true' : 'false');
-    }
-    if (section.root) {
-      section.root.classList.toggle('open', next);
-    }
-    if (section.content) {
-      section.content.hidden = !next;
-    }
-
-    if (next) {
-      this.#ensureSectionForm(section, entry);
-      this.#refreshSectionForm(section, entry);
-    } else if (prev) {
-      this.#teardownSectionForm(section);
-    }
-  }
-
-  #ensureSectionForm(section, entry) {
-    if (!section || section.form) return;
-    const container = section.formContainer;
-    if (!container) return;
-    const constraintEntry = entry || this._getConstraintEntryById(section.id);
-    const ConstraintClass = section.constraintClass || this._resolveConstraintClass(constraintEntry);
-    const schema = ConstraintClass?.inputParamsSchema ? { ...ConstraintClass.inputParamsSchema } : {};
-    const params = constraintEntry?.inputParams || {};
-    if (params && typeof params === 'object') {
-      params.applyImmediately = true;
-    }
-    const constraintId = section.id;
-    const form = new genFeatureUI(schema, params, {
-      viewer: this.viewer,
-      partHistory: this.partHistory,
-      scene: this.viewer?.scene || null,
-      featureRef: constraintEntry,
-      excludeKeys: ['constraintID', 'applyImmediately'],
-      onChange: (_featureId, details) => {
-        if (!constraintId) return;
-        if (!details || !details.key || !Object.prototype.hasOwnProperty.call(details, 'value')) return;
-        this.history?.updateConstraintParams(constraintId, (targetParams) => {
-          if (!targetParams || typeof targetParams !== 'object') return;
-          targetParams[details.key] = details.value;
-        });
-      },
-      onReferenceChipRemove: (name) => {
-        try { SelectionFilter.deselectItem?.(this.viewer?.scene, name); }
-        catch { /* ignore */ }
-      },
-    });
-    try { container.textContent = ''; } catch { /* ignore */ }
-    container.appendChild(form.uiElement);
-    section.form = form;
-  }
-
-  #refreshSectionForm(section, entry) {
-    if (!section?.form) return;
-    const form = section.form;
-    const params = entry?.inputParams || form.params || {};
-    if (params && typeof params === 'object') {
-      params.applyImmediately = true;
-    }
-    form.params = params;
-    try {
-      if (typeof form.refreshFromParams === 'function') {
-        form.refreshFromParams();
-      }
-    } catch { /* ignore */ }
-    try { form.featureRef = entry; } catch { /* ignore */ }
-  }
-
-  #teardownSectionForm(section) {
-    if (!section) return;
-    const form = section.form;
-    if (form) {
-      try { form._stopActiveReferenceSelection?.(); } catch { /* ignore */ }
-      try { form.destroy?.(); } catch { /* ignore */ }
-    }
-    if (section.formContainer) {
-      try { section.formContainer.textContent = ''; } catch { /* ignore */ }
-    }
-    section.form = null;
   }
   async _handleStartClick() {
     const iterations = this.#normalizeIterationInputValue();
@@ -1666,15 +1261,7 @@ export class AssemblyConstraintsWidget {
       this.history?.setOpenState?.(id, true);
     }
 
-    requestAnimationFrame(() => {
-      try {
-        const selector = `.acc-item[data-constraint-id="${CSS?.escape ? CSS.escape(id) : id}"]`;
-        const target = this._accordion?.querySelector?.(selector);
-        if (target && typeof target.scrollIntoView === 'function') {
-          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      } catch { }
-    });
+    this._constraintList?.focusEntryById?.(id);
   }
 
   _createNormalArrow(object, color, label) {
@@ -1707,84 +1294,6 @@ export class AssemblyConstraintsWidget {
     return btn;
   }
 
-  _buildAddConstraintFooter() {
-    const footer = document.createElement('div');
-    footer.className = 'footer';
-
-    const addBtn = document.createElement('button');
-    addBtn.type = 'button';
-    addBtn.className = 'add-btn';
-    addBtn.setAttribute('aria-expanded', 'false');
-    addBtn.title = 'Add assembly constraint';
-    addBtn.textContent = '+';
-    footer.appendChild(addBtn);
-
-    const menu = document.createElement('div');
-    menu.className = 'add-menu';
-    menu.setAttribute('role', 'menu');
-    menu.hidden = true;
-
-    const items = this._listAvailableConstraints();
-    if (items.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'menu-empty';
-      empty.textContent = 'No constraints registered';
-      menu.appendChild(empty);
-      addBtn.disabled = true;
-    } else {
-      items.forEach(({ label, value }) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'menu-item';
-        btn.setAttribute('role', 'menuitem');
-        btn.textContent = label;
-        btn.dataset.type = value;
-        btn.addEventListener('click', async (ev) => {
-          ev.stopPropagation();
-          await this._handleAddConstraint(value);
-        });
-        menu.appendChild(btn);
-      });
-    }
-
-    footer.appendChild(menu);
-
-    addBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      const isOpen = addBtn.getAttribute('aria-expanded') === 'true';
-      this._toggleAddMenu(!isOpen);
-    });
-
-    this._addBtn = addBtn;
-    this._addMenu = menu;
-
-    return footer;
-  }
-
-  _toggleAddMenu(open) {
-    if (!this._addBtn || !this._addMenu) return;
-    const willOpen = Boolean(open);
-    this._addBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-    this._addMenu.hidden = !willOpen;
-    this._footer?.classList.toggle('menu-open', willOpen);
-  }
-
-  async _handleAddConstraint(type) {
-    this._toggleAddMenu(false);
-    if (!type) return;
-    try {
-      const entry = await this.history?.addConstraint(type);
-      if (entry && entry.inputParams?.constraintID) {
-        this.history?.setOpenState(entry.inputParams.constraintID, true);
-      }
-
-      this.#handleLabelClick(entry?.inputParams?.constraintID, null, null);
-
-    } catch (error) {
-      console.warn('[AssemblyConstraintsWidget] Failed to add constraint:', error);
-    }
-  }
-
   _refreshUpdateComponentsButton() {
     const btn = this._updateComponentsBtn;
     if (!btn) return;
@@ -1815,7 +1324,6 @@ export class AssemblyConstraintsWidget {
   }
 
   async _handleUpdateComponents() {
-    this._toggleAddMenu(false);
     if (this._updatingComponents) return;
     if (!this.partHistory || typeof this.partHistory.updateAssemblyComponents !== 'function') return;
 
@@ -1833,16 +1341,6 @@ export class AssemblyConstraintsWidget {
       this._updatingComponents = false;
       this._refreshUpdateComponentsButton();
     }
-  }
-
-  _listAvailableConstraints() {
-    if (!this.registry || typeof this.registry.list !== 'function') return [];
-    const classes = this.registry.list();
-    return classes.map((ConstraintClass) => {
-      const value = ConstraintClass.constraintType || ConstraintClass.constraintShortName || ConstraintClass.name;
-      const label = ConstraintClass.constraintName || ConstraintClass.name || value;
-      return { label, value };
-    });
   }
 
   _resolveConstraintClass(entry) {

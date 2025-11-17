@@ -49,6 +49,7 @@ export class AnnotationHistory extends HistoryCollectionBase {
         inputParams: input,
         persistentData: deepClone(entity.persistentData || {}),
         __open: open || undefined,
+        enabled: entity.enabled !== false,
       };
     });
   }
@@ -64,6 +65,31 @@ export class AnnotationHistory extends HistoryCollectionBase {
   getEntry(index) {
     if (!Number.isInteger(index) || index < 0 || index >= this.entries.length) return null;
     return this.entries[index] || null;
+  }
+
+  findById(entryId) {
+    if (entryId == null) return null;
+    const target = String(entryId);
+    if (!target) return null;
+    for (const entity of this.entries) {
+      const params = entity?.inputParams;
+      const candidate = params?.id ?? entity?.id;
+      if (candidate != null && String(candidate) === target) {
+        return entity;
+      }
+    }
+    return null;
+  }
+
+  setAnnotationEnabled(annotationId, enabled) {
+    const entry = this.findById(annotationId);
+    if (!entry) return false;
+    const next = enabled !== false;
+    const prev = entry.enabled !== false;
+    if (prev === next) return false;
+    this.#applyEnabledState(entry, next);
+    this.notifyListeners({ reason: 'update', entry, history: this });
+    return true;
   }
 
   createAnnotation(type, initialData = null) {
@@ -95,6 +121,7 @@ export class AnnotationHistory extends HistoryCollectionBase {
     const id = entity.inputParams.id || this.generateId(entity.shortName || entity.type || 'ANN');
     entity.setId(id);
     entity.runtimeAttributes.__open = true;
+    this.#applyEnabledState(entity, true);
     this.entries.push(entity);
     this.#bumpIdCounterFrom(entity);
     this.notifyListeners({ reason: 'add', entry: entity, history: this });
@@ -203,6 +230,7 @@ export class AnnotationHistory extends HistoryCollectionBase {
     const id = entity.inputParams.id || source.id || this.generateId(entity.shortName || entity.type);
     entity.setId(id);
     entity.runtimeAttributes.__open = Boolean(source.__open);
+    this.#applyEnabledState(entity, source.enabled);
     this.#linkInputParams(entity);
     return entity;
   }
@@ -310,5 +338,16 @@ export class AnnotationHistory extends HistoryCollectionBase {
     if (Number.isFinite(num) && num > this._idCounter) {
       this._idCounter = num;
     }
+  }
+
+  #applyEnabledState(entity, value) {
+    if (!entity) return false;
+    const enabled = value !== false;
+    entity.enabled = enabled;
+    if (!entity.runtimeAttributes || typeof entity.runtimeAttributes !== 'object') {
+      entity.runtimeAttributes = {};
+    }
+    entity.runtimeAttributes.__enabled = enabled;
+    return enabled;
   }
 }

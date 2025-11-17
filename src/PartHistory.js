@@ -426,6 +426,11 @@ export class PartHistory {
   // methods to store and retrieve feature history to JSON strings
   // We will store the features, idCounter, expressions, and optionally PMI views
   async toJSON() {
+    try {
+      this.syncAssemblyComponentTransforms?.();
+    } catch (error) {
+      console.warn('[PartHistory] Failed to sync assembly component transforms before export:', error);
+    }
     const constraintsSnapshot = this.assemblyConstraintHistory?.snapshot?.() || { idCounter: 0, constraints: [] };
 
 

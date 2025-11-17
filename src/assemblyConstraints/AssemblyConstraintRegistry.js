@@ -68,6 +68,10 @@ export class AssemblyConstraintRegistry {
     return Array.from(new Set(this._map.values()));
   }
 
+  listAvailable() {
+    return this.list();
+  }
+
   #collectKeys(ConstraintClass) {
     const keys = new Set();
     const type = normalizeKey(ConstraintClass.constraintType || ConstraintClass.type || null);

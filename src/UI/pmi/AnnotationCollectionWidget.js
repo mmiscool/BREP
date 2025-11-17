@@ -15,6 +15,21 @@ export class AnnotationCollectionWidget extends HistoryCollectionWidget {
     super({
       history,
       viewer: pmimode?.viewer || null,
+      entryToggle: history ? {
+        getTitle: () => 'Show or hide this annotation',
+        isEnabled: ({ entry }) => entry?.enabled !== false,
+        setEnabled: ({ entry }, value) => {
+          const entryId = entry?.inputParams?.id || entry?.id;
+          if (!entryId || typeof history.setAnnotationEnabled !== 'function') return;
+          history.setAnnotationEnabled(entryId, value);
+        },
+      } : null,
+      decorateEntryHeader: (context) => {
+        const item = context?.elements?.item;
+        if (!item) return;
+        const disabled = context?.entry?.enabled === false;
+        item.classList.toggle('annotation-disabled', disabled);
+      },
       onEntryChange: (payload) => {
         this.#applyEntryChange(payload);
         if (externalChange) {

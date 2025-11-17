@@ -812,8 +812,10 @@ export class PMIMode {
 
       const annotationEntities = this._annotationHistory ? this._annotationHistory.getEntries() : [];
       if (!Array.isArray(annotationEntities) || annotationEntities.length === 0) return;
+      const activeEntities = annotationEntities.filter((entity) => entity?.enabled !== false);
+      if (!activeEntities.length) return;
 
-      const anns = annotationEntities.map((entity) => entity?.inputParams || {});
+      const anns = activeEntities.map((entity) => entity?.inputParams || {});
 
 
       const handler = annotationRegistry.getSafe?.('viewTransform') || null;
@@ -902,6 +904,7 @@ export class PMIMode {
       if (!handler) return;
 
       for (const entity of entities) {
+        if (entity?.enabled === false) continue;
         const ann = entity?.inputParams;
         if (!ann || (ann.type !== 'viewTransform' && ann.type !== 'explodeBody' && ann.type !== 'exp')) continue;
 
@@ -1045,8 +1048,8 @@ export class PMIMode {
     this.#clearAnnGroup();
     const group = this._annGroup;
     if (!group) return;
-    // Ensure overlay exists; do not clear between frames so labels remain visible even if a render is skipped
-    // overlay root managed by LabelOverlay
+    try { this._labelOverlay?.clear?.(); } catch { }
+    // Ensure overlay exists before we start populating labels
     const entities = this._annotationHistory ? this._annotationHistory.getEntries() : [];
     const ctx = {
       pmimode: this,
@@ -1060,6 +1063,7 @@ export class PMIMode {
     this.__explodeTraceState = new Map();
     entities.forEach((entity, i) => {
       try {
+        if (entity?.enabled === false) return;
         if (!entity || typeof entity.run !== 'function') return;
         if (!entity.persistentData || typeof entity.persistentData !== 'object') {
           entity.setPersistentData({});

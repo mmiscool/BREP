@@ -177,6 +177,88 @@ export class AssemblyConstraintHistory {
     this._autoRunOptions = null;
   }
 
+  #syncEntryIds(entry) {
+    if (!entry || !entry.inputParams) return;
+    const rawId = entry.inputParams.constraintID || entry.inputParams.id || entry.id;
+    if (!rawId) return;
+    const normalized = String(rawId);
+    entry.inputParams.constraintID = normalized;
+    entry.inputParams.id = normalized;
+    entry.id = normalized;
+  }
+
+  #linkEntryParams(entry) {
+    if (!entry || typeof entry !== 'object') return;
+    if (!entry.inputParams || typeof entry.inputParams !== 'object') {
+      entry.inputParams = {};
+    }
+    const params = entry.inputParams;
+    const descriptor = { configurable: true, enumerable: false };
+    const existingOpen = Object.prototype.hasOwnProperty.call(params, '__open')
+      ? params.__open
+      : entry.__open;
+    if (Object.prototype.hasOwnProperty.call(params, '__open')) {
+      try { delete params.__open; } catch { /* ignore */ }
+    }
+    const normalizedOpen = existingOpen !== false;
+    entry.__open = normalizedOpen;
+    const runtimeAttributes = (entry.runtimeAttributes && typeof entry.runtimeAttributes === 'object')
+      ? entry.runtimeAttributes
+      : {};
+    runtimeAttributes.__open = normalizedOpen;
+    try {
+      Object.defineProperty(entry, 'runtimeAttributes', {
+        value: runtimeAttributes,
+        configurable: true,
+        writable: true,
+        enumerable: false,
+      });
+    } catch {
+      entry.runtimeAttributes = runtimeAttributes;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(params, '__entityRef')) {
+      Object.defineProperty(params, '__entityRef', {
+        ...descriptor,
+        value: entry,
+      });
+    }
+
+    let persistentSeed;
+    if (Object.prototype.hasOwnProperty.call(params, 'persistentData')) {
+      persistentSeed = params.persistentData;
+      try { delete params.persistentData; } catch { /* ignore */ }
+    }
+    if (persistentSeed && typeof persistentSeed === 'object') {
+      entry.persistentData = deepClone(persistentSeed);
+    } else if (!entry.persistentData || typeof entry.persistentData !== 'object') {
+      entry.persistentData = {};
+    }
+    Object.defineProperty(params, 'persistentData', {
+      ...descriptor,
+      get: () => entry.persistentData || (entry.persistentData = {}),
+      set: (value) => {
+        const next = (value && typeof value === 'object') ? value : {};
+        entry.persistentData = next;
+      },
+    });
+
+    Object.defineProperty(params, '__open', {
+      ...descriptor,
+      get: () => entry.runtimeAttributes.__open !== false,
+      set: (value) => {
+        const next = value !== false;
+        entry.runtimeAttributes.__open = next;
+        entry.__open = next;
+      },
+    });
+
+    if (entry.type && !params.type) {
+      params.type = entry.type;
+    }
+    entry.entityType = entry.type || params.type || entry.entityType || null;
+  }
+
   setPartHistory(partHistory) {
     this.partHistory = partHistory || null;
     if (this.partHistory && this.constraints.length) {
@@ -188,7 +270,7 @@ export class AssemblyConstraintHistory {
     this.registry = registry || this.registry;
   }
 
-  onChange(listener) {
+  addListener(listener) {
     if (typeof listener !== 'function') return () => {};
     this._listeners.add(listener);
     return () => {
@@ -196,8 +278,34 @@ export class AssemblyConstraintHistory {
     };
   }
 
+  removeListener(listener) {
+    if (typeof listener !== 'function') return;
+    this._listeners.delete(listener);
+  }
+
+  onChange(listener) {
+    if (typeof listener !== 'function') return () => {};
+    const wrapped = () => {
+      try { listener(this); }
+      catch { /* ignore */ }
+    };
+    return this.addListener(wrapped);
+  }
+
   list() {
+    return this.entries;
+  }
+
+  get entries() {
     return this.constraints;
+  }
+
+  set entries(value) {
+    if (Array.isArray(value)) {
+      this.constraints = value;
+    } else {
+      this.constraints = [];
+    }
   }
 
   get size() {
@@ -234,15 +342,17 @@ export class AssemblyConstraintHistory {
 
     const nextId = this.generateId(ConstraintClass.constraintShortName || normalizedType || 'CONST');
     entry.inputParams.constraintID = entry.inputParams.constraintID || nextId;
+    this.#syncEntryIds(entry);
 
     if (initialInput && typeof initialInput === 'object') {
       Object.assign(entry.inputParams, deepClone(initialInput));
     }
 
     entry.inputParams.applyImmediately = true;
+    this.#linkEntryParams(entry);
 
     this.constraints.push(entry);
-    this.#emitChange();
+    this.#emitChange('add', entry);
     this.checkConstraintErrors(this.partHistory);
     this.#scheduleAutoRun();
     return entry;
@@ -251,15 +361,13 @@ export class AssemblyConstraintHistory {
   removeConstraint(constraintID) {
     const id = normalizeTypeString(constraintID);
     if (!id) return false;
-    const prevLength = this.constraints.length;
-    this.constraints = this.constraints.filter((entry) => normalizeTypeString(entry?.inputParams?.constraintID) !== id);
-    const changed = this.constraints.length !== prevLength;
-    if (changed) {
-      this.#emitChange();
-      this.checkConstraintErrors(this.partHistory);
-      this.#scheduleAutoRun();
-    }
-    return changed;
+    const index = this.constraints.findIndex((entry) => normalizeTypeString(entry?.inputParams?.constraintID) === id);
+    if (index < 0) return false;
+    const [removed] = this.constraints.splice(index, 1);
+    this.#emitChange('remove', removed || null);
+    this.checkConstraintErrors(this.partHistory);
+    this.#scheduleAutoRun();
+    return true;
   }
 
   moveConstraint(constraintID, delta) {
@@ -271,7 +379,7 @@ export class AssemblyConstraintHistory {
     if (target < 0 || target >= this.constraints.length) return false;
     const [entry] = this.constraints.splice(index, 1);
     this.constraints.splice(target, 0, entry);
-    this.#emitChange();
+    this.#emitChange('reorder', entry || null);
     this.#scheduleAutoRun();
     return true;
   }
@@ -280,7 +388,8 @@ export class AssemblyConstraintHistory {
     const entry = this.findById(constraintID);
     if (!entry || typeof mutateFn !== 'function') return false;
     mutateFn(entry.inputParams);
-    this.#emitChange();
+    this.#syncEntryIds(entry);
+    this.#emitChange('update', entry);
     this.checkConstraintErrors(this.partHistory);
     this.#scheduleAutoRun();
     return true;
@@ -300,7 +409,7 @@ export class AssemblyConstraintHistory {
         pd.status = 'disabled';
         if (!pd.message) pd.message = DISABLED_STATUS_MESSAGE;
         entry.persistentData = pd;
-        this.#emitChange();
+        this.#emitChange('update', entry);
       }
       return false;
     }
@@ -312,7 +421,7 @@ export class AssemblyConstraintHistory {
       pd.status = 'disabled';
       if (!pd.message) pd.message = DISABLED_STATUS_MESSAGE;
       entry.persistentData = pd;
-      this.#emitChange();
+      this.#emitChange('update', entry);
       this.checkConstraintErrors(this.partHistory);
       this.#scheduleAutoRun();
       return true;
@@ -324,7 +433,7 @@ export class AssemblyConstraintHistory {
       entry.persistentData = pd;
     }
 
-    this.#emitChange();
+    this.#emitChange('update', entry);
     this.checkConstraintErrors(this.partHistory);
     this.#scheduleAutoRun();
     return true;
@@ -333,8 +442,21 @@ export class AssemblyConstraintHistory {
   setOpenState(constraintID, isOpen) {
     const entry = this.findById(constraintID);
     if (!entry) return false;
-    entry.__open = !!isOpen;
-    this.#emitChange();
+    const next = isOpen !== false;
+    const current = entry.__open !== false;
+    if (current === next) return false;
+    const params = entry.inputParams || {};
+    if (Object.prototype.hasOwnProperty.call(params, '__open')) {
+      try { params.__open = next; }
+      catch { entry.__open = next; }
+    } else {
+      entry.__open = next;
+    }
+    if (!entry.runtimeAttributes || typeof entry.runtimeAttributes !== 'object') {
+      entry.runtimeAttributes = {};
+    }
+    entry.runtimeAttributes.__open = next;
+    this.#emitChange('open-state', entry);
     return true;
   }
 
@@ -348,18 +470,30 @@ export class AssemblyConstraintHistory {
       const shouldOpen = entryId === targetId;
       const currentOpen = entry.__open !== false;
       if (currentOpen !== shouldOpen) {
-        entry.__open = shouldOpen;
+        const params = entry.inputParams || {};
+        if (Object.prototype.hasOwnProperty.call(params, '__open')) {
+          try { params.__open = shouldOpen; }
+          catch { entry.__open = shouldOpen; }
+        } else {
+          entry.__open = shouldOpen;
+        }
+        if (!entry.runtimeAttributes || typeof entry.runtimeAttributes !== 'object') {
+          entry.runtimeAttributes = {};
+        }
+        entry.runtimeAttributes.__open = shouldOpen;
         changed = true;
       }
     }
-    if (changed) this.#emitChange();
+    if (changed) {
+      this.#emitChange('open-state', this.findById(constraintID));
+    }
     return changed;
   }
 
   clear() {
     this.constraints = [];
     this.idCounter = 0;
-    this.#emitChange();
+    this.#emitChange('clear');
   }
 
   snapshot() {
@@ -409,6 +543,7 @@ export class AssemblyConstraintHistory {
           if (Number.isFinite(numeric)) maxId = Math.max(maxId, numeric);
         }
       }
+      this.#syncEntryIds(entry);
 
       entry.inputParams.applyImmediately = true;
 
@@ -419,12 +554,13 @@ export class AssemblyConstraintHistory {
         enumerable: false,
       });
 
+      this.#linkEntryParams(entry);
       resolved.push(entry);
     }
 
     this.idCounter = maxId;
     this.constraints = resolved;
-    this.#emitChange();
+    this.#emitChange('replace');
     if (this.constraints.length) {
       this.checkConstraintErrors(this.partHistory);
       this.#scheduleAutoRun();
@@ -604,7 +740,7 @@ export class AssemblyConstraintHistory {
     }
 
     if (updatePersistentData && changed && emit) {
-      this.#emitChange();
+      this.#emitChange('update');
     }
 
     return results;
@@ -1002,15 +1138,13 @@ export class AssemblyConstraintHistory {
       });
     }
 
-    if (updatedComponents.size) {
-      try {
-        ph.syncAssemblyComponentTransforms?.();
-      } catch (error) {
-        console.warn('[AssemblyConstraintHistory] Failed to sync component transforms:', error);
-      }
+    try {
+      ph.syncAssemblyComponentTransforms?.();
+    } catch (error) {
+      console.warn('[AssemblyConstraintHistory] Failed to sync component transforms:', error);
     }
 
-    this.#emitChange();
+    this.#emitChange('solve');
 
     await safeCallHook('onComplete', {
       results: finalResults.slice(),
@@ -1332,12 +1466,18 @@ export class AssemblyConstraintHistory {
     return null;
   }
 
-  #emitChange() {
-    for (const listener of this._listeners) {
+  #emitChange(reason = 'update', entry = null, extra = null) {
+    if (!(this._listeners instanceof Set) || this._listeners.size === 0) return;
+    const basePayload = {
+      ...(extra && typeof extra === 'object' ? extra : {}),
+      history: this,
+      entry: entry || null,
+      reason: reason || 'update',
+    };
+    for (const listener of Array.from(this._listeners)) {
       try {
-        listener(this);
-      } catch { /* ignore */ }
+        listener({ ...basePayload });
+      } catch { /* ignore listener errors */ }
     }
   }
-
 }

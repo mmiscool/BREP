@@ -21,6 +21,7 @@ export class HistoryCollectionWidget {
     createEntry = null,
     decorateEntryHeader = null,
     buildEntryControls = null,
+    entryToggle = null,
   } = {}) {
     this.history = null;
     this.viewer = viewer || null;
@@ -34,6 +35,7 @@ export class HistoryCollectionWidget {
     this._createEntryFunc = typeof createEntry === 'function' ? createEntry : null;
     this._decorateEntryHeader = typeof decorateEntryHeader === 'function' ? decorateEntryHeader : null;
     this._buildEntryControls = typeof buildEntryControls === 'function' ? buildEntryControls : null;
+    this._entryToggleConfig = this._normalizeEntryToggle(entryToggle);
     this._addBtn = null;
     this._addMenu = null;
     this._onGlobalClick = null;
@@ -229,8 +231,20 @@ export class HistoryCollectionWidget {
     item.dataset.entryId = entryId;
     if (isOpen) item.classList.add('open');
 
+    const renderContext = this._createEntryRenderContext({
+      entry,
+      id: entryId,
+      index,
+      isOpen,
+      totalCount,
+      item,
+    });
+
     const headerRow = document.createElement('div');
     headerRow.className = 'hc-header-row';
+
+    const toggleControl = this._maybeRenderEntryToggle(renderContext);
+    if (toggleControl) headerRow.appendChild(toggleControl);
 
     const toggle = document.createElement('button');
     toggle.type = 'button';
@@ -265,17 +279,10 @@ export class HistoryCollectionWidget {
     headerRow.appendChild(controls);
     item.appendChild(headerRow);
 
-    const renderContext = this._createEntryRenderContext({
-      entry,
-      id: entryId,
-      index,
-      isOpen,
-      totalCount,
-      item,
-    });
     renderContext.elements = {
       item,
       headerRow,
+      toggleControl,
       toggle,
       toggleMain,
       titleEl: title,
@@ -477,6 +484,54 @@ export class HistoryCollectionWidget {
       }
     }
     container.hidden = count === 0;
+  }
+
+  _maybeRenderEntryToggle(context = {}) {
+    const config = this._entryToggleConfig;
+    if (!config) return null;
+    let isEnabled = true;
+    let disabled = false;
+    let title = 'Enable entry';
+    try {
+      isEnabled = !!config.isEnabled(context);
+    } catch {
+      isEnabled = true;
+    }
+    try {
+      disabled = config.isDisabled ? !!config.isDisabled(context) : false;
+    } catch {
+      disabled = false;
+    }
+    try {
+      if (config.getTitle) {
+        title = config.getTitle(context) || title;
+      }
+    } catch {
+      /* ignore */
+    }
+    const wrap = document.createElement('label');
+    wrap.className = config.className || 'hc-entry-toggle';
+    if (title) wrap.title = title;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'hc-entry-toggle-checkbox';
+    checkbox.checked = isEnabled;
+    checkbox.disabled = disabled;
+    if (title) checkbox.setAttribute('aria-label', title);
+    checkbox.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+    });
+    checkbox.addEventListener('change', (ev) => {
+      ev.stopPropagation();
+      if (checkbox.disabled) return;
+      try {
+        config.setEnabled(context, checkbox.checked);
+      } catch {
+        // ignore
+      }
+    });
+    wrap.appendChild(checkbox);
+    return wrap;
   }
 
   _applyEntryHeaderDecorators(context) {
@@ -931,6 +986,23 @@ export class HistoryCollectionWidget {
   // eslint-disable-next-line class-methods-use-this, no-unused-vars
   _augmentHelperContext(_baseHelpers, _context) {
     return {};
+  }
+
+  _normalizeEntryToggle(config) {
+    if (!config || typeof config !== 'object') return null;
+    const { isEnabled, setEnabled } = config;
+    if (typeof isEnabled !== 'function' || typeof setEnabled !== 'function') return null;
+    return {
+      isEnabled,
+      setEnabled,
+      isDisabled: typeof config.isDisabled === 'function' ? config.isDisabled : null,
+      getTitle: typeof config.getTitle === 'function'
+        ? config.getTitle
+        : (typeof config.title === 'string' ? () => config.title : null),
+      className: typeof config.className === 'string' && config.className.trim()
+        ? config.className
+        : 'hc-entry-toggle',
+    };
   }
 
   _makeStyle() {
