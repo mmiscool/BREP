@@ -63,8 +63,6 @@ export class LeaderAnnotation extends BaseAnnotation {
   static shortName = 'LEAD';
   static longName = 'Leader';
   static title = 'Leader';
-  static featureShortName = 'leader';
-  static featureName = 'Leader';
   static inputParamsSchema = inputParamsSchema;
 
   constructor(opts = {}) {

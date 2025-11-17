@@ -22,8 +22,8 @@ const inputParamsSchema = {
 };
 
 export class BooleanFeature {
-    static featureShortName = "B";
-    static featureName = "Boolean";
+    static shortName = "B";
+    static longName = "Boolean";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

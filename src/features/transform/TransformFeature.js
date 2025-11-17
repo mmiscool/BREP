@@ -49,8 +49,8 @@ const inputParamsSchema = {
 };
 
 export class TransformFeature {
-  static featureName = "Transform";
-  static featureShortName = "XFORM";
+  static shortName = "XFORM";
+  static longName = "Transform";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {

@@ -44,9 +44,9 @@ const inputParamsSchema = {
 };
 
 export class PrimitiveConeFeature {
-  static featureShortName = "P.CO";
-  static featureName = "Primitive Cone";
-  static inputParamsSchema = inputParamsSchema;
+    static shortName = "P.CO";
+    static longName = "Primitive Cone";
+    static inputParamsSchema = inputParamsSchema;
 
   constructor() {
     this.inputParams = {};

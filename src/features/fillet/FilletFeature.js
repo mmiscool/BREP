@@ -44,8 +44,8 @@ const inputParamsSchema = {
 };
 
 export class FilletFeature {
-    static featureShortName = "F";
-    static featureName = "Fillet";
+    static shortName = "F";
+    static longName = "Fillet";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

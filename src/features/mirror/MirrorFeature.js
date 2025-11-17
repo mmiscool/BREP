@@ -31,8 +31,8 @@ const inputParamsSchema = {
 };
 
 export class MirrorFeature {
-    static featureName = "Mirror";
-    static featureShortName = "M";
+    static shortName = "M";
+    static longName = "Mirror";
 
     static inputParamsSchema = inputParamsSchema;
 

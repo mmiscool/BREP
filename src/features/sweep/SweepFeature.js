@@ -39,8 +39,8 @@ const inputParamsSchema = {
 };
 
 export class SweepFeature {
-  static featureShortName = "SW";
-  static featureName = "Sweep";
+  static shortName = "SW";
+  static longName = "Sweep";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {

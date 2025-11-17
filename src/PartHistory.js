@@ -232,7 +232,8 @@ export class PartHistory {
 
       // manually run the sketch feature and then test if the geometry has changed
       // if so, mark dirty
-      if (FeatureClass.featureName === 'Sketch') {
+      const featureName = FeatureClass?.longName || FeatureClass?.shortName || FeatureClass?.name || '';
+      if (featureName === 'Sketch') {
         try {
           instance.run(this);
           const sketchChanged = await instance.hasSketchChanged(feature);
@@ -553,7 +554,7 @@ export class PartHistory {
     }
 
     const updates = [];
-    const targetName = String(AssemblyComponentFeature?.featureName || '').trim().toUpperCase();
+    const targetName = String(AssemblyComponentFeature?.longName || AssemblyComponentFeature?.name || '').trim().toUpperCase();
 
     for (const feature of this.features) {
       if (!feature || !feature.type) continue;
@@ -566,7 +567,7 @@ export class PartHistory {
       }
 
       const isAssemblyComponent = FeatureClass === AssemblyComponentFeature
-        || (FeatureClass && String(FeatureClass?.featureName || '').trim().toUpperCase() === targetName);
+        || (FeatureClass && String(FeatureClass?.longName || FeatureClass?.name || '').trim().toUpperCase() === targetName);
       if (!isAssemblyComponent) continue;
 
       const componentName = feature?.inputParams?.componentName;

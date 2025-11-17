@@ -31,8 +31,8 @@ const inputParamsSchema = {
 };
 
 export class ExtrudeFeature {
-  static featureShortName = "E";
-  static featureName = "Extrude";
+  static shortName = "E";
+  static longName = "Extrude";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {

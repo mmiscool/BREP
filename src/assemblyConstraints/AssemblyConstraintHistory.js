@@ -340,7 +340,8 @@ export class AssemblyConstraintHistory {
       enumerable: false,
     });
 
-    const nextId = this.generateId(ConstraintClass.constraintShortName || normalizedType || 'CONST');
+    const shortName = ConstraintClass?.shortName || ConstraintClass?.constraintShortName || normalizedType || 'CONST';
+    const nextId = this.generateId(shortName);
     entry.inputParams.constraintID = entry.inputParams.constraintID || nextId;
     this.#syncEntryIds(entry);
 
@@ -531,7 +532,7 @@ export class AssemblyConstraintHistory {
       };
 
       if (!entry.inputParams.constraintID) {
-        const prefix = (ConstraintClass.constraintShortName || normalizedType || 'CONST')
+        const prefix = (ConstraintClass?.shortName || ConstraintClass?.constraintShortName || normalizedType || 'CONST')
           .replace(/[^a-z0-9]/gi, '')
           .toUpperCase() || 'CONST';
         maxId += 1;

@@ -61,8 +61,8 @@ const inputParamsSchema = {
 };
 
 export class PatternFeature {
-  static featureName = "Pattern";
-  static featureShortName = "PATTERN";
+  static shortName = "PATTERN";
+  static longName = "Pattern";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
@@ -143,7 +143,8 @@ export class PatternFeature {
       const t = new THREE.Matrix4().makeTranslation(d.x * i, d.y * i, d.z * i);
       const c = src.clone();
       c.bakeTransform(t);
-      const featureID = this.inputParams.featureID || PatternFeature.featureShortName || 'Pattern';
+      const fallbackId = PatternFeature.shortName || PatternFeature.longName || 'Pattern';
+      const featureID = this.inputParams.featureID || fallbackId;
       const idx = i + 1;
       try { retagSolidFaces(c, `${featureID}_${idx}`); } catch (_) {}
       c.name = `${featureID}_${idx}`;
@@ -172,7 +173,8 @@ export class PatternFeature {
 
       const c = src.clone();
       c.bakeTransform(M);
-      const featureID = this.inputParams.featureID || PatternFeature.featureShortName || 'Pattern';
+      const fallbackId = PatternFeature.shortName || PatternFeature.longName || 'Pattern';
+      const featureID = this.inputParams.featureID || fallbackId;
       const idx = i + 1;
       try { retagSolidFaces(c, `${featureID}_${idx}`); } catch (_) {}
       c.name = `${featureID}_${idx}`;

@@ -30,8 +30,8 @@ const inputParamsSchema = {
 };
 
 export class TouchAlignConstraint extends BaseAssemblyConstraint {
-  static constraintShortName = '⪥';
-  static constraintName = '⪥ Touch Align Constraint';
+  static shortName = '⪥';
+  static longName = '⪥ Touch Align Constraint';
   static constraintType = 'touch_align';
   static aliases = ['touch', 'touch_align', 'touch-align', 'TALN'];
   static inputParamsSchema = inputParamsSchema;

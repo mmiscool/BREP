@@ -16,8 +16,8 @@ const inputParamsSchema = {
 
 
 export class FixedConstraint extends BaseAssemblyConstraint {
-  static constraintShortName = '⏚';
-  static constraintName = '⏚ Fixed Constraint';
+  static shortName = '⏚';
+  static longName = '⏚ Fixed Constraint';
   static constraintType = 'fixed';
   static aliases = ['fix', 'fixed constraint', 'fixed', 'FIXD'];
   static inputParamsSchema = inputParamsSchema;
@@ -76,5 +76,3 @@ function firstSelection(value) {
   if (!value) return null;
   return Array.isArray(value) ? value.find((item) => item != null) ?? null : value;
 }
-
-

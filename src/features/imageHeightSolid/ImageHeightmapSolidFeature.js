@@ -97,8 +97,8 @@ const inputParamsSchema = {
 };
 
 export class ImageHeightmapSolidFeature {
-  static featureShortName = "HEIGHTMAP";
-  static featureName = "Image Heightmap Solid";
+  static shortName = "HEIGHTMAP";
+  static longName = "Image Heightmap Solid";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {

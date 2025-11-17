@@ -1257,8 +1257,8 @@ const inputParamsSchema = {
 };
 
 export class SplineFeature {
-  static featureShortName = "SP";
-  static featureName = "Spline";
+  static shortName = "SP";
+  static longName = "Spline";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {

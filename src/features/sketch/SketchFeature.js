@@ -79,8 +79,8 @@ const inputParamsSchema = {
 };
 
 export class SketchFeature {
-    static featureShortName = "S";
-    static featureName = "Sketch";
+    static shortName = "S";
+    static longName = "Sketch";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

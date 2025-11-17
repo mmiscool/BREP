@@ -76,8 +76,6 @@ export class RadialDimensionAnnotation extends BaseAnnotation {
   static shortName = 'RAD';
   static longName = 'Radial Dimension';
   static title = 'Radial';
-  static featureShortName = 'radial';
-  static featureName = 'Radial Dimension';
   static inputParamsSchema = inputParamsSchema;
 
   constructor(opts = {}) {

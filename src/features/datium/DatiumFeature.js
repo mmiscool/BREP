@@ -18,8 +18,8 @@ const inputParamsSchema = {
 };
 
 export class DatiumFeature {
-    static featureShortName = "D";
-    static featureName = "Datium";
+    static shortName = "D";
+    static longName = "Datium";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

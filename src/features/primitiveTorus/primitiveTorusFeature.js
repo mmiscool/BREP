@@ -46,8 +46,8 @@ const inputParamsSchema = {
 };
 
 export class PrimitiveTorusFeature {
-    static featureShortName = "P.T";
-    static featureName = "Primitive Torus";
+    static shortName = "P.T";
+    static longName = "Primitive Torus";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

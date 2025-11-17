@@ -39,8 +39,8 @@ const inputParamsSchema = {
 };
 
 export class RevolveFeature {
-    static featureShortName = "REVOLVE";
-    static featureName = "Revolve";
+    static shortName = "REVOLVE";
+    static longName = "Revolve";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

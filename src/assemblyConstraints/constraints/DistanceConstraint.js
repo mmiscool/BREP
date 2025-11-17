@@ -34,8 +34,8 @@ const inputParamsSchema = {
   },
 };
 export class DistanceConstraint extends BaseAssemblyConstraint {
-  static constraintShortName = '⟺';
-  static constraintName = '⟺ Distance Constraint';
+  static shortName = '⟺';
+  static longName = '⟺ Distance Constraint';
   static constraintType = 'distance';
   static aliases = ['distance', 'offset', 'gap', 'DIST'];
   static inputParamsSchema = inputParamsSchema;

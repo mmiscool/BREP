@@ -33,8 +33,8 @@ const inputParamsSchema = {
 };
 
 export class PrimitiveSphereFeature {
-    static featureShortName = "P.S";
-    static featureName = "Primitive Sphere";
+    static shortName = "P.S";
+    static longName = "Primitive Sphere";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

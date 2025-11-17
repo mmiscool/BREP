@@ -7,8 +7,6 @@ export class BaseAnnotation extends ListEntityBase {
   static entityType = 'annotation';
   static shortName = 'ANN';
   static longName = 'Annotation';
-  static featureShortName = 'ANN';
-  static featureName = 'Annotation';
   static inputParamsSchema = {}; 
 
   constructor(opts = {}) {

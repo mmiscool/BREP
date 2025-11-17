@@ -2,9 +2,10 @@ import { evaluateConstraintNumericValue } from '../../assemblyConstraints/constr
 
 export function constraintLabelText(entry, constraintClass, partHistory = null) {
   const cls = constraintClass || entry?.constraintClass || null;
-  const rawShortName = cls?.constraintShortName;
+  const rawShortName = cls?.shortName || cls?.constraintShortName;
   const shortName = rawShortName != null ? String(rawShortName).trim() : '';
   const base = shortName
+    || cls?.longName
     || cls?.constraintName
     || entry?.constraintType
     || entry?.type

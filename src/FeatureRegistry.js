@@ -34,6 +34,29 @@ import { SplineFeature } from './features/spline/SplineFeature.js';
    (Renamed local var to FeatureClass to avoid confusion; it’s the constructor.)
    ======================================================================== */
 
+const normalizeName = (value) => {
+  if (value == null && value !== 0) return '';
+  try {
+    return String(value).trim();
+  } catch {
+    return '';
+  }
+};
+
+const normalizeKey = (value) => normalizeName(value).toUpperCase();
+
+const getShortName = (FeatureClass) => normalizeName(
+  FeatureClass?.shortName
+  ?? FeatureClass?.featureShortName
+  ?? FeatureClass?.name,
+);
+
+const getLongName = (FeatureClass) => normalizeName(
+  FeatureClass?.longName
+  ?? FeatureClass?.featureName
+  ?? FeatureClass?.name,
+);
+
 export class FeatureRegistry {
   constructor() {
     this.features = [];
@@ -86,14 +109,26 @@ export class FeatureRegistry {
   }
 
   register(FeatureClass) {
+    if (!FeatureClass) return;
+    if (!FeatureClass.shortName) {
+      FeatureClass.shortName = FeatureClass.featureShortName || FeatureClass.name || 'FEATURE';
+    }
+    if (!FeatureClass.longName) {
+      FeatureClass.longName = FeatureClass.featureName || FeatureClass.name || FeatureClass.shortName || 'Feature';
+    }
     this.features.push(FeatureClass);
   }
 
   get(featureName) {
-    const searchName = featureName.toUpperCase();
-    const FeatureClass = this.features.find(fc => fc.featureShortName.toUpperCase() === searchName ||
-      (fc.featureName && fc.featureName.toUpperCase() === searchName)
-    );
+    const searchKey = normalizeKey(featureName);
+    if (!searchKey) throw new Error('Feature type must be a non-empty string');
+    const FeatureClass = this.features.find((fc) => {
+      if (!fc) return false;
+      const shortName = normalizeKey(getShortName(fc));
+      const longName = normalizeKey(getLongName(fc));
+      const className = normalizeKey(fc.name);
+      return shortName === searchKey || longName === searchKey || className === searchKey;
+    }) || this.aliases.get(searchKey);
 
     if (!FeatureClass) {
       throw new Error(`Feature type "${featureName}" is not registered.`);
@@ -104,13 +139,12 @@ export class FeatureRegistry {
   // Tolerant lookup: returns null instead of throwing, and also
   // accepts the class constructor name as an alias.
   getSafe(featureName) {
-    const searchName = String(featureName || '').trim().toUpperCase();
+    const searchName = normalizeKey(featureName);
     for (const fc of this.features) {
       if (!fc) continue;
-      let shortName = null, longName = null, className = null;
-      try { shortName = fc.featureShortName != null ? String(fc.featureShortName).trim().toUpperCase() : null; } catch { shortName = null; }
-      try { longName = fc.featureName != null ? String(fc.featureName).trim().toUpperCase() : null; } catch { longName = null; }
-      try { className = fc.name ? String(fc.name).trim().toUpperCase() : null; } catch { className = null; }
+      const shortName = normalizeKey(getShortName(fc));
+      const longName = normalizeKey(getLongName(fc));
+      const className = normalizeKey(fc.name);
       if (shortName === searchName || longName === searchName || className === searchName) return fc;
     }
     // Aliases for new split pattern features

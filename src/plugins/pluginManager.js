@@ -153,10 +153,10 @@ function buildApp(viewer) {
     registerFeature(FeatureClass) {
       try {
         FeatureClass.fromPlugin = true;
-
-        FeatureClass.featureShortName = "🔌" + (FeatureClass.featureShortName || "Feature");
-
-        FeatureClass.featureName = "🔌 " + FeatureClass.featureName;
+        const baseShort = FeatureClass?.shortName || FeatureClass?.name || 'Feature';
+        const baseLong = FeatureClass?.longName || FeatureClass?.name || baseShort;
+        FeatureClass.shortName = `🔌${baseShort}`;
+        FeatureClass.longName = `🔌 ${baseLong}`;
 
         viewer?.partHistory?.featureRegistry?.register?.(FeatureClass);
 

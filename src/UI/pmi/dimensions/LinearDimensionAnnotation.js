@@ -83,8 +83,6 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
   static shortName = 'DIM';
   static longName = 'Linear Dimension';
   static title = 'Linear';
-  static featureShortName = 'linear';
-  static featureName = 'Linear Dimension';
   static inputParamsSchema = inputParamsSchema;
 
   constructor(opts = {}) {

@@ -92,8 +92,8 @@ const inputParamsSchema = {
 };
 
 export class ImageToFaceFeature {
-  static featureShortName = "IMAGE";
-  static featureName = "Image to Face";
+  static shortName = "IMAGE";
+  static longName = "Image to Face";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {

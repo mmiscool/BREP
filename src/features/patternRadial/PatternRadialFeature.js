@@ -46,8 +46,8 @@ const inputParamsSchema = {
 };
 
 export class PatternRadialFeature {
-  static featureName = "Pattern Radial";
-  static featureShortName = "PATRAD";
+  static shortName = "PATRAD";
+  static longName = "Pattern Radial";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
@@ -75,7 +75,8 @@ export class PatternRadialFeature {
     const center = (axisInfo?.point || new THREE.Vector3()).clone().addScaledVector(axis, centerOffset || 0);
 
     const instances = [];
-    const featureID = this.inputParams.featureID || PatternRadialFeature.featureShortName || 'PatternRadial';
+    const fallbackId = PatternRadialFeature.shortName || PatternRadialFeature.longName || 'PatternRadial';
+    const featureID = this.inputParams.featureID || fallbackId;
     const step = (count <= 1) ? 0 : THREE.MathUtils.degToRad(totalAngleDeg) / count;
     for (const src of solids) {
       for (let i = 1; i <= count - 1; i++) {

@@ -37,8 +37,8 @@ const inputParamsSchema = {
 };
 
 export class Import3dModelFeature {
-    static featureShortName = "IMPORT3D";
-    static featureName = "Import 3D Model";
+    static shortName = "IMPORT3D";
+    static longName = "Import 3D Model";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

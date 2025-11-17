@@ -355,8 +355,8 @@ function extendPathEndpoints(points, extension = 0) {
 }
 
 export class TubeFeature {
-  static featureShortName = 'TU';
-  static featureName = 'Tube';
+  static shortName = 'TU';
+  static longName = 'Tube';
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {

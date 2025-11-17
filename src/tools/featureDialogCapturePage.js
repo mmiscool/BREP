@@ -21,8 +21,8 @@ grid.className = 'dialog-capture-grid';
 
 for (const FeatureClass of featureClasses) {
   if (!FeatureClass) continue;
-  const featureName = String(FeatureClass.featureName || FeatureClass.name || 'Feature').trim() || 'Feature';
-  const shortNameRaw = FeatureClass.featureShortName || featureName;
+  const featureName = String(FeatureClass.longName || FeatureClass.featureName || FeatureClass.name || 'Feature').trim() || 'Feature';
+  const shortNameRaw = FeatureClass.shortName || FeatureClass.featureShortName || featureName;
   const shortName = String(shortNameRaw || featureName).trim() || 'Feature';
   const captureName = featureName || shortName;
   const params = { featureID: `${shortName}-capture` };

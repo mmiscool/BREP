@@ -30,8 +30,8 @@ const inputParamsSchema = {
 
 
 export class AngleConstraint extends BaseAssemblyConstraint {
-  static constraintShortName = '∠';
-  static constraintName = '∠ Angle Constraint';
+  static shortName = '∠';
+  static longName = '∠ Angle Constraint';
   static constraintType = 'angle';
   static aliases = ['angle', 'angle_between', 'angular', 'ANGL'];
   static inputParamsSchema = inputParamsSchema;

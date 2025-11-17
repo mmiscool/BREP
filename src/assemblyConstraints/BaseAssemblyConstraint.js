@@ -2,13 +2,13 @@ import * as THREE from 'three';
 
 /**
  * Base class for all assembly constraints. Mirrors the feature/annotation patterns:
- *  - subclasses define static metadata (constraintShortName, constraintName, constraintType)
+ *  - subclasses define static metadata (shortName, longName, constraintType)
  *  - subclasses provide a static inputParamsSchema compatible with SchemaForm
  *  - instances expose `inputParams` and `persistentData` containers updated by the UI/runtime
  */
 export class BaseAssemblyConstraint {
-  static constraintShortName = 'ACON';
-  static constraintName = 'Assembly Constraint';
+  static shortName = 'ACON';
+  static longName = 'Assembly Constraint';
   static constraintType = 'assembly_constraint';
   static inputParamsSchema = {
     constraintID: {

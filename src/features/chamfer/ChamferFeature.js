@@ -39,8 +39,8 @@ const inputParamsSchema = {
 };
 
 export class ChamferFeature {
-    static featureShortName = "CHAMFER";
-    static featureName = "Chamfer";
+    static shortName = "CH";
+    static longName = "Chamfer";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

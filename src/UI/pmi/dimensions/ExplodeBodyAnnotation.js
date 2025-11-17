@@ -39,8 +39,6 @@ export class ExplodeBodyAnnotation extends BaseAnnotation {
   static shortName = 'EXP';
   static longName = 'Explode Body';
   static title = 'Explode Body';
-  static featureShortName = 'exp';
-  static featureName = 'Explode Body';
   static inputParamsSchema = inputParamsSchema;
   static aliases = ['viewTransform'];
 

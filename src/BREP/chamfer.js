@@ -141,6 +141,10 @@ export class ChamferSolid extends Solid {
         const baseName = `CHAMFER_${faceA.name}|${faceB.name}`;
         // Build a closed triangular prism and tag faces: _SIDE_A, _SIDE_B, _BEVEL, _CAP0, _CAP1
         buildChamferPrismNamed(this, baseName, railP, railA, railB, closeLoop);
+        // use pushFace to push end caps out by a tiny amount to avoid z-fighting with original faces
+        const tinyPush = -(this.distance * 1e-4 + 1e-7);
+        this.pushFace(`${baseName}_CAP0`, tinyPush);
+        this.pushFace(`${baseName}_CAP1`, tinyPush);
 
         // Inflate only the two side faces (on original faces) to avoid slivers; bevel remains untouched
         if (Math.abs(this.inflate) > 0) {

@@ -88,19 +88,42 @@ export class HistoryWidget extends HistoryCollectionWidget {
       this._addMenu.appendChild(empty);
       return;
     }
-    this._addBtn.disabled = false;
+    const items = [];
     for (const FC of features) {
       if (!FC) continue;
-      const label = String(FC.featureName || FC.featureShortName || FC.name || 'Feature');
-      const value = String(FC.featureShortName || FC.featureName || FC.name || label);
+      const names = this._extractDisplayNames(
+        FC,
+        FC?.shortName || FC?.name || 'Feature',
+        FC?.longName || FC?.name || 'Feature',
+      );
+      const label = names.longName || names.shortName || 'Feature';
+      const value = FC?.shortName || FC?.type || FC?.name || names.shortName || label;
+      const item = this._composeMenuItem(value, label, FC);
+      if (item) items.push(item);
+    }
+    if (!items.length) {
+      this._addBtn.disabled = true;
+      const empty = document.createElement('div');
+      empty.className = 'hc-menu-empty';
+      empty.textContent = 'No features registered';
+      this._addMenu.appendChild(empty);
+      return;
+    }
+    this._addBtn.disabled = false;
+    for (const { type, text } of items) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'hc-menu-item';
-      btn.textContent = label;
-      btn.dataset.type = value;
+      btn.textContent = text;
+      btn.dataset.type = type;
       btn.addEventListener('click', async (ev) => {
         ev.stopPropagation();
-        await this._handleAddEntry(value);
+        const targetType = ev?.currentTarget?.dataset?.type || type;
+        try {
+          await this._handleAddEntry(targetType);
+        } finally {
+          this._toggleAddMenu(false);
+        }
       });
       this._addMenu.appendChild(btn);
     }

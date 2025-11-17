@@ -21,8 +21,8 @@ const inputParamsSchema = {
 };
 
 export class OffsetShellFeature {
-  static featureShortName = 'O.S';
-  static featureName = 'offsetShell';
+  static shortName = 'O.S';
+  static longName = 'Offset Shell';
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
@@ -61,7 +61,8 @@ export class OffsetShellFeature {
       return { added: [], removed: [] };
     }
 
-    const featureId = (this.inputParams.featureID || OffsetShellFeature.featureShortName || 'OffsetShell').trim();
+    const fallbackId = OffsetShellFeature.shortName || OffsetShellFeature.longName || 'OffsetShell';
+    const featureId = (this.inputParams.featureID || fallbackId).trim();
     const newSolidName = `${targetSolid.name || 'Solid'}_${featureId}`;
 
     let resultSolid = null;

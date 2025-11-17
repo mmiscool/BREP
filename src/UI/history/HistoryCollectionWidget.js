@@ -59,13 +59,18 @@ export class HistoryCollectionWidget {
     this._onGlobalClick = (ev) => {
       if (!this._footer) return;
       const target = ev?.target || null;
+      const path = typeof ev?.composedPath === 'function' ? ev.composedPath() : null;
       const canCheckNode = typeof Node !== 'undefined';
-      if (target && canCheckNode && target instanceof Node) {
-        const isInMenu = this._addMenu && this._addMenu.contains(target);
-        const isAddButton = this._addBtn && this._addBtn.contains(target);
-        if (isInMenu || isAddButton) {
-          return;
+      const isInScope = (el) => {
+        if (!el) return false;
+        if (path && path.includes(el)) return true;
+        if (target && canCheckNode && target instanceof Node) {
+          return typeof el.contains === 'function' ? el.contains(target) : false;
         }
+        return false;
+      };
+      if (isInScope(this._addMenu) || isInScope(this._addBtn)) {
+        return;
       }
       this._toggleAddMenu(false);
     };
@@ -203,25 +208,25 @@ export class HistoryCollectionWidget {
 
   _guessEntryLabel(entry, index) {
     const params = entry && entry.inputParams ? entry.inputParams : {};
-    const primary =
+    const custom =
       entry?.title ||
       params.name ||
       params.label ||
-      params.title ||
-      entry?.constructor?.longName ||
-      entry?.constructor?.shortName ||
-      entry?.type ||
-      entry?.entityType ||
-      `Entry ${index + 1}`;
-    return String(primary);
+      params.title;
+    if (custom) return String(custom);
+    const names = this._extractDisplayNames(entry?.constructor, entry?.type, entry?.entityType);
+    if (names.longName) return names.longName;
+    if (names.shortName) return names.shortName;
+    return params.id || entry?.type || entry?.entityType || `Entry ${index + 1}`;
   }
 
   _guessTypeLabel(entry) {
+    const names = this._extractDisplayNames(entry?.constructor, entry?.type, entry?.entityType);
+    if (names.shortName) return names.shortName;
+    if (names.longName) return names.longName;
     return (
       entry?.type ||
       entry?.entityType ||
-      entry?.constructor?.shortName ||
-      entry?.constructor?.name ||
       ''
     );
   }
@@ -584,6 +589,7 @@ export class HistoryCollectionWidget {
   async _handleAddEntry(typeStr) {
     this._toggleAddMenu(false);
     if (!typeStr) return;
+    let createdEntryId = null;
     if (typeof this._createEntryFunc === 'function') {
       let entry = null;
       try {
@@ -606,10 +612,12 @@ export class HistoryCollectionWidget {
           }
           if (this._autoSyncOpenState) this._applyOpenState(entry, true);
           this._expandedId = normalizedId;
+          createdEntryId = normalizedId;
         }
       } catch (_) { /* ignore */ }
       this.render();
       this._emitCollectionChange('add', entry);
+      this._deferScrollToEntry(createdEntryId);
       return;
     }
     const entry = await this._instantiateEntryForType(typeStr);
@@ -626,9 +634,11 @@ export class HistoryCollectionWidget {
       }
       if (this._autoSyncOpenState) this._applyOpenState(entry, true);
       this._expandedId = normalizedId;
+      createdEntryId = normalizedId;
     }
     this.render();
     this._emitCollectionChange('add', entry);
+    this._deferScrollToEntry(createdEntryId);
   }
 
   _handleSchemaChange(id, entry, details) {
@@ -743,9 +753,9 @@ export class HistoryCollectionWidget {
     if (!history || typeof history.generateId !== 'function') return `entry-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const hint =
       EntityClass?.shortName ||
-      EntityClass?.featureShortName ||
-      EntityClass?.featureName ||
+      EntityClass?.longName ||
       EntityClass?.entityType ||
+      EntityClass?.name ||
       'ENTRY';
     return history.generateId(hint);
   }
@@ -783,20 +793,19 @@ export class HistoryCollectionWidget {
       if (!info) continue;
       let rawType = null;
       let rawLabel = null;
+      let source = null;
       if (typeof info === 'string') {
         rawType = info;
         rawLabel = info;
       } else {
-        const source = (typeof info === 'function' || typeof info === 'object') ? info : null;
+        source = (typeof info === 'function' || typeof info === 'object') ? info : null;
         if (source) {
-          rawType = source.type || source.entityType || source.shortName || source.featureShortName || source.featureName || source.name;
-          rawLabel = source.longName || source.featureName || source.featureShortName || source.shortName || source.entityType || source.type || source.name;
+          rawType = source.type || source.entityType || source.shortName || source.name;
+          rawLabel = source.longName || source.shortName || source.entityType || source.type || source.name;
         }
       }
-      if (!rawType) continue;
-      const normalizedType = String(rawType);
-      const labelText = rawLabel ? String(rawLabel) : normalizedType;
-      items.push({ type: normalizedType, text: labelText });
+      const item = this._composeMenuItem(rawType, rawLabel, source);
+      if (item) items.push(item);
     }
     if (!items.length) {
       this._addBtn.disabled = true;
@@ -816,8 +825,9 @@ export class HistoryCollectionWidget {
       btn.dataset.type = type;
       btn.addEventListener('click', async (ev) => {
         ev.stopPropagation();
+        const targetType = ev?.currentTarget?.dataset?.type || type;
         try {
-          await this._handleAddEntry(type);
+          await this._handleAddEntry(targetType);
         } finally {
           this._toggleAddMenu(false);
         }
@@ -847,7 +857,10 @@ export class HistoryCollectionWidget {
     addBtn.addEventListener('click', (ev) => {
       ev.stopPropagation();
       const isOpen = addBtn.getAttribute('aria-expanded') === 'true';
-      this._toggleAddMenu(!isOpen);
+      this._scrollListIntoView();
+      const nextState = !isOpen;
+      this._toggleAddMenu(nextState);
+      if (nextState) this._scrollFooterIntoView();
     });
 
     this._addBtn = addBtn;
@@ -1011,9 +1024,87 @@ export class HistoryCollectionWidget {
     };
   }
 
+  _composeMenuItem(rawType, rawLabel, source = null, extraNames = []) {
+    if (!rawType && rawType !== 0) return null;
+    const normalizedType = String(rawType);
+    const nameInfo = this._extractDisplayNames(source, normalizedType, rawLabel);
+    const labelText = nameInfo.longName || nameInfo.shortName || normalizedType;
+    return { type: normalizedType, text: labelText };
+  }
+
+  _extractDisplayNames(source, fallbackType = '', fallbackLabel = '') {
+    const shortName = this._firstNonEmptyString([
+      source?.shortName,
+      fallbackType,
+      fallbackLabel,
+    ]);
+    let longName = this._firstNonEmptyString([
+      source?.longName,
+      fallbackLabel,
+      fallbackType,
+      shortName,
+    ]);
+    if (!longName) longName = '';
+    return { shortName: shortName || '', longName: longName || '' };
+  }
+
+  _firstNonEmptyString(list = []) {
+    if (!Array.isArray(list)) return '';
+    for (const value of list) {
+      if (value == null && value !== 0) continue;
+      const str = String(value).trim();
+      if (str.length) return str;
+    }
+    return '';
+  }
+
   _makeStyle() {
     const style = document.createElement('style');
     style.textContent = HISTORY_COLLECTION_WIDGET_CSS;
     return style;
+  }
+
+  _scrollListIntoView() {
+    const target = this._listEl || this._container || this.uiElement;
+    this._scrollElementIntoView(target);
+  }
+
+  _scrollFooterIntoView() {
+    const target = this._footer || this._addBtn || this._addMenu;
+    this._scrollElementIntoView(target);
+  }
+
+  _deferScrollToEntry(entryId) {
+    if (!entryId) return;
+    const exec = () => this._scrollEntryIntoView(entryId);
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(exec);
+    else setTimeout(exec, 0);
+  }
+
+  _scrollEntryIntoView(entryId) {
+    if (!entryId || !this._listEl) return;
+    const selector = `[data-entry-id="${this.#escapeCss(entryId)}"]`;
+    const target = this._listEl.querySelector(selector);
+    if (target) {
+      this._scrollElementIntoView(target);
+    }
+  }
+
+  _scrollElementIntoView(target) {
+    if (target && typeof target.scrollIntoView === 'function') {
+      try {
+        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } catch {
+        target.scrollIntoView();
+      }
+    }
+  }
+
+  #escapeCss(value) {
+    const str = String(value);
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+      return CSS.escape(str);
+    }
+    return str.replace(/"/g, '\\"');
   }
 }

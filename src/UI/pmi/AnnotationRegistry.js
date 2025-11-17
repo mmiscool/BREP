@@ -20,7 +20,23 @@ export class AnnotationRegistry {
 
   register(handler) {
     if (!handler) return;
-    const typeKey = normalizeKey(handler.type || handler.featureShortName || handler.featureName || handler.name);
+    if (typeof handler === 'function') {
+      const ctor = handler;
+      if (!ctor.shortName) {
+        ctor.shortName = ctor.featureShortName || ctor.name || ctor.type || 'ANN';
+      }
+      if (!ctor.longName) {
+        ctor.longName = ctor.featureName || ctor.name || ctor.shortName || ctor.type || 'Annotation';
+      }
+    }
+    const typeKey = normalizeKey(
+      handler.type
+      || handler.shortName
+      || handler.featureShortName
+      || handler.name
+      || handler.longName
+      || handler.featureName,
+    );
     if (!typeKey) return;
     this._map.set(typeKey, handler);
 

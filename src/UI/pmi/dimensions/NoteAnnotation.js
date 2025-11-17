@@ -32,8 +32,6 @@ export class NoteAnnotation extends BaseAnnotation {
   static shortName = 'NOTE';
   static longName = 'Note';
   static title = 'Note';
-  static featureShortName = 'note';
-  static featureName = 'Note';
   static inputParamsSchema = inputParamsSchema;
 
   constructor(opts = {}) {

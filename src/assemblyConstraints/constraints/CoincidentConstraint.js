@@ -34,8 +34,8 @@ const inputParamsSchema = {
 };
 
 export class CoincidentConstraint extends BaseAssemblyConstraint {
-  static constraintShortName = 'COIN';
-  static constraintName = 'Coincident Constraint';
+  static shortName = 'COIN';
+  static longName = 'Coincident Constraint';
   static constraintType = 'coincident';
   static aliases = ['mate', 'coincident', 'coincident constraint'];
   static inputParamsSchema = inputParamsSchema;

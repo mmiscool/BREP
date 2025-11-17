@@ -40,8 +40,8 @@ const inputParamsSchema = {
 };
 
 export class RemeshFeature {
-  static featureShortName = "RM";
-  static featureName = "Remesh";
+  static shortName = "RM";
+  static longName = "Remesh";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {

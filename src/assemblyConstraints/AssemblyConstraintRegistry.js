@@ -5,10 +5,28 @@ import { FixedConstraint } from './constraints/FixedConstraint.js';
 import { ParallelConstraint } from './constraints/ParallelConstraint.js';
 import { TouchAlignConstraint } from './constraints/TouchAlignConstraint.js';
 
-const normalizeKey = (value) => {
-  if (value == null) return '';
-  return String(value).trim().toLowerCase();
+const normalizeName = (value) => {
+  if (value == null && value !== 0) return '';
+  try {
+    return String(value).trim();
+  } catch {
+    return '';
+  }
 };
+
+const normalizeKey = (value) => normalizeName(value).toLowerCase();
+
+const getShortName = (ConstraintClass) => normalizeName(
+  ConstraintClass?.shortName
+  ?? ConstraintClass?.constraintShortName
+  ?? ConstraintClass?.name,
+);
+
+const getLongName = (ConstraintClass) => normalizeName(
+  ConstraintClass?.longName
+  ?? ConstraintClass?.constraintName
+  ?? ConstraintClass?.name,
+);
 
 export class AssemblyConstraintRegistry {
   constructor() {
@@ -25,11 +43,17 @@ export class AssemblyConstraintRegistry {
   }
 
   /**
-   * Register a constraint class. Keys derive from `constraintType`, `constraintShortName`, etc.
+   * Register a constraint class. Keys derive from `constraintType`, `shortName`, etc.
    * @param {typeof import('./BaseAssemblyConstraint.js').BaseAssemblyConstraint} ConstraintClass
    */
   register(ConstraintClass) {
     if (!ConstraintClass) return;
+    if (!ConstraintClass.shortName) {
+      ConstraintClass.shortName = ConstraintClass.constraintShortName || ConstraintClass.name || 'CONST';
+    }
+    if (!ConstraintClass.longName) {
+      ConstraintClass.longName = ConstraintClass.constraintName || ConstraintClass.name || ConstraintClass.shortName || 'Constraint';
+    }
     const keys = this.#collectKeys(ConstraintClass);
     if (!keys.typeKey) return;
 
@@ -77,10 +101,10 @@ export class AssemblyConstraintRegistry {
     const type = normalizeKey(ConstraintClass.constraintType || ConstraintClass.type || null);
     if (type) keys.add(type);
 
-    const shortName = normalizeKey(ConstraintClass.constraintShortName);
+    const shortName = normalizeKey(getShortName(ConstraintClass));
     if (shortName && shortName !== type) keys.add(shortName);
 
-    const longName = normalizeKey(ConstraintClass.constraintName);
+    const longName = normalizeKey(getLongName(ConstraintClass));
     if (longName && longName !== type) keys.add(longName);
 
     const className = normalizeKey(ConstraintClass.name);

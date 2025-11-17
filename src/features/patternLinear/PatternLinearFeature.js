@@ -31,8 +31,8 @@ const inputParamsSchema = {
 };
 
 export class PatternLinearFeature {
-  static featureName = "Pattern Linear";
-  static featureShortName = "PATLIN";
+  static shortName = "PATLIN";
+  static longName = "Pattern Linear";
   static inputParamsSchema = inputParamsSchema;
 
   constructor() {
@@ -55,7 +55,8 @@ export class PatternLinearFeature {
     const d = toVec3(this.inputParams.offset?.position, 10, 0, 0);
 
     const instances = [];
-    const featureID = this.inputParams.featureID || PatternLinearFeature.featureShortName || 'PatternLinear';
+    const fallbackId = PatternLinearFeature.shortName || PatternLinearFeature.longName || 'PatternLinear';
+    const featureID = this.inputParams.featureID || fallbackId;
     for (const src of solids) {
       for (let i = 1; i <= count - 1; i++) {
         const t = new THREE.Matrix4().makeTranslation(d.x * i, d.y * i, d.z * i);

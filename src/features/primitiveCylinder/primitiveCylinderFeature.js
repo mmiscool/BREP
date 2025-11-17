@@ -39,8 +39,8 @@ const inputParamsSchema = {
 };
 
 export class PrimitiveCylinderFeature {
-    static featureShortName = "P.CY";
-    static featureName = "Primitive Cylinder";
+    static shortName = "P.CY";
+    static longName = "Primitive Cylinder";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

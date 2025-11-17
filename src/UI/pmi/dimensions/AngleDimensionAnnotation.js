@@ -76,8 +76,6 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
   static shortName = 'ANG';
   static longName = 'Angle Dimension';
   static title = 'Angle';
-  static featureShortName = 'angle';
-  static featureName = 'Angle Dimension';
   static inputParamsSchema = inputParamsSchema;
 
   constructor(opts = {}) {

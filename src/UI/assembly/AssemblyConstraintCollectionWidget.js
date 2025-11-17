@@ -218,8 +218,9 @@ export class AssemblyConstraintCollectionWidget extends HistoryCollectionWidget 
     }
 
     if (elements.typeEl) {
+      const shortName = constraintClass?.shortName || constraintClass?.constraintShortName;
       elements.typeEl.textContent =
-        constraintClass?.constraintShortName
+        shortName
         || constraintClass?.constraintType
         || entry?.type
         || '';
@@ -342,4 +343,5 @@ export class AssemblyConstraintCollectionWidget extends HistoryCollectionWidget 
     style.textContent = COLLECTION_EXTRA_CSS;
     this._shadow.appendChild(style);
   }
+
 }

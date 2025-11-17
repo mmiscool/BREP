@@ -38,8 +38,8 @@ const inputParamsSchema = {
 };
 
 export class PrimitiveCubeFeature {
-    static featureShortName = "P.CU";
-    static featureName = "Primitive Cube";
+    static shortName = "P.CU";
+    static longName = "Primitive Cube";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {

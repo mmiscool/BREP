@@ -41,8 +41,8 @@ const inputParamsSchema = {
 };
 
 export class PrimitivePyramidFeature {
-    static featureShortName = "P.PY";
-    static featureName = "Primitive Pyramid";
+    static shortName = "P.PY";
+    static longName = "Primitive Pyramid";
     static inputParamsSchema = inputParamsSchema;
 
     constructor() {
