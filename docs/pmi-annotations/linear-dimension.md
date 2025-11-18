@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Linear Dimension dialog](Linear_Dimension.png)
+
 Linear dimensions measure the distance between two vertices and project the result into the active PMI view. Use them to document edge-to-edge spacing and critical offsets without altering model geometry.
 
 ## Inputs

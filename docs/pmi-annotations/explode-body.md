@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Explode Body annotation dialog](Explode_Body.png)
+
 Explode Body annotations reposition solids inside a PMI view without touching the master model. They are ideal for exploded assemblies, service manuals, and view-specific storyboards.
 
 ## Inputs

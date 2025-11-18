@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Angle Dimension dialog](Angle_Dimension.png)
+
 Angle dimensions measure the sweep between two faces or edges and display the result on the active PMI sheet. Use them for chamfers, draft checks, and assembly alignment callouts.
 
 ## Inputs

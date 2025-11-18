@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Coincident Constraint dialog](Coincident_Constraint.png)
+
 The coincident constraint brings two references to the same world-space location by translating their owning components. It is the general-purpose mate used for points, edges, faces, or whole components.
 
 ## Inputs

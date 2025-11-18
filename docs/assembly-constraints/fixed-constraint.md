@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Fixed Constraint dialog](_Fixed_Constraint.png)
+
 Fixed constraints lock an assembly component in place so other constraints treat it as immovable. They usually provide the reference frame that every other constraint solves against.
 
 ## Inputs

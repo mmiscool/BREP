@@ -2,6 +2,8 @@
 
 Status: Experimental
 
+![Touch Align Constraint dialog](_Touch_Align_Constraint.png)
+
 Touch Align constraints drive two like-kind references into contact while also aligning their orientations. They extend the parallel alignment logic with a translation phase so the selected entities share the same location in space.
 
 ## Inputs

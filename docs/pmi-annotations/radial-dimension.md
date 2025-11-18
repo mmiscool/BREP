@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Radial Dimension dialog](Radial_Dimension.png)
+
 Radial dimensions expose radii or diameters of cylindrical faces directly in PMI views. They support associative updates to revolved geometry, holes, and rounds.
 
 ## Inputs

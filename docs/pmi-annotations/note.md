@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Note annotation dialog](Note.png)
+
 Note annotations drop standalone text markers into a PMI view for general instructions, inspection checkpoints, or revision flags.
 
 ## Inputs

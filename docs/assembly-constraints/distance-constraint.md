@@ -2,6 +2,8 @@
 
 Status: Implemented
 
+![Distance Constraint dialog](_Distance_Constraint.png)
+
 Distance constraints maintain a target separation between two references. They support point/point, point/edge, point/face, edge/edge, and face/face combinations and will translate components until the measured offset matches the requested distance.
 
 ## Inputs
