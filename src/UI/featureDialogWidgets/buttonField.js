@@ -10,7 +10,7 @@ export function renderButtonField({ ui, key, def, id }) {
         ui._stopActiveReferenceSelection();
         const fid = (ui.params && Object.prototype.hasOwnProperty.call(ui.params, 'featureID'))
             ? ui.params.featureID
-            : null;
+            : (ui.params?.id ?? null);
         let handled = false;
         try {
             if (def && typeof def.actionFunction === 'function') {

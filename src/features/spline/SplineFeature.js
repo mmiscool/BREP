@@ -1230,7 +1230,7 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
 }
 
 const inputParamsSchema = {
-  featureID: {
+  id: {
     type: "string",
     default_value: null,
     hint: "unique identifier for the spline feature",

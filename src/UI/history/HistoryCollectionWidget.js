@@ -1,6 +1,8 @@
 import { SchemaForm } from '../featureDialogs.js';
 import { HISTORY_COLLECTION_WIDGET_CSS } from './historyCollectionWidget.css.js';
 
+export const HISTORY_COLLECTION_REFRESH_EVENT = 'brep:history-collections-refresh';
+
 const noop = () => {};
 
 /**
@@ -39,6 +41,7 @@ export class HistoryCollectionWidget {
     this._addBtn = null;
     this._addMenu = null;
     this._onGlobalClick = null;
+    this._globalRefreshHandler = null;
 
     this.uiElement = document.createElement('div');
     this.uiElement.className = 'history-collection-widget-host';
@@ -80,6 +83,8 @@ export class HistoryCollectionWidget {
       this._onGlobalClick = null;
     }
 
+    this._installGlobalRefreshHandler();
+
     this._expandedId = null;
     this._titleEls = new Map();
     this._forms = new Map();
@@ -105,6 +110,11 @@ export class HistoryCollectionWidget {
       try { document.removeEventListener('mousedown', this._onGlobalClick, true); } catch (_) { /* ignore */ }
     }
     this._onGlobalClick = null;
+    if (this._globalRefreshHandler) {
+      try { window.removeEventListener(HISTORY_COLLECTION_REFRESH_EVENT, this._globalRefreshHandler); }
+      catch (_) { /* ignore */ }
+    }
+    this._globalRefreshHandler = null;
   }
 
   setHistory(history) {
@@ -887,6 +897,20 @@ export class HistoryCollectionWidget {
     };
     this._boundHistoryListener = handler;
     this._listenerUnsub = history.addListener(handler);
+  }
+
+  _installGlobalRefreshHandler() {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    const handler = () => {
+      try { this.render(); }
+      catch (_) { /* ignore */ }
+    };
+    try {
+      window.addEventListener(HISTORY_COLLECTION_REFRESH_EVENT, handler);
+      this._globalRefreshHandler = handler;
+    } catch {
+      this._globalRefreshHandler = null;
+    }
   }
 
   _handleHistoryEvent(payload) {

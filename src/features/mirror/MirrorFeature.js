@@ -3,7 +3,7 @@ const THREE = BREP.THREE;
 // no direct BREP usage here
 
 const inputParamsSchema = {
-    featureID: {
+    id: {
         type: "string",
         default_value: null,
         hint: "unique identifier for the mirror feature",

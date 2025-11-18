@@ -14,6 +14,7 @@ import {
   uint8ArrayToBase64,
   base64ToUint8Array,
 } from '../services/componentLibrary.js';
+import { HISTORY_COLLECTION_REFRESH_EVENT } from './history/HistoryCollectionWidget.js';
 
 export class FileManagerWidget {
   constructor(viewer) {
@@ -243,6 +244,7 @@ export class FileManagerWidget {
     await this.viewer.partHistory.runHistory();
     this.currentName = '';
     this.nameInput.value = '';
+    this._refreshHistoryCollections('new-model');
   }
 
   async saveCurrent() {
@@ -333,7 +335,7 @@ export class FileManagerWidget {
             this.nameInput.value = name;
             this._saveLastName(name);
             await this.viewer.partHistory.runHistory();
-            try { this.viewer?.historyWidget?.render?.(); } catch {}
+            this._refreshHistoryCollections('load-model');
             return;
           }
         }
@@ -346,7 +348,7 @@ export class FileManagerWidget {
             feat.inputParams.centerMesh = true;
           }
           await this.viewer?.partHistory?.runHistory?.();
-          try { this.viewer?.historyWidget?.render?.(); } catch {}
+          this._refreshHistoryCollections('load-model');
           if (seq !== this._loadSeq) return;
           this.currentName = name;
           this.nameInput.value = name;
@@ -373,7 +375,7 @@ export class FileManagerWidget {
     this.nameInput.value = name;
     this._saveLastName(name);
     await this.viewer.partHistory.runHistory();
-    try { this.viewer?.historyWidget?.render?.(); } catch {}
+    this._refreshHistoryCollections('load-model');
   }
 
   deleteModel(name) {
@@ -387,6 +389,28 @@ export class FileManagerWidget {
       if (this.nameInput.value === name) this.nameInput.value = '';
     }
     this.refreshList();
+  }
+
+  _refreshHistoryCollections(reason = 'manual') {
+    const detail = { source: 'file-manager', reason };
+    try {
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        const evt = (typeof CustomEvent === 'function')
+          ? new CustomEvent(HISTORY_COLLECTION_REFRESH_EVENT, { detail })
+          : null;
+        if (evt) window.dispatchEvent(evt);
+        else window.dispatchEvent({ type: HISTORY_COLLECTION_REFRESH_EVENT, detail });
+      }
+    } catch { /* ignore */ }
+
+    try { this.viewer?.historyWidget?.render?.(); } catch { }
+    try { this.viewer?.assemblyConstraintsWidget?.render?.(); } catch { }
+    try {
+      if (this.viewer?.pmiViewsWidget) {
+        this.viewer.pmiViewsWidget.refreshFromHistory?.();
+        this.viewer.pmiViewsWidget._renderList?.();
+      }
+    } catch { /* ignore */ }
   }
 
   refreshList() {

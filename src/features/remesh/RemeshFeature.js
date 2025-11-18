@@ -1,7 +1,7 @@
  
 
 const inputParamsSchema = {
-  featureID: {
+  id: {
     type: "string",
     default_value: null,
     hint: "unique identifier for the remesh feature",

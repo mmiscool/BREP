@@ -3,7 +3,7 @@ import { Manifold } from "../../BREP/SolidShared.js";
 const THREE = BREP.THREE;
 
 const inputParamsSchema = {
-  featureID: {
+  id: {
     type: "string",
     default_value: null,
     hint: "unique identifier for the pattern feature",

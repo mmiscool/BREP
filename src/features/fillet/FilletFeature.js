@@ -1,7 +1,7 @@
 import { clearFilletCaches } from "../../BREP/fillets/fillet.js";
 
 const inputParamsSchema = {
-    featureID: {
+    id: {
         type: "string",
         default_value: null,
         hint: "unique identifier for the fillet feature",

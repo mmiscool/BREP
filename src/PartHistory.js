@@ -16,6 +16,14 @@ import { deepClone } from './utils/deepClone.js';
 
 const debug = false;
 
+function resolveFeatureEntryId(entry, fallback = null) {
+  if (!entry) return fallback;
+  const params = entry.inputParams || {};
+  const rawId = params.id ?? params.featureID ?? entry.id ?? fallback;
+  if (rawId == null) return fallback;
+  return String(rawId);
+}
+
 
 export class PartHistory {
   constructor() {
@@ -59,6 +67,92 @@ export class PartHistory {
       originalAdd.apply(this.scene, args);
     };
 
+  }
+
+  #runFeatureEntryMigrations(rawFeature) {
+    if (!rawFeature || typeof rawFeature !== 'object') return rawFeature;
+    const migrated = rawFeature;
+
+    if (Object.prototype.hasOwnProperty.call(migrated, 'featureID')) {
+      if (!migrated.id && migrated.featureID != null) {
+        migrated.id = migrated.featureID;
+      }
+      try { delete migrated.featureID; } catch { /* ignore */ }
+    }
+
+    const paramsSource = migrated.inputParams && typeof migrated.inputParams === 'object'
+      ? migrated.inputParams
+      : null;
+    if (paramsSource) {
+      if (Object.prototype.hasOwnProperty.call(paramsSource, 'featureID')) {
+        if ((paramsSource.id == null || paramsSource.id === '') && paramsSource.featureID != null) {
+          paramsSource.id = paramsSource.featureID;
+        }
+        try { delete paramsSource.featureID; } catch { /* ignore */ }
+      }
+    }
+
+    if ((migrated.id == null || migrated.id === '') && paramsSource?.id != null) {
+      migrated.id = paramsSource.id;
+    }
+
+    return migrated;
+  }
+
+  #linkFeatureParams(feature) {
+    if (!feature || typeof feature !== 'object') return;
+    if (!feature.inputParams || typeof feature.inputParams !== 'object') {
+      feature.inputParams = {};
+    }
+    if (!feature.persistentData || typeof feature.persistentData !== 'object') {
+      feature.persistentData = {};
+    }
+    const params = feature.inputParams;
+    const descriptor = { configurable: true, enumerable: false };
+    const rawId = params.id ?? params.featureID ?? feature.id;
+    if (rawId != null && rawId !== '') {
+      const normalized = String(rawId);
+      params.id = normalized;
+      feature.id = normalized;
+    } else if (params.id != null && params.id !== feature.id) {
+      feature.id = params.id;
+    } else if (feature.id != null && feature.id !== params.id) {
+      params.id = feature.id;
+    }
+
+    if (!Object.getOwnPropertyDescriptor(params, 'featureID')) {
+      Object.defineProperty(params, 'featureID', {
+        ...descriptor,
+        get: () => params.id,
+        set: (value) => {
+          if (value == null || value === '') {
+            params.id = value;
+            feature.id = value;
+            return;
+          }
+          const normalized = String(value);
+          params.id = normalized;
+          feature.id = normalized;
+        },
+      });
+    }
+  }
+
+  #prepareFeatureEntry(rawFeature) {
+    if (!rawFeature || typeof rawFeature !== 'object') return null;
+    const migrated = this.#runFeatureEntryMigrations(rawFeature);
+    this.#linkFeatureParams(migrated);
+    return migrated;
+  }
+
+  #prepareFeatureList(list) {
+    if (!Array.isArray(list)) return [];
+    const prepared = [];
+    for (const rawFeature of list) {
+      const entry = this.#prepareFeatureEntry(rawFeature);
+      if (entry) prepared.push(entry);
+    }
+    return prepared;
   }
 
   static evaluateExpression(expressionsSource, equation) {
@@ -140,13 +234,15 @@ export class PartHistory {
     const nowMs = () => (typeof performance !== 'undefined' && performance?.now ? performance.now() : Date.now());
     for (let i = 0; i < features.length; i++) {
       const feature = features[i];
+      this.#linkFeatureParams(feature);
+      const featureId = resolveFeatureEntryId(feature);
       if (skipAllFeatures) {
         continue;
       }
 
       const nextFeature = features[i + 1];
 
-      if (whatStepToStopAt && feature.inputParams.featureID === whatStepToStopAt) {
+      if (whatStepToStopAt && featureId === whatStepToStopAt) {
         skipAllFeatures = true; // stop after this feature
       }
 
@@ -158,7 +254,7 @@ export class PartHistory {
       // expand items after PNG imports and similar long-running steps.
 
       if (this.callbacks.run) {
-        await this.callbacks.run(feature.inputParams.featureID);
+        await this.callbacks.run(featureId);
       }
       const FeatureClass = this.featureRegistry.getSafe(feature.type);
       if (!FeatureClass) {
@@ -175,7 +271,7 @@ export class PartHistory {
       await Object.assign(instance.persistentData, feature.persistentData);
 
       // Remove any existing scene children owned by this feature (rerun case)
-      const toRemoveOwned = this.scene.children.slice().filter(ch => ch?.owningFeatureID === feature.inputParams.featureID);
+      const toRemoveOwned = this.scene.children.slice().filter(ch => ch?.owningFeatureID === featureId);
       if (toRemoveOwned.length) {
         for (const ch of toRemoveOwned) this.scene.remove(ch);
       }
@@ -246,7 +342,7 @@ export class PartHistory {
 
       if (feature.dirty) {
         if (debug) console.log("feature dirty");
-        if (debug) console.log(`Running feature ${i + 1}/${features.length} (${feature.inputParams.featureID}) of type ${feature.type}...`, feature);
+        if (debug) console.log(`Running feature ${i + 1}/${features.length} (${featureId}) of type ${feature.type}...`, feature);
         // if this one is dirty, next one should be too (conservative)
         if (nextFeature) nextFeature.dirty = true;
 
@@ -279,13 +375,13 @@ export class PartHistory {
           feature.timestamp = Date.now();
 
           previousFeatureTimestamp = feature.timestamp;
-          instance.errorString = `Error occurred while running feature ${feature.inputParams.featureID}: ${e.message}`;
+          instance.errorString = `Error occurred while running feature ${featureId}: ${e.message}`;
           console.error(e);
           return;
         }
       }
 
-      await this.applyFeatureEffects(feature.effects, feature.inputParams.featureID, feature);
+      await this.applyFeatureEffects(feature.effects, featureId, feature);
 
 
       feature.persistentData = instance.persistentData;
@@ -465,7 +561,8 @@ export class PartHistory {
 
   async fromJSON(jsonString) {
     const importData = JSON.parse(jsonString);
-    this.features = importData.features;
+    const rawFeatures = Array.isArray(importData.features) ? importData.features : [];
+    this.features = this.#prepareFeatureList(rawFeatures);
     this.idCounter = importData.idCounter;
     this.expressions = importData.expressions || "";
     this.pmiViewsManager.setViews(importData.pmiViews || []);
@@ -504,8 +601,8 @@ export class PartHistory {
     const featureById = new Map();
     for (const feature of this.features) {
       if (!feature || !feature.inputParams) continue;
-      const id = feature.inputParams.featureID;
-      if (!id && id !== 0) continue;
+      const id = resolveFeatureEntryId(feature);
+      if (id == null) continue;
       featureById.set(String(id), feature);
     }
 
@@ -657,8 +754,9 @@ export class PartHistory {
       inputParams: await extractDefaultValues(FeatureClass.inputParamsSchema),
       persistentData: {}
     };
-    feature.inputParams.featureID = await this.generateId(featureType);
-    // console.debug("New feature created:", feature.inputParams.featureID);
+    feature.inputParams.id = await this.generateId(featureType);
+    this.#linkFeatureParams(feature);
+    // console.debug("New feature created:", feature.inputParams.id);
     this.features.push(feature);
     return feature;
   }
@@ -666,7 +764,9 @@ export class PartHistory {
   // Removed unused reorderFeature
 
   async removeFeature(featureID) {
-    this.features = this.features.filter(f => f.inputParams.featureID !== featureID);
+    if (featureID == null) return;
+    const target = String(featureID);
+    this.features = this.features.filter((f) => resolveFeatureEntryId(f) !== target);
   }
 
 
@@ -764,6 +864,26 @@ export class PartHistory {
       } else {
         // Clone structured defaults to avoid shared references across features
         sanitized[key] = deepClone(schema[key].default_value);
+      }
+    }
+
+    const params = sanitized;
+    if (params && typeof params === 'object') {
+      if (params.id == null && params.featureID != null) {
+        params.id = params.featureID;
+      }
+      if (params.id != null && params.id !== '') {
+        params.id = String(params.id);
+      }
+      if (!Object.getOwnPropertyDescriptor(params, 'featureID')) {
+        Object.defineProperty(params, 'featureID', {
+          configurable: true,
+          enumerable: false,
+          get: () => params.id,
+          set: (value) => {
+            params.id = value == null ? value : String(value);
+          },
+        });
       }
     }
 

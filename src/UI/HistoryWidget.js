@@ -415,7 +415,7 @@ export class HistoryWidget extends HistoryCollectionWidget {
 
   #computeParamsSig(params) {
     if (!params || typeof params !== 'object') return '';
-    const keys = Object.keys(params).filter((k) => k !== 'featureID').sort();
+    const keys = Object.keys(params).filter((k) => k !== 'featureID' && k !== 'id').sort();
     const parts = [];
     for (const key of keys) {
       const value = params[key];
@@ -429,6 +429,7 @@ export class HistoryWidget extends HistoryCollectionWidget {
   #entryId(entry) {
     if (!entry) return null;
     const params = entry.inputParams || {};
+    if (params.id != null) return String(params.id);
     if (params.featureID != null) return String(params.featureID);
     if (params.id != null) return String(params.id);
     if (entry.id != null) return String(entry.id);

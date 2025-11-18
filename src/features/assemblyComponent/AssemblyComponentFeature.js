@@ -34,7 +34,7 @@ const DEFAULT_TRANSFORM = {
 };
 
 const inputParamsSchema = {
-  featureID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Unique identifier for the assembly component feature.',

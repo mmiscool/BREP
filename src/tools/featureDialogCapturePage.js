@@ -37,9 +37,11 @@ function pickName(...values) {
 }
 
 function buildFeatureParams(schema, shortName) {
-  if (!schema || typeof schema !== 'object' || !Object.prototype.hasOwnProperty.call(schema, 'featureID')) {
-    return {};
-  }
+  if (!schema || typeof schema !== 'object') return {};
+  let key = null;
+  if (Object.prototype.hasOwnProperty.call(schema, 'id')) key = 'id';
+  else if (Object.prototype.hasOwnProperty.call(schema, 'featureID')) key = 'featureID';
+  if (!key) return {};
   const fallback = String(shortName || 'feature').replace(/[^a-z0-9._-]+/gi, '_');
-  return { featureID: `${fallback}-capture` };
+  return { [key]: `${fallback}-capture` };
 }

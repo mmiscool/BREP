@@ -3,7 +3,7 @@ const THREE = BREP.THREE;
 import { ImageEditorUI } from '../imageToFace/imageEditor.js';
 
 const inputParamsSchema = {
-  featureID: {
+  id: {
     type: "string",
     default_value: null,
     hint: "unique identifier for the heightmap solid feature",

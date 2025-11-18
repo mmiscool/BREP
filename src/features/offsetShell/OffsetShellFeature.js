@@ -1,7 +1,7 @@
 import { OffsetShellSolid } from '../../BREP/OffsetShellSolid.js';
 
 const inputParamsSchema = {
-  featureID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Optional identifier used when naming the generated solid and faces',

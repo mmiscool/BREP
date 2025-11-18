@@ -28,7 +28,7 @@ export function renderComponentSelectorField({ ui, key, def, id, controlWrap }) 
     if (typeof def.onSelect === 'function') {
       try {
         const ctx = {
-          featureID: ui.params?.featureID || null,
+          featureID: ui.params?.featureID ?? ui.params?.id ?? null,
           key,
           viewer: ui.options?.viewer || null,
           partHistory: ui.options?.partHistory || null,

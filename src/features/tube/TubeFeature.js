@@ -1,7 +1,7 @@
 import { BREP } from '../../BREP/BREP.js';
 
 const inputParamsSchema = {
-  featureID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Unique identifier for the tube feature'

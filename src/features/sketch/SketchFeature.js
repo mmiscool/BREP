@@ -6,7 +6,7 @@ import { LineGeometry } from 'three/examples/jsm/Addons.js';
 import { deepClone } from '../../utils/deepClone.js';
 
 const inputParamsSchema = {
-    featureID: {
+    id: {
         type: "string",
         default_value: null,
         hint: "unique identifier for the sketch feature",

@@ -6,7 +6,7 @@ import { BREP } from '../../BREP/BREP.js'
 // no extra imports needed for centerline metadata
 
 const inputParamsSchema = {
-  featureID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Unique identifier for the feature'

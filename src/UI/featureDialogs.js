@@ -162,7 +162,7 @@ export class SchemaForm {
         this._inputs = new Map();
         this._widgets = new Map();
         this._skipDefaultRefresh = new Set();
-        this._excludedKeys = new Set(['featureID']); // exclude from defaults & rendering
+        this._excludedKeys = new Set(['id', 'featureID']); // exclude from defaults & rendering
         if (Array.isArray(options.excludeKeys)) {
             for (const key of options.excludeKeys) {
                 if (typeof key === 'string' && key.length) this._excludedKeys.add(key);
@@ -681,7 +681,7 @@ export class SchemaForm {
             try {
                 const featureID = (this.params && Object.prototype.hasOwnProperty.call(this.params, 'featureID'))
                     ? this.params.featureID
-                    : null;
+                    : (this.params?.id ?? null);
                 if (typeof this.options.onChange === 'function') {
                     this.options.onChange(featureID);
                 }
@@ -1088,7 +1088,7 @@ export class SchemaForm {
         if (typeof this.options.onChange === 'function') {
             const featureID = (this.params && Object.prototype.hasOwnProperty.call(this.params, 'featureID'))
                 ? this.params.featureID
-                : null;
+                : (this.params?.id ?? null);
             const details = { key, value, params: this.params, form: this };
             try {
                 this.options.onChange(featureID, details);

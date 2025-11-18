@@ -4,7 +4,7 @@ import { LineGeometry } from 'three/examples/jsm/Addons.js';
 import { ImageEditorUI } from './imageEditor.js';
 
 const inputParamsSchema = {
-  featureID: {
+  id: {
     type: "string",
     default_value: null,
     hint: "unique identifier for the image trace feature",

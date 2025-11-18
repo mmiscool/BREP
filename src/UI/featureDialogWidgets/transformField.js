@@ -196,7 +196,7 @@ export function renderTransformField({ ui, key, def, id, controlWrap, valueAdapt
         emitChange(updated);
         const featureID = (ui.params && Object.prototype.hasOwnProperty.call(ui.params, 'featureID'))
             ? ui.params.featureID
-            : null;
+            : (ui.params?.id ?? null);
         if (typeof ui.options.onChange === 'function') ui.options.onChange(featureID);
     });
     modes.appendChild(resetBtn);
