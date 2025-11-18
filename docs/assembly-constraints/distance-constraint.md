@@ -7,7 +7,7 @@ Status: Implemented
 Distance constraints maintain a target separation between two references. They support point/point, point/edge, point/face, edge/edge, and face/face combinations and will translate components until the measured offset matches the requested distance.
 
 ## Inputs
-- `constraintID` – unique label used across the solver UI and logs.
+- `id` – unique label used across the solver UI and logs.
 - `elements` – two references (faces, edges, or vertices). Component references are treated as points at their representative location.
 - `distance` – desired separation in scene units. Negative input is clamped to zero.
 - `opposeNormals` – for face-to-face alignment, flips the normal on the second selection before the parallel alignment stage.

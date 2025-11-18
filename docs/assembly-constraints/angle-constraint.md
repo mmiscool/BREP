@@ -7,7 +7,7 @@ Status: Implemented
 Angle constraints rotate components until the measured angle between two references matches a specified target. They work on face normals or edge directions and are ideal for setting hinge offsets or maintaining draft angles during assembly.
 
 ## Inputs
-- `constraintID` – solver-assigned identifier (for example `ANGL3`).
+- `id` – solver-assigned identifier (for example `ANGL3`).
 - `elements` – two selections. Faces use their resolved normals; edges use the edge direction extracted from geometry.
 - `angle` – desired signed angle in degrees. The implementation normalises the value to the `[-360, 360]` range before solving.
 

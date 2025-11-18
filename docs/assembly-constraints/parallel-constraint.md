@@ -7,7 +7,7 @@ Status: Implemented
 Parallel constraints align the directions of two faces, edges, or components. They are the primary orientation tool for planar or cylindrical features that must stay parallel without requiring contact.
 
 ## Inputs
-- `constraintID` – unique identifier surfaced in the UI.
+- `id` – unique identifier surfaced in the UI.
 - `elements` – two selections (faces, edges, or components). Each selection must resolve to a direction vector.
 - `applyImmediately` – historical flag retained for UI compatibility; the solver always iterates instead of applying a single shot correction.
 - `reverse` – toggles the stored orientation preference so the constraint can align outward-facing normals instead of inward-facing normals.

@@ -7,7 +7,7 @@ Status: Experimental
 Touch Align constraints drive two like-kind references into contact while also aligning their orientations. They extend the parallel alignment logic with a translation phase so the selected entities share the same location in space.
 
 ## Inputs
-- `constraintID` – solver-generated identifier (for example `TALN5`).
+- `id` – solver-generated identifier (for example `TALN5`).
 - `elements` – two selections of the same kind (face/face, edge/edge, or point/point). Mixed types are rejected.
 - `reverse` – flips the stored orientation preference, mirroring the behaviour of the Parallel constraint.
 

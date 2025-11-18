@@ -23,7 +23,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - [File Formats: Import and Export](docs/file-formats.md)
 - [Plugins and Examples](docs/plugins.md)
 - [Recent Inspector Improvements](docs/inspector-improvements.md)
-- [Inspector Todo](docs/todo.md)
+- [Inspector](docs/inspector.md)
 
 ## Using as an npm package
 

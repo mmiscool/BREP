@@ -10,7 +10,7 @@ The assembly constraint solver manages constraint instances attached to an assem
 - `src/assemblyConstraints/BaseAssemblyConstraint.js` – base class that exposes shared helpers and metadata conventions for concrete constraints.
 
 ## Runtime Flow
-- Every constraint entry carries a `type`, `inputParams`, and `persistentData`. Defaults come from the constraint's `inputParamsSchema`, and each entry receives an auto-generated `constraintID` (for example `COIN12`).
+- Every constraint entry carries a `type`, `inputParams`, and `persistentData`. Defaults come from the constraint's `inputParamsSchema`, and each entry receives an auto-generated `id` (for example `COIN12`).
 - `AssemblyConstraintHistory.runAll()` is the primary entry point. It validates entries, removes disabled constraints, detects duplicates before instantiating anything, and then constructs one runtime instance per constraint.
 - During each iteration the solver calls `solve(context)` (or `run(context)` for legacy classes) on every instance. A constraint may mark itself satisfied, request additional adjustments, or block if both components are fixed.
 - When a constraint applies a motion it must call `context.applyTranslation(component, vector)` or `context.applyRotation(component, quaternion)`, both of which update the component transform and record that the component needs to be synced back to feature data.

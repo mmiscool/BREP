@@ -7,7 +7,7 @@ Status: Implemented
 Fixed constraints lock an assembly component in place so other constraints treat it as immovable. They usually provide the reference frame that every other constraint solves against.
 
 ## Inputs
-- `constraintID` – solver-assigned identifier that appears in the constraint list.
+- `id` – solver-assigned identifier that appears in the constraint list.
 - `component` – single component selection. No other entity types are accepted.
 
 ## Behaviour
