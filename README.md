@@ -38,22 +38,9 @@ This project is actively evolving; expect rough edges while APIs settle.
 
 ## Dialog Screenshots
 
-- Run `pnpm dev` and open the capture helpers at:
-  - `http://localhost:5173/feature-dialog-capture.html`
-  - `http://localhost:5173/pmi-dialog-capture.html`
-  - `http://localhost:5173/assembly-constraint-capture.html`
-- With the dev server running, execute `pnpm capture` to export every dialog screenshot. Outputs land in:
-  - `docs/features` (feature dialogs)
-  - `docs/pmi-annotations` (PMI annotations)
-  - `docs/assembly-constraints` (assembly constraints)
-- Customize the automation with env vars:
-  - `CAPTURE_SCOPE=features,pmi` to limit targets
-  - `CAPTURE_BASE_URL=http://127.0.0.1:5174` when the dev server runs on another port
-  - `CAPTURE_URL` + `CAPTURE_OUTPUT` to run a one-off capture against any URL
-  - `CAPTURE_DEVICE_SCALE_FACTOR=1` (default `2`) to control the device pixel ratio for sharper/softer output
-  - `CAPTURE_OUTPUT_SCALE=device` to keep the full hi-DPI image size (default `css` downsizes back to CSS pixels for sharper files without the size jump)
+See [Dialog Screenshots](docs/dialog-screenshots.md) for the capture helpers, output locations, and configuration options.
 
-## Mode Guides
+## Application Mode Guides
 
 
 
@@ -62,7 +49,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - [PMI Mode](docs/modes/pmi.md)
 - [Assembly Constraint Solver](docs/assembly-constraints/solver.md)
 
-## Feature Guides
+## Modeling Features
 
 - [Primitive Cube](docs/features/primitive-cube.md) — Implemented
 - [Primitive Cylinder](docs/features/primitive-cylinder.md) — Implemented
@@ -88,6 +75,33 @@ This project is actively evolving; expect rough edges while APIs settle.
 - [Transform (move, rotate, scale)](docs/features/transform.md) — Implemented
 - [Pattern Linear](docs/features/pattern-linear.md) — Implemented
 - [Pattern Radial](docs/features/pattern-radial.md) — Implemented
+
+
+## Assembly Constraints
+
+Assemblies can be constrained with the iterative solver described in [Assembly Constraint Solver](docs/assembly-constraints/solver.md). Each constraint instance stores clear selections plus persistent solve data so runs resume quickly after edits. The constraint registry currently ships with:
+
+- [Coincident](docs/assembly-constraints/coincident-constraint.md) – mates two datum points or implicit origins.
+- [Distance](docs/assembly-constraints/distance-constraint.md) – fixes an offset between reference points along a chosen axis or free space.
+- [Angle](docs/assembly-constraints/angle-constraint.md) – enforces a target angle between two axes or faces.
+- [Parallel](docs/assembly-constraints/parallel-constraint.md) – locks component axes or normals into parallel alignment.
+- [Touch Align](docs/assembly-constraints/touch-align-constraint.md) – slides surfaces until they touch and optionally shares tangency.
+- [Fixed](docs/assembly-constraints/fixed-constraint.md) – anchors a component so downstream constraints treat it as immobile.
+
+Adding, removing, or editing any of these entries queues an automatic background solve, and the UI exposes constraint status plus debugging messages pulled from each `persistentData` record.
+
+## PMI annotations
+
+PMI mode focuses on downstream manufacturing communication. Annotating the model augments the saved `.brep` history and the embedded 3MF metadata. The PMI tools mirror the dialog capture pages in `docs/pmi-annotations`:
+
+- [Linear Dimension](docs/pmi-annotations/linear-dimension.md) – measures distances between vertices with alignment, offsets, and extension controls.
+- [Radial Dimension](docs/pmi-annotations/radial-dimension.md) – reports diameter/radius for arcs, circles, and cylinders.
+- [Angle Dimension](docs/pmi-annotations/angle-dimension.md) – dimension angular relationships across edges or faces.
+- [Leader](docs/pmi-annotations/leader.md) – callouts with free-form text, arrowhead placement, and captured drag offsets.
+- [Note](docs/pmi-annotations/note.md) – rich-text style annotations tied to PMI views without leader geometry.
+- [Explode Body](docs/pmi-annotations/explode-body.md) – stores exploded-view offsets per component for presentation layouts.
+
+Each annotation stores associative references and view metadata so reloading a part restores the PMI viewport, label placement, and formatting settings.
 
 ## License
 
