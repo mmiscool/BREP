@@ -78,21 +78,22 @@ export class ChamferFeature {
 
         const targetSolid = edgeObjs[0].parentSolid || edgeObjs[0].parent;
 
+        const direction = String(this.inputParams.direction || "INSET").toUpperCase();
         const objectsForBoolean = [];
         for (const edgeObj of edgeObjs) {
             const chamferSolid = makeSingleChamferSolid(edgeObj,
                 this.inputParams.distance,
                 this.inputParams.inflate,
-                this.inputParams.direction,
+                direction,
                 this.inputParams.debug);
             objectsForBoolean.push(chamferSolid);
         }
 
         let finalSolid = targetSolid;
         for (const obj of objectsForBoolean) {
-            if (this.inputParams.direction === "OUTSET") {
+            if (direction === "OUTSET") {
                 finalSolid = finalSolid.union(obj);
-            } else if (this.inputParams.direction === "INSET") {
+            } else if (direction === "INSET") {
                 finalSolid = finalSolid.subtract(obj);
             } else { // AUTO (not exposed currently)
                 try {
@@ -115,7 +116,10 @@ export class ChamferFeature {
 }
 
 function makeSingleChamferSolid(edgeObj, distance = 1, inflate = 0, direction = 'INSET', debug = false) {
-    const tool = new BREP.ChamferSolid({ edgeToChamfer: edgeObj, distance, inflate, direction, debug });
+    const dir = String(direction || 'INSET').toUpperCase();
+    const inflateValue = Number(inflate) || 0;
+    const inflateForSolid = (dir === 'OUTSET') ? -inflateValue : inflateValue;
+    const tool = new BREP.ChamferSolid({ edgeToChamfer: edgeObj, distance, inflate: inflateForSolid, direction: dir, debug });
     tool.name = "CHAMFER_TOOL";
     tool.visualize();
     return tool;

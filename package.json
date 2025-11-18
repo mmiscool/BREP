@@ -9,7 +9,7 @@
     "test": "node ./src/tests/tests.js",
     "debug:boolean": "node ./src/tests/debugBoolean.js",
     "generateLicenses": "node ./generateLicenses.js",
-    "capture": "node ./scripts/capture.js"
+    "capture": "pnpm dev & node ./scripts/capture.js"
   },
   "type": "module",
   "main": "./src/index.js",

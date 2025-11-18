@@ -9,6 +9,10 @@ const TARGET_URL = process.env.CAPTURE_URL || DEFAULT_TARGET_URL;
 const OUTPUT_DIR = process.env.CAPTURE_OUTPUT || DEFAULT_OUTPUT_DIR;
 
 async function run() {
+  // sleep 5 seconds to allow dev server to start
+  await new Promise((r) => setTimeout(r, 5000));
+
+
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 

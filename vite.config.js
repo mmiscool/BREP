@@ -1,11 +1,16 @@
 // vite.config.js (ESM)
 import { defineConfig } from 'vite';
-import fs from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = __dirname; // adjust if your html files live elsewhere
+
+const htmlEntries = {
+  main: resolve(root, 'index.html'),
+  about: resolve(root, 'about.html'),
+  featureDialogs: resolve(root, 'feature-dialog-capture.html'),
+};
 
 export default defineConfig({
   // Explicitly set the public directory to ensure generated docs are included
@@ -19,9 +24,7 @@ export default defineConfig({
       keep_fnames: true,
     },
     rollupOptions: {
-      input: {
-        main: resolve(root, 'index.html'),
-      },
+      input: htmlEntries,
     },
   },
 });
