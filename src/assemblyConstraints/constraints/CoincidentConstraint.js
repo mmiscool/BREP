@@ -5,7 +5,7 @@ import { objectRepresentativePoint } from '../../UI/pmi/annUtils.js';
 const DEFAULT_COINCIDENT_TOLERANCE = 1e-6;
 
 const inputParamsSchema = {
-  constraintID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Unique identifier for the constraint.',

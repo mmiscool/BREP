@@ -3,7 +3,7 @@ import { BaseAssemblyConstraint } from '../BaseAssemblyConstraint.js';
 import { solveParallelAlignment, resolveParallelSelection } from '../constraintUtils/parallelAlignment.js';
 
 const inputParamsSchema = {
-  constraintID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Unique identifier for the constraint.',
@@ -92,7 +92,7 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
         : (typeof angle === 'number' ? THREE.MathUtils.radToDeg(angle) : null);
 
       console.log('[ParallelConstraint] directions', {
-        constraintID: this.inputParams?.constraintID || null,
+        id: this.inputParams?.id ?? this.inputParams?.constraintID ?? null,
         selectionA: {
           normal: dirA?.toArray?.() || null,
           point: infoA.origin?.toArray?.() || null,
@@ -178,6 +178,7 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
       { info: infoB, color: 0x4dff91, label: 'B' },
     ];
 
+    const constraintId = this.inputParams?.id ?? this.inputParams?.constraintID ?? 'unknown';
     for (const { info, color, label } of entries) {
       if (!info?.direction || !info.origin) continue;
       const dir = info.direction.clone().normalize();
@@ -186,7 +187,7 @@ export class ParallelConstraint extends BaseAssemblyConstraint {
       const origin = info.origin.clone();
       const length = Math.max(this.#estimateHelperLength(info), 10);
       const arrow = new THREE.ArrowHelper(dir, origin, length, color, length * 0.25, length * 0.15);
-      arrow.name = `parallel-constraint-normal-${this.inputParams?.constraintID || 'unknown'}-${label}-iter${iteration}`;
+      arrow.name = `parallel-constraint-normal-${constraintId}-${label}-iter${iteration}`;
       scene.add(arrow);
       this._debugHelpers.push(arrow);
     }

@@ -165,6 +165,18 @@ function vectorFrom(value) {
   return null;
 }
 
+function resolveConstraintEntryId(entry, fallback = null) {
+  if (!entry) return fallback;
+  const params = entry.inputParams || {};
+  const rawId = params.id ?? params.constraintID ?? entry.id ?? fallback;
+  if (rawId == null) return fallback;
+  return String(rawId);
+}
+
+function normalizeConstraintEntryId(entry) {
+  return normalizeTypeString(resolveConstraintEntryId(entry));
+}
+
 export class AssemblyConstraintHistory {
   constructor(partHistory = null, registry = null) {
     this.partHistory = partHistory || null;
@@ -177,13 +189,56 @@ export class AssemblyConstraintHistory {
     this._autoRunOptions = null;
   }
 
+  /**
+   * Runs serialized constraint migrations before the data enters runtime structures.
+   * All future migrations for persisted constraint payloads should be handled here.
+   * @param {object|null} rawEntry
+   * @returns {object|null}
+   */
+  #runConstraintEntryMigrations(rawEntry) {
+    if (!rawEntry || typeof rawEntry !== 'object') return rawEntry;
+    const migrated = { ...rawEntry };
+
+    const paramsSource = (rawEntry.inputParams && typeof rawEntry.inputParams === 'object')
+      ? rawEntry.inputParams
+      : null;
+    if (paramsSource) {
+      const params = { ...paramsSource };
+      const legacyId = Object.prototype.hasOwnProperty.call(params, 'constraintID')
+        ? params.constraintID
+        : undefined;
+      if ((params.id == null || params.id === '') && legacyId != null) {
+        params.id = legacyId;
+      }
+      if (Object.prototype.hasOwnProperty.call(params, 'constraintID')) {
+        delete params.constraintID;
+      }
+      migrated.inputParams = params;
+    }
+
+    const topLevelLegacyId = Object.prototype.hasOwnProperty.call(migrated, 'constraintID')
+      ? migrated.constraintID
+      : undefined;
+    if ((migrated.id == null || migrated.id === '') && topLevelLegacyId != null) {
+      migrated.id = topLevelLegacyId;
+    }
+    if (Object.prototype.hasOwnProperty.call(migrated, 'constraintID')) {
+      delete migrated.constraintID;
+    }
+    if ((migrated.id == null || migrated.id === '') && migrated.inputParams?.id != null) {
+      migrated.id = migrated.inputParams.id;
+    }
+
+    return migrated;
+  }
+
   #syncEntryIds(entry) {
     if (!entry || !entry.inputParams) return;
-    const rawId = entry.inputParams.constraintID || entry.inputParams.id || entry.id;
+    const params = entry.inputParams;
+    const rawId = params.id ?? params.constraintID ?? entry.id;
     if (!rawId) return;
     const normalized = String(rawId);
-    entry.inputParams.constraintID = normalized;
-    entry.inputParams.id = normalized;
+    params.id = normalized;
     entry.id = normalized;
   }
 
@@ -194,6 +249,34 @@ export class AssemblyConstraintHistory {
     }
     const params = entry.inputParams;
     const descriptor = { configurable: true, enumerable: false };
+    this.#syncEntryIds(entry);
+
+    const legacyConstraintId = Object.prototype.hasOwnProperty.call(params, 'constraintID')
+      ? params.constraintID
+      : undefined;
+    if (legacyConstraintId != null && (params.id == null || params.id === '')) {
+      params.id = legacyConstraintId;
+    }
+    if (Object.prototype.hasOwnProperty.call(params, 'constraintID')) {
+      try { delete params.constraintID; } catch { /* ignore */ }
+    }
+    if (!Object.getOwnPropertyDescriptor(params, 'constraintID')) {
+      Object.defineProperty(params, 'constraintID', {
+        ...descriptor,
+        get: () => params.id,
+        set: (value) => {
+          if (value == null) {
+            params.id = value;
+            entry.id = value;
+            return;
+          }
+          const normalized = String(value);
+          params.id = normalized;
+          entry.id = normalized;
+        },
+      });
+    }
+
     const existingOpen = Object.prototype.hasOwnProperty.call(params, '__open')
       ? params.__open
       : entry.__open;
@@ -315,7 +398,7 @@ export class AssemblyConstraintHistory {
   findById(constraintID) {
     const id = normalizeTypeString(constraintID);
     if (!id) return null;
-    return this.constraints.find((entry) => normalizeTypeString(entry?.inputParams?.constraintID) === id) || null;
+    return this.constraints.find((entry) => normalizeConstraintEntryId(entry) === id) || null;
   }
 
   async addConstraint(type, initialInput = null) {
@@ -342,7 +425,8 @@ export class AssemblyConstraintHistory {
 
     const shortName = ConstraintClass?.shortName || ConstraintClass?.constraintShortName || normalizedType || 'CONST';
     const nextId = this.generateId(shortName);
-    entry.inputParams.constraintID = entry.inputParams.constraintID || nextId;
+    const existingId = entry.inputParams.id ?? entry.inputParams.constraintID;
+    entry.inputParams.id = existingId || nextId;
     this.#syncEntryIds(entry);
 
     if (initialInput && typeof initialInput === 'object') {
@@ -362,7 +446,7 @@ export class AssemblyConstraintHistory {
   removeConstraint(constraintID) {
     const id = normalizeTypeString(constraintID);
     if (!id) return false;
-    const index = this.constraints.findIndex((entry) => normalizeTypeString(entry?.inputParams?.constraintID) === id);
+    const index = this.constraints.findIndex((entry) => normalizeConstraintEntryId(entry) === id);
     if (index < 0) return false;
     const [removed] = this.constraints.splice(index, 1);
     this.#emitChange('remove', removed || null);
@@ -374,7 +458,7 @@ export class AssemblyConstraintHistory {
   moveConstraint(constraintID, delta) {
     const id = normalizeTypeString(constraintID);
     if (!id) return false;
-    const index = this.constraints.findIndex((entry) => normalizeTypeString(entry?.inputParams?.constraintID) === id);
+    const index = this.constraints.findIndex((entry) => normalizeConstraintEntryId(entry) === id);
     if (index < 0) return false;
     const target = index + delta;
     if (target < 0 || target >= this.constraints.length) return false;
@@ -467,7 +551,7 @@ export class AssemblyConstraintHistory {
     let changed = false;
     for (const entry of this.constraints) {
       if (!entry) continue;
-      const entryId = normalizeTypeString(entry?.inputParams?.constraintID);
+      const entryId = normalizeConstraintEntryId(entry);
       const shouldOpen = entryId === targetId;
       const currentOpen = entry.__open !== false;
       if (currentOpen !== shouldOpen) {
@@ -515,7 +599,8 @@ export class AssemblyConstraintHistory {
     const list = Array.isArray(constraints) ? constraints : [];
     let maxId = Number.isFinite(Number(idCounter)) ? Number(idCounter) : 0;
 
-    for (const item of list) {
+    for (const rawItem of list) {
+      const item = this.#runConstraintEntryMigrations(rawItem);
       if (!item) continue;
       const typeHint = item.type || item.constraintType || null;
       const ConstraintClass = this.#resolveConstraint(typeHint);
@@ -531,18 +616,20 @@ export class AssemblyConstraintHistory {
         enabled: item.enabled !== false,
       };
 
-      if (!entry.inputParams.constraintID) {
+      const existingId = entry.inputParams.id ?? entry.inputParams.constraintID;
+      if (!existingId) {
         const prefix = (ConstraintClass?.shortName || ConstraintClass?.constraintShortName || normalizedType || 'CONST')
           .replace(/[^a-z0-9]/gi, '')
           .toUpperCase() || 'CONST';
         maxId += 1;
-        entry.inputParams.constraintID = `${prefix}${maxId}`;
+        entry.inputParams.id = `${prefix}${maxId}`;
       } else {
-        const match = String(entry.inputParams.constraintID).match(/(\d+)$/);
+        const match = String(existingId).match(/(\d+)$/);
         if (match) {
           const numeric = Number(match[1]);
           if (Number.isFinite(numeric)) maxId = Math.max(maxId, numeric);
         }
+        entry.inputParams.id = existingId;
       }
       this.#syncEntryIds(entry);
 
@@ -642,9 +729,10 @@ export class AssemblyConstraintHistory {
     for (const entry of this.constraints) {
       if (!entry) continue;
 
-      const constraintID = entry?.inputParams?.constraintID || null;
+      const constraintID = resolveConstraintEntryId(entry);
       const type = entry?.type || null;
       const result = {
+        id: constraintID,
         constraintID,
         type,
         status: 'ok',
@@ -888,9 +976,10 @@ export class AssemblyConstraintHistory {
     const duplicateInfo = this.#detectDuplicateConstraints();
 
     const runtimeEntries = this.constraints.map((entry) => {
+      const constraintID = resolveConstraintEntryId(entry);
       if (entry?.enabled === false) {
-        const constraintID = entry?.inputParams?.constraintID || null;
         const result = {
+          id: constraintID,
           ok: true,
           status: 'disabled',
           message: DISABLED_STATUS_MESSAGE,
@@ -909,9 +998,9 @@ export class AssemblyConstraintHistory {
 
       const duplicate = duplicateInfo.get(entry);
       if (duplicate) {
-        const constraintID = entry?.inputParams?.constraintID || null;
         const relatedIds = Array.isArray(duplicate.relatedIds) ? duplicate.relatedIds.slice() : [];
         const result = {
+          id: constraintID,
           ok: false,
           status: 'duplicate',
           message: duplicate.message,
@@ -933,7 +1022,6 @@ export class AssemblyConstraintHistory {
       const ConstraintClass = this.#resolveConstraint(entry.type);
       if (!ConstraintClass) {
         const message = formatUnknownConstraintMessage(entry.type);
-        const constraintID = entry?.inputParams?.constraintID || null;
         entry.persistentData = {
           status: 'error',
           message,
@@ -944,6 +1032,7 @@ export class AssemblyConstraintHistory {
           entry,
           instance: null,
           result: {
+            id: constraintID,
             ok: false,
             status: 'error',
             message,
@@ -997,11 +1086,12 @@ export class AssemblyConstraintHistory {
       for (let idx = 0; idx < runtimeEntries.length; idx += 1) {
         if (shouldAbort()) break outerLoop;
         const runtime = runtimeEntries[idx];
-        const constraintID = runtime?.entry?.inputParams?.constraintID || null;
+        const constraintID = resolveConstraintEntryId(runtime?.entry);
         const constraintType = runtime?.entry?.type || null;
         const hookBase = {
           iteration: iter,
           index: idx,
+          id: constraintID,
           constraintID,
           constraintType,
           totalConstraints,
@@ -1132,8 +1222,10 @@ export class AssemblyConstraintHistory {
         entry.inputParams = { ...(entry.inputParams || {}) };
       }
 
+      const constraintID = resolveConstraintEntryId(entry);
       finalResults.push({
-        constraintID: entry?.inputParams?.constraintID || null,
+        id: constraintID,
+        constraintID,
         type: entry?.type || null,
         ...result,
       });
@@ -1179,7 +1271,7 @@ export class AssemblyConstraintHistory {
       const signature = this.#buildSelectionSignature(entry?.inputParams);
       if (!signature) continue;
       if (!grouped.has(signature)) grouped.set(signature, []);
-      const constraintID = normalizeTypeString(entry?.inputParams?.constraintID) || null;
+      const constraintID = normalizeConstraintEntryId(entry) || null;
       const typeLabel = DUPLICATE_TYPE_LABELS[baseType] || baseType;
       grouped.get(signature).push({
         entry,

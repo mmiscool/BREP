@@ -7,7 +7,7 @@ const DEFAULT_TOUCH_TOLERANCE = 1e-6;
 const MAX_POINT_ROTATION_STEP = THREE.MathUtils.degToRad(5);
 
 const inputParamsSchema = {
-  constraintID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Unique identifier for the constraint.',
@@ -807,6 +807,7 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
       { info: infoB, color: 0x4dff91, label: 'B' },
     ];
 
+    const constraintId = this.inputParams?.id ?? this.inputParams?.constraintID ?? 'unknown';
     for (const { info, color, label } of entries) {
       if (!info?.direction || !info.origin) continue;
       const dir = info.direction.clone().normalize();
@@ -815,7 +816,7 @@ export class TouchAlignConstraint extends BaseAssemblyConstraint {
       const origin = info.origin.clone();
       const length = Math.max(this.#estimateHelperLength(info), 10);
       const arrow = new THREE.ArrowHelper(dir, origin, length, color, length * 0.25, length * 0.15);
-      arrow.name = `touch-align-normal-${this.inputParams?.constraintID || 'unknown'}-${label}-iter${iteration}`;
+      arrow.name = `touch-align-normal-${constraintId}-${label}-iter${iteration}`;
       scene.add(arrow);
       this._debugHelpers.push(arrow);
     }

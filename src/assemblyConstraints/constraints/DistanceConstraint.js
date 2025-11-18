@@ -6,7 +6,7 @@ import { objectRepresentativePoint, getElementDirection } from '../../UI/pmi/ann
 const DEFAULT_DISTANCE_TOLERANCE = 1e-6;
 
 const inputParamsSchema = {
-  constraintID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Unique identifier for the constraint.',
@@ -516,7 +516,8 @@ export class DistanceConstraint extends BaseAssemblyConstraint {
       const origin = info.origin.clone();
       const length = Math.max(this.#estimateHelperLength(info), 10);
       const arrow = new THREE.ArrowHelper(dir, origin, length, color, length * 0.25, length * 0.15);
-      arrow.name = `distance-constraint-normal-${this.inputParams?.constraintID || 'unknown'}-${label}-iter${iteration}`;
+      const constraintId = this.inputParams?.id ?? this.inputParams?.constraintID ?? 'unknown';
+      arrow.name = `distance-constraint-normal-${constraintId}-${label}-iter${iteration}`;
       scene.add(arrow);
       this._debugHelpers.push(arrow);
     }

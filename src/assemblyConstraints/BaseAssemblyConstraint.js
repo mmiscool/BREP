@@ -11,7 +11,7 @@ export class BaseAssemblyConstraint {
   static longName = 'Assembly Constraint';
   static constraintType = 'assembly_constraint';
   static inputParamsSchema = {
-    constraintID: {
+    id: {
       type: 'string',
       default_value: null,
       hint: 'Unique identifier for the constraint.',

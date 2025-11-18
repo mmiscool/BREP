@@ -21,6 +21,15 @@ import './AssemblyConstraintsWidget.css';
 const ROOT_CLASS = 'constraints-history';
 const DEFAULT_CONSTRAINT_COLOR = '#ffd60a';
 
+function resolveConstraintId(entry, fallback = null) {
+  if (!entry) return fallback;
+  const params = entry.inputParams || {};
+  if (params.id != null) return String(params.id);
+  if (params.constraintID != null) return String(params.constraintID);
+  if (entry.id != null) return String(entry.id);
+  return fallback;
+}
+
 export class AssemblyConstraintsWidget {
   constructor(viewer) {
     this.viewer = viewer || null;
@@ -334,9 +343,9 @@ export class AssemblyConstraintsWidget {
         run.currentConstraintID = null;
         this._updateSolverUI();
       },
-      onConstraintStart: ({ constraintID }) => {
+      onConstraintStart: ({ id, constraintID }) => {
         if (this._solverRun !== run) return;
-        run.currentConstraintID = constraintID || null;
+        run.currentConstraintID = id || constraintID || null;
         this._updateSolverUI();
       },
       onIterationComplete: async ({ iteration }) => {
@@ -689,6 +698,8 @@ export class AssemblyConstraintsWidget {
     const refFields = Object.entries(schema).filter(([, def]) => def?.type === 'reference_selection');
     if (!refFields.length) return false;
 
+    const constraintId = resolveConstraintId(entry) || 'constraint';
+
     let colorIndex = 0;
     let foundTargets = false;
     let sawFace = false;
@@ -703,18 +714,18 @@ export class AssemblyConstraintsWidget {
         const changed = applyHighlightMaterial(obj, color, store, skipSets);
         if (changed && includeNormals && isFaceObject(obj)) {
           sawFace = true;
-          const arrow = this._createNormalArrow(obj, color, `${entry?.inputParams?.constraintID || 'constraint'}:${key}`);
+          const arrow = this._createNormalArrow(obj, color, `${constraintId}:${key}`);
           if (arrow) arrowsCreated = true;
         }
       }
     }
 
     if (emitWarnings && !foundTargets) {
-      console.warn('[AssemblyConstraintsWidget] No reference objects could be highlighted for constraint:', entry?.inputParams?.constraintID);
+      console.warn('[AssemblyConstraintsWidget] No reference objects could be highlighted for constraint:', constraintId);
     }
 
     if (emitWarnings && includeNormals && sawFace && !arrowsCreated) {
-      console.warn('[AssemblyConstraintsWidget] No face normals could be visualized for constraint:', entry?.inputParams?.constraintID);
+      console.warn('[AssemblyConstraintsWidget] No face normals could be visualized for constraint:', constraintId);
     }
 
     this.#requestViewerRender();
@@ -851,7 +862,7 @@ export class AssemblyConstraintsWidget {
 
     entries.forEach((entry, index) => {
       if (!entry) return;
-      const constraintID = entry?.inputParams?.constraintID || `constraint-${index}`;
+      const constraintID = resolveConstraintId(entry) || `constraint-${index}`;
       const constraintClass = this._resolveConstraintClass(entry);
       const statusInfo = constraintStatusInfo(entry);
       const color = statusInfo?.color || DEFAULT_CONSTRAINT_COLOR;
@@ -881,7 +892,7 @@ export class AssemblyConstraintsWidget {
       if (!labelPosition) return;
 
       const text = constraintLabelText(entry, constraintClass, this.partHistory);
-      const overlayData = { constraintID };
+      const overlayData = { id: constraintID, constraintID };
 
       if (this._constraintGraphicsEnabled) {
         try { this._labelOverlay?.updateLabel(constraintID, text, labelPosition.clone(), overlayData); } catch { }
@@ -1251,7 +1262,7 @@ export class AssemblyConstraintsWidget {
     if (!changed) {
       const entries = this.history?.list?.() || [];
       for (const entry of entries) {
-        const entryId = entry?.inputParams?.constraintID;
+        const entryId = resolveConstraintId(entry);
         const shouldOpen = entryId === id;
         const current = entry?.__open !== false;
         if (current !== shouldOpen) {

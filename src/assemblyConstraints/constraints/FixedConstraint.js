@@ -1,7 +1,7 @@
 import { BaseAssemblyConstraint } from '../BaseAssemblyConstraint.js';
 
 const inputParamsSchema = {
-  constraintID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Unique identifier for the constraint.',

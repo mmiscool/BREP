@@ -6,7 +6,7 @@ import { objectRepresentativePoint, getElementDirection } from '../../UI/pmi/ann
 const DEFAULT_ANGLE_LINEAR_TOLERANCE = 1e-12;
 
 const inputParamsSchema = {
-  constraintID: {
+  id: {
     type: 'string',
     default_value: null,
     hint: 'Unique identifier for the constraint.',

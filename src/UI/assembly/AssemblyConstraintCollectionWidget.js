@@ -60,8 +60,8 @@ const COLLECTION_EXTRA_CSS = `
 
 function resolveEntryId(entry, fallback = null) {
   if (!entry) return fallback;
-  if (entry.inputParams?.constraintID != null) return String(entry.inputParams.constraintID);
   if (entry.inputParams?.id != null) return String(entry.inputParams.id);
+  if (entry.inputParams?.constraintID != null) return String(entry.inputParams.constraintID);
   if (entry.id != null) return String(entry.id);
   return fallback;
 }
@@ -100,7 +100,7 @@ export class AssemblyConstraintCollectionWidget extends HistoryCollectionWidget 
       const entry = context.entry || null;
       const constraintId = resolveEntryId(entry);
       return {
-        excludeKeys: ['constraintID', 'applyImmediately'],
+        excludeKeys: ['id', 'constraintID', 'applyImmediately'],
         onReferenceChipRemove: (name) => {
           try { SelectionFilter.deselectItem?.(viewerRef?.scene, name); }
           catch { /* ignore */ }
