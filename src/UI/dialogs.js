@@ -50,7 +50,7 @@ const cancelButtonStyle = neutralButtonStyle;       // used for the secondary ac
 
 
 
-window.confirm = async (message, timeoutInSeconds = null, defaultValue = false) => {
+window.confirm = async (message, timeoutInSeconds = null, defaultValue = true) => {
     return new Promise((resolve) => {
         const overlay = document.createElement('div');
         const dialog = document.createElement('div');
@@ -84,6 +84,7 @@ window.confirm = async (message, timeoutInSeconds = null, defaultValue = false) 
 
 
         // Highlight default button
+        const defaultButton = defaultValue ? confirmButton : cancelButton;
         if (defaultValue) {
             Object.assign(confirmButton.style, confirmButtonStyle);
             Object.assign(cancelButton.style, cancelButtonStyle);
@@ -146,6 +147,9 @@ window.confirm = async (message, timeoutInSeconds = null, defaultValue = false) 
 
         confirmButton.addEventListener('click', onConfirm);
         cancelButton.addEventListener('click', onCancel);
+
+        // ensure the emphasized/default action receives focus for Enter/Space
+        requestAnimationFrame(() => defaultButton.focus());
     });
 };
 
@@ -229,6 +233,10 @@ window.alert = async (message, timeoutInSeconds = null) => {
         };
 
         okButton.addEventListener('click', onOk);
+
+        // make the OK button focused by default
+        okButton.focus();
+
     });
 };
 

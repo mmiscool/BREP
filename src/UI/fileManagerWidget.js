@@ -237,7 +237,7 @@ export class FileManagerWidget {
   // ----- Actions -----
   async newModel() {
     if (!this.viewer || !this.viewer.partHistory) return;
-    const proceed = confirm('Clear current model and start a new one?');
+    const proceed = await confirm('Clear current model and start a new one?');
     if (!proceed) return;
     await this.viewer.partHistory.reset();
     this.viewer.partHistory.currentHistoryStepId = null;
