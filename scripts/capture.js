@@ -1,8 +1,11 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { chromium } from 'playwright';
 
 const DEFAULT_BASE_URL = process.env.CAPTURE_BASE_URL || 'http://localhost:5173';
+const DEFAULT_VIEWPORT = { width: 1440, height: 900 };
+const DEVICE_SCALE_FACTOR = 4;
+const OUTPUT_SCALE_MODE = 4;
 const DEFAULT_TARGETS = [
   {
     id: 'features',
@@ -25,6 +28,10 @@ const DEFAULT_TARGETS = [
 ];
 
 async function run() {
+  // sleep 4 seconds
+  await new Promise(resolve => setTimeout(resolve, 4000));
+
+
   const targets = resolveTargets();
   if (!targets.length) {
     console.warn('⚠️  No capture targets selected. Use CAPTURE_SCOPE or CAPTURE_URL to configure targets.');
@@ -32,7 +39,11 @@ async function run() {
   }
 
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({
+    viewport: DEFAULT_VIEWPORT,
+    deviceScaleFactor: DEVICE_SCALE_FACTOR,
+  });
+  const page = await context.newPage();
   let totalCaptured = 0;
 
   for (const target of targets) {
@@ -40,6 +51,7 @@ async function run() {
     totalCaptured += count;
   }
 
+  await context.close();
   await browser.close();
   console.log(`✅ Saved ${totalCaptured} dialog screenshots across ${targets.length} target(s).`);
 }
@@ -95,7 +107,12 @@ async function captureDialogsForTarget(page, target) {
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
     await dialog.scrollIntoViewIfNeeded();
     const targetPath = join(target.outputDir, `${fileSafe}.png`);
-    await dialog.screenshot({ path: targetPath });
+    const buffer = await dialog.screenshot({
+      path: targetPath,
+      scale: 'device',
+      animations: 'disabled',
+    });
+    await maybeNormalizeScreenshot(page, buffer, targetPath);
     console.log(`  • ${captureName} → ${targetPath}`);
     capturedCount += 1;
   }
@@ -136,6 +153,65 @@ function resolveUrl(base, path) {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     return `${normalizedBase}${normalizedPath}`;
   }
+}
+
+async function maybeNormalizeScreenshot(page, buffer, targetPath) {
+  if (OUTPUT_SCALE_MODE !== 'css') return;
+  if (DEVICE_SCALE_FACTOR <= 1) return;
+  if (!buffer?.length) return;
+  const normalized = await downscaleScreenshot(page, buffer, DEVICE_SCALE_FACTOR);
+  if (!normalized) return;
+  await writeFile(targetPath, normalized);
+}
+
+async function downscaleScreenshot(page, buffer, scale) {
+  try {
+    const base64Data = buffer.toString('base64');
+    const normalizedBase64 = await page.evaluate(async ({ data, factor }) => {
+      const binary = atob(data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: 'image/png' });
+      const bitmap = await createImageBitmap(blob);
+      const targetWidth = Math.max(1, Math.round(bitmap.width / factor));
+      const targetHeight = Math.max(1, Math.round(bitmap.height / factor));
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.clearRect(0, 0, targetWidth, targetHeight);
+      ctx.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+      const result = canvas.toDataURL('image/png');
+      return result.slice(result.indexOf(',') + 1);
+    }, { data: base64Data, factor: scale /2});
+    return Buffer.from(normalizedBase64, 'base64');
+  } catch (error) {
+    console.warn('⚠️  Failed to downscale screenshot:', error);
+    return null;
+  }
+}
+
+function resolveDeviceScaleFactor(value) {
+  const fallback = 2;
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    console.warn(`⚠️  Invalid device scale factor "${value}". Falling back to ${fallback}.`);
+    return fallback;
+  }
+  return parsed;
+}
+
+function resolveOutputScale(value, deviceScale) {
+  if (!value) {
+    return deviceScale > 1 ? 'css' : 'device';
+  }
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === 'device' ? 'device' : 'css';
 }
 
 run().catch((err) => {

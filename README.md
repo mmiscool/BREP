@@ -50,6 +50,8 @@ This project is actively evolving; expect rough edges while APIs settle.
   - `CAPTURE_SCOPE=features,pmi` to limit targets
   - `CAPTURE_BASE_URL=http://127.0.0.1:5174` when the dev server runs on another port
   - `CAPTURE_URL` + `CAPTURE_OUTPUT` to run a one-off capture against any URL
+  - `CAPTURE_DEVICE_SCALE_FACTOR=1` (default `2`) to control the device pixel ratio for sharper/softer output
+  - `CAPTURE_OUTPUT_SCALE=device` to keep the full hi-DPI image size (default `css` downsizes back to CSS pixels for sharper files without the size jump)
 
 ## Mode Guides
 

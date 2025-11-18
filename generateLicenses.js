@@ -122,20 +122,20 @@ const escape = (s = "") => String(s)
 // Helper function to parse markdown tables
 function parseTable(tableLines) {
   if (tableLines.length < 2) return null;
-  
+
   // Parse header row
   const headerLine = tableLines[0].trim();
   if (!headerLine.includes('|')) return null;
-  
+
   // Parse separator row (must be second line)
   const separatorLine = tableLines[1].trim();
   if (!separatorLine.match(/^\|?[\s\-\|:]+\|?$/)) return null;
-  
+
   // Extract headers
   const headers = headerLine.split('|')
     .map(h => h.trim())
     .filter(h => h !== '');
-  
+
   // Extract alignment from separator
   const alignments = separatorLine.split('|')
     .map(s => s.trim())
@@ -145,7 +145,7 @@ function parseTable(tableLines) {
       if (s.endsWith(':')) return 'right';
       return 'left';
     });
-  
+
   // Parse data rows
   const dataRows = tableLines.slice(2).map(line => {
     const trimmed = line.trim();
@@ -157,7 +157,7 @@ function parseTable(tableLines) {
         return !(cell === '' && (idx === 0 || idx === arr.length - 1));
       });
   }).filter(row => row !== null);
-  
+
   return { headers, alignments, dataRows };
 }
 
@@ -212,7 +212,7 @@ function renderMarkdown(md) {
 
   const renderTableHTML = (table) => {
     let tableHTML = '<table>';
-    
+
     // Header
     if (table.headers.length > 0) {
       tableHTML += '<thead><tr>';
@@ -223,7 +223,7 @@ function renderMarkdown(md) {
       }
       tableHTML += '</tr></thead>';
     }
-    
+
     // Body
     if (table.dataRows.length > 0) {
       tableHTML += '<tbody>';
@@ -238,7 +238,7 @@ function renderMarkdown(md) {
       }
       tableHTML += '</tbody>';
     }
-    
+
     tableHTML += '</table>';
     return tableHTML;
   };
@@ -251,7 +251,9 @@ function renderMarkdown(md) {
       const altAttr = alt.trim();
       const srcAttr = src.trim();
       const titleAttr = title ? ` title="${title.trim()}"` : "";
-      const widthAttr = /feature\s+dialog/i.test(altAttr) ? ' width="420"' : '';
+      // const widthAttr = /feature\s+dialog/i.test(altAttr) ? ' width="420"' : '';
+      // return `<img src="${srcAttr}" alt="${altAttr}"${titleAttr}${widthAttr} loading="lazy" />`;
+      const widthAttr = /feature\s+dialog/i.test(altAttr) ? ' width="280"' : '';
       return `<img src="${srcAttr}" alt="${altAttr}"${titleAttr}${widthAttr} loading="lazy" />`;
     });
     // links [text](url)
@@ -283,7 +285,7 @@ function renderMarkdown(md) {
 
     // Check for potential table line (contains |)
     const isTableLine = line.includes('|');
-    
+
     if (isTableLine && !inTable) {
       // Start of potential table
       if (inList) { html += `</${listType}>`; inList = false; listType = null; }
@@ -408,10 +410,10 @@ ${content}
 function generateTableOfContents(pages, outputDir) {
   // Create a tree structure from the pages
   const tree = {};
-  
+
   // Add root-level files first
   const rootFiles = pages.filter(p => !p.href.includes('/'));
-  
+
   // Add files in subdirectories
   pages.forEach(page => {
     const parts = page.href.split('/');
@@ -430,7 +432,7 @@ function generateTableOfContents(pages, outputDir) {
       });
     }
   });
-  
+
   // Sort everything
   if (tree._root) {
     tree._root.sort((a, b) => a.title.localeCompare(b.title));
@@ -440,10 +442,10 @@ function generateTableOfContents(pages, outputDir) {
       tree[key].sort((a, b) => a.title.localeCompare(b.title));
     }
   });
-  
+
   // Generate HTML
   let tocContent = '<h1>Table of Contents</h1>\n<p>Complete documentation structure with all available pages.</p>\n\n';
-  
+
   // Root level files
   if (tree._root && tree._root.length > 0) {
     tocContent += '<h2>Main Documentation</h2>\n<ul class="doc-list">\n';
@@ -452,7 +454,7 @@ function generateTableOfContents(pages, outputDir) {
     });
     tocContent += '</ul>\n\n';
   }
-  
+
   // Subdirectories
   const sortedDirs = Object.keys(tree).filter(k => k !== '_root').sort();
   sortedDirs.forEach(dir => {
@@ -462,7 +464,7 @@ function generateTableOfContents(pages, outputDir) {
     });
     tocContent += '</ul>\n\n';
   });
-  
+
   const tocHtml = docTemplate("Table of Contents", tocContent, { relativeRoot: ".", showTitle: false });
   writeFileSync(path.join(outputDir, "table-of-contents.html"), tocHtml, "utf-8");
 }
@@ -544,7 +546,7 @@ function generateDocsSite() {
     const readmeTitle = extractTitle(readmeMd, "BREP");
     let readmeBody = renderMarkdown(readmeMd);
     readmeBody = convertReadmeLinks(readmeBody);
-    
+
     // Add navigation to other docs at the end of README
     if (sortedPages.length > 0) {
       const listItems = sortedPages
@@ -587,7 +589,7 @@ function generateDocsSite() {
 
         readmeBody += `<div class="pkg">
       <div>
-        <div class="name">${name}${versionsCount ? ` <span class="chip">${versionsCount} version${versionsCount===1?"":"s"}</span>` : ""}</div>
+        <div class="name">${name}${versionsCount ? ` <span class="chip">${versionsCount} version${versionsCount === 1 ? "" : "s"}</span>` : ""}</div>
         ${desc ? `<div class="desc">${desc}</div>` : ""}
         ${author ? `<div class="desc">Author: ${escapeHTML(author)}</div>` : ""}
       </div>
@@ -602,7 +604,7 @@ function generateDocsSite() {
 
     readmeBody += `<div class="footer">Generated from <code>pnpm licenses list --prod --long --json</code></div>
     <div class="prose">`;
-    
+
     const indexHtml = docTemplate(readmeTitle, readmeBody, { relativeRoot: ".", showTitle: false });
     writeFileSync(path.join(docsOutputDir, "index.html"), indexHtml, "utf-8");
   }
@@ -669,7 +671,7 @@ for (const lic of licenseKeys) {
 
     html += `<div class="pkg">
       <div>
-        <div class="name">${name}${versionsCount ? ` <span class="chip">${versionsCount} version${versionsCount===1?"":"s"}</span>` : ""}</div>
+        <div class="name">${name}${versionsCount ? ` <span class="chip">${versionsCount} version${versionsCount === 1 ? "" : "s"}</span>` : ""}</div>
         ${desc ? `<div class="desc">${desc}</div>` : ""}
         ${author ? `<div class="desc">Author: ${escapeHTML(author)}</div>` : ""}
       </div>
