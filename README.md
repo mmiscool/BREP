@@ -36,10 +36,20 @@ This project is actively evolving; expect rough edges while APIs settle.
   - `import { AssemblyConstraintHistory, AssemblyConstraintRegistry } from 'brep-io-kernel';`
 
 
-## Feature Dialog Screenshots
+## Dialog Screenshots
 
-- Run `pnpm dev` and open `http://localhost:5173/feature-dialog-capture.html`.
-- Use the capture helper to grab updated PNGs for every feature dialog or download them as a ZIP for docs.
+- Run `pnpm dev` and open the capture helpers at:
+  - `http://localhost:5173/feature-dialog-capture.html`
+  - `http://localhost:5173/pmi-dialog-capture.html`
+  - `http://localhost:5173/assembly-constraint-capture.html`
+- With the dev server running, execute `pnpm capture` to export every dialog screenshot. Outputs land in:
+  - `docs/features` (feature dialogs)
+  - `docs/pmi-annotations` (PMI annotations)
+  - `docs/assembly-constraints` (assembly constraints)
+- Customize the automation with env vars:
+  - `CAPTURE_SCOPE=features,pmi` to limit targets
+  - `CAPTURE_BASE_URL=http://127.0.0.1:5174` when the dev server runs on another port
+  - `CAPTURE_URL` + `CAPTURE_OUTPUT` to run a one-off capture against any URL
 
 ## Mode Guides
 

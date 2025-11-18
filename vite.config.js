@@ -10,6 +10,8 @@ const htmlEntries = {
   main: resolve(root, 'index.html'),
   about: resolve(root, 'about.html'),
   featureDialogs: resolve(root, 'feature-dialog-capture.html'),
+  pmiDialogs: resolve(root, 'pmi-dialog-capture.html'),
+  assemblyConstraintDialogs: resolve(root, 'assembly-constraint-capture.html'),
 };
 
 export default defineConfig({
