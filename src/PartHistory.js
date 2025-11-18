@@ -155,6 +155,54 @@ export class PartHistory {
     return prepared;
   }
 
+  #disposeMaterialResources(material) {
+    if (!material) return;
+    if (Array.isArray(material)) {
+      for (const mat of material) this.#disposeMaterialResources(mat);
+      return;
+    }
+    if (typeof material !== 'object') return;
+    if (typeof material.dispose === 'function') {
+      try { material.dispose(); } catch { }
+    }
+    try {
+      for (const value of Object.values(material)) {
+        if (value && typeof value === 'object' && value.isTexture && typeof value.dispose === 'function') {
+          try { value.dispose(); } catch { }
+        }
+      }
+    } catch { /* ignore texture disposal errors */ }
+  }
+
+  #disposeObjectResources(object) {
+    if (!object || typeof object !== 'object') return;
+    try {
+      const children = Array.isArray(object.children) ? object.children.slice() : [];
+      for (const child of children) this.#disposeObjectResources(child);
+    } catch { }
+    try {
+      const geom = object.geometry;
+      if (geom && typeof geom.dispose === 'function') geom.dispose();
+    } catch { }
+    this.#disposeMaterialResources(object.material);
+  }
+
+  #disposeSceneObjects(filterFn = null) {
+    if (!this.scene || !Array.isArray(this.scene.children)) return;
+    const children = this.scene.children.slice();
+    for (const child of children) {
+      if (child?.userData?.preventRemove) continue;
+      let shouldDispose = true;
+      if (typeof filterFn === 'function') {
+        try { shouldDispose = !!filterFn(child); }
+        catch { shouldDispose = false; }
+      }
+      if (!shouldDispose) continue;
+      this.#disposeObjectResources(child);
+      try { this.scene.remove(child); } catch { }
+    }
+  }
+
   static evaluateExpression(expressionsSource, equation) {
     const exprSource = typeof expressionsSource === 'string' ? expressionsSource : '';
     const fnBody = `${exprSource}; return ${equation} ;`;
@@ -195,6 +243,7 @@ export class PartHistory {
     this.metadataManager = new MetadataManager();
     this.currentHistoryStepId = null;
 
+    this.#disposeSceneObjects();
     // empty the scene without destroying it
     await this.scene.clear();
     if (this.callbacks.reset) {
@@ -214,18 +263,8 @@ export class PartHistory {
   async runHistory() {
     const whatStepToStopAt = this.currentHistoryStepId;
 
+    this.#disposeSceneObjects((obj) => !obj?.isLight && !obj?.isCamera && !obj?.isTransformGizmo);
     await this.scene.clear();
-    // remove all objects from the scene except lights, camera and transform gizmos
-    const toRemove = this.scene.children.slice().filter(ch => !ch.isLight && !ch.isCamera && !ch.isTransformGizmo);
-    for (const ch of toRemove) {
-      // console.log("Removing from scene before runHistory:", ch);
-      // // print the object type and name
-      // console.log("Object type:", ch.type);
-      // console.log("Object name:", ch.name);
-      this.scene.remove(ch);
-    }
-
-
     this.scene.add(this.ambientLight);
 
     let skipAllFeatures = false;
