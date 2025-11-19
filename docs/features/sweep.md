@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Sweep feature dialog](Sweep.png)
+![Sweep feature dialog](Sweep_dialog.png)
 
 Sweep extrudes a single profile along one or more connected path edges using `BREP.Sweep`.
 

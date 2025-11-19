@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Primitive Cube feature dialog](Primitive_Cube.png)
+![Primitive Cube feature dialog](Primitive_Cube_dialog.png)
 
 Primitive Cube builds an axis-aligned rectangular prism rooted at the origin.
 

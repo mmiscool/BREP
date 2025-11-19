@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Mirror feature dialog](Mirror.png)
+![Mirror feature dialog](Mirror_dialog.png)
 
 Mirror clones the selected solids and reflects the copies across a reference plane or face.
 

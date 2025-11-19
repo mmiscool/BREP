@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Loft feature dialog](Loft.png)
+![Loft feature dialog](Loft_dialog.png)
 
 Loft stitches two or more faces (or sketches containing faces) into a single solid by marching matching loop samples between the profiles.
 

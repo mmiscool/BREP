@@ -106,7 +106,7 @@ async function captureDialogsForTarget(page, target) {
     const dialog = card.locator('.dialog-form');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
     await dialog.scrollIntoViewIfNeeded();
-    const targetPath = join(target.outputDir, `${fileSafe}.png`);
+    const targetPath = join(target.outputDir, `${fileSafe}_dialog.png`);
     const buffer = await dialog.screenshot({
       path: targetPath,
       scale: 'device',

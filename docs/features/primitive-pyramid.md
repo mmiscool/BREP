@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Primitive Pyramid feature dialog](Primitive_Pyramid.png)
+![Primitive Pyramid feature dialog](Primitive_Pyramid_dialog.png)
 
 Primitive Pyramid extrudes a regular polygon base to an apex aligned with the +Y axis.
 

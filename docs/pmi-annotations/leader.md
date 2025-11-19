@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Leader annotation dialog](Leader.png)
+![Leader annotation dialog](Leader_dialog.png)
 
 Leader annotations attach custom text to one or more points, providing flexible callouts for notes, GD&T, or assembly instructions inside PMI mode.
 

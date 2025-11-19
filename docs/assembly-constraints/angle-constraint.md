@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Angle Constraint dialog](_Angle_Constraint.png)
+![Angle Constraint dialog](_Angle_Constraint_dialog.png)
 
 Angle constraints rotate components until the measured angle between two references matches a specified target. They work on face normals or edge directions and are ideal for setting hinge offsets or maintaining draft angles during assembly.
 

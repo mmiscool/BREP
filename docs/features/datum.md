@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Datum feature dialog](Datium.png)
+![Datum feature dialog](Datium_dialog.png)
 
 Datum creates a lightweight reference group that exposes orthogonal XY/XZ/YZ planes for downstream selections.
 

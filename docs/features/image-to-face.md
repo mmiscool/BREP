@@ -2,12 +2,12 @@
 
 Status: Implemented
 
-![Image to Face feature dialog](Image_to_Face.png)
+![Image to Face feature dialog](Image_to_Face_dialog.png)
 
 Image to Face traces a source image into planar geometry that can be placed on any sketch plane or selected face. It is ideal for logos, decorative cutouts, and relief features.
 
-![Image to Face 2D Trace](./image-to-face-2D.png)
-![Image to Face 3D Result](./image-to-face-3D.png)
+![Image to Face 2D Trace](./image-to-face-2D_dialog.png)
+![Image to Face 3D Result](./image-to-face-3D_dialog.png)
 
 ## Parameters
 - **threshold** (0-255) controls how dark a pixel must be to form geometry.

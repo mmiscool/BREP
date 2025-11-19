@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Primitive Cylinder feature dialog](Primitive_Cylinder.png)
+![Primitive Cylinder feature dialog](Primitive_Cylinder_dialog.png)
 
 Primitive Cylinder creates a right cylinder aligned to the +Y axis.
 

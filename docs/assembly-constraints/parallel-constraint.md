@@ -2,7 +2,7 @@
 
 Status: Implemented
 
-![Parallel Constraint dialog](_Parallel_Constraint.png)
+![Parallel Constraint dialog](_Parallel_Constraint_dialog.png)
 
 Parallel constraints align the directions of two faces, edges, or components. They are the primary orientation tool for planar or cylindrical features that must stay parallel without requiring contact.
 

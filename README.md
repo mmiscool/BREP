@@ -7,8 +7,8 @@ This project is actively evolving; expect rough edges while APIs settle.
 [![Modeling Mode](docs/MODELING.png)](docs/modes/modeling.md)
 [![Sketch Mode](docs/SKETCH.png)](docs/modes/sketch.md)
 [![PMI Mode](docs/PMI.png)](docs/modes/pmi.md)
-[![Image to Face 2D Trace](docs/features/image-to-face-2D.png)](docs/features/image-to-face.md)
-[![Image to Face 3D Result](docs/features/image-to-face-3D.png)](docs/features/image-to-face.md)
+[![Image to Face 2D Trace](docs/features/image-to-face-2D_dialog.png)](docs/features/image-to-face.md)
+[![Image to Face 3D Result](docs/features/image-to-face-3D_dialog.png)](docs/features/image-to-face.md)
 
 
 ## Documentation Map

@@ -251,9 +251,9 @@ function renderMarkdown(md) {
       const altAttr = alt.trim();
       const srcAttr = src.trim();
       const titleAttr = title ? ` title="${title.trim()}"` : "";
-      // const widthAttr = /feature\s+dialog/i.test(altAttr) ? ' width="420"' : '';
-      // return `<img src="${srcAttr}" alt="${altAttr}"${titleAttr}${widthAttr} loading="lazy" />`;
-      const widthAttr = /feature\s+dialog/i.test(altAttr) ? ' width="280"' : '';
+      const normalizedSrc = srcAttr.split(/[?#]/)[0];
+      const isDialogScreenshot = normalizedSrc.toLowerCase().endsWith('_dialog.png');
+      const widthAttr = isDialogScreenshot ? ' width="280"' : '';
       return `<img src="${srcAttr}" alt="${altAttr}"${titleAttr}${widthAttr} loading="lazy" />`;
     });
     // links [text](url)
