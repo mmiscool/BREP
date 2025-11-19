@@ -75,6 +75,8 @@ See [Dialog Screenshots](docs/dialog-screenshots.md) for the capture helpers, ou
 - [Transform (move, rotate, scale)](docs/features/transform.md) — Implemented
 - [Pattern Linear](docs/features/pattern-linear.md) — Implemented
 - [Pattern Radial](docs/features/pattern-radial.md) — Implemented
+- [Sheet Metal Tab](docs/features/sheet-metal-tab.md) — Implemented
+- [Sheet Metal Contour Flange](docs/features/sheet-metal-contour-flange.md) — Implemented
 
 
 ## Assembly Constraints

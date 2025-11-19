@@ -27,6 +27,8 @@ import { TubeFeature } from './features/tube/TubeFeature.js';
 import { AssemblyComponentFeature } from './features/assemblyComponent/AssemblyComponentFeature.js';
 import { OffsetShellFeature } from './features/offsetShell/OffsetShellFeature.js';
 import { SplineFeature } from './features/spline/SplineFeature.js';
+import { SheetMetalTabFeature } from './features/sheetMetal/SheetMetalTabFeature.js';
+import { SheetMetalContourFlangeFeature } from './features/sheetMetal/SheetMetalContourFlangeFeature.js';
 
 /* ========================================================================
    FeatureRegistry
@@ -77,6 +79,8 @@ export class FeatureRegistry {
     this.register(FilletFeature);
     this.register(ChamferFeature);
     this.register(OffsetShellFeature);
+    this.register(SheetMetalTabFeature);
+    this.register(SheetMetalContourFlangeFeature);
     this.register(LoftFeature);
     this.register(MirrorFeature);
     this.register(RevolveFeature);
