@@ -32,11 +32,10 @@ const inputParamsSchema = {
     min: 0,
     hint: "Sheet metal thickness (extruded normal to the sketch plane).",
   },
-  sheetSide: {
-    type: "options",
-    options: ["left", "right"],
-    default_value: "left",
-    hint: "Controls which side of the selected path receives material.",
+  reverseSheetSide: {
+    type: "boolean",
+    default_value: false,
+    hint: "Flip the sheet offset to the opposite side of the sketch.",
   },
   bendRadius: {
     type: "number",
@@ -79,13 +78,14 @@ export class SheetMetalContourFlangeFeature {
       this.inputParams?.thickness ?? 1,
     );
     const bendRadius = normalizeBendRadius(this.inputParams?.bendRadius ?? 0);
-    const distance = Math.max(0, Number(this.inputParams?.distance ?? 0));
-    if (!Number.isFinite(distance) || distance <= 0) {
-      throw new Error("Contour Flange distance must be greater than zero.");
+    const rawDistance = Number(this.inputParams?.distance ?? 0);
+    if (!Number.isFinite(rawDistance) || rawDistance === 0) {
+      throw new Error("Contour Flange distance must be a non-zero number.");
     }
-    const sheetSide = (String(this.inputParams?.sheetSide || "left").toLowerCase() === "right")
-      ? "right"
-      : "left";
+    const distance = Math.abs(rawDistance);
+    const extrudeDirectionSign = rawDistance >= 0 ? 1 : -1;
+
+    const { sheetSide, reverseSheetSide } = resolveSheetSideOption(this.inputParams);
 
     const pathData = buildPathPoints(edges);
     let rawPath = pathData.points;
@@ -124,7 +124,7 @@ export class SheetMetalContourFlangeFeature {
       sheetSide,
     });
 
-    const extrudeVector = planeBasis.planeNormal.clone().normalize().multiplyScalar(distance);
+    const extrudeVector = planeBasis.planeNormal.clone().normalize().multiplyScalar(distance * extrudeDirectionSign);
     const sweep = new BREP.Sweep({
       face: flangeFace,
       distance: extrudeVector,
@@ -162,6 +162,8 @@ export class SheetMetalContourFlangeFeature {
       extra: {
         signedThickness,
         sheetSide,
+        reverseSheetSide,
+        signedDistance: rawDistance,
         distance,
         pathPointCount: filletedPath.length,
       },
@@ -174,6 +176,8 @@ export class SheetMetalContourFlangeFeature {
       bendRadius,
       signedThickness,
       sheetSide,
+      reverseSheetSide,
+      signedDistance: rawDistance,
       distance,
       pathPointCount: filletedPath.length,
     };
@@ -776,37 +780,46 @@ function buildContourFlangeStripFace({ featureID, pathPoints, pathSegmentNames, 
   face.userData.boundaryLoopsWorld = [{ pts: loopWorld, isHole: false }];
 
   const pathEdges = buildBoundaryEdgesFromSegments(path2D, pathNames, converters.to3D);
-  const offsetEdges = buildBoundaryEdgesFromSegments(offset2D, pathNames, converters.to3D);
+  const offsetEdges = buildBoundaryEdgesFromSegments(offset2D, pathNames, converters.to3D, {
+    nameTransform: (baseName) => `${baseName}_OFFSET`,
+  });
   const closureEdges = buildClosureEdges(path2D, offset2D, converters.to3D, featureID);
   face.edges = [...pathEdges, ...offsetEdges, ...closureEdges];
   return face;
 }
 
 function buildOuterLoopWorld(path2D, offset2D, to3D) {
-  const loop = [];
+  const loopWorld = [];
+  const loop2D = [];
   const pushPoint = (coord) => {
     if (!coord) return;
     const p = to3D(coord);
     const arr = [p.x, p.y, p.z];
-    if (loop.length) {
-      const last = loop[loop.length - 1];
+    if (loopWorld.length) {
+      const last = loopWorld[loopWorld.length - 1];
       if (last[0] === arr[0] && last[1] === arr[1] && last[2] === arr[2]) return;
     }
-    loop.push(arr);
+    loopWorld.push(arr);
+    loop2D.push({ u: coord.u, v: coord.v });
   };
   for (const coord of path2D) pushPoint(coord);
   for (let i = offset2D.length - 1; i >= 0; i--) pushPoint(offset2D[i]);
-  if (loop.length >= 2) {
-    const first = loop[0];
-    const last = loop[loop.length - 1];
+  if (loopWorld.length >= 2) {
+    const first = loopWorld[0];
+    const last = loopWorld[loopWorld.length - 1];
     if (first[0] === last[0] && first[1] === last[1] && first[2] === last[2]) {
-      loop.pop();
+      loopWorld.pop();
+      loop2D.pop();
     }
   }
-  return loop;
+  const area = polygonArea2D(loop2D);
+  if (area < 0) {
+    loopWorld.reverse();
+  }
+  return loopWorld;
 }
 
-function buildBoundaryEdgesFromSegments(points2D, segmentNames, to3D) {
+function buildBoundaryEdgesFromSegments(points2D, segmentNames, to3D, options = {}) {
   if (!Array.isArray(points2D) || points2D.length < 2) return [];
   const names = normalizeSegmentNameCount(segmentNames, points2D.length - 1);
   const edges = [];
@@ -817,7 +830,11 @@ function buildBoundaryEdgesFromSegments(points2D, segmentNames, to3D) {
     const nextName = names[i + 1];
     if (nextName !== currentName) {
       const pts3D = currentCoords.map((coord) => to3D(coord));
-      const edge = createPseudoEdge(currentName || `SEG_${edges.length}`, pts3D);
+      const baseName = currentName || `SEG_${edges.length}`;
+      const finalName = typeof options.nameTransform === "function"
+        ? options.nameTransform(baseName, edges.length)
+        : baseName;
+      const edge = createPseudoEdge(finalName, pts3D);
       if (edge) edges.push(edge);
       currentCoords = [points2D[i + 1]];
       currentName = nextName;
@@ -995,6 +1012,22 @@ function isPolygonTooSmall(points, areaTolerance) {
   const area = Math.abs(polygonArea2D(points));
   if (!Number.isFinite(area)) return true;
   return area < areaTolerance;
+}
+
+function resolveSheetSideOption(inputParams) {
+  const legacyValue = inputParams?.sheetSide;
+  const reverseRaw = inputParams?.reverseSheetSide;
+  let sheetSide = "left";
+  if (typeof reverseRaw === "boolean") {
+    sheetSide = reverseRaw ? "right" : "left";
+  } else if (legacyValue != null) {
+    sheetSide = (String(legacyValue).toLowerCase() === "right") ? "right" : "left";
+  }
+  const reverseSheetSide = sheetSide === "right";
+  if (inputParams && typeof reverseRaw !== "boolean") {
+    inputParams.reverseSheetSide = reverseSheetSide;
+  }
+  return { sheetSide, reverseSheetSide };
 }
 
 function normalizeSegmentNameCount(names, expectedLength) {
