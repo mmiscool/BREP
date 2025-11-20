@@ -162,6 +162,7 @@ class MetadataPanelController {
         const name = target.name;
         const own = manager.getOwnMetadata(name);
         const effective = manager.getMetadata(name);
+        const faceMetadata = this._getFaceMetadataForTarget(target);
         const entries = Object.entries(own).map(([key, value]) => ({
             key,
             value,
@@ -536,6 +537,30 @@ class MetadataPanelController {
         actionRow.appendChild(bulkDeleteBtn);
         this.content.appendChild(actionRow);
 
+        if (faceMetadata) {
+            const faceLabel = document.createElement('div');
+            faceLabel.style.font = '12px system-ui';
+            faceLabel.style.color = '#cbd5e1';
+            faceLabel.style.marginTop = '10px';
+            faceLabel.textContent = `Face metadata (${faceMetadata.faceName})`;
+            this.content.appendChild(faceLabel);
+
+            const facePre = document.createElement('pre');
+            facePre.textContent = JSON.stringify(faceMetadata.metadata, null, 2);
+            facePre.style.margin = '0';
+            facePre.style.padding = '8px';
+            facePre.style.background = '#0f172a';
+            facePre.style.color = '#e2e8f0';
+            facePre.style.font = '12px monospace';
+            facePre.style.border = '1px solid #1f2937';
+            facePre.style.borderRadius = '4px';
+            facePre.style.maxHeight = '160px';
+            facePre.style.overflow = 'auto';
+            facePre.style.whiteSpace = 'pre-wrap';
+            facePre.style.wordBreak = 'break-word';
+            this.content.appendChild(facePre);
+        }
+
         const effectiveLabel = document.createElement('div');
         effectiveLabel.style.font = '12px system-ui';
         effectiveLabel.style.color = '#cbd5e1';
@@ -606,6 +631,29 @@ class MetadataPanelController {
 
     _getManager() {
         return this.viewer?.partHistory?.metadataManager || null;
+    }
+
+    _getFaceMetadataForTarget(target) {
+        if (!target) return null;
+        const faceName = target.userData?.faceName || target.name;
+        if (!faceName) return null;
+        const solid = this._findParentSolid(target);
+        if (!solid || typeof solid.getFaceMetadata !== "function") return null;
+        const metadata = solid.getFaceMetadata(faceName);
+        if (!metadata || typeof metadata !== "object" || Object.keys(metadata).length === 0) return null;
+        return { faceName, metadata };
+    }
+
+    _findParentSolid(target) {
+        if (!target) return null;
+        if (target.parentSolid) return target.parentSolid;
+        let current = target.parent;
+        while (current) {
+            if (current.parentSolid) return current.parentSolid;
+            if (current.type === "SOLID") return current;
+            current = current.parent;
+        }
+        return null;
     }
 }
 

@@ -124,6 +124,7 @@ export function visualize(options = {}) {
             const faceObj = new Face(geom);
             faceObj.name = faceName;
             faceObj.userData.faceName = faceName;
+            faceObj.parentSolid = this;
             faceMap.set(faceName, faceObj);
             this.add(faceObj);
         }
