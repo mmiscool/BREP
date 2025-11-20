@@ -48,11 +48,6 @@ const inputParamsSchema = {
     default_value: true,
     hint: "Remove the referenced sketch after creating the flange. Turn off to keep it in the scene.",
   },
-  boolean: {
-    type: "boolean_operation",
-    default_value: { targets: [], operation: "NONE" },
-    hint: "Optional boolean with existing solids.",
-  },
 };
 
 export class SheetMetalContourFlangeFeature {
@@ -115,7 +110,7 @@ export class SheetMetalContourFlangeFeature {
       throw new Error("Contour Flange requires at least two path points after filleting.");
     }
 
-    const flangeFace = buildContourFlangeStripFace({
+    const flangeFaces = buildContourFlangeStripFaces({
       featureID: this.inputParams?.featureID,
       pathPoints: filletedPath,
       pathSegmentNames: filletedSegmentNames,
@@ -125,19 +120,33 @@ export class SheetMetalContourFlangeFeature {
     });
 
     const extrudeVector = planeBasis.planeNormal.clone().normalize().multiplyScalar(distance * extrudeDirectionSign);
-    const sweep = new BREP.Sweep({
-      face: flangeFace,
-      distance: extrudeVector,
-      mode: "translate",
-      name: this.inputParams?.featureID,
-      omitBaseCap: false,
+    const sweeps = flangeFaces.map((face) => {
+      const sweep = new BREP.Sweep({
+        face,
+        distance: extrudeVector,
+        mode: "translate",
+        name: face?.name || this.inputParams?.featureID,
+        omitBaseCap: false,
+      });
+      sweep.visualize();
+      return sweep;
     });
-    sweep.visualize();
+    if (!sweeps.length) {
+      throw new Error("Contour flange failed to generate any extrusions from the selected path.");
+    }
+    let combinedSweep = sweeps[0];
+    for (let i = 1; i < sweeps.length; i++) {
+      try {
+        combinedSweep = combinedSweep.union(sweeps[i]);
+      } catch {
+        combinedSweep = sweeps[i];
+      }
+    }
 
     const effects = await BREP.applyBooleanOperation(
       partHistory || {},
-      sweep,
-      this.inputParams?.boolean,
+      combinedSweep,
+      null,
       this.inputParams?.featureID,
     );
 
@@ -711,7 +720,7 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
   };
 }
 
-function buildContourFlangeStripFace({ featureID, pathPoints, pathSegmentNames, planeBasis, thickness, sheetSide }) {
+function buildContourFlangeStripFaces({ featureID, pathPoints, pathSegmentNames, planeBasis, thickness, sheetSide }) {
   if (!Array.isArray(pathPoints) || pathPoints.length < 2) {
     throw new Error("Contour flange strip requires at least two path points.");
   }
@@ -727,131 +736,176 @@ function buildContourFlangeStripFace({ featureID, pathPoints, pathSegmentNames, 
     throw new Error("Contour flange failed to compute the offset path.");
   }
 
-  const regions = [];
   const areaTolerance = Math.max(thickness * thickness * 1e-6, 1e-9);
-  for (let i = 0; i < path2D.length - 1; i++) {
-    const quad = [
-      { ...path2D[i] },
-      { ...path2D[i + 1] },
-      { ...offset2D[i + 1] },
-      { ...offset2D[i] },
-    ];
-    if (isPolygonTooSmall(quad, areaTolerance)) continue;
-    if (polygonArea2D(quad) < 0) quad.reverse();
-    regions.push(quad);
+  const pathGroups = groupSegmentsByName(pathNames);
+  if (!pathGroups.length && path2D.length >= 2) {
+    pathGroups.push({ name: "SEG_0", startIndex: 0, endIndex: path2D.length - 2 });
+  }
+  const faces = [];
+  let segmentCounter = 0;
+  for (const group of pathGroups) {
+    const face = buildSegmentFace({
+      featureID,
+      converters,
+      path2D,
+      offset2D,
+      startIndex: group.startIndex,
+      endIndex: group.endIndex,
+      segmentName: group.name,
+      areaTolerance,
+      segmentIndex: segmentCounter++,
+    });
+    if (face) faces.push(face);
   }
 
-  if (!regions.length) {
+  if (!faces.length) {
     throw new Error("Contour flange failed to create planar strip regions from the selected path.");
   }
 
-  const totalVerts = regions.length * 4;
-  const positionArray = new Float32Array(totalVerts * 3);
-  const indexArray = new Uint32Array(regions.length * 6);
-  let vertCursor = 0;
-  let indexCursor = 0;
+  return faces;
+}
 
-  for (const quad of regions) {
-    for (const coord of quad) {
-      const pt = converters.to3D(coord);
-      positionArray[vertCursor * 3] = pt.x;
-      positionArray[vertCursor * 3 + 1] = pt.y;
-      positionArray[vertCursor * 3 + 2] = pt.z;
-      vertCursor++;
+function groupSegmentsByName(names) {
+  const result = [];
+  if (!Array.isArray(names) || !names.length) return result;
+  let current = names[0];
+  let startIndex = 0;
+  for (let i = 1; i <= names.length; i++) {
+    const next = names[i];
+    if (next !== current) {
+      result.push({ name: current, startIndex, endIndex: i - 1 });
+      startIndex = i;
+      current = next;
     }
-    const base = vertCursor - 4;
-    indexArray[indexCursor++] = base;
-    indexArray[indexCursor++] = base + 1;
-    indexArray[indexCursor++] = base + 2;
-    indexArray[indexCursor++] = base;
-    indexArray[indexCursor++] = base + 2;
-    indexArray[indexCursor++] = base + 3;
+  }
+  return result;
+}
+
+function buildSegmentFace({
+  featureID,
+  converters,
+  path2D,
+  offset2D,
+  startIndex,
+  endIndex,
+  segmentName,
+  areaTolerance,
+  segmentIndex,
+}) {
+  const pathSlice = [];
+  const offsetSlice = [];
+  for (let i = startIndex; i <= endIndex + 1 && i < path2D.length; i++) {
+    pathSlice.push({ ...path2D[i] });
+  }
+  for (let i = startIndex; i <= endIndex + 1 && i < offset2D.length; i++) {
+    offsetSlice.push({ ...offset2D[i] });
+  }
+  if (pathSlice.length < 2 || offsetSlice.length < 2) return null;
+
+  const polygon = buildSegmentPolygon(pathSlice, offsetSlice);
+  const loopCoords = dedupePolygonCoords(polygon);
+  if (loopCoords.length < 3) return null;
+
+  let area = polygonArea2D(loopCoords);
+  if (!Number.isFinite(area) || Math.abs(area) < areaTolerance) return null;
+  if (area < 0) loopCoords.reverse();
+
+  const triangles = triangulatePolygon(loopCoords);
+  if (!triangles.length) return null;
+
+  const worldPts = loopCoords.map((coord) => converters.to3D(coord));
+  const positionArray = new Float32Array(worldPts.length * 3);
+  for (let i = 0; i < worldPts.length; i++) {
+    positionArray[i * 3 + 0] = worldPts[i].x;
+    positionArray[i * 3 + 1] = worldPts[i].y;
+    positionArray[i * 3 + 2] = worldPts[i].z;
+  }
+  const indexArray = new Uint32Array(triangles.length * 3);
+  for (let i = 0; i < triangles.length; i++) {
+    const tri = triangles[i];
+    indexArray[i * 3 + 0] = tri[0];
+    indexArray[i * 3 + 1] = tri[1];
+    indexArray[i * 3 + 2] = tri[2];
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positionArray, 3));
   geometry.setIndex(new THREE.BufferAttribute(indexArray, 1));
 
+  const baseName = segmentName || `SEG_${segmentIndex}`;
   const face = new BREP.Face(geometry);
-  face.name = featureID ? `${featureID}:STRIP` : "SM.CF_STRIP";
+  face.name = featureID ? `${featureID}:${baseName}` : `SM.CF_${baseName}`;
 
-  const loopWorld = buildOuterLoopWorld(path2D, offset2D, converters.to3D);
-  face.userData = face.userData || {};
-  face.userData.boundaryLoopsWorld = [{ pts: loopWorld, isHole: false }];
-
-  const pathEdges = buildBoundaryEdgesFromSegments(path2D, pathNames, converters.to3D);
-  const offsetEdges = buildBoundaryEdgesFromSegments(offset2D, pathNames, converters.to3D, {
-    nameTransform: (baseName) => `${baseName}_OFFSET`,
-  });
-  const closureEdges = buildClosureEdges(path2D, offset2D, converters.to3D, featureID);
-  face.edges = [...pathEdges, ...offsetEdges, ...closureEdges];
-  return face;
-}
-
-function buildOuterLoopWorld(path2D, offset2D, to3D) {
-  const loopWorld = [];
-  const loop2D = [];
-  const pushPoint = (coord) => {
-    if (!coord) return;
-    const p = to3D(coord);
-    const arr = [p.x, p.y, p.z];
-    if (loopWorld.length) {
-      const last = loopWorld[loopWorld.length - 1];
-      if (last[0] === arr[0] && last[1] === arr[1] && last[2] === arr[2]) return;
-    }
-    loopWorld.push(arr);
-    loop2D.push({ u: coord.u, v: coord.v });
-  };
-  for (const coord of path2D) pushPoint(coord);
-  for (let i = offset2D.length - 1; i >= 0; i--) pushPoint(offset2D[i]);
+  const loopWorld = worldPts.map((pt) => [pt.x, pt.y, pt.z]);
   if (loopWorld.length >= 2) {
     const first = loopWorld[0];
     const last = loopWorld[loopWorld.length - 1];
     if (first[0] === last[0] && first[1] === last[1] && first[2] === last[2]) {
       loopWorld.pop();
-      loop2D.pop();
     }
   }
-  const area = polygonArea2D(loop2D);
-  if (area < 0) {
-    loopWorld.reverse();
-  }
-  return loopWorld;
+  face.userData = face.userData || {};
+  face.userData.boundaryLoopsWorld = [{ pts: loopWorld, isHole: false }];
+
+  const pathEdgePts = pathSlice.map((coord) => converters.to3D(coord));
+  const offsetEdgePts = offsetSlice.map((coord) => converters.to3D(coord));
+  const pathEdge = createPseudoEdge(baseName, pathEdgePts);
+  const offsetEdge = createPseudoEdge(`${baseName}_OFFSET`, offsetEdgePts);
+  const startClosure = createPseudoEdge(`${baseName}_START_CAP`, [pathEdgePts[0], offsetEdgePts[0]]);
+  const endClosure = createPseudoEdge(
+    `${baseName}_END_CAP`,
+    [pathEdgePts[pathEdgePts.length - 1], offsetEdgePts[offsetEdgePts.length - 1]],
+  );
+  face.edges = [pathEdge, offsetEdge, startClosure, endClosure].filter(Boolean);
+  return face;
 }
 
-function buildBoundaryEdgesFromSegments(points2D, segmentNames, to3D, options = {}) {
-  if (!Array.isArray(points2D) || points2D.length < 2) return [];
-  const names = normalizeSegmentNameCount(segmentNames, points2D.length - 1);
-  const edges = [];
-  let currentName = names[0];
-  let currentCoords = [points2D[0]];
-  for (let i = 0; i < names.length; i++) {
-    currentCoords.push(points2D[i + 1]);
-    const nextName = names[i + 1];
-    if (nextName !== currentName) {
-      const pts3D = currentCoords.map((coord) => to3D(coord));
-      const baseName = currentName || `SEG_${edges.length}`;
-      const finalName = typeof options.nameTransform === "function"
-        ? options.nameTransform(baseName, edges.length)
-        : baseName;
-      const edge = createPseudoEdge(finalName, pts3D);
-      if (edge) edges.push(edge);
-      currentCoords = [points2D[i + 1]];
-      currentName = nextName;
+function buildSegmentPolygon(pathSlice, offsetSlice) {
+  const polygon = [];
+  for (const coord of pathSlice) {
+    polygon.push({ ...coord });
+  }
+  for (let i = offsetSlice.length - 1; i >= 0; i--) {
+    polygon.push({ ...offsetSlice[i] });
+  }
+  return polygon;
+}
+
+function dedupePolygonCoords(coords) {
+  const out = [];
+  const push = (coord) => {
+    if (!coord) return;
+    if (!out.length || !coordsAlmostEqual(out[out.length - 1], coord)) {
+      out.push({ u: coord.u, v: coord.v, w: coord.w });
+    }
+  };
+  for (const coord of coords) push(coord);
+  if (out.length >= 2 && coordsAlmostEqual(out[0], out[out.length - 1])) {
+    out.pop();
+  }
+  return out;
+}
+
+function coordsAlmostEqual(a, b, eps = 1e-9) {
+  if (!a || !b) return false;
+  return (
+    Math.abs(a.u - b.u) < eps
+    && Math.abs(a.v - b.v) < eps
+    && Math.abs((a.w || 0) - (b.w || 0)) < eps
+  );
+}
+
+function triangulatePolygon(points) {
+  if (!Array.isArray(points) || points.length < 3) return [];
+  const contour = points.map((coord) => new THREE.Vector2(coord.u, coord.v));
+  let tris = THREE.ShapeUtils.triangulateShape(contour, []);
+  if (!Array.isArray(tris) || !tris.length) {
+    tris = [];
+    for (let i = 1; i < points.length - 1; i++) {
+      tris.push([0, i, i + 1]);
     }
   }
-  return edges;
-}
-
-function buildClosureEdges(path2D, offset2D, to3D, featureID) {
-  if (!Array.isArray(path2D) || path2D.length === 0 || !Array.isArray(offset2D) || offset2D.length === 0) {
-    return [];
-  }
-  const startName = `${featureID || "SMCF"}_START_CAP`;
-  const endName = `${featureID || "SMCF"}_END_CAP`;
-  const startPts = [to3D(path2D[0]), to3D(offset2D[0])];
-  const endPts = [to3D(path2D[path2D.length - 1]), to3D(offset2D[offset2D.length - 1])];
-  return [createPseudoEdge(startName, startPts), createPseudoEdge(endName, endPts)].filter(Boolean);
+  return tris;
 }
 
 let pseudoEdgeCounter = 0;
@@ -1005,13 +1059,6 @@ function polygonArea2D(points) {
     area += (a.u * b.v) - (a.v * b.u);
   }
   return area / 2;
-}
-
-function isPolygonTooSmall(points, areaTolerance) {
-  if (!Array.isArray(points) || points.length < 3) return true;
-  const area = Math.abs(polygonArea2D(points));
-  if (!Number.isFinite(area)) return true;
-  return area < areaTolerance;
 }
 
 function resolveSheetSideOption(inputParams) {
