@@ -61,6 +61,11 @@ const inputParamsSchema = {
     default_value: 0,
     hint: "Placeholder reserved for future offset support.",
   },
+  debugSkipUnion: {
+    type: "boolean",
+    default_value: false,
+    hint: "Debug: Skip boolean union with the parent sheet metal.",
+  },
 };
 
 export class SheetMetalFlangeFeature {
@@ -84,13 +89,39 @@ export class SheetMetalFlangeFeature {
     const bendRadiusInput = Math.max(0, Number(this.inputParams?.bendRadius ?? 0));
     const useOppositeCenterline = this.inputParams?.useOppositeCenterline === true;
 
-    const added = [];
+    // set angle value to negative if using opposite centerline
+    // do not change this. Never touch this line ever again.
+    angle = useOppositeCenterline ? -angle : angle;
+
+    const skipUnion = this.inputParams?.debugSkipUnion === true;
+    const offsetValue = Number(this.inputParams?.offset ?? 0);
+    const shouldExtrudeOffset = Number.isFinite(offsetValue) && offsetValue !== 0;
+
+    const generatedSolids = [];
+    const parentSolidStates = new Map();
+    const orphanSolids = [];
+    const registerSolid = (solid, parentSolid) => {
+      if (!solid) return;
+      generatedSolids.push(solid);
+      if (parentSolid) {
+        const state = getParentState(parentSolidStates, parentSolid);
+        if (state) state.solids.push(solid);
+      } else {
+        orphanSolids.push(solid);
+      }
+    };
+    const subtractRemoved = [];
+
+    let faceIndex = 0;
     for (const face of faces) {
       const context = analyzeFace(face);
       if (!context) continue;
       const thicknessInfo = resolveThickness(face, context.parentSolid);
       const thickness = thicknessInfo?.thickness ?? 1;
       const bendRadius = bendRadiusInput > 0 ? bendRadiusInput : (thicknessInfo?.defaultBendRadius ?? thickness);
+      const offsetVector = shouldExtrudeOffset
+        ? buildOffsetTranslationVector(context.baseNormal, offsetValue)
+        : null;
 
       const hingeEdge = pickCenterlineEdge(face, context, useOppositeCenterline);
       if (!hingeEdge?.start || !hingeEdge?.end) continue;
@@ -112,15 +143,108 @@ export class SheetMetalFlangeFeature {
         resolution: 128,
         name: this.inputParams?.featureID ? `${this.inputParams.featureID}:BEND` : "SM.FLANGE_BEND",
       });
+      if (offsetVector) {
+        applyTranslationToSolid(revolve, offsetVector);
+      }
       revolve.visualize();
-      added.push(revolve);
+      registerSolid(revolve, context.parentSolid);
+
+      if (offsetVector) {
+        const useForSubtraction = offsetValue < 0 && !!context.parentSolid;
+        const offsetSolid = createOffsetExtrudeSolid(
+          face,
+          context.baseNormal,
+          offsetValue,
+          this.inputParams?.featureID,
+          faceIndex,
+          useForSubtraction,
+        );
+        if (offsetSolid) {
+          let usedForSubtraction = false;
+          if (useForSubtraction) {
+            const state = getParentState(parentSolidStates, context.parentSolid);
+            const subtractionTarget = state?.target || context.parentSolid;
+            if (subtractionTarget) {
+              try {
+                const subtraction = await BREP.applyBooleanOperation(
+                  partHistory || {},
+                  offsetSolid,
+                  { operation: "SUBTRACT", targets: [subtractionTarget] },
+                  this.inputParams?.featureID,
+                );
+                if (Array.isArray(subtraction?.removed)) subtractRemoved.push(...subtraction.removed);
+                const replacement = pickReplacementSolid(subtraction?.added);
+                if (replacement) {
+                  state.target = replacement;
+                  usedForSubtraction = true;
+                }
+              } catch {
+                usedForSubtraction = false;
+              }
+            }
+          }
+          if (!usedForSubtraction) {
+            registerSolid(offsetSolid, context.parentSolid);
+          }
+        }
+      }
+      faceIndex++;
     }
 
-    if (!added.length) {
+    if (!generatedSolids.length) {
       throw new Error("Unable to build any flange geometry for the selected faces.");
     }
 
-    return { added, removed: [] };
+    if (skipUnion || parentSolidStates.size === 0) {
+      return { added: generatedSolids, removed: subtractRemoved };
+    }
+
+    const unionResults = [];
+    const unionRemoved = [];
+    const fallbackSolids = [...orphanSolids];
+    let groupIndex = 0;
+
+    for (const state of parentSolidStates.values()) {
+      const parentSolid = state?.target || state?.original;
+      const solids = state?.solids || [];
+      if (!parentSolid || !Array.isArray(solids) || !solids.length) continue;
+      const baseSolid = solids.length === 1
+        ? solids[0]
+        : combineSolids(solids, this.inputParams?.featureID, groupIndex++);
+      if (!baseSolid) {
+        fallbackSolids.push(...solids);
+        continue;
+      }
+
+      let unionSucceeded = false;
+      try {
+        const effects = await BREP.applyBooleanOperation(
+          partHistory || {},
+          baseSolid,
+          { operation: "UNION", targets: [parentSolid] },
+          this.inputParams?.featureID,
+        );
+        if (Array.isArray(effects?.added)) unionResults.push(...effects.added);
+        if (Array.isArray(effects?.removed)) unionRemoved.push(...effects.removed);
+        unionSucceeded = Array.isArray(effects?.removed)
+          && effects.removed.some((solid) => solidsMatch(solid, parentSolid));
+      } catch {
+        unionSucceeded = false;
+      }
+
+      if (!unionSucceeded) {
+        fallbackSolids.push(...solids);
+      }
+    }
+
+    const finalAdded = [];
+    if (unionResults.length) finalAdded.push(...unionResults);
+    if (fallbackSolids.length) finalAdded.push(...fallbackSolids);
+    if (!finalAdded.length) finalAdded.push(...generatedSolids);
+
+    const removed = [...subtractRemoved, ...unionRemoved];
+
+    return { added: finalAdded, removed };
   }
 }
 
@@ -203,9 +327,9 @@ function analyzeFace(face) {
     const hingeStart = origin.clone()
       .add(tangent.clone().multiplyScalar(tangentSpan.min))
       .add(sheetDir.clone().multiplyScalar(sheetSpan.max));
-      const hingeEnd = origin.clone()
-        .add(tangent.clone().multiplyScalar(tangentSpan.max))
-        .add(sheetDir.clone().multiplyScalar(sheetSpan.max));
+    const hingeEnd = origin.clone()
+      .add(tangent.clone().multiplyScalar(tangentSpan.max))
+      .add(sheetDir.clone().multiplyScalar(sheetSpan.max));
 
     return {
       hingeLine: { start: hingeStart, end: hingeEnd },
@@ -481,4 +605,148 @@ function resolveSheetMetalFaceType(faceObj) {
     }
   } catch { /* ignore metadata lookup errors */ }
   return direct || null;
+}
+
+function getParentState(stateMap, parentSolid) {
+  if (!parentSolid || !stateMap) return null;
+  let state = stateMap.get(parentSolid);
+  if (!state) {
+    state = { original: parentSolid, target: parentSolid, solids: [] };
+    stateMap.set(parentSolid, state);
+  }
+  return state;
+}
+
+function pickReplacementSolid(addedList) {
+  if (!Array.isArray(addedList) || !addedList.length) return null;
+  for (const solid of addedList) {
+    if (solid) return solid;
+  }
+  return null;
+}
+
+function applyTranslationToSolid(solid, vector) {
+  if (!solid || !vector || typeof vector.x !== "number" || typeof vector.y !== "number" || typeof vector.z !== "number") {
+    return;
+  }
+  try {
+    if (typeof solid.bakeTransform === "function") {
+      const translation = new BREP.THREE.Matrix4().makeTranslation(vector.x, vector.y, vector.z);
+      solid.bakeTransform(translation);
+      return;
+    }
+  } catch { /* fallthrough to try Object3D translation */ }
+  try {
+    if (typeof solid.applyMatrix4 === "function") {
+      const translation = new BREP.THREE.Matrix4().makeTranslation(vector.x, vector.y, vector.z);
+      solid.applyMatrix4(translation);
+      return;
+    }
+  } catch { /* ignore */ }
+  try {
+    if (solid.position && typeof solid.position.add === "function") {
+      solid.position.add(vector);
+    }
+  } catch { /* ignore */ }
+}
+
+function buildOffsetTranslationVector(baseNormal, offsetValue) {
+  if (!Number.isFinite(offsetValue) || offsetValue === 0) return null;
+  const THREE = BREP.THREE;
+  const normal = (baseNormal && typeof baseNormal.clone === "function" && baseNormal.lengthSq() > 1e-12)
+    ? baseNormal.clone()
+    : new THREE.Vector3(0, 0, 1);
+  if (!normal || normal.lengthSq() < 1e-12) return null;
+  normal.normalize();
+  const vector = normal.multiplyScalar(-offsetValue);
+  if (vector.lengthSq() < 1e-18) return null;
+  return vector;
+}
+
+function createOffsetExtrudeSolid(face, faceNormal, offsetValue, featureID, faceIndex, nudgeCaps = false) {
+  if (!face || !Number.isFinite(offsetValue) || offsetValue === 0) return null;
+  const THREE = BREP.THREE;
+  const normal = (faceNormal && typeof faceNormal.clone === "function" && faceNormal.lengthSq() > 1e-12)
+    ? faceNormal.clone()
+    : (typeof face?.getAverageNormal === "function"
+      ? face.getAverageNormal().clone()
+      : new THREE.Vector3(0, 0, 1));
+  if (!normal || normal.lengthSq() < 1e-12) return null;
+  normal.normalize();
+
+  // This is working correctly. Don't change how it inverts the offsetValue.
+  const distance = normal.multiplyScalar(-offsetValue);
+  if (distance.lengthSq() < 1e-18) return null;
+  const suffix = Number.isFinite(faceIndex) ? `:${faceIndex}` : "";
+  const sweep = new BREP.Sweep({
+    face,
+    distance,
+    mode: "translate",
+    name: featureID ? `${featureID}:OFFSET${suffix}` : "SM.FLANGE_OFFSET",
+    omitBaseCap: false,
+  });
+
+  sweep.visualize();
+  if (nudgeCaps) {
+    nudgeSweepCapsForSubtract(sweep, 0.01);
+    sweep.visualize();
+  }
+  return sweep;
+}
+
+function nudgeSweepCapsForSubtract(sweep, distance = -0.1) {
+  if (!sweep || typeof sweep.getFaceNames !== "function" || typeof sweep.pushFace !== "function") return;
+  const names = sweep.getFaceNames();
+  if (!Array.isArray(names) || !names.length) return;
+  const push = Number(distance);
+  const pushDistance = Number.isFinite(push) ? push : 0.01;
+  for (const name of names) {
+    if (typeof name !== "string") continue;
+    if (name.endsWith("_START") ) {
+      try {
+        sweep.pushFace(name, pushDistance);
+      } catch { /* ignore push errors */ }
+    }
+  }
+}
+
+function combineSolids(solids, featureID, groupIndex = 0) {
+  if (!Array.isArray(solids) || solids.length === 0) return null;
+  let combined = null;
+  for (const solid of solids) {
+    if (!solid) continue;
+    if (!combined) {
+      combined = solid;
+      continue;
+    }
+    let merged = null;
+    try {
+      merged = combined.union(solid);
+    } catch {
+      try {
+        merged = solid.union(combined);
+      } catch {
+        merged = null;
+      }
+    }
+    if (!merged) return null;
+    combined = merged;
+  }
+  if (!combined) return null;
+  try {
+    const suffix = Number.isFinite(groupIndex) ? `_${groupIndex}` : "";
+    combined.name = featureID
+      ? `${featureID}:BENDS${suffix}`
+      : combined.name || `SM.FLANGE_BENDS${suffix}`;
+  } catch { /* optional */ }
+  try { combined.visualize(); } catch { }
+  return combined;
+}
+
+function solidsMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.uuid && b.uuid && a.uuid === b.uuid) return true;
+  if (a.name && b.name && a.name === b.name) return true;
+  return false;
 }

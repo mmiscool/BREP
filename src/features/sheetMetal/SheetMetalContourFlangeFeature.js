@@ -126,10 +126,11 @@ export class SheetMetalContourFlangeFeature {
         face,
         distance: extrudeVector,
         mode: "translate",
-        name: face?.name || this.inputParams?.featureID,
+        name:this.inputParams?.featureID,
         omitBaseCap: false,
       });
       sweep.visualize();
+      //alert(`Sweep created: ${sweep.name }    ${sweep.name || this.inputParams?.featureID || "Unnamed"}`);
       tagContourFlangeFaceTypes(sweep);
       return sweep;
     });
@@ -149,7 +150,7 @@ export class SheetMetalContourFlangeFeature {
       partHistory || {},
       combinedSweep,
       null,
-      this.inputParams?.featureID,
+      this.inputParams?.id,
     );
 
     const consumeSketch = this.inputParams?.consumePathSketch !== false;
