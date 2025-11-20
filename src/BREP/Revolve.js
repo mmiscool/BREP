@@ -59,10 +59,25 @@ export class Revolve extends Solid {
         }
       }
     }
-    const axisDir = B.clone().sub(A); if (axisDir.lengthSq() < 1e-12) axisDir.set(0, 1, 0); axisDir.normalize();
+    let axisDir = B.clone().sub(A); if (axisDir.lengthSq() < 1e-12) axisDir.set(0, 1, 0); axisDir.normalize();
+
+    // Ensure positive angles follow a consistent orientation relative to the face normal.
+    const faceNormal = (typeof faceObj.getAverageNormal === 'function') ? faceObj.getAverageNormal().clone() : null;
+    const faceCentroid = computeFaceCentroidWorld(faceObj);
+    if (faceNormal && faceCentroid && faceNormal.lengthSq() > 1e-12) {
+      faceNormal.normalize();
+      const radial = faceCentroid.clone().sub(A);
+      const projLen = radial.dot(axisDir);
+      radial.sub(axisDir.clone().multiplyScalar(projLen));
+      if (radial.lengthSq() > 1e-12) {
+        const orientVec = new THREE.Vector3().crossVectors(axisDir, radial);
+        const orient = orientVec.dot(faceNormal);
+        if (orient < 0) axisDir.negate();
+      }
+    }
 
     const deg = Number.isFinite(angle) ? angle : 360;
-    const sweepRad = deg * Math.PI / 180;
+    const sweepRad = -deg * Math.PI / 180;
     const rawResolution = Number(resolution);
     const baseResolution = Number.isFinite(rawResolution) ? rawResolution : 64;
     const revolvedResolution = Math.max(3, Math.floor(Math.abs(baseResolution) || 0));
@@ -154,9 +169,25 @@ export class Revolve extends Solid {
             let set = pointToEdgeNames.get(k);
             if (!set) { set = new Set(); pointToEdgeNames.set(k, set); }
             set.add(name);
-          }
-        }
-      }
+    }
+  }
+}
+
+function computeFaceCentroidWorld(faceObj) {
+  try {
+    const posAttr = faceObj?.geometry?.getAttribute?.('position');
+    if (!posAttr || posAttr.itemSize !== 3 || posAttr.count === 0) return null;
+    const center = new THREE.Vector3();
+    const v = new THREE.Vector3();
+    for (let i = 0; i < posAttr.count; i++) {
+      v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(faceObj.matrixWorld);
+      center.add(v);
+    }
+    return center.multiplyScalar(1 / posAttr.count);
+  } catch {
+    return null;
+  }
+}
 
       for (const loop of boundaryLoops) {
         const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
@@ -273,4 +304,37 @@ export class Revolve extends Solid {
 
     try { this.setEpsilon(1e-6); } catch { }
   }
+}
+
+function computeFaceCentroidWorld(faceObj) {
+  try {
+    const geom = faceObj?.geometry;
+    const posAttr = geom?.getAttribute?.('position');
+    if (posAttr && posAttr.itemSize === 3 && posAttr.count > 0) {
+      const sum = new THREE.Vector3();
+      const tmp = new THREE.Vector3();
+      for (let i = 0; i < posAttr.count; i++) {
+        tmp.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(faceObj.matrixWorld);
+        sum.add(tmp);
+      }
+      return sum.multiplyScalar(1 / posAttr.count);
+    }
+  } catch { /* best effort */ }
+
+  try {
+    const loops = Array.isArray(faceObj?.userData?.boundaryLoopsWorld)
+      ? faceObj.userData.boundaryLoopsWorld
+      : null;
+    const outer = loops?.find((loop) => Array.isArray(loop?.pts) && loop.pts.length);
+    if (outer) {
+      const center = new THREE.Vector3();
+      let count = 0;
+      for (const pt of outer.pts) {
+        center.add(new THREE.Vector3(pt[0], pt[1], pt[2]));
+        count++;
+      }
+      if (count) return center.multiplyScalar(1 / count);
+    }
+  } catch { /* ignore */ }
+  return null;
 }
