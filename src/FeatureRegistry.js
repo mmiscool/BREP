@@ -29,6 +29,7 @@ import { OffsetShellFeature } from './features/offsetShell/OffsetShellFeature.js
 import { SplineFeature } from './features/spline/SplineFeature.js';
 import { SheetMetalTabFeature } from './features/sheetMetal/SheetMetalTabFeature.js';
 import { SheetMetalContourFlangeFeature } from './features/sheetMetal/SheetMetalContourFlangeFeature.js';
+import { SheetMetalFlangeFeature } from './features/sheetMetal/SheetMetalFlangeFeature.js';
 
 /* ========================================================================
    FeatureRegistry
@@ -81,6 +82,7 @@ export class FeatureRegistry {
     this.register(OffsetShellFeature);
     this.register(SheetMetalTabFeature);
     this.register(SheetMetalContourFlangeFeature);
+    this.register(SheetMetalFlangeFeature);
     this.register(LoftFeature);
     this.register(MirrorFeature);
     this.register(RevolveFeature);
