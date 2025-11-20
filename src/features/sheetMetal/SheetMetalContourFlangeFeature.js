@@ -4,6 +4,7 @@ import {
   normalizeBendRadius,
   applySheetMetalMetadata,
 } from "./sheetMetalMetadata.js";
+import { setSheetMetalFaceTypeMetadata, SHEET_METAL_FACE_TYPES } from "./sheetMetalFaceTypes.js";
 
 const THREE = BREP.THREE;
 
@@ -129,6 +130,7 @@ export class SheetMetalContourFlangeFeature {
         omitBaseCap: false,
       });
       sweep.visualize();
+      tagContourFlangeFaceTypes(sweep);
       return sweep;
     });
     if (!sweeps.length) {
@@ -856,7 +858,17 @@ function buildSegmentFace({
     `${baseName}_END_CAP`,
     [pathEdgePts[pathEdgePts.length - 1], offsetEdgePts[offsetEdgePts.length - 1]],
   );
-  face.edges = [pathEdge, offsetEdge, startClosure, endClosure].filter(Boolean);
+  const edges = [pathEdge, offsetEdge, startClosure, endClosure].filter(Boolean);
+  face.edges = edges;
+
+  const baseEdges = pathEdge ? [pathEdge.name] : [];
+  const offsetEdges = offsetEdge ? [offsetEdge.name] : [];
+  const closureEdges = [startClosure?.name, endClosure?.name].filter(Boolean);
+  face.userData.sheetMetalEdgeGroups = {
+    baseEdges,
+    offsetEdges,
+    closureEdges,
+  };
   return face;
 }
 
@@ -1116,4 +1128,23 @@ function deriveEdgeBaseName(edge, fallbackIndex) {
   const uid = edge.uuid ? String(edge.uuid).slice(0, 8) : null;
   if (uid) return `EDGE_${uid}`;
   return fallback;
+}
+
+function tagContourFlangeFaceTypes(sweep) {
+  if (!sweep || typeof sweep.getFaceNames !== "function") return;
+  const names = sweep.getFaceNames();
+  const thicknessFaces = names.filter((name) =>
+    name.endsWith("_START")
+    || name.endsWith("_END")
+    || name.includes("_CAP_SW"),
+  );
+  const bFaces = names.filter((name) => name.includes("_OFFSET_SW"));
+  const aFaces = names.filter((name) =>
+    name.endsWith("_SW")
+    && !name.includes("_OFFSET_SW")
+    && !name.includes("_CAP_SW"),
+  );
+  setSheetMetalFaceTypeMetadata(sweep, aFaces, SHEET_METAL_FACE_TYPES.A);
+  setSheetMetalFaceTypeMetadata(sweep, bFaces, SHEET_METAL_FACE_TYPES.B);
+  setSheetMetalFaceTypeMetadata(sweep, thicknessFaces, SHEET_METAL_FACE_TYPES.THICKNESS);
 }
