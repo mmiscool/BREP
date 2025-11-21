@@ -19,6 +19,7 @@ export function union(other) {
     const out = Solid._fromManifold(outManifold, mergedMap);
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
+    try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
     return out;
 }
 
@@ -29,6 +30,7 @@ export function subtract(other) {
     const out = Solid._fromManifold(outManifold, mergedMap);
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
+    try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
     return out;
 }
 
@@ -39,6 +41,7 @@ export function intersect(other) {
     const out = Solid._fromManifold(outManifold, mergedMap);
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
+    try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
     return out;
 }
 
@@ -53,6 +56,7 @@ export function difference(other) {
     const out = Solid._fromManifold(outManifold, mergedMap);
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
+    try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
     return out;
 }
 
@@ -63,6 +67,8 @@ export function setTolerance(tolerance) {
     const mapCopy = new Map(this._idToFaceName);
     const out = Solid._fromManifold(outM, mapCopy);
     try { out._auxEdges = Array.isArray(this._auxEdges) ? this._auxEdges.slice() : []; } catch { }
+    try { out._faceMetadata = new Map(this._faceMetadata); } catch { }
+    try { out._edgeMetadata = new Map(this._edgeMetadata); } catch { }
     return out;
 }
 //3284

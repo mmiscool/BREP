@@ -12,6 +12,9 @@ export {
     getFaceMetadata,
     getFaceNames,
     _combineFaceMetadata,
+    setEdgeMetadata,
+    getEdgeMetadata,
+    _combineEdgeMetadata,
 } from "./metadata.js";
 export {
     bakeTransform,

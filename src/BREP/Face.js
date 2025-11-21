@@ -7,6 +7,7 @@ export class Face extends THREE.Mesh {
         this.edges = [];
         this.name = null;
         this.type = 'FACE';
+        this.parentSolid = null;
     }
 
     // Compute the average geometric normal of this face's triangles in world space.
@@ -114,5 +115,21 @@ export class Face extends THREE.Mesh {
             }
         }
         return arr;
+    }
+
+    setMetadata(metadata) {
+        // call the approriate method in the parent solid
+        if (this.parentSolid && typeof this.parentSolid.setFaceMetadata === 'function') {
+            this.parentSolid.setFaceMetadata(this.name, metadata);
+        }
+        return this;
+    }
+
+    getMetadata() {
+        // call the approriate method in the parent solid
+        if (this.parentSolid && typeof this.parentSolid.getFaceMetadata === 'function') {
+            return this.parentSolid.getFaceMetadata(this.name);
+        }
+        return null;
     }
 }

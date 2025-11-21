@@ -15,8 +15,9 @@ export function constructorImpl() {
     this._faceNameToID = new Map();
     this._idToFaceName = new Map();
 
-    // Face metadata storage (e.g., radius for cylindrical faces)
+    // Face and edge metadata storage
     this._faceMetadata = new Map(); // faceName -> metadata object
+    this._edgeMetadata = new Map(); // edgeName -> metadata object
 
     // Laziness & caching
     this._dirty = true;               // arrays changed and manifold needs rebuild
@@ -55,6 +56,8 @@ export function clone() {
         s._idToFaceName = new Map(this._idToFaceName);
         s._faceNameToID = new Map(this._faceNameToID);
     } catch (_) { /* ignore */ }
+    try { s._faceMetadata = new Map(this._faceMetadata); } catch (_) { s._faceMetadata = new Map(); }
+    try { s._edgeMetadata = new Map(this._edgeMetadata); } catch (_) { s._edgeMetadata = new Map(); }
     // Copy auxiliary edges (deep copy points)
     try {
         s._auxEdges = Array.isArray(this._auxEdges)

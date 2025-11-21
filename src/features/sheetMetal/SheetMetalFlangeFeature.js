@@ -1,5 +1,5 @@
 import { BREP } from "../../BREP/BREP.js";
-import { SHEET_METAL_FACE_TYPES } from "./sheetMetalFaceTypes.js";
+import { SHEET_METAL_FACE_TYPES, setSheetMetalFaceTypeMetadata } from "./sheetMetalFaceTypes.js";
 
 const inputParamsSchema = {
   id: {
@@ -97,6 +97,7 @@ export class SheetMetalFlangeFeature {
     const offsetValue = Number(this.inputParams?.offset ?? 0);
     const shouldExtrudeOffset = Number.isFinite(offsetValue) && offsetValue !== 0;
 
+
     const generatedSolids = [];
     const parentSolidStates = new Map();
     const orphanSolids = [];
@@ -111,6 +112,7 @@ export class SheetMetalFlangeFeature {
       }
     };
     const subtractRemoved = [];
+    const debugSubtractionSolids = [];
 
     let faceIndex = 0;
     for (const face of faces) {
@@ -183,6 +185,9 @@ export class SheetMetalFlangeFeature {
               }
             }
           }
+          if (usedForSubtraction && skipUnion) {
+            debugSubtractionSolids.push(offsetSolid);
+          }
           if (!usedForSubtraction) {
             registerSolid(offsetSolid, context.parentSolid);
           }
@@ -196,7 +201,10 @@ export class SheetMetalFlangeFeature {
     }
 
     if (skipUnion || parentSolidStates.size === 0) {
-      return { added: generatedSolids, removed: subtractRemoved };
+      const added = skipUnion && debugSubtractionSolids.length
+        ? [...generatedSolids, ...debugSubtractionSolids]
+        : generatedSolids;
+      return { added, removed: subtractRemoved };
     }
 
     const unionResults = [];
@@ -242,7 +250,12 @@ export class SheetMetalFlangeFeature {
     if (fallbackSolids.length) finalAdded.push(...fallbackSolids);
     if (!finalAdded.length) finalAdded.push(...generatedSolids);
 
-    const removed = [...subtractRemoved, ...unionRemoved];
+    // skip removal if debugging
+
+
+    let removed = [...subtractRemoved, ...unionRemoved];
+
+    if (this.inputParams?.debug) removed = [];
 
     return { added: finalAdded, removed };
   }
@@ -688,25 +701,230 @@ function createOffsetExtrudeSolid(face, faceNormal, offsetValue, featureID, face
 
   sweep.visualize();
   if (nudgeCaps) {
+    tagSweepSubtractFaceTypes(sweep, distance, face);
     nudgeSweepCapsForSubtract(sweep, 0.01);
     sweep.visualize();
   }
   return sweep;
 }
 
-function nudgeSweepCapsForSubtract(sweep, distance = -0.1) {
+function nudgeSweepCapsForSubtract(sweep, distance = 0.01) {
   if (!sweep || typeof sweep.getFaceNames !== "function" || typeof sweep.pushFace !== "function") return;
   const names = sweep.getFaceNames();
   if (!Array.isArray(names) || !names.length) return;
   const push = Number(distance);
-  const pushDistance = Number.isFinite(push) ? push : 0.01;
+  const pushDistance = -(Number.isFinite(push) ? push : 0.01);
   for (const name of names) {
     if (typeof name !== "string") continue;
-    if (name.endsWith("_START") ) {
-      try {
-        sweep.pushFace(name, pushDistance);
-      } catch { /* ignore push errors */ }
+    const meta = typeof sweep.getFaceMetadata === "function" ? sweep.getFaceMetadata(name) : null;
+    const type = meta?.sheetMetalFaceType;
+    const isStartFace = typeof name === "string" && name.endsWith("_START");
+    const isThicknessStart = type === SHEET_METAL_FACE_TYPES.THICKNESS && isStartFace;
+    const shouldPushFromType = type === SHEET_METAL_FACE_TYPES.A
+      || type === SHEET_METAL_FACE_TYPES.B
+      || isThicknessStart;
+    if (shouldPushFromType) {
+      try { sweep.pushFace(name, - pushDistance); } catch { /* ignore push errors */ }
     }
+  }
+}
+
+function tagSweepSubtractFaceTypes(sweep, translationVector = null, sourceFace = null) {
+  if (!sweep || typeof sweep.getFaceNames !== "function") return;
+  const names = sweep.getFaceNames();
+  const startFaces = names.filter((n) => typeof n === "string" && n.endsWith("_START"));
+  const endFaces = names.filter((n) => typeof n === "string" && n.endsWith("_END"));
+  const tagged = new Set();
+  const thicknessFaces = [...startFaces, ...endFaces];
+  if (thicknessFaces.length) {
+    setSheetMetalFaceTypeMetadata(sweep, thicknessFaces, SHEET_METAL_FACE_TYPES.THICKNESS);
+    thicknessFaces.forEach((name) => tagged.add(name));
+  }
+
+  const edgeTypes = collectEdgeSheetTypes(sourceFace);
+  const featureTag = sweep?.name ? `${sweep.name}:` : "";
+  const edgeBaseFromFaceName = (faceName) => {
+    if (!faceName || typeof faceName !== "string") return null;
+    const parts = faceName.split("|");
+    for (const part of parts) {
+      const trimmed = featureTag && part.startsWith(featureTag) ? part.slice(featureTag.length) : part;
+      if (trimmed.endsWith("_SW")) return trimmed.slice(0, -3);
+    }
+    return null;
+  };
+
+  const dir = resolveDirectionVector(translationVector);
+  const faceRecords = [];
+  for (const name of names) {
+    const isStart = startFaces.includes(name);
+    const isEnd = endFaces.includes(name);
+    const edgeBase = edgeBaseFromFaceName(name);
+    let typeFromEdge = null;
+    if (edgeBase) {
+      if (edgeTypes.a.has(edgeBase)) typeFromEdge = SHEET_METAL_FACE_TYPES.A;
+      else if (edgeTypes.b.has(edgeBase)) typeFromEdge = SHEET_METAL_FACE_TYPES.B;
+    }
+    if (tagged.has(name)) continue;
+    const normal = computeFaceNormal(sweep, name);
+    const alignment = dir && normal ? normal.dot(dir) : null;
+    let assigned = null;
+    if (typeFromEdge) {
+      assigned = typeFromEdge;
+    } else if (alignment != null && Math.abs(alignment) > 1e-4) {
+      assigned = alignment > 0 ? SHEET_METAL_FACE_TYPES.B : SHEET_METAL_FACE_TYPES.A;
+    } else {
+      assigned = SHEET_METAL_FACE_TYPES.THICKNESS;
+    }
+    setSheetMetalFaceTypeMetadata(sweep, name, assigned);
+    faceRecords.push({ name, assigned, typeFromEdge, alignment, isStart, isEnd, edgeBase });
+    tagged.add(name);
+  }
+
+  enforceSingleABFaces(sweep, faceRecords);
+  ensureSweepFacesTagged(sweep, names);
+}
+
+function resolveDirectionVector(vec) {
+  if (!vec || typeof vec.x !== "number" || typeof vec.y !== "number" || typeof vec.z !== "number") return null;
+  const THREE = BREP.THREE;
+  const dir = new THREE.Vector3(vec.x, vec.y, vec.z);
+  if (dir.lengthSq() < 1e-12) return null;
+  return dir.normalize();
+}
+
+function computeFaceNormal(solid, faceName) {
+  if (!solid || !faceName || typeof solid.getFace !== "function") return null;
+  try {
+    const face = solid.getFace(faceName);
+    if (face && typeof face.getAverageNormal === "function") {
+      const n = face.getAverageNormal();
+      if (n && typeof n.clone === "function" && n.lengthSq() > 1e-12) {
+        return n.clone().normalize();
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+function collectEdgeSheetTypes(face) {
+  const map = { a: new Set(), b: new Set() };
+  const edges = Array.isArray(face?.edges) ? face.edges : [];
+  for (const edge of edges) {
+    const baseName = deriveEdgeBaseName(edge);
+    if (!baseName) continue;
+    const adjacency = classifyEdgeSheetMetalTypes(edge, face);
+    const edgeType = pickEdgeSheetType(adjacency);
+    if (edgeType === SHEET_METAL_FACE_TYPES.A) map.a.add(baseName);
+    else if (edgeType === SHEET_METAL_FACE_TYPES.B) map.b.add(baseName);
+  }
+  return map;
+}
+
+function deriveEdgeBaseName(edge) {
+  if (edge && typeof edge.name === "string" && edge.name.trim().length) {
+    return edge.name.trim();
+  }
+  if (edge?.uuid) return String(edge.uuid);
+  return null;
+}
+
+function pickEdgeSheetType(adjacency) {
+  if (!adjacency) return null;
+  const hasA = adjacency.primaryType === SHEET_METAL_FACE_TYPES.A
+    || (Array.isArray(adjacency.adjacentTypes) && adjacency.adjacentTypes.includes(SHEET_METAL_FACE_TYPES.A));
+  const hasB = adjacency.primaryType === SHEET_METAL_FACE_TYPES.B
+    || (Array.isArray(adjacency.adjacentTypes) && adjacency.adjacentTypes.includes(SHEET_METAL_FACE_TYPES.B));
+  if (hasA && hasB) return null; // ambiguous: do not assign both types from one edge
+  const primary = adjacency.primaryType;
+  if (primary === SHEET_METAL_FACE_TYPES.A || primary === SHEET_METAL_FACE_TYPES.B) {
+    return primary;
+  }
+  const adjacent = Array.isArray(adjacency.adjacentTypes) ? adjacency.adjacentTypes : [];
+  if (adjacent.includes(SHEET_METAL_FACE_TYPES.A)) return SHEET_METAL_FACE_TYPES.A;
+  if (adjacent.includes(SHEET_METAL_FACE_TYPES.B)) return SHEET_METAL_FACE_TYPES.B;
+  return null;
+}
+
+function enforceSingleABFaces(sweep, records) {
+  if (!sweep || !Array.isArray(records) || !records.length) return;
+  const nonCaps = records.filter((rec) => !rec.isStart && !rec.isEnd);
+  if (!nonCaps.length) return;
+  const setType = (rec, type) => {
+    if (!rec || !rec.name) return;
+    setSheetMetalFaceTypeMetadata(sweep, rec.name, type);
+    rec.assigned = type;
+  };
+  const pickByEdges = (target) => nonCaps.find((rec) => rec.typeFromEdge === target);
+  const pickByAlignment = (target, exclude, disallowEdgeBases = null) => {
+    let best = null;
+    let bestScore = -Infinity;
+    for (const rec of nonCaps) {
+      if (exclude && rec.assigned === exclude) continue;
+      if (disallowEdgeBases && rec.edgeBase && disallowEdgeBases.has(rec.edgeBase)) continue;
+      if (typeof rec.alignment !== "number") continue;
+      const score = target === SHEET_METAL_FACE_TYPES.B ? rec.alignment : -rec.alignment;
+      if (score > bestScore) {
+        bestScore = score;
+        best = rec;
+      }
+    }
+    return best;
+  };
+
+  const countType = (type) => nonCaps.filter((rec) => rec.assigned === type);
+
+  let aFaces = countType(SHEET_METAL_FACE_TYPES.A);
+  if (aFaces.length === 0) {
+    const candidate = pickByEdges(SHEET_METAL_FACE_TYPES.A)
+      || pickByAlignment(SHEET_METAL_FACE_TYPES.A)
+      || nonCaps[0];
+    if (candidate) setType(candidate, SHEET_METAL_FACE_TYPES.A);
+  } else if (aFaces.length > 1) {
+    const [keep, ...extras] = aFaces;
+    for (const rec of extras) setType(rec, SHEET_METAL_FACE_TYPES.THICKNESS);
+  }
+
+  let bFaces = countType(SHEET_METAL_FACE_TYPES.B);
+  if (bFaces.length === 0) {
+    const aEdgeBases = new Set(countType(SHEET_METAL_FACE_TYPES.A).map((rec) => rec.edgeBase).filter(Boolean));
+    const candidate = pickByEdges(SHEET_METAL_FACE_TYPES.B)
+      || pickByAlignment(SHEET_METAL_FACE_TYPES.B, SHEET_METAL_FACE_TYPES.A, aEdgeBases)
+      || nonCaps.find((rec) => rec.assigned !== SHEET_METAL_FACE_TYPES.A && (!rec.edgeBase || !aEdgeBases.has(rec.edgeBase)))
+      || nonCaps[nonCaps.length - 1];
+    if (candidate) setType(candidate, SHEET_METAL_FACE_TYPES.B);
+  } else if (bFaces.length > 1) {
+    const [keep, ...extras] = bFaces;
+    for (const rec of extras) setType(rec, SHEET_METAL_FACE_TYPES.THICKNESS);
+  }
+
+  // Final safety: guarantee exactly one A and one B by reassigning a fallback face if needed
+  aFaces = countType(SHEET_METAL_FACE_TYPES.A);
+  bFaces = countType(SHEET_METAL_FACE_TYPES.B);
+  if (aFaces.length === 0 && nonCaps.length) {
+    const fallback = nonCaps.find((rec) => rec.assigned !== SHEET_METAL_FACE_TYPES.B) || nonCaps[0];
+    if (fallback) setType(fallback, SHEET_METAL_FACE_TYPES.A);
+  }
+  if (bFaces.length === 0 && nonCaps.length) {
+    const aEdgeBases = new Set(countType(SHEET_METAL_FACE_TYPES.A).map((rec) => rec.edgeBase).filter(Boolean));
+    const fallback = nonCaps.find((rec) => rec.assigned !== SHEET_METAL_FACE_TYPES.A && (!rec.edgeBase || !aEdgeBases.has(rec.edgeBase)))
+      || nonCaps[0];
+    if (fallback) setType(fallback, SHEET_METAL_FACE_TYPES.B);
+  }
+}
+
+function ensureSweepFacesTagged(sweep, names) {
+  if (!sweep || typeof sweep.getFaceMetadata !== "function") return;
+  const faceNames = Array.isArray(names) ? names : (typeof sweep.getFaceNames === "function" ? sweep.getFaceNames() : []);
+  for (const name of faceNames) {
+    if (typeof name !== "string") continue;
+    const meta = sweep.getFaceMetadata(name) || {};
+    const type = meta.sheetMetalFaceType;
+    if (type === SHEET_METAL_FACE_TYPES.A
+      || type === SHEET_METAL_FACE_TYPES.B
+      || type === SHEET_METAL_FACE_TYPES.THICKNESS) {
+      continue;
+    }
+    setSheetMetalFaceTypeMetadata(sweep, name, SHEET_METAL_FACE_TYPES.THICKNESS);
   }
 }
 

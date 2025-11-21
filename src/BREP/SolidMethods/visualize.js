@@ -7,6 +7,7 @@ import {
     Vertex,
     Face
 } from "../SolidShared.js";
+import { SHEET_METAL_FACE_TYPES, resolveSheetMetalFaceType } from "../../features/sheetMetal/sheetMetalFaceTypes.js";
 
 /**
  * Build a Three.js Group of per-face meshes for visualization.
@@ -152,7 +153,13 @@ export function visualize(options = {}) {
                     const edgeObj = new Edge(g);
                     edgeObj.name = e.name;
                     edgeObj.closedLoop = !!e.closedLoop;
-                    edgeObj.userData = { faceA: e.faceA, faceB: e.faceB, polylineLocal: e.positions, closedLoop: !!e.closedLoop };
+                    edgeObj.userData = {
+                        faceA: e.faceA,
+                        faceB: e.faceB,
+                        polylineLocal: e.positions,
+                        closedLoop: !!e.closedLoop,
+                    };
+                    annotateEdgeFromMetadata(edgeObj, this);
                     // For convenience in feature code, mirror THREE's parent with an explicit handle
                     edgeObj.parentSolid = this;
                     const fa = faceMap.get(e.faceA);
@@ -251,7 +258,13 @@ export function visualize(options = {}) {
                                 const edgeObj = new Edge(g);
                                 edgeObj.name = `${nameA}|${nameB}`;
                                 edgeObj.closedLoop = false;
-                                edgeObj.userData = { faceA: nameA, faceB: nameB, polylineLocal: poly, closedLoop: false };
+                                edgeObj.userData = {
+                                    faceA: nameA,
+                                    faceB: nameB,
+                                    polylineLocal: poly,
+                                    closedLoop: false,
+                                };
+                                annotateEdgeFromMetadata(edgeObj, this);
                                 edgeObj.parentSolid = this;
                                 const fa = faceMap.get(nameA); const fb = faceMap.get(nameB);
                                 if (fa) fa.edges.push(edgeObj); if (fb) fb.edges.push(edgeObj);
@@ -386,4 +399,82 @@ export function visualize(options = {}) {
 
         return this;
     
+}
+
+function annotateEdgeFromMetadata(edgeObj, solid) {
+    if (!edgeObj || !solid) return;
+    const edgeName = edgeObj.name || null;
+    if (!edgeName) return;
+    let meta = null;
+    try {
+        meta = typeof solid.getEdgeMetadata === "function" ? solid.getEdgeMetadata(edgeName) : null;
+    } catch { meta = null; }
+    if (meta && typeof meta === "object") {
+        edgeObj.userData = { ...(edgeObj.userData || {}), ...meta };
+    }
+    const seType = edgeObj.userData?.sheetMetalEdgeType;
+    if (seType && seType !== "AMBIGUOUS") return;
+    try {
+        // If edge metadata not populated, see if adjacent faces (or face metadata by name) carry a sheet-metal type
+        const faces = Array.isArray(edgeObj.faces) ? edgeObj.faces : [];
+        const faceTypes = new Set();
+        let hasSheetMeta = false;
+        let hasABCandidate = false;
+        for (const f of faces) {
+            const t = resolveSheetMetalFaceType(f);
+            if (t) hasSheetMeta = true;
+            if (t === SHEET_METAL_FACE_TYPES.A || t === SHEET_METAL_FACE_TYPES.B) {
+                faceTypes.add(t);
+                hasABCandidate = true;
+            }
+        }
+        // Try userData face names if no attached face objects
+        if (!faceTypes.size && edgeObj.userData) {
+            const names = [];
+            if (edgeObj.userData.faceA) names.push(edgeObj.userData.faceA);
+            if (edgeObj.userData.faceB) names.push(edgeObj.userData.faceB);
+            for (const n of names) {
+                const m = typeof solid.getFaceMetadata === "function" ? solid.getFaceMetadata(n) : null;
+                const t = m?.sheetMetalFaceType;
+                if (t) hasSheetMeta = true;
+                if (t === SHEET_METAL_FACE_TYPES.A || t === SHEET_METAL_FACE_TYPES.B) {
+                    faceTypes.add(t);
+                    hasABCandidate = true;
+                }
+            }
+        }
+        if (faceTypes.size >= 1) {
+            const t = [...faceTypes][0];
+            edgeObj.userData = { ...(edgeObj.userData || {}), sheetMetalEdgeType: t };
+            if (solid && typeof solid.setEdgeMetadata === "function") {
+                solid.setEdgeMetadata(edgeName, { ...(solid.getEdgeMetadata(edgeName) || {}), sheetMetalEdgeType: t });
+            }
+        } else {
+            // Fallback: derive from edge name segments via face metadata
+            const parts = typeof edgeName === "string" ? edgeName.split("|") : [];
+            let derivedType = null;
+            for (const p of parts) {
+                const meta = solid && typeof solid.getFaceMetadata === "function" ? solid.getFaceMetadata(p) : null;
+                const t = meta?.sheetMetalFaceType;
+                if (t) hasSheetMeta = true;
+                if (t === SHEET_METAL_FACE_TYPES.A || t === SHEET_METAL_FACE_TYPES.B) {
+                    hasABCandidate = true;
+                    derivedType = t;
+                    break;
+                }
+            }
+            if (derivedType) {
+                edgeObj.userData = { ...(edgeObj.userData || {}), sheetMetalEdgeType: derivedType };
+                if (solid && typeof solid.setEdgeMetadata === "function") {
+                    solid.setEdgeMetadata(edgeName, { ...(solid.getEdgeMetadata(edgeName) || {}), sheetMetalEdgeType: derivedType });
+                }
+            } else if (hasSheetMeta && hasABCandidate) {
+                console.warn("[visualize] Edge has mixed or missing sheet metal face types", {
+                    edge: edgeName,
+                    faceTypes: Array.from(faceTypes),
+                    faces: faces.map((f) => f?.name || f?.userData?.faceName || "UNKNOWN"),
+                });
+            }
+        }
+    } catch { /* ignore */ }
 }

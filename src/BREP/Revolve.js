@@ -83,6 +83,15 @@ export class Revolve extends Solid {
     const revolvedResolution = Math.max(3, Math.floor(Math.abs(baseResolution) || 0));
     const steps = Math.max(3, Math.ceil((Math.abs(deg) / 360) * revolvedResolution));
     const dA = sweepRad / steps;
+    const baseName = faceObj?.name || 'Face';
+    const startName = `${baseName}_START`;
+    const endName = `${baseName}_END`;
+    const setFaceType = (name, faceType) => {
+      if (!name || !faceType) return;
+      try { this.setFaceMetadata(name, { faceType }); } catch { /* best effort */ }
+    };
+    setFaceType(startName, 'STARTCAP');
+    setFaceType(endName, 'ENDCAP');
 
     // Helper: rotate world point around axis by angle
     const rotQ = new THREE.Quaternion();
@@ -113,12 +122,12 @@ export class Revolve extends Solid {
             const v1 = new THREE.Vector3(p1[0], p1[1], p1[2]);
             const v2 = new THREE.Vector3(p2[0], p2[1], p2[2]);
             // Start cap reversed
-            this.addTriangle(`${faceObj.name || 'Face'}_START`, [v0.x, v0.y, v0.z], [v2.x, v2.y, v2.z], [v1.x, v1.y, v1.z]);
+            this.addTriangle(startName, [v0.x, v0.y, v0.z], [v2.x, v2.y, v2.z], [v1.x, v1.y, v1.z]);
             // End cap rotated
             const q0 = rotateP(v0, sweepRad);
             const q1 = rotateP(v1, sweepRad);
             const q2 = rotateP(v2, sweepRad);
-            this.addTriangle(`${faceObj.name || 'Face'}_END`, q0, q1, q2);
+            this.addTriangle(endName, q0, q1, q2);
           }
         }
       } else {
@@ -136,11 +145,11 @@ export class Revolve extends Solid {
           }
           const addTri = (i0, i1, i2) => {
             const p0 = world[i0], p1 = world[i1], p2 = world[i2];
-            this.addTriangle(`${faceObj.name || 'Face'}_START`, p0, p2, p1);
+            this.addTriangle(startName, p0, p2, p1);
             const q0 = rotateP(new THREE.Vector3(...p0), sweepRad);
             const q1 = rotateP(new THREE.Vector3(...p1), sweepRad);
             const q2 = rotateP(new THREE.Vector3(...p2), sweepRad);
-            this.addTriangle(`${faceObj.name || 'Face'}_END`, q0, q1, q2);
+            this.addTriangle(endName, q0, q1, q2);
           };
           if (hasIndex) {
             for (let i = 0; i < idx.count; i += 3) addTri(idx.getX(i + 0) >>> 0, idx.getX(i + 1) >>> 0, idx.getX(i + 2) >>> 0);
@@ -209,6 +218,7 @@ function computeFaceCentroidWorld(faceObj) {
           const setB = pointToEdgeNames.get(key(b));
           let fname = `${faceObj.name || 'FACE'}_RV`;
           if (setA && setB) { for (const n of setA) { if (setB.has(n)) { fname = n; break; } } }
+          setFaceType(fname, 'SIDEWALL');
 
           // sweep along angular steps
           let ang0 = 0;
@@ -233,6 +243,7 @@ function computeFaceCentroidWorld(faceObj) {
       const edges = Array.isArray(faceObj?.edges) ? faceObj.edges : [];
       for (const edge of edges) {
         const name = `${edge?.name || 'EDGE'}_RV`;
+        setFaceType(name, 'SIDEWALL');
         const pts = [];
         const w = new THREE.Vector3();
 

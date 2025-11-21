@@ -54,6 +54,27 @@ class MetadataPanelController {
 
     handleSelection(target) {
         this.currentTarget = target || null;
+        if (this.currentTarget) {
+            try {
+                const solid = this._findParentSolid(this.currentTarget);
+                const name = this.currentTarget.name || this.currentTarget.userData?.faceName || null;
+                const meta = (solid && name && typeof solid.getFaceMetadata === 'function')
+                    ? solid.getFaceMetadata(name)
+                    : null;
+                console.log('[MetadataPanel] Selected object', {
+                    name,
+                    type: this.currentTarget.type,
+                    faceName: this.currentTarget.userData?.faceName || null,
+                    sheetMetalFaceType: this.currentTarget.userData?.sheetMetalFaceType || null,
+                    sheetMetalEdgeType: this.currentTarget.userData?.sheetMetalEdgeType || null,
+                    parentSolid: solid?.name || null,
+                    metadata: meta || null,
+                });
+                console.log("Actual object:", this.currentTarget);
+            } catch (e) {
+                try { console.warn('[MetadataPanel] Selection log failed:', e); } catch { }
+            }
+        }
         if (!this.open) return;
         this._render();
     }
@@ -163,6 +184,16 @@ class MetadataPanelController {
         const own = manager.getOwnMetadata(name);
         const effective = manager.getMetadata(name);
         const faceMetadata = this._getFaceMetadataForTarget(target);
+        const edgeMetadata = this._getEdgeMetadataForTarget(target);
+
+        // Merge edge metadata into the displayed entries so edge attributes are visible
+        if (edgeMetadata && typeof edgeMetadata.metadata === 'object') {
+            for (const [k, v] of Object.entries(edgeMetadata.metadata)) {
+                own[k] = v;
+                effective[k] = v;
+            }
+        }
+
         const entries = Object.entries(own).map(([key, value]) => ({
             key,
             value,
@@ -642,6 +673,17 @@ class MetadataPanelController {
         const metadata = solid.getFaceMetadata(faceName);
         if (!metadata || typeof metadata !== "object" || Object.keys(metadata).length === 0) return null;
         return { faceName, metadata };
+    }
+
+    _getEdgeMetadataForTarget(target) {
+        if (!target || target.type !== "EDGE") return null;
+        const edgeName = target.name;
+        if (!edgeName) return null;
+        const solid = this._findParentSolid(target);
+        if (!solid || typeof solid.getEdgeMetadata !== "function") return null;
+        const metadata = solid.getEdgeMetadata(edgeName);
+        if (!metadata || typeof metadata !== "object" || Object.keys(metadata).length === 0) return null;
+        return { edgeName, metadata };
     }
 
     _findParentSolid(target) {

@@ -682,6 +682,14 @@ export class Sweep extends FacesSolid {
     const startName = `${featureTag}${face.name || 'Face'}_START`;
     const endName = `${featureTag}${face.name || 'Face'}_END`;
 
+    const setFaceType = (name, faceType) => {
+      if (!name || !faceType) return;
+      try { this.setFaceMetadata(name, { faceType }); } catch { /* best effort */ }
+    };
+
+    setFaceType(startName, 'STARTCAP');
+    setFaceType(endName, 'ENDCAP');
+
     // Note: pathAlign support removed. If reintroducing, add helpers here.
 
     // Prefer rebuilding caps using 2D profile groups from the sketch to ensure
@@ -1244,6 +1252,7 @@ export class Sweep extends FacesSolid {
               let name = `${featureTag}${face.name || 'FACE'}_SW`;
               if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
               ensureMetadataForName(name);
+              setFaceType(name, 'SIDEWALL');
               addQuad(name, A0, B0, B1, A1, isHole);
             }
           } else {
@@ -1260,6 +1269,7 @@ export class Sweep extends FacesSolid {
               let name = `${featureTag}${face.name || 'FACE'}_SW`;
               if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
               ensureMetadataForName(name);
+              setFaceType(name, 'SIDEWALL');
               if (isHole) {
                 this.addTriangle(name, a, b2, b);
                 this.addTriangle(name, a, a2, b2);
@@ -1286,6 +1296,7 @@ export class Sweep extends FacesSolid {
                 let name = `${featureTag}${face.name || 'FACE'}_SW`;
                 if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
                 ensureMetadataForName(name);
+                setFaceType(name, 'SIDEWALL');
                 addQuad(name, A0, B0, B1, A1, isHole);
               }
             }
@@ -1307,6 +1318,7 @@ export class Sweep extends FacesSolid {
                 let name = `${featureTag}${face.name || 'FACE'}_SW`;
                 if (setA && setB) { for (const n of setA) { if (setB.has(n)) { name = n; break; } } }
                 ensureMetadataForName(name);
+                setFaceType(name, 'SIDEWALL');
                 // Use robust splitting to avoid skinny/inside-crossing diagonals
                 addQuad(name, A0, B0, B1, A1, isHole);
                 if (sweepDebugEnabled() && seg===0 && i===0) {
@@ -1387,6 +1399,8 @@ export class Sweep extends FacesSolid {
         // Per-edge fallback; support translate and pathAlign
         for (const edge of edges) {
           const name = `${featureTag}${edge.name || 'EDGE'}_SW`;
+          ensureMetadataForName(name);
+          setFaceType(name, 'SIDEWALL');
 
           // Robustly extract world-space polyline points
           const pA = [];

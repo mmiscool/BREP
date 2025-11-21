@@ -114,6 +114,14 @@ export class Solid extends THREE.Group {
         return SolidMethods.getFaceMetadata.apply(this, arguments);
     }
 
+    setEdgeMetadata(edgeName, metadata) {
+        return SolidMethods.setEdgeMetadata.apply(this, arguments);
+    }
+
+    getEdgeMetadata(edgeName) {
+        return SolidMethods.getEdgeMetadata.apply(this, arguments);
+    }
+
     remesh({ maxEdgeLength, maxIterations = 10 } = {}) {
         return SolidMethods.remesh.apply(this, arguments);
     }

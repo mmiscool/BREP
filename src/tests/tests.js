@@ -20,6 +20,7 @@ import { test_fillets_more_dificult } from './test_filletsMoreDifficult.js';
 import { test_tube } from './test_tube.js';
 import { test_tube_closedLoop } from './test_tube_closedLoop.js';
 import { test_offsetShellGrouping } from './test_offsetShellGrouping.js';
+import { test_pushFace, afterRun_pushFace } from './test_pushFace.js';
 import { test_sketch_openLoop, afterRun_sketch_openLoop } from './test_sketch_openLoop.js';
 import { test_Fillet_NonClosed, afterRun_Fillet_NonClosed } from './test_fillet_nonClosed.js';
 
@@ -47,6 +48,7 @@ export const testFunctions = [
     { test: test_Fillet_NonClosed, afterRun: afterRun_Fillet_NonClosed, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_fillets_more_dificult, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_Chamfer, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
+    { test: test_pushFace, afterRun: afterRun_pushFace, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_mirror, printArtifacts: false, exportFaces: true, exportSolids: true, resetHistory: true },
     { test: test_solidMetrics, afterRun: afterRun_solidMetrics, printArtifacts: true, exportFaces: true, exportSolids: true, resetHistory: true },
 

@@ -71,6 +71,10 @@ export function bakeTransform(matrix) {
                     }
                 }
             }
+            if (this._edgeMetadata && this._edgeMetadata.size > 0) {
+                // Edge metadata currently only carries scalar tags; keep the map intact
+                this._edgeMetadata = new Map(this._edgeMetadata);
+            }
         } catch { /* ignore metadata bake errors */ }
     } catch (_) { /* ignore */ }
     return this;
@@ -224,6 +228,9 @@ export function pushFace(faceName, distance = 0.001) {
     const dist = Number(distance);
     if (!faceName || !Number.isFinite(dist) || dist === 0) return this;
 
+    // Make sure triangle windings are coherent so the averaged normal points outward.
+    try { this._manifoldize(); } catch { /* best effort; fall back to existing winding */ }
+
     const faceID = this._faceNameToID.get(faceName);
     if (faceID === undefined) {
         console.warn(`pushFace: Face "${faceName}" not found`);
@@ -266,105 +273,18 @@ export function pushFace(faceName, distance = 0.001) {
         return this;
     }
 
-    const computeVolume = () => {
-        let vol6 = 0;
-        for (let t = 0; t < triVerts.length; t += 3) {
-            const i0 = (triVerts[t] >>> 0) * 3;
-            const i1 = (triVerts[t + 1] >>> 0) * 3;
-            const i2 = (triVerts[t + 2] >>> 0) * 3;
-            const x0 = vp[i0], y0 = vp[i0 + 1], z0 = vp[i0 + 2];
-            const x1 = vp[i1], y1 = vp[i1 + 1], z1 = vp[i1 + 2];
-            const x2 = vp[i2], y2 = vp[i2 + 1], z2 = vp[i2 + 2];
-            vol6 += x0 * (y1 * z2 - z1 * y2)
-                - y0 * (x1 * z2 - z1 * x2)
-                + z0 * (x1 * y2 - y1 * x2);
-        }
-        return Math.abs(vol6) / 6.0;
-    };
-
-    const baseVolume = computeVolume();
-    if (!Number.isFinite(baseVolume)) return this;
-
-    const magnitude = Math.abs(dist);
-    const unitScale = 1 / len;
-    const unitX = nx * unitScale;
-    const unitY = ny * unitScale;
-    const unitZ = nz * unitScale;
-    const deltaX = unitX * magnitude;
-    const deltaY = unitY * magnitude;
-    const deltaZ = unitZ * magnitude;
-
-    const applyDisplacement = (sign) => {
-        const sx = deltaX * sign;
-        const sy = deltaY * sign;
-        const sz = deltaZ * sign;
-        for (const idx of affectedIndices) {
-            const base = idx * 3;
-            vp[base + 0] += sx;
-            vp[base + 1] += sy;
-            vp[base + 2] += sz;
-        }
-    };
-
-    const testVolume = (sign) => {
-        applyDisplacement(sign);
-        const vol = computeVolume();
-        applyDisplacement(-sign);
-        return vol;
-    };
-
-    const volPlus = testVolume(1);
-    const volMinus = testVolume(-1);
-    const deltaPlus = Number.isFinite(volPlus) ? volPlus - baseVolume : null;
-    const deltaMinus = Number.isFinite(volMinus) ? volMinus - baseVolume : null;
-    const eps = Math.max(1e-9, baseVolume * 1e-9);
-
-    const defaultSign = dist >= 0 ? 1 : -1;
-    let chosenSign = defaultSign;
-    if (dist > 0) {
-        let bestDelta = -Infinity;
-        if (deltaPlus !== null && deltaPlus > eps) {
-            bestDelta = deltaPlus;
-            chosenSign = 1;
-        }
-        if (deltaMinus !== null && deltaMinus > eps && deltaMinus > bestDelta) {
-            bestDelta = deltaMinus;
-            chosenSign = -1;
-        }
-        if (!Number.isFinite(bestDelta)) {
-            if (deltaPlus !== null && deltaMinus !== null) {
-                chosenSign = deltaPlus >= deltaMinus ? 1 : -1;
-            } else if (deltaPlus !== null) {
-                chosenSign = 1;
-            } else if (deltaMinus !== null) {
-                chosenSign = -1;
-            }
-        }
-    } else { // dist < 0
-        let bestDelta = Infinity;
-        let found = false;
-        if (deltaPlus !== null && deltaPlus < -eps) {
-            bestDelta = deltaPlus;
-            chosenSign = 1;
-            found = true;
-        }
-        if (deltaMinus !== null && deltaMinus < -eps && deltaMinus < bestDelta) {
-            bestDelta = deltaMinus;
-            chosenSign = -1;
-            found = true;
-        }
-        if (!found) {
-            if (deltaPlus !== null && deltaMinus !== null) {
-                chosenSign = deltaPlus <= deltaMinus ? 1 : -1;
-            } else if (deltaPlus !== null) {
-                chosenSign = 1;
-            } else if (deltaMinus !== null) {
-                chosenSign = -1;
-            }
-        }
+    // Push strictly along the outward normal derived from triangle winding;
+    // positive distance moves outward, negative moves inward.
+    const scale = dist / len;
+    const dx = nx * scale;
+    const dy = ny * scale;
+    const dz = nz * scale;
+    for (const idx of affectedIndices) {
+        const base = idx * 3;
+        vp[base + 0] += dx;
+        vp[base + 1] += dy;
+        vp[base + 2] += dz;
     }
-
-    applyDisplacement(chosenSign);
 
     this._vertKeyToIndex = new Map();
     for (let i = 0; i < vp.length; i += 3) {
