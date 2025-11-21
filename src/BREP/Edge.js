@@ -82,4 +82,21 @@ export class Edge extends Line2 {
         }
         return out;
     }
+
+
+    setMetadata(metadata) {
+        // call the approriate method in the parent solid
+        if (this.parentSolid && typeof this.parentSolid.setEdgeMetadata === 'function') {
+            this.parentSolid.setEdgeMetadata(this.name, metadata);
+        }
+        return this;
+    }
+
+    getMetadata() {
+        // call the approriate method in the parent solid
+        if (this.parentSolid && typeof this.parentSolid.getEdgeMetadata === 'function') {
+            return this.parentSolid.getEdgeMetadata(this.name);
+        }
+        return null;
+    }
 }

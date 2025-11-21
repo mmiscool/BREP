@@ -5,7 +5,9 @@
 /** Set metadata for a face (e.g., radius for cylindrical faces). */
 export function setFaceMetadata(faceName, metadata) {
     if (!metadata || typeof metadata !== 'object') return this;
-    this._faceMetadata.set(faceName, { ...this.getFaceMetadata(faceName), ...metadata });
+    const existing = this.getFaceMetadata(faceName);
+    const base = existing && typeof existing === 'object' ? existing : {};
+    this._faceMetadata.set(faceName, { ...base, ...metadata });
     return this;
 }
 
@@ -22,7 +24,9 @@ export function getFaceNames() {
 /** Set metadata for an edge. */
 export function setEdgeMetadata(edgeName, metadata) {
     if (!metadata || typeof metadata !== 'object') return this;
-    this._edgeMetadata.set(edgeName, { ...this.getEdgeMetadata(edgeName), ...metadata });
+    const existing = this.getEdgeMetadata(edgeName);
+    const base = existing && typeof existing === 'object' ? existing : {};
+    this._edgeMetadata.set(edgeName, { ...base, ...metadata });
     return this;
 }
 

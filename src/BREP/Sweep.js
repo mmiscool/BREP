@@ -793,6 +793,13 @@ export class Sweep extends FacesSolid {
 
     const canEmbedCylMetadata = (mode === 'translate') && !(offsets.length >= 2);
     const cylMetadataByName = new Map();
+    const edgeSourceByName = new Map();
+    const registerEdgeSource = (faceName, edge) => {
+      if (!faceName || !edge) return;
+      if (!edgeSourceByName.has(faceName)) {
+        edgeSourceByName.set(faceName, edge?.name || 'EDGE');
+      }
+    };
     const registerCylMetadata = (name, meta) => {
       if (!name || !meta) return;
       if (!Number.isFinite(meta.radius) || meta.radius <= 0) return;
@@ -860,6 +867,10 @@ export class Sweep extends FacesSolid {
       const meta = cylMetadataByName.get(name);
       if (meta) {
         try { this.setFaceMetadata(name, meta); } catch { }
+      }
+      const sourceEdgeName = edgeSourceByName.get(name);
+      if (sourceEdgeName) {
+        try { this.setFaceMetadata(name, { sourceEdgeName }); } catch { }
       }
     };
 
@@ -983,6 +994,7 @@ export class Sweep extends FacesSolid {
       const pointToEdgeNames = new Map(); // key -> Set(edgeName)
       for (const e of edges) {
         const name = `${featureTag}${e?.name || 'EDGE'}_SW`;
+        registerEdgeSource(name, e);
         const poly = e?.userData?.polylineLocal;
         const isWorld = !!(e?.userData?.polylineWorld);
         if (Array.isArray(poly) && poly.length >= 2) {
@@ -1399,6 +1411,7 @@ export class Sweep extends FacesSolid {
         // Per-edge fallback; support translate and pathAlign
         for (const edge of edges) {
           const name = `${featureTag}${edge.name || 'EDGE'}_SW`;
+          registerEdgeSource(name, edge);
           ensureMetadataForName(name);
           setFaceType(name, 'SIDEWALL');
 

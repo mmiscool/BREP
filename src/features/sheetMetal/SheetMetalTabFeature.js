@@ -1,6 +1,6 @@
 import { BREP } from "../../BREP/BREP.js";
 import { normalizeThickness, normalizeBendRadius, applySheetMetalMetadata } from "./sheetMetalMetadata.js";
-import { setSheetMetalFaceTypeMetadata, SHEET_METAL_FACE_TYPES } from "./sheetMetalFaceTypes.js";
+import { setSheetMetalFaceTypeMetadata, SHEET_METAL_FACE_TYPES, propagateSheetMetalFaceTypesToEdges } from "./sheetMetalFaceTypes.js";
 import { resolveProfileFace, collectSketchParents } from "./profileUtils.js";
 
 const inputParamsSchema = {
@@ -85,6 +85,8 @@ export class SheetMetalTabFeature {
 
     const removedArtifacts = [...sketchParentsToRemove, ...(effects?.removed || [])];
     const added = effects?.added || [];
+
+    propagateSheetMetalFaceTypesToEdges(added);
 
     applySheetMetalMetadata(added, partHistory?.metadataManager, {
       featureID: this.inputParams?.featureID || null,

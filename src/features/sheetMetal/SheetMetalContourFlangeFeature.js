@@ -4,7 +4,7 @@ import {
   normalizeBendRadius,
   applySheetMetalMetadata,
 } from "./sheetMetalMetadata.js";
-import { setSheetMetalFaceTypeMetadata, SHEET_METAL_FACE_TYPES } from "./sheetMetalFaceTypes.js";
+import { setSheetMetalFaceTypeMetadata, SHEET_METAL_FACE_TYPES, propagateSheetMetalFaceTypesToEdges } from "./sheetMetalFaceTypes.js";
 
 const THREE = BREP.THREE;
 
@@ -193,6 +193,8 @@ export class SheetMetalContourFlangeFeature {
       distance,
       pathPointCount: filletedPath.length,
     };
+
+    propagateSheetMetalFaceTypesToEdges(added);
 
     return { added, removed };
   }

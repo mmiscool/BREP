@@ -319,7 +319,14 @@ export class Solid extends THREE.Group {
     }
 
     fillet(options = {}) {
-        return SolidMethods.fillet.apply(this, [options]);
+        return 
+        SolidMethods.fillet.apply(this, [options]);
+    }
+
+
+    get faces(){
+        this.visualize();
+        return this.children.filter(c=>c.type==='FACE');
     }
 }
 

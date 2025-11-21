@@ -90,6 +90,20 @@ export class Revolve extends Solid {
       if (!name || !faceType) return;
       try { this.setFaceMetadata(name, { faceType }); } catch { /* best effort */ }
     };
+    const edgeSourceByName = new Map();
+    const registerEdgeSource = (faceName, edge) => {
+      if (!faceName || !edge) return;
+      if (!edgeSourceByName.has(faceName)) {
+        edgeSourceByName.set(faceName, edge?.name || 'EDGE');
+      }
+    };
+    const ensureSidewallMetadata = (faceName) => {
+      if (!faceName) return;
+      const sourceEdgeName = edgeSourceByName.get(faceName);
+      if (sourceEdgeName) {
+        try { this.setFaceMetadata(faceName, { sourceEdgeName }); } catch { /* best effort */ }
+      }
+    };
     setFaceType(startName, 'STARTCAP');
     setFaceType(endName, 'ENDCAP');
 
@@ -168,6 +182,7 @@ export class Revolve extends Solid {
       const pointToEdgeNames = new Map();
       for (const e of edges) {
         const name = `${e?.name || 'EDGE'}_RV`;
+        registerEdgeSource(name, e);
         const poly = e?.userData?.polylineLocal;
         const isWorld = !!(e?.userData?.polylineWorld);
         if (Array.isArray(poly) && poly.length >= 2) {
@@ -219,6 +234,7 @@ function computeFaceCentroidWorld(faceObj) {
           let fname = `${faceObj.name || 'FACE'}_RV`;
           if (setA && setB) { for (const n of setA) { if (setB.has(n)) { fname = n; break; } } }
           setFaceType(fname, 'SIDEWALL');
+          ensureSidewallMetadata(fname);
 
           // sweep along angular steps
           let ang0 = 0;
@@ -243,7 +259,9 @@ function computeFaceCentroidWorld(faceObj) {
       const edges = Array.isArray(faceObj?.edges) ? faceObj.edges : [];
       for (const edge of edges) {
         const name = `${edge?.name || 'EDGE'}_RV`;
+        registerEdgeSource(name, edge);
         setFaceType(name, 'SIDEWALL');
+        ensureSidewallMetadata(name);
         const pts = [];
         const w = new THREE.Vector3();
 
