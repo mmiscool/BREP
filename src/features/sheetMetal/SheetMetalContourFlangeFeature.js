@@ -100,8 +100,10 @@ export class SheetMetalContourFlangeFeature {
     const planeBasis = computePlaneBasis(rawPath, basisHint);
     const filletResult = bendRadius > 0
       ? filletPolyline(rawPath, bendRadius, planeBasis, pathSegmentNames)
-      : { points: rawPath.map((pt) => pt.clone()), segmentNames: pathSegmentNames.slice() };
+      : { points: rawPath.map((pt) => pt.clone()), points2D: null, tangents2D: null, segmentNames: pathSegmentNames.slice() };
     const filletedPath = filletResult.points;
+    const filletedPath2D = Array.isArray(filletResult.points2D) ? filletResult.points2D : null;
+    const filletedTangents2D = Array.isArray(filletResult.tangents2D) ? filletResult.tangents2D : null;
     const filletedSegmentNames = normalizeSegmentNameCount(
       filletResult.segmentNames,
       filletedPath.length - 1,
@@ -118,6 +120,8 @@ export class SheetMetalContourFlangeFeature {
       planeBasis,
       thickness: thicknessAbs,
       sheetSide,
+      path2DOverride: filletedPath2D,
+      pathTangents2D: filletedTangents2D,
     });
 
     const extrudeVector = planeBasis.planeNormal.clone().normalize().multiplyScalar(distance * extrudeDirectionSign);
@@ -562,7 +566,12 @@ function computePlaneBasis(points, hintBasis = null) {
 
 function filletPolyline(points, radius, basis, segmentNames = []) {
   if (!Array.isArray(points) || points.length < 2) {
-    return { points: Array.isArray(points) ? points.map((pt) => pt.clone()) : [], segmentNames: [] };
+    return {
+      points: Array.isArray(points) ? points.map((pt) => pt.clone()) : [],
+      segmentNames: [],
+      points2D: null,
+      tangents2D: null,
+    };
   }
 
   const { origin, xAxis, yAxis, planeNormal } = basis;
@@ -582,9 +591,12 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
   };
 
   if (!radius || radius <= 1e-8 || points.length < 3) {
+    const coordsSimple = points.map((pt) => to2D(pt));
     return {
       points: points.map((pt) => pt.clone()),
       segmentNames: normalizeSegmentNameCount(segmentNames, points.length - 1),
+      points2D: coordsSimple,
+      tangents2D: null,
     };
   }
 
@@ -593,6 +605,8 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
   const segCount = coords.length - 1;
   const segmentStart = new Array(segCount);
   const segmentEnd = new Array(segCount);
+  const arcCenters = new Array(coords.length).fill(null);
+  const arcSweepDirs = new Array(coords.length).fill(0);
   for (let i = 0; i < segCount; i++) {
     segmentStart[i] = { ...coords[i] };
     segmentEnd[i] = { ...coords[i + 1] };
@@ -682,38 +696,97 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
     arcPts.push(end);
     arcSamples[i] = arcPts;
     arcNames[i] = buildFilletEdgeName(baseNames[i - 1], baseNames[i]);
+    arcCenters[i] = center;
+    arcSweepDirs[i] = sweepDir;
   }
+
+  const segmentDirections = new Array(segCount);
+  const dirBetween = (a, b) => {
+    const dx = (b?.u ?? 0) - (a?.u ?? 0);
+    const dy = (b?.v ?? 0) - (a?.v ?? 0);
+    const l = Math.hypot(dx, dy);
+    if (l < 1e-12) return null;
+    return { x: dx / l, y: dy / l };
+  };
+  for (let i = 0; i < segCount; i++) {
+    segmentDirections[i] = dirBetween(segmentStart[i], segmentEnd[i]);
+  }
+  let fallbackDir = null;
+  for (const dir of segmentDirections) {
+    if (dir) {
+      fallbackDir = dir;
+      break;
+    }
+  }
+  if (!fallbackDir) fallbackDir = { x: 1, y: 0 };
+  const safeDir = (dir) => {
+    if (dir && Number.isFinite(dir.x) && Number.isFinite(dir.y) && Math.hypot(dir.x, dir.y) > 1e-12) {
+      return dir;
+    }
+    return fallbackDir;
+  };
 
   const outCoords = [];
   const outNames = [];
+  const outTangents = [];
   const coordsEqual = (a, b) => !a || !b
     ? false
     : (Math.abs(a.u - b.u) < 1e-9 && Math.abs(a.v - b.v) < 1e-9 && Math.abs((a.w || 0) - (b.w || 0)) < 1e-9);
-  const pushCoord = (coord, segName) => {
+  const normalizeTan = (tan) => {
+    if (!tan || !Number.isFinite(tan.x) || !Number.isFinite(tan.y)) return null;
+    const l = Math.hypot(tan.x, tan.y);
+    if (l < 1e-12) return null;
+    return { x: tan.x / l, y: tan.y / l };
+  };
+  const pushCoord = (coord, segName, tangent = null) => {
     if (!coord) return false;
     const copy = { u: coord.u, v: coord.v, w: coord.w };
+    const tanNorm = normalizeTan(tangent);
     if (!outCoords.length) {
       outCoords.push(copy);
+      outTangents.push(tanNorm);
       return true;
     }
     const last = outCoords[outCoords.length - 1];
-    if (coordsEqual(last, copy)) return false;
+    if (coordsEqual(last, copy)) {
+      if (!outTangents[outTangents.length - 1] && tanNorm) {
+        outTangents[outTangents.length - 1] = tanNorm;
+      }
+      return false;
+    }
     outCoords.push(copy);
+    outTangents.push(tanNorm);
     if (segName) {
       outNames[outCoords.length - 2] = segName;
     }
     return true;
   };
 
+  const arcTangent = (center, pt, sweepDir) => {
+    if (!center || !pt) return null;
+    const dx = pt.u - center.u;
+    const dy = pt.v - center.v;
+    const l = Math.hypot(dx, dy);
+    if (l < 1e-12) return null;
+    return sweepDir > 0
+      ? { x: -dy / l, y: dx / l }
+      : { x: dy / l, y: -dx / l };
+  };
+
   for (let seg = 0; seg < segCount; seg++) {
-    pushCoord(segmentStart[seg]);
+    const segTangent = safeDir(segmentDirections[seg]);
+    pushCoord(segmentStart[seg], null, segTangent);
     const segName = baseNames[seg] || `SEG_${seg}`;
-    pushCoord(segmentEnd[seg], segName);
+    pushCoord(segmentEnd[seg], segName, segTangent);
     const arc = arcSamples[seg + 1];
     if (arc && arc.length >= 2) {
       const arcName = arcNames[seg + 1] || buildFilletEdgeName(baseNames[seg], baseNames[seg + 1]);
+      const center = arcCenters[seg + 1];
+      const sweepDir = arcSweepDirs[seg + 1] || 1;
       for (let j = 1; j < arc.length; j++) {
-        pushCoord(arc[j], arcName);
+        const pt = arc[j];
+        const tan = arcTangent(center, pt, sweepDir) || segTangent;
+        pushCoord(pt, arcName, tan);
       }
     }
   }
@@ -722,10 +795,21 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
   return {
     points: outPoints,
     segmentNames: normalizeSegmentNameCount(outNames, outPoints.length - 1),
+    points2D: outCoords.map((coord) => ({ ...coord })),
+    tangents2D: outTangents.map((tan) => (tan ? { x: tan.x, y: tan.y } : null)),
   };
 }
 
-function buildContourFlangeStripFaces({ featureID, pathPoints, pathSegmentNames, planeBasis, thickness, sheetSide }) {
+function buildContourFlangeStripFaces({
+  featureID,
+  pathPoints,
+  pathSegmentNames,
+  planeBasis,
+  thickness,
+  sheetSide,
+  path2DOverride = null,
+  pathTangents2D = null,
+}) {
   if (!Array.isArray(pathPoints) || pathPoints.length < 2) {
     throw new Error("Contour flange strip requires at least two path points.");
   }
@@ -734,9 +818,22 @@ function buildContourFlangeStripFaces({ featureID, pathPoints, pathSegmentNames,
   }
 
   const converters = createPlaneBasisConverters(planeBasis);
-  const path2D = pathPoints.map((pt) => converters.to2D(pt));
+  const path2D = Array.isArray(path2DOverride) && path2DOverride.length === pathPoints.length
+    ? path2DOverride.map((coord) => ({ u: coord.u, v: coord.v, w: coord.w }))
+    : pathPoints.map((pt) => converters.to2D(pt));
+  const tangentHints = Array.isArray(pathTangents2D) && pathTangents2D.length === path2D.length
+    ? pathTangents2D.map((tan) => {
+      if (!tan) return null;
+      const x = Number(tan.x ?? tan.u ?? tan[0]);
+      const y = Number(tan.y ?? tan.v ?? tan[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      const len = Math.hypot(x, y);
+      if (len < 1e-12) return null;
+      return { x: x / len, y: y / len };
+    })
+    : null;
   const pathNames = normalizeSegmentNameCount(pathSegmentNames, path2D.length - 1);
-  const offset2D = offsetPolyline2D(path2D, thickness, sheetSide);
+  const offset2D = offsetPolyline2D(path2D, thickness, sheetSide, tangentHints);
   if (!offset2D || offset2D.length !== path2D.length) {
     throw new Error("Contour flange failed to compute the offset path.");
   }
@@ -976,9 +1073,19 @@ function createPlaneBasisConverters(basis) {
   };
 }
 
-function offsetPolyline2D(path2D, thickness, sheetSide) {
+function offsetPolyline2D(path2D, thickness, sheetSide, tangentHints = null) {
   if (!Array.isArray(path2D) || path2D.length < 2) return [];
   const EPS = 1e-10;
+  const normalizedTangents = Array.isArray(tangentHints) && tangentHints.length === path2D.length
+    ? tangentHints.map((tan) => {
+      if (!tan) return null;
+      const x = Number(tan.x ?? tan.u ?? tan[0]);
+      const y = Number(tan.y ?? tan.v ?? tan[1]);
+      const len = Math.hypot(x, y);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || len < EPS) return null;
+      return { x: x / len, y: y / len };
+    })
+    : null;
   const dirs = [];
   for (let i = 0; i < path2D.length - 1; i++) {
     const dx = path2D[i + 1].u - path2D[i].u;
@@ -992,6 +1099,14 @@ function offsetPolyline2D(path2D, thickness, sheetSide) {
     if (dir) {
       fallback = dir;
       break;
+    }
+  }
+  if (!fallback && normalizedTangents) {
+    for (const tan of normalizedTangents) {
+      if (tan) {
+        fallback = tan;
+        break;
+      }
     }
   }
   if (!fallback) fallback = { x: 1, y: 0 };
@@ -1010,21 +1125,32 @@ function offsetPolyline2D(path2D, thickness, sheetSide) {
     w: pt.w,
   });
   const offsets = new Array(path2D.length);
+  const tangentOffset = (index) => {
+    if (!normalizedTangents) return null;
+    const tan = normalizedTangents[index];
+    if (!tan) return null;
+    return offsetPoint(path2D[index], rotateDir(tan));
+  };
   const getPrevDir = (vertexIndex) => {
     for (let seg = vertexIndex - 1; seg >= 0; seg--) {
       if (dirs[seg]) return dirs[seg];
     }
-    return fallback;
+    return normalizedTangents?.[vertexIndex] || fallback;
   };
   const getNextDir = (vertexIndex) => {
     for (let seg = vertexIndex; seg < dirs.length; seg++) {
       if (dirs[seg]) return dirs[seg];
     }
-    return fallback;
+    return normalizedTangents?.[vertexIndex] || fallback;
   };
 
-  offsets[0] = offsetPoint(path2D[0], rotateDir(getNextDir(0)));
+  offsets[0] = tangentOffset(0) || offsetPoint(path2D[0], rotateDir(getNextDir(0)));
   for (let i = 1; i < path2D.length - 1; i++) {
+    const directOffset = tangentOffset(i);
+    if (directOffset) {
+      offsets[i] = directOffset;
+      continue;
+    }
     const prevDir = safeDir(getPrevDir(i));
     const nextDir = safeDir(getNextDir(i));
     const perpPrev = rotateDir(prevDir);
@@ -1042,7 +1168,8 @@ function offsetPolyline2D(path2D, thickness, sheetSide) {
       };
     }
   }
-  offsets[path2D.length - 1] = offsetPoint(path2D[path2D.length - 1], rotateDir(getPrevDir(path2D.length - 1)));
+  offsets[path2D.length - 1] = tangentOffset(path2D.length - 1)
+    || offsetPoint(path2D[path2D.length - 1], rotateDir(getPrevDir(path2D.length - 1)));
   return offsets;
 }
 

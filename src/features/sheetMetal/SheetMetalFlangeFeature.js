@@ -192,8 +192,7 @@ export class SheetMetalFlangeFeature {
         resolution: 128,
         name: this.inputParams?.featureID ? `${this.inputParams.featureID}:BEND` : "SM.FLANGE_BEND",
       }).visualize();
-
-
+      const bendEndFace = findRevolveEndFace(revolve);
 
       applyFaceSheetMetalData(face, revolve);
       if (offsetVector) {
@@ -245,6 +244,28 @@ export class SheetMetalFlangeFeature {
           if (!usedForSubtraction) {
             registerSolid(offsetSolid, context.parentSolid);
           }
+        }
+      }
+      const flangeRef = String(this.inputParams?.flangeLengthReference || "web").toLowerCase();
+      let flangeLength = Number(this.inputParams?.flangeLength ?? 0);
+      if (!Number.isFinite(flangeLength)) flangeLength = 0;
+      if (flangeRef === "inside") flangeLength = flangeLength  - bendRadius;
+      if (flangeRef === "outside") flangeLength = flangeLength - bendRadius - thickness;
+      if (flangeRef === "web") flangeLength = flangeLength;
+      if (bendEndFace && Number.isFinite(flangeLength) && flangeLength !== 0) {
+        const flatSolid = createOffsetExtrudeSolid({
+          face: bendEndFace,
+          faceNormal: bendEndFace?.getAverageNormal ? bendEndFace.getAverageNormal() : null,
+          lengthValue: flangeLength,
+          featureID: this.inputParams?.featureID,
+          faceIndex,
+          reliefWidthValue: 0,
+        });
+        if (flatSolid) {
+          if (offsetVector) {
+            applyTranslationToSolid(flatSolid, offsetVector);
+          }
+          registerSolid(flatSolid, context.parentSolid);
         }
       }
       faceIndex++;
@@ -718,6 +739,15 @@ function buildOffsetTranslationVector(baseNormal, offsetValue) {
   const vector = normal.multiplyScalar(-offsetValue);
   if (vector.lengthSq() < 1e-18) return null;
   return vector;
+}
+
+function findRevolveEndFace(revolveSolid) {
+  if (!revolveSolid || !Array.isArray(revolveSolid.faces)) return null;
+  for (const face of revolveSolid.faces) {
+    const meta = typeof face.getMetadata === "function" ? face.getMetadata() : null;
+    if (meta?.faceType === "ENDCAP") return face;
+  }
+  return revolveSolid.faces[revolveSolid.faces.length - 1] || null;
 }
 
 function createOffsetExtrudeSolid(params = {}) {
