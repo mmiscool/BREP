@@ -175,15 +175,27 @@ export class SheetMetalFlangeFeature {
       const hingeEdge = pickCenterlineEdge(face, context, useOppositeCenterline);
       if (!hingeEdge?.start || !hingeEdge?.end) continue;
 
-      const sheetDir = context.sheetDir.clone().normalize();
+      const hingeDir = hingeEdge.end.clone().sub(hingeEdge.start).normalize();
+      let sheetDir = new BREP.THREE.Vector3().crossVectors(context.baseNormal, hingeDir);
+      if (sheetDir.lengthSq() < 1e-10) {
+        sheetDir = context.sheetDir.clone();
+      }
+      sheetDir.normalize();
       const offsetSign = hingeEdge.target === "MIN" ? 1 : -1;
       const offsetMagnitude = bendRadius + thickness;
+      alert(`Offset Magnitude: ${offsetMagnitude}`);
       const offsetVec = sheetDir.clone().multiplyScalar(offsetSign * offsetMagnitude);
       const axisEdge = buildAxisEdge(
         hingeEdge.start.clone().add(offsetVec),
         hingeEdge.end.clone().add(offsetVec),
         this.inputParams?.featureID,
       );
+
+
+      // make an alert that displays the value of the offsetVec
+      alert(`Offset Vector: ${offsetVec.x}, ${offsetVec.y}, ${offsetVec.z}`);
+
+
       const revolveAngle = appliedAngle;
       const revolve = new BREP.Revolve({
         face,
