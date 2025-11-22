@@ -45,6 +45,7 @@ const inputParamsSchema = {
   reliefWidth: {
     type: "number",
     default_value: 0,
+    step: 0.1,
     min: 0,
     hint: "Placeholder reserved for future relief cut options.",
   },
@@ -87,9 +88,16 @@ export class SheetMetalFlangeFeature {
       throw new Error("Sheet Metal Flange requires selecting at least one FACE.");
     }
 
+    // Assume all selected faces share the same sheet thickness; resolve it once up front.
+    const baseFace = faces[0];
+    const baseParentSolid = findAncestorSolid(baseFace);
+    const thicknessInfo = resolveThickness(baseFace, baseParentSolid);
+    const thickness = thicknessInfo?.thickness ?? 1;
+
     const angleDeg = Number(this.inputParams?.angle ?? 90);
     let angle = Number.isFinite(angleDeg) ? Math.max(0, Math.min(180, angleDeg)) : 90;
     const bendRadiusInput = Math.max(0, Number(this.inputParams?.bendRadius ?? 0));
+    const bendRadius = bendRadiusInput > 0 ? bendRadiusInput : (thicknessInfo?.defaultBendRadius ?? thickness);
     const useOppositeCenterline = this.inputParams?.useOppositeCenterline === true;
 
     // set angle value to negative if using opposite centerline
@@ -97,8 +105,19 @@ export class SheetMetalFlangeFeature {
     angle = useOppositeCenterline ? -angle : angle;
 
     const skipUnion = this.inputParams?.debugSkipUnion === true;
-    const offsetValue = Number(this.inputParams?.offset ?? 0);
+
+    let insetOffsetValue = 0;
+    if (this.inputParams?.inset === "material_inside") insetOffsetValue = -bendRadius-thickness;
+    if (this.inputParams?.inset === "material_outside") insetOffsetValue = -bendRadius;
+    if (this.inputParams?.inset === "bend_outside") insetOffsetValue = 0;
+
+
+
+    const offsetValue = Number(this.inputParams?.offset ?? 0) + insetOffsetValue;
     const shouldExtrudeOffset = Number.isFinite(offsetValue) && offsetValue !== 0;
+
+
+
 
 
     const generatedSolids = [];
@@ -121,9 +140,7 @@ export class SheetMetalFlangeFeature {
     for (const face of faces) {
       const context = analyzeFace(face);
       if (!context) continue;
-      const thicknessInfo = resolveThickness(face, context.parentSolid);
-      const thickness = thicknessInfo?.thickness ?? 1;
-      const bendRadius = bendRadiusInput > 0 ? bendRadiusInput : (thicknessInfo?.defaultBendRadius ?? thickness);
+
       const offsetVector = shouldExtrudeOffset
         ? buildOffsetTranslationVector(context.baseNormal, offsetValue)
         : null;
@@ -160,14 +177,17 @@ export class SheetMetalFlangeFeature {
 
       if (offsetVector) {
         const useForSubtraction = offsetValue < 0 && !!context.parentSolid;
-        const offsetSolid = createOffsetExtrudeSolid(
+        const reliefWidth = (Number.isFinite(this.inputParams?.reliefWidth) && this.inputParams.reliefWidth > 0
+          ? this.inputParams.reliefWidth
+          : 0);
+        const offsetSolid = createOffsetExtrudeSolid({
           face,
-          context.baseNormal,
-          offsetValue,
-          this.inputParams?.featureID,
+          faceNormal: context.baseNormal,
+          lengthValue: offsetValue,
+          featureID: this.inputParams?.featureID,
           faceIndex,
-          this.inputParams
-        );
+          reliefWidthValue: reliefWidth,
+        });
         if (offsetSolid) {
           let usedForSubtraction = false;
           if (useForSubtraction) {
@@ -225,7 +245,11 @@ export class SheetMetalFlangeFeature {
       if (!parentSolid || !Array.isArray(solids) || !solids.length) continue;
       const baseSolid = solids.length === 1
         ? solids[0]
-        : combineSolids(solids, this.inputParams?.featureID, groupIndex++);
+        : combineSolids({
+          solids,
+          featureID: this.inputParams?.featureID,
+          groupIndex: groupIndex++,
+        });
       if (!baseSolid) {
         fallbackSolids.push(...solids);
         continue;
@@ -666,8 +690,16 @@ function buildOffsetTranslationVector(baseNormal, offsetValue) {
   return vector;
 }
 
-function createOffsetExtrudeSolid(face, faceNormal, offsetValue, featureID, faceIndex, inputParams) {
-  if (!face || !Number.isFinite(offsetValue) || offsetValue === 0) return null;
+function createOffsetExtrudeSolid(params = {}) {
+  const {
+    face,
+    faceNormal,
+    lengthValue,
+    featureID,
+    faceIndex,
+    reliefWidthValue = 0,
+  } = params;
+  if (!face || !Number.isFinite(lengthValue) || lengthValue === 0) return null;
   const THREE = BREP.THREE;
   const normal = (faceNormal && typeof faceNormal.clone === "function" && faceNormal.lengthSq() > 1e-12)
     ? faceNormal.clone()
@@ -677,8 +709,8 @@ function createOffsetExtrudeSolid(face, faceNormal, offsetValue, featureID, face
   if (!normal || normal.lengthSq() < 1e-12) return null;
   normal.normalize();
 
-  // This is working correctly. Don't change how it inverts the offsetValue.
-  const distance = normal.multiplyScalar(-offsetValue);
+  // This is working correctly. Don't change how it inverts the lengthValue.
+  const distance = normal.multiplyScalar(-lengthValue);
   if (distance.lengthSq() < 1e-18) return null;
   const suffix = Number.isFinite(faceIndex) ? `:${faceIndex}` : "";
   const sweep = new BREP.Sweep({
@@ -692,14 +724,10 @@ function createOffsetExtrudeSolid(face, faceNormal, offsetValue, featureID, face
 
   applyFaceSheetMetalData(face, sweep);
 
-
-
-
-  const reliefWidth = 0.001 + (Number.isFinite(inputParams?.reliefWidth) && inputParams.reliefWidth > 0 ? inputParams.reliefWidth : 0);
-
+  const reliefWidth = 0.001 + reliefWidthValue;
 
   // use the solid.pushFace() method to nudge the faces with sheetMetalFaceType of "A" or "B" outward by a tiny amount to avoid z-fighting
-  if (0 > offsetValue) {
+  if (0 > lengthValue) {
     for (const solidFace of sweep.faces) {
       const faceMetadata = solidFace.getMetadata();
       let pushFace = true;
@@ -708,8 +736,6 @@ function createOffsetExtrudeSolid(face, faceNormal, offsetValue, featureID, face
       if (pushFace == true) sweep.pushFace(solidFace.name, reliefWidth);
     }
   }
-
-
   return sweep;
 }
 
@@ -765,7 +791,12 @@ function applyFaceSheetMetalData(inputFace, inputSolid) {
 
 }
 
-function combineSolids(solids, featureID, groupIndex = 0) {
+function combineSolids(params = {}) {
+  const {
+    solids,
+    featureID,
+    groupIndex = 0,
+  } = params;
   if (!Array.isArray(solids) || solids.length === 0) return null;
   let combined = null;
   for (const solid of solids) {
