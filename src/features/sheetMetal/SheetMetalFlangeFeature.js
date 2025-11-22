@@ -183,7 +183,7 @@ export class SheetMetalFlangeFeature {
       sheetDir.normalize();
       const offsetSign = hingeEdge.target === "MIN" ? 1 : -1;
       const offsetMagnitude = bendRadius + thickness;
-      alert(`Offset Magnitude: ${offsetMagnitude}`);
+      //alert(`Offset Magnitude: ${offsetMagnitude}`);
       const offsetVec = sheetDir.clone().multiplyScalar(offsetSign * offsetMagnitude);
       const axisEdge = buildAxisEdge(
         hingeEdge.start.clone().add(offsetVec),
@@ -193,7 +193,7 @@ export class SheetMetalFlangeFeature {
 
 
       // make an alert that displays the value of the offsetVec
-      alert(`Offset Vector: ${offsetVec.x}, ${offsetVec.y}, ${offsetVec.z}`);
+      //alert(`Offset Vector: ${offsetVec.x}, ${offsetVec.y}, ${offsetVec.z}`);
 
 
       const revolveAngle = appliedAngle;
@@ -210,6 +210,7 @@ export class SheetMetalFlangeFeature {
       if (offsetVector) {
         applyTranslationToSolid(revolve, offsetVector);
       }
+      applyCylMetadataToRevolve(revolve, axisEdge, bendRadius + thickness, context.baseNormal, offsetVector);
       revolve.visualize();
       registerSolid(revolve, context.parentSolid);
 
@@ -809,6 +810,65 @@ function createOffsetExtrudeSolid(params = {}) {
     }
   }
   return sweep;
+}
+
+function applyCylMetadataToRevolve(revolve, axisEdge, radiusValue, baseNormal, offsetVector = null) {
+  if (!revolve || !Array.isArray(revolve.faces) || !axisEdge) return;
+  const THREE = BREP.THREE;
+  try {
+    const posAttr = axisEdge?.geometry?.getAttribute?.("position");
+    const mat = axisEdge.matrixWorld || new THREE.Matrix4();
+    const A = new THREE.Vector3(0, 0, 0);
+    const B = new THREE.Vector3(0, 1, 0);
+    if (posAttr && posAttr.count >= 2) {
+      A.set(posAttr.getX(0), posAttr.getY(0), posAttr.getZ(0)).applyMatrix4(mat);
+      B.set(posAttr.getX(posAttr.count - 1), posAttr.getY(posAttr.count - 1), posAttr.getZ(posAttr.count - 1)).applyMatrix4(mat);
+    }
+    if (offsetVector && offsetVector.x !== undefined) {
+      A.add(offsetVector);
+      B.add(offsetVector);
+    }
+    const axisDir = B.clone().sub(A);
+    const height = axisDir.length();
+    if (height < 1e-9) return;
+    axisDir.normalize();
+    const center = A.clone().addScaledVector(axisDir, height * 0.5);
+
+    // Fit radius/center per side face from geometry to avoid relying on input radius alone.
+    const axisOrigin = A.clone();
+    const n = baseNormal && baseNormal.clone ? baseNormal.clone().normalize() : null;
+    const tmp = new THREE.Vector3();
+    for (const face of revolve.faces) {
+      const meta = face.getMetadata?.() || {};
+      if (meta.faceType && meta.faceType !== "SIDEWALL") continue;
+      const pos = face.geometry?.getAttribute?.("position");
+      if (!pos || pos.itemSize !== 3 || pos.count < 3) continue;
+      let projMin = Infinity;
+      let projMax = -Infinity;
+      let sumRadius = 0;
+      for (let i = 0; i < pos.count; i++) {
+        tmp.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(face.matrixWorld);
+        const t = tmp.clone().sub(axisOrigin).dot(axisDir);
+        if (t < projMin) projMin = t;
+        if (t > projMax) projMax = t;
+        const proj = axisOrigin.clone().add(axisDir.clone().multiplyScalar(t));
+        sumRadius += tmp.distanceTo(proj);
+      }
+      const fitRadius = sumRadius / pos.count;
+      const midT = (projMin + projMax) * 0.5;
+      const fitCenter = axisOrigin.clone().add(axisDir.clone().multiplyScalar(midT));
+      // Keep a slight preference for the intended radius but store the fit value so PMI reads geometry.
+      const radius = Number.isFinite(fitRadius) && fitRadius > 1e-6 ? fitRadius : radiusValue;
+      revolve.setFaceMetadata(face.name, {
+        type: "cylindrical",
+        radius,
+        height: projMax - projMin,
+        axis: [axisDir.x, axisDir.y, axisDir.z],
+        center: [fitCenter.x, fitCenter.y, fitCenter.z],
+        pmiRadiusOverride: radius,
+      });
+    }
+  } catch { /* ignore cyl metadata errors */ }
 }
 
 function resolveDirectionVector(vec) {

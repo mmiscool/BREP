@@ -100,10 +100,11 @@ export class SheetMetalContourFlangeFeature {
     const planeBasis = computePlaneBasis(rawPath, basisHint);
     const filletResult = bendRadius > 0
       ? filletPolyline(rawPath, bendRadius, planeBasis, pathSegmentNames)
-      : { points: rawPath.map((pt) => pt.clone()), points2D: null, tangents2D: null, segmentNames: pathSegmentNames.slice() };
+      : { points: rawPath.map((pt) => pt.clone()), points2D: null, tangents2D: null, segmentNames: pathSegmentNames.slice(), arcs: [] };
     const filletedPath = filletResult.points;
     const filletedPath2D = Array.isArray(filletResult.points2D) ? filletResult.points2D : null;
     const filletedTangents2D = Array.isArray(filletResult.tangents2D) ? filletResult.tangents2D : null;
+    const filletedArcs = Array.isArray(filletResult.arcs) ? filletResult.arcs : [];
     const filletedSegmentNames = normalizeSegmentNameCount(
       filletResult.segmentNames,
       filletedPath.length - 1,
@@ -124,6 +125,7 @@ export class SheetMetalContourFlangeFeature {
       pathTangents2D: filletedTangents2D,
     });
 
+    const converters = createPlaneBasisConverters(planeBasis);
     const extrudeVector = planeBasis.planeNormal.clone().normalize().multiplyScalar(distance * extrudeDirectionSign);
     const sweeps = flangeFaces.map((face) => {
       const sweep = new BREP.Sweep({
@@ -136,6 +138,9 @@ export class SheetMetalContourFlangeFeature {
       sweep.visualize();
       //alert(`Sweep created: ${sweep.name }    ${sweep.name || this.inputParams?.featureID || "Unnamed"}`);
       tagContourFlangeFaceTypes(sweep);
+      // Add cylinder metadata and centerlines for bend arcs (if any).
+      const axisDir = extrudeVector.clone().normalize();
+      addCylMetadataToSideFaces(sweep, filletedArcs, converters, extrudeVector, axisDir);
       return sweep;
     });
     if (!sweeps.length) {
@@ -571,6 +576,7 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
       segmentNames: [],
       points2D: null,
       tangents2D: null,
+      arcs: [],
     };
   }
 
@@ -597,6 +603,7 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
       segmentNames: normalizeSegmentNameCount(segmentNames, points.length - 1),
       points2D: coordsSimple,
       tangents2D: null,
+      arcs: [],
     };
   }
 
@@ -607,6 +614,7 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
   const segmentEnd = new Array(segCount);
   const arcCenters = new Array(coords.length).fill(null);
   const arcSweepDirs = new Array(coords.length).fill(0);
+  const arcInfo = [];
   for (let i = 0; i < segCount; i++) {
     segmentStart[i] = { ...coords[i] };
     segmentEnd[i] = { ...coords[i + 1] };
@@ -696,6 +704,11 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
     arcPts.push(end);
     arcSamples[i] = arcPts;
     arcNames[i] = buildFilletEdgeName(baseNames[i - 1], baseNames[i]);
+    arcInfo.push({
+      name: arcNames[i] || buildFilletEdgeName(baseNames[i - 1], baseNames[i]),
+      center,
+      radius,
+    });
     arcCenters[i] = center;
     arcSweepDirs[i] = sweepDir;
   }
@@ -797,6 +810,7 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
     segmentNames: normalizeSegmentNameCount(outNames, outPoints.length - 1),
     points2D: outCoords.map((coord) => ({ ...coord })),
     tangents2D: outTangents.map((tan) => (tan ? { x: tan.x, y: tan.y } : null)),
+    arcs: arcInfo,
   };
 }
 
@@ -1277,4 +1291,90 @@ function tagContourFlangeFaceTypes(sweep) {
   setSheetMetalFaceTypeMetadata(sweep, aFaces, SHEET_METAL_FACE_TYPES.A);
   setSheetMetalFaceTypeMetadata(sweep, bFaces, SHEET_METAL_FACE_TYPES.B);
   setSheetMetalFaceTypeMetadata(sweep, thicknessFaces, SHEET_METAL_FACE_TYPES.THICKNESS);
+}
+
+function addCylMetadataToSideFaces(sweep, arcs, converters, extrudeVector, axisDir) {
+  if (!sweep || !Array.isArray(sweep.faces)) return;
+  const arcList = Array.isArray(arcs) ? arcs.filter((a) => a && a.center && Number.isFinite(a.radius)) : [];
+  if (!arcList.length) return;
+
+  const height = extrudeVector.length();
+  const featureTag = sweep.params?.name ? `${sweep.params.name}:` : "";
+  const v = new THREE.Vector3();
+
+  const arc3D = arcList.map((arc) => {
+    const startCenter = converters.to3D(arc.center);
+    const endCenter = startCenter.clone().add(extrudeVector);
+    return {
+      name: arc.name || "BEND",
+      radius: arc.radius,
+      axisStart: startCenter,
+      axisEnd: endCenter,
+    };
+  });
+
+  // Centerlines per arc
+  for (const arc of arc3D) {
+    const clName = `${featureTag}${arc.name}_AXIS`;
+    try { sweep.addCenterline(arc.axisStart, arc.axisEnd, clName, { polylineWorld: true }); } catch { /* optional */ }
+  }
+
+  // Attach metadata by geometric fit to each side face
+  for (const face of sweep.faces) {
+    try {
+      const meta = face.getMetadata?.() || {};
+      const faceType = meta?.faceType;
+      if (faceType && faceType !== "SIDEWALL") continue;
+      const pos = face.geometry?.getAttribute?.("position");
+      if (!pos || pos.itemSize !== 3 || pos.count < 3) continue;
+      const verts = [];
+      for (let i = 0; i < pos.count; i++) {
+        v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(face.matrixWorld);
+        verts.push(v.clone());
+      }
+      let best = null;
+      for (const arc of arc3D) {
+        const axisVec = arc.axisEnd.clone().sub(arc.axisStart);
+        const axisLen = axisVec.length();
+        if (axisLen < 1e-9) continue;
+        const axisN = axisVec.clone().normalize();
+        const origin = arc.axisStart;
+        let sumDist = 0;
+        let minT = Infinity;
+        let maxT = -Infinity;
+        for (const p of verts) {
+          const t = p.clone().sub(origin).dot(axisN);
+          if (t < minT) minT = t;
+          if (t > maxT) maxT = t;
+          const proj = origin.clone().add(axisN.clone().multiplyScalar(t));
+          const d = p.distanceTo(proj);
+          sumDist += d;
+        }
+        const meanRadius = sumDist / verts.length;
+        const dev = Math.abs(meanRadius - arc.radius);
+        const tol = Math.max(Math.abs(arc.radius) * 1e-3, 1e-4);
+        if (!best || dev < best.dev) {
+          best = {
+            arc,
+            dev,
+            radius: meanRadius,
+            axisN,
+            center: origin.clone().add(axisN.clone().multiplyScalar((minT + maxT) * 0.5)),
+            height: maxT - minT,
+          };
+        }
+      }
+      if (best) {
+        const arc = best.arc;
+        const axisN = best.axisN || arc.axisEnd.clone().sub(arc.axisStart).normalize();
+        sweep.setFaceMetadata(face.name, {
+          type: "cylindrical",
+          radius: best.radius,
+          height: best.height || height,
+          axis: [axisN.x, axisN.y, axisN.z],
+          center: [best.center.x, best.center.y, best.center.z],
+        });
+      }
+    } catch { /* ignore */ }
+  }
 }
