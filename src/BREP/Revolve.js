@@ -331,6 +331,27 @@ function computeFaceCentroidWorld(faceObj) {
       }
     }
 
+    // Attach an axis centerline that spans the revolved geometry extents.
+    try {
+      const vp = Array.isArray(this._vertProperties) ? this._vertProperties : null;
+      if (vp && vp.length >= 6) {
+        const tmp = new THREE.Vector3();
+        let minT = Infinity;
+        let maxT = -Infinity;
+        for (let i = 0; i < vp.length; i += 3) {
+          tmp.set(vp[i], vp[i + 1], vp[i + 2]);
+          const t = tmp.clone().sub(A).dot(axisDir);
+          if (t < minT) minT = t;
+          if (t > maxT) maxT = t;
+        }
+        if (Number.isFinite(minT) && Number.isFinite(maxT) && maxT - minT > 1e-9) {
+          const p0 = A.clone().add(axisDir.clone().multiplyScalar(minT));
+          const p1 = A.clone().add(axisDir.clone().multiplyScalar(maxT));
+          this.addCenterline(p0, p1, `${this.name || 'Revolve'}_AXIS`, { polylineWorld: true });
+        }
+      }
+    } catch { /* optional centerline add */ }
+
     try { this.setEpsilon(1e-6); } catch { }
   }
 }
