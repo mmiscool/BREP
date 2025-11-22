@@ -166,6 +166,7 @@ export class SheetMetalFlangeFeature {
           offsetValue,
           this.inputParams?.featureID,
           faceIndex,
+          this.inputParams
         );
         if (offsetSolid) {
           let usedForSubtraction = false;
@@ -665,7 +666,7 @@ function buildOffsetTranslationVector(baseNormal, offsetValue) {
   return vector;
 }
 
-function createOffsetExtrudeSolid(face, faceNormal, offsetValue, featureID, faceIndex) {
+function createOffsetExtrudeSolid(face, faceNormal, offsetValue, featureID, faceIndex, inputParams) {
   if (!face || !Number.isFinite(offsetValue) || offsetValue === 0) return null;
   const THREE = BREP.THREE;
   const normal = (faceNormal && typeof faceNormal.clone === "function" && faceNormal.lengthSq() > 1e-12)
@@ -689,19 +690,24 @@ function createOffsetExtrudeSolid(face, faceNormal, offsetValue, featureID, face
   });
   sweep.visualize();
 
-  console.log(applyFaceSheetMetalData(face, sweep));
+  applyFaceSheetMetalData(face, sweep);
 
-  alert("generating offset extrude solid");
+
+
+
+  const reliefWidth = 0.001 + (Number.isFinite(inputParams?.reliefWidth) && inputParams.reliefWidth > 0 ? inputParams.reliefWidth : 0);
+
+
   // use the solid.pushFace() method to nudge the faces with sheetMetalFaceType of "A" or "B" outward by a tiny amount to avoid z-fighting
-  for (const solidFace of sweep.faces) {
-    const faceMetadata = solidFace.getMetadata();
-    if (faceMetadata?.sheetMetalFaceType === "A" || faceMetadata?.sheetMetalFaceType === "B") {
-      if (0 > offsetValue ) sweep.pushFace(solidFace.name, 0.1);
-
+  if (0 > offsetValue) {
+    for (const solidFace of sweep.faces) {
+      const faceMetadata = solidFace.getMetadata();
+      let pushFace = true;
+      if (faceMetadata?.sheetMetalFaceType === "A" || faceMetadata?.sheetMetalFaceType === "B") pushFace = true;
+      if (faceMetadata?.faceType === "ENDCAP") pushFace = false;
+      if (pushFace == true) sweep.pushFace(solidFace.name, reliefWidth);
     }
   }
-  alert("generating offset extrude done");
-
 
 
   return sweep;

@@ -614,8 +614,8 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
 
     // Helper: light pre-clean in authoring space (no manifold build)
     const preClean = (solid, eps) => {
-      try { if (typeof solid.setEpsilon === 'function') solid.setEpsilon(eps); } catch {}
       try { if (typeof solid.fixTriangleWindingsByAdjacency === 'function') solid.fixTriangleWindingsByAdjacency(); } catch {}
+      try { if (typeof solid.setEpsilon === 'function') solid.setEpsilon(eps); } catch (e) {console.warn(e, solid)}
     };
 
     // UNION / INTERSECT: fold tools into the new baseSolid and replace base
@@ -632,8 +632,8 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
       try {
         // Lightly weld triangles before attempting the boolean. This nudges
         // nearly-duplicate verts into place so Manifold sees a clean solid.
-        preClean(result, eps);
-        preClean(tool, eps);
+        // preClean(result, eps);
+        // preClean(tool, eps);
         result = (op === 'UNION') ? result.union(tool) : result.intersect(tool);
       } catch (e1) {
         debugLog('Primary union/intersect failed; attempting welded fallback', {
