@@ -3,6 +3,7 @@ import {
   SHEET_METAL_FACE_TYPES,
   resolveSheetMetalFaceType as resolveSMFaceType,
 } from "./sheetMetalFaceTypes.js";
+import { applySheetMetalMetadata } from "./sheetMetalMetadata.js";
 
 const inputParamsSchema = {
   id: {
@@ -16,6 +17,12 @@ const inputParamsSchema = {
     multiple: true,
     default_value: null,
     hint: "Select one or more thin side faces where the flange will be constructed.",
+  },
+  useOppositeCenterline: {
+    label: "Reverse direction",
+    type: "boolean",
+    default_value: false,
+    hint: "Flip to use the opposite edge for the hinge centerline.",
   },
   flangeLength: {
     type: "number",
@@ -55,11 +62,7 @@ const inputParamsSchema = {
     min: 0,
     hint: "Placeholder reserved for future bend radius overrides.",
   },
-  useOppositeCenterline: {
-    type: "boolean",
-    default_value: false,
-    hint: "Flip to use the opposite edge for the hinge centerline.",
-  },
+
   offset: {
     type: "number",
     default_value: 0,
@@ -73,7 +76,7 @@ const inputParamsSchema = {
 };
 
 export class SheetMetalFlangeFeature {
-  static shortName = "SM.FLANGE";
+  static shortName = "SM.F";
   static longName = "Sheet Metal Flange";
   static inputParamsSchema = inputParamsSchema;
 
@@ -107,7 +110,7 @@ export class SheetMetalFlangeFeature {
     const skipUnion = this.inputParams?.debugSkipUnion === true;
 
     let insetOffsetValue = 0;
-    if (this.inputParams?.inset === "material_inside") insetOffsetValue = -bendRadius-thickness;
+    if (this.inputParams?.inset === "material_inside") insetOffsetValue = -bendRadius - thickness;
     if (this.inputParams?.inset === "material_outside") insetOffsetValue = -bendRadius;
     if (this.inputParams?.inset === "bend_outside") insetOffsetValue = 0;
 
@@ -115,6 +118,30 @@ export class SheetMetalFlangeFeature {
 
     const offsetValue = Number(this.inputParams?.offset ?? 0) + insetOffsetValue;
     const shouldExtrudeOffset = Number.isFinite(offsetValue) && offsetValue !== 0;
+
+    const appliedAngle = useOppositeCenterline ? -angle : angle;
+    const sheetMetalMetadata = {
+      featureID: this.inputParams?.featureID || null,
+      thickness,
+      bendRadius,
+      baseType: "FLANGE",
+      extra: {
+        angleDegrees: appliedAngle,
+        insetMode: this.inputParams?.inset || null,
+        useOppositeCenterline,
+        offsetValue,
+      },
+    };
+    this.persistentData = this.persistentData || {};
+    this.persistentData.sheetMetal = {
+      baseType: "FLANGE",
+      thickness,
+      bendRadius,
+      angleDegrees: appliedAngle,
+      insetMode: this.inputParams?.inset || null,
+      useOppositeCenterline,
+      offsetValue,
+    };
 
 
 
@@ -157,7 +184,7 @@ export class SheetMetalFlangeFeature {
         hingeEdge.end.clone().add(offsetVec),
         this.inputParams?.featureID,
       );
-      const revolveAngle = useOppositeCenterline ? -angle : angle;
+      const revolveAngle = appliedAngle;
       const revolve = new BREP.Revolve({
         face,
         axis: axisEdge,
@@ -231,6 +258,7 @@ export class SheetMetalFlangeFeature {
       const added = skipUnion && debugSubtractionSolids.length
         ? [...generatedSolids, ...debugSubtractionSolids]
         : generatedSolids;
+      applySheetMetalMetadata(added, partHistory?.metadataManager, sheetMetalMetadata);
       return { added, removed: subtractRemoved };
     }
 
@@ -280,6 +308,8 @@ export class SheetMetalFlangeFeature {
     if (unionResults.length) finalAdded.push(...unionResults);
     if (fallbackSolids.length) finalAdded.push(...fallbackSolids);
     if (!finalAdded.length) finalAdded.push(...generatedSolids);
+
+    applySheetMetalMetadata(finalAdded, partHistory?.metadataManager, sheetMetalMetadata);
 
     // skip removal if debugging
 
