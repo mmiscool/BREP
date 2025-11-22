@@ -6,3 +6,5 @@
 - Feature example: https://github.com/mmiscool/BREPpluginExample/blob/master/exampleFeature.js
 
 Use the plugin system to extend BREP with custom features, toolbar buttons, or automation pipelines sourced from GitHub.
+
+When adding dialogs for your feature, follow the shared `inputParamsSchema` format described in [Input Params Schema](./input-params-schema.md) to pick field types, defaults, and reference-selection rules.

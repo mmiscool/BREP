@@ -9,6 +9,8 @@
    - `docs/pmi-annotations` (PMI annotations)
    - `docs/assembly-constraints` (assembly constraints)
 
+For the schema that drives these dialogs (field types, defaults, and selection filters), see [Input Params Schema](./input-params-schema.md).
+
 ## Configuration
 
 Customize the automation with environment variables:

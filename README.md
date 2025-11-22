@@ -19,6 +19,7 @@ This project is actively evolving; expect rough edges while APIs settle.
 - [UI Overview (Browser)](docs/ui-overview.md)
 - [How It Works](docs/how-it-works.md)
 - [History Systems](docs/history-systems.md)
+- [Input Params Schema](docs/input-params-schema.md)
 - [BREP Model and Classes](docs/brep-model.md)
 - [File Formats: Import and Export](docs/file-formats.md)
 - [Plugins and Examples](docs/plugins.md)
