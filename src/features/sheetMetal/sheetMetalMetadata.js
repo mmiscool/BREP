@@ -3,6 +3,23 @@ import { deepClone } from '../../utils/deepClone.js';
 const MIN_THICKNESS = 1e-6;
 const MIN_BEND_RADIUS = 0;
 
+function isValidThickness(value) {
+  const num = Number(value);
+  return Number.isFinite(num) && Math.abs(num) > MIN_THICKNESS;
+}
+
+function isValidBendRadius(value) {
+  const num = Number(value);
+  return Number.isFinite(num) && num >= MIN_BEND_RADIUS;
+}
+
+function pickPersistentValue(existingValue, incomingValue, validator) {
+  const existing = validator(existingValue) ? Number(existingValue) : null;
+  if (existing != null) return existing;
+  const incoming = validator(incomingValue) ? Number(incomingValue) : null;
+  return incoming;
+}
+
 export function normalizeThickness(rawValue) {
   const num = Number(rawValue);
   if (!Number.isFinite(num)) {
@@ -37,31 +54,49 @@ export function applySheetMetalMetadata(
   if (!Array.isArray(solids) || !solids.length) return;
   for (const solid of solids) {
     if (!solid || typeof solid !== 'object') continue;
+    let lockedThickness = null;
+    let lockedBendRadius = null;
     try {
       solid.userData = solid.userData || {};
-      solid.userData.sheetMetal = {
-        ...(solid.userData.sheetMetal || {}),
-        baseType: baseType || solid.userData.sheetMetal?.baseType || null,
+      const existingSM = solid.userData.sheetMetal || {};
+      lockedThickness = pickPersistentValue(
+        existingSM.baseThickness ?? solid.userData.sheetThickness ?? existingSM.thickness,
         thickness,
+        isValidThickness,
+      );
+      lockedBendRadius = pickPersistentValue(
+        existingSM.baseBendRadius ?? solid.userData.sheetBendRadius ?? existingSM.bendRadius,
         bendRadius,
+        isValidBendRadius,
+      );
+
+      solid.userData.sheetMetal = {
+        ...(existingSM || {}),
+        baseType: existingSM.baseType || baseType || null,
+        thickness: lockedThickness ?? null,
+        bendRadius: lockedBendRadius ?? null,
+        baseThickness: lockedThickness ?? null,
+        baseBendRadius: lockedBendRadius ?? null,
         featureID,
         ...(extra || {}),
       };
-      if (thickness != null) solid.userData.sheetThickness = thickness;
-      if (bendRadius != null) solid.userData.sheetBendRadius = bendRadius;
+      if (lockedThickness != null) solid.userData.sheetThickness = lockedThickness;
+      if (lockedBendRadius != null) solid.userData.sheetBendRadius = lockedBendRadius;
     } catch { /* metadata best-effort */ }
 
     const metaTarget = solid.name || featureID;
     if (metaTarget && metadataManager && typeof metadataManager.setMetadata === 'function') {
       const existing = metadataManager.getOwnMetadata(metaTarget);
-      const merged = {
-        ...(existing ? deepClone(existing) : {}),
-        sheetMetalThickness: thickness,
-        sheetMetalBendRadius: bendRadius,
-        sheetMetalBaseType: baseType,
-        sheetMetalFeatureId: featureID,
-        sheetMetalExtra: extra || null,
-      };
+      const merged = existing ? deepClone(existing) : {};
+      if (!isValidThickness(merged.sheetMetalThickness) && isValidThickness(lockedThickness)) {
+        merged.sheetMetalThickness = Number(lockedThickness);
+      }
+      if (!isValidBendRadius(merged.sheetMetalBendRadius) && isValidBendRadius(lockedBendRadius)) {
+        merged.sheetMetalBendRadius = Number(lockedBendRadius);
+      }
+      if (baseType && !merged.sheetMetalBaseType) merged.sheetMetalBaseType = baseType;
+      merged.sheetMetalFeatureId = featureID ?? merged.sheetMetalFeatureId ?? null;
+      if (extra !== undefined) merged.sheetMetalExtra = extra || null;
       metadataManager.setMetadataObject(metaTarget, merged);
     }
   }

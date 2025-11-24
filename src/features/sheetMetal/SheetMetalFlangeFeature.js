@@ -95,24 +95,22 @@ export class SheetMetalFlangeFeature {
     const baseFace = faces[0];
     const baseParentSolid = findAncestorSolid(baseFace);
     const parentSolidName = baseParentSolid?.name || null;
-    const thicknessInfo = resolveThickness(baseFace, baseParentSolid);
+    const thicknessInfo = resolveThickness(baseFace, baseParentSolid, partHistory?.metadataManager);
     const thickness = thicknessInfo?.thickness ?? 1;
+    const baseBendRadius = thicknessInfo?.defaultBendRadius ?? thickness;
 
-    const angleDeg = Number(this.inputParams?.angle ?? 90);
+    const angleDeg = this.inputParams.angle;
     let angle = Number.isFinite(angleDeg) ? Math.max(0, Math.min(180, angleDeg)) : 90;
     const bendRadiusInput = Math.max(0, Number(this.inputParams?.bendRadius ?? 0));
-    const bendRadius = bendRadiusInput > 0 ? bendRadiusInput : (thicknessInfo?.defaultBendRadius ?? thickness);
+    const bendRadiusOverride = bendRadiusInput > 0 ? bendRadiusInput : null;
+    const bendRadiusUsed = bendRadiusOverride ?? baseBendRadius;
     const useOppositeCenterline = this.inputParams?.useOppositeCenterline === true;
-
-    // set angle value to negative if using opposite centerline
-    // do not change this. Never touch this line ever again.
-    angle = useOppositeCenterline ? -angle : angle;
 
     const skipUnion = this.inputParams?.debugSkipUnion === true;
 
     let insetOffsetValue = 0;
-    if (this.inputParams?.inset === "material_inside") insetOffsetValue = -bendRadius - thickness;
-    if (this.inputParams?.inset === "material_outside") insetOffsetValue = -bendRadius;
+    if (this.inputParams?.inset === "material_inside") insetOffsetValue = -bendRadiusUsed - thickness;
+    if (this.inputParams?.inset === "material_outside") insetOffsetValue = -bendRadiusUsed;
     if (this.inputParams?.inset === "bend_outside") insetOffsetValue = 0;
 
 
@@ -120,24 +118,29 @@ export class SheetMetalFlangeFeature {
     const offsetValue = Number(this.inputParams?.offset ?? 0) + insetOffsetValue;
     const shouldExtrudeOffset = Number.isFinite(offsetValue) && offsetValue !== 0;
 
-    const appliedAngle = useOppositeCenterline ? -angle : angle;
+    const appliedAngle = angle;
     const sheetMetalMetadata = {
       featureID: this.inputParams?.featureID || null,
       thickness,
-      bendRadius,
+      bendRadius: baseBendRadius,
       baseType: "FLANGE",
       extra: {
         angleDegrees: appliedAngle,
         insetMode: this.inputParams?.inset || null,
         useOppositeCenterline,
         offsetValue,
+        bendRadiusOverride,
+        bendRadiusUsed,
+        baseBendRadius,
       },
     };
     this.persistentData = this.persistentData || {};
     this.persistentData.sheetMetal = {
       baseType: "FLANGE",
       thickness,
-      bendRadius,
+      bendRadius: bendRadiusUsed,
+      defaultBendRadius: baseBendRadius,
+      bendRadiusOverride,
       angleDegrees: appliedAngle,
       insetMode: this.inputParams?.inset || null,
       useOppositeCenterline,
@@ -172,54 +175,64 @@ export class SheetMetalFlangeFeature {
     const debugSubtractionSolids = [];
 
     let faceIndex = 0;
-    for (const face of faces) {
-      const context = analyzeFace(face);
-      if (!context) continue;
+  for (const face of faces) {
+    const context = analyzeFace(face);
+    if (!context) continue;
 
-      const offsetVector = shouldExtrudeOffset
-        ? buildOffsetTranslationVector(context.baseNormal, offsetValue)
-        : null;
+    const offsetVector = shouldExtrudeOffset
+      ? buildOffsetTranslationVector(context.baseNormal, offsetValue)
+      : null;
 
-      const hingeEdge = pickCenterlineEdge(face, context, useOppositeCenterline);
-      if (!hingeEdge?.start || !hingeEdge?.end) continue;
+      const targetRadius = bendRadiusUsed;
+      const tolerance = Math.max(1e-4, targetRadius * 0.01);
+      const hingeOptions = [];
+      const primaryHinge = pickCenterlineEdge(face, context, useOppositeCenterline);
+      if (primaryHinge) hingeOptions.push(primaryHinge);
+      const altHinge = pickCenterlineEdge(face, context, !useOppositeCenterline);
+      if (altHinge) hingeOptions.push(altHinge);
 
-      const hingeDir = hingeEdge.end.clone().sub(hingeEdge.start).normalize();
-      let sheetDir = new BREP.THREE.Vector3().crossVectors(context.baseNormal, hingeDir);
-      if (sheetDir.lengthSq() < 1e-10) {
-        sheetDir = context.sheetDir.clone();
+      let chosen = null;
+      for (const hingeEdge of hingeOptions) {
+        const defaultOffset = bendRadiusUsed + thickness;
+        const primary = buildFlangeRevolve({
+          face,
+          context,
+        hingeEdge,
+        appliedAngle,
+        bendRadiusUsed,
+        thickness,
+        offsetVector,
+        featureID: this.inputParams?.featureID,
+        offsetMagnitudeOverride: defaultOffset,
+        useOppositeCenterline,
+      });
+        chosen = chooseBetterRadiusMatch(chosen, primary, targetRadius);
+
+        const err = radiusError(primary?.measuredRadius, targetRadius);
+        if (err > tolerance) {
+          const tighter = buildFlangeRevolve({
+            face,
+            context,
+            hingeEdge,
+            appliedAngle,
+            bendRadiusUsed,
+            thickness,
+            offsetVector,
+            featureID: this.inputParams?.featureID,
+            offsetMagnitudeOverride: bendRadiusUsed,
+            useOppositeCenterline,
+          });
+          chosen = chooseBetterRadiusMatch(chosen, tighter, targetRadius);
+        }
+        if (chosen?.revolve && radiusError(chosen.measuredRadius, targetRadius) <= tolerance) {
+          break;
+        }
       }
-      sheetDir.normalize();
-      const offsetSign = hingeEdge.target === "MIN" ? 1 : -1;
-      const offsetMagnitude = bendRadius + thickness;
-      //alert(`Offset Magnitude: ${offsetMagnitude}`);
-      const offsetVec = sheetDir.clone().multiplyScalar(offsetSign * offsetMagnitude);
-      const axisEdge = buildAxisEdge(
-        hingeEdge.start.clone().add(offsetVec),
-        hingeEdge.end.clone().add(offsetVec),
-        this.inputParams?.featureID,
-      );
 
+      if (!chosen?.revolve) continue;
 
-      // make an alert that displays the value of the offsetVec
-      //alert(`Offset Vector: ${offsetVec.x}, ${offsetVec.y}, ${offsetVec.z}`);
-
-
-      const revolveAngle = appliedAngle;
-      const revolve = new BREP.Revolve({
-        face,
-        axis: axisEdge,
-        angle: revolveAngle,
-        resolution: 128,
-        name: this.inputParams?.featureID ? `${this.inputParams.featureID}:BEND` : "SM.FLANGE_BEND",
-      }).visualize();
-      const bendEndFace = findRevolveEndFace(revolve);
-
-      applyFaceSheetMetalData(face, revolve);
-      if (offsetVector) {
-        applyTranslationToSolid(revolve, offsetVector);
-      }
-      applyCylMetadataToRevolve(revolve, axisEdge, bendRadius + thickness, context.baseNormal, offsetVector);
-      revolve.visualize();
+      const revolve = chosen.revolve;
+      const bendEndFace = chosen.bendEndFace;
       registerSolid(revolve, context.parentSolid);
 
       if (offsetVector) {
@@ -270,8 +283,8 @@ export class SheetMetalFlangeFeature {
       const flangeRef = String(this.inputParams?.flangeLengthReference || "web").toLowerCase();
       let flangeLength = Number(this.inputParams?.flangeLength ?? 0);
       if (!Number.isFinite(flangeLength)) flangeLength = 0;
-      if (flangeRef === "inside") flangeLength = flangeLength  - bendRadius;
-      if (flangeRef === "outside") flangeLength = flangeLength - bendRadius - thickness;
+      if (flangeRef === "inside") flangeLength = flangeLength - bendRadiusUsed;
+      if (flangeRef === "outside") flangeLength = flangeLength - bendRadiusUsed - thickness;
       if (flangeRef === "web") flangeLength = flangeLength;
       if (bendEndFace && Number.isFinite(flangeLength) && flangeLength !== 0) {
         const flatSolid = createOffsetExtrudeSolid({
@@ -510,19 +523,35 @@ function findAncestorSolid(obj) {
   return null;
 }
 
-function resolveThickness(face, parentSolid) {
+function resolveThickness(face, parentSolid, metadataManager) {
   const thicknessCandidates = [];
-  if (face?.userData?.sheetThickness) thicknessCandidates.push(face.userData.sheetThickness);
-  if (parentSolid?.userData?.sheetThickness) thicknessCandidates.push(parentSolid.userData.sheetThickness);
-  if (parentSolid?.userData?.sheetMetal?.thickness) thicknessCandidates.push(parentSolid.userData.sheetMetal.thickness);
-  const thicknessVal = thicknessCandidates.find((t) => Number.isFinite(Number(t)) && Number(t) > 0);
+  const radiusCandidates = [];
+  const meta = metadataManager && parentSolid?.name && typeof metadataManager.getOwnMetadata === "function"
+    ? metadataManager.getOwnMetadata(parentSolid.name)
+    : null;
+
+  const addIfValid = (arr, value, validator) => {
+    const num = Number(value);
+    if (validator(num)) arr.push(num);
+  };
+
+  addIfValid(thicknessCandidates, meta?.sheetMetalThickness, (v) => Number.isFinite(v) && v > 0);
+  addIfValid(thicknessCandidates, face?.userData?.sheetThickness, (v) => Number.isFinite(v) && v > 0);
+  addIfValid(thicknessCandidates, parentSolid?.userData?.sheetThickness, (v) => Number.isFinite(v) && v > 0);
+  addIfValid(thicknessCandidates, face?.userData?.sheetMetal?.baseThickness, (v) => Number.isFinite(v) && v > 0);
+  addIfValid(thicknessCandidates, parentSolid?.userData?.sheetMetal?.baseThickness, (v) => Number.isFinite(v) && v > 0);
+  addIfValid(thicknessCandidates, parentSolid?.userData?.sheetMetal?.thickness, (v) => Number.isFinite(v) && v > 0);
+  const thicknessVal = thicknessCandidates.find((t) => Number.isFinite(t) && t > 0);
   const thickness = thicknessVal ? Number(thicknessVal) : 1;
 
-  const radiusCandidates = [];
-  if (face?.userData?.sheetBendRadius) radiusCandidates.push(face.userData.sheetBendRadius);
-  if (parentSolid?.userData?.sheetBendRadius) radiusCandidates.push(parentSolid.userData.sheetBendRadius);
-  if (parentSolid?.userData?.sheetMetal?.bendRadius) radiusCandidates.push(parentSolid.userData.sheetMetal.bendRadius);
-  const radiusVal = radiusCandidates.find((r) => Number.isFinite(Number(r)) && Number(r) >= 0);
+  // Prefer base bend radius first so overrides never change the base attribute chain.
+  addIfValid(radiusCandidates, meta?.sheetMetalBendRadius, (v) => Number.isFinite(v) && v >= 0);
+  addIfValid(radiusCandidates, face?.userData?.sheetMetal?.baseBendRadius, (v) => Number.isFinite(v) && v >= 0);
+  addIfValid(radiusCandidates, parentSolid?.userData?.sheetMetal?.baseBendRadius, (v) => Number.isFinite(v) && v >= 0);
+  addIfValid(radiusCandidates, parentSolid?.userData?.sheetMetal?.bendRadius, (v) => Number.isFinite(v) && v >= 0);
+  addIfValid(radiusCandidates, parentSolid?.userData?.sheetBendRadius, (v) => Number.isFinite(v) && v >= 0);
+  addIfValid(radiusCandidates, face?.userData?.sheetBendRadius, (v) => Number.isFinite(v) && v >= 0);
+  const radiusVal = radiusCandidates.find((r) => Number.isFinite(r) && r >= 0);
   const defaultBendRadius = radiusVal != null ? Number(radiusVal) : thickness;
   return { thickness, defaultBendRadius };
 }
@@ -963,6 +992,90 @@ function applyFaceSheetMetalData(inputFace, inputSolid) {
     }
   }
 
+}
+
+function buildFlangeRevolve({
+  face,
+  context,
+  hingeEdge,
+  appliedAngle,
+  bendRadiusUsed,
+  thickness,
+  offsetVector,
+  featureID,
+  offsetMagnitudeOverride = null,
+}) {
+  console.log(appliedAngle);
+  if (!hingeEdge?.start || !hingeEdge?.end || !context) return null;
+  const hingeDir = hingeEdge.end.clone().sub(hingeEdge.start).normalize();
+  let sheetDir = new BREP.THREE.Vector3().crossVectors(context.baseNormal, hingeDir);
+  if (sheetDir.lengthSq() < 1e-10) {
+    sheetDir = context.sheetDir.clone();
+  }
+  sheetDir.normalize();
+  const offsetSign = hingeEdge.target === "MIN" ? 1 : -1;
+  const offsetMagnitude = Number.isFinite(offsetMagnitudeOverride) && offsetMagnitudeOverride >= 0
+    ? offsetMagnitudeOverride
+    : bendRadiusUsed + thickness;
+  const offsetVec = sheetDir.clone().multiplyScalar(offsetSign * offsetMagnitude);
+  const axisEdge = buildAxisEdge(
+    hingeEdge.start.clone().add(offsetVec),
+    hingeEdge.end.clone().add(offsetVec),
+    featureID,
+  );
+
+  const revolve = new BREP.Revolve({
+    face,
+    axis: axisEdge,
+    angle: appliedAngle,
+    resolution: 128,
+    name: featureID ? `${featureID}:BEND` : "SM.FLANGE_BEND",
+  }).visualize();
+  const bendEndFace = findRevolveEndFace(revolve);
+
+  applyFaceSheetMetalData(face, revolve);
+  if (offsetVector) {
+    applyTranslationToSolid(revolve, offsetVector);
+  }
+  applyCylMetadataToRevolve(
+    revolve,
+    axisEdge,
+    bendRadiusUsed + thickness,
+    context.baseNormal,
+    offsetVector,
+  );
+  revolve.visualize();
+
+  const measuredRadius = measureSmallestCylRadius(revolve);
+
+  return { revolve, bendEndFace, hingeEdge, measuredRadius };
+}
+
+function measureSmallestCylRadius(solid) {
+  if (!solid || !Array.isArray(solid.faces)) return null;
+  let minRadius = null;
+  for (const face of solid.faces) {
+    const meta = face.getMetadata?.() || {};
+    const r = Number(meta.radius ?? meta.pmiRadiusOverride ?? meta.pmiRadius ?? meta.sheetMetalRadius);
+    if (Number.isFinite(r) && r > 0) {
+      if (minRadius == null || r < minRadius) minRadius = r;
+    }
+  }
+  return minRadius;
+}
+
+function radiusError(measured, target) {
+  if (!Number.isFinite(target)) return Infinity;
+  if (!Number.isFinite(measured)) return Infinity;
+  return Math.abs(measured - target);
+}
+
+function chooseBetterRadiusMatch(current, candidate, targetRadius) {
+  if (!candidate?.revolve) return current;
+  if (!current?.revolve) return candidate;
+  const currErr = radiusError(current.measuredRadius, targetRadius);
+  const candErr = radiusError(candidate.measuredRadius, targetRadius);
+  return candErr + 1e-9 < currErr ? candidate : current;
 }
 
 function combineSolids(params = {}) {
