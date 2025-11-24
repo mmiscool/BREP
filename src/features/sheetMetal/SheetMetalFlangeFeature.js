@@ -94,6 +94,7 @@ export class SheetMetalFlangeFeature {
     // Assume all selected faces share the same sheet thickness; resolve it once up front.
     const baseFace = faces[0];
     const baseParentSolid = findAncestorSolid(baseFace);
+    const parentSolidName = baseParentSolid?.name || null;
     const thicknessInfo = resolveThickness(baseFace, baseParentSolid);
     const thickness = thicknessInfo?.thickness ?? 1;
 
@@ -150,12 +151,19 @@ export class SheetMetalFlangeFeature {
     const generatedSolids = [];
     const parentSolidStates = new Map();
     const orphanSolids = [];
+    const solidParentNames = new WeakMap();
+    const recordParentName = (solid, parentSolid) => {
+      try {
+        if (solid && parentSolid?.name) solidParentNames.set(solid, parentSolid.name);
+      } catch { /* ignore */ }
+    };
     const registerSolid = (solid, parentSolid) => {
       if (!solid) return;
       generatedSolids.push(solid);
       if (parentSolid) {
         const state = getParentState(parentSolidStates, parentSolid);
         if (state) state.solids.push(solid);
+        recordParentName(solid, parentSolid);
       } else {
         orphanSolids.push(solid);
       }
@@ -312,6 +320,7 @@ export class SheetMetalFlangeFeature {
           featureID: this.inputParams?.featureID,
           groupIndex: groupIndex++,
         });
+      recordParentName(baseSolid, parentSolid);
       if (!baseSolid) {
         fallbackSolids.push(...solids);
         continue;
@@ -325,7 +334,13 @@ export class SheetMetalFlangeFeature {
           { operation: "UNION", targets: [parentSolid] },
           this.inputParams?.featureID,
         );
-        if (Array.isArray(effects?.added)) unionResults.push(...effects.added);
+        if (Array.isArray(effects?.added)) {
+          for (const addedSolid of effects.added) {
+            if (parentSolid?.name) setSolidNameSafe(addedSolid, parentSolid.name);
+            recordParentName(addedSolid, parentSolid);
+          }
+          unionResults.push(...effects.added);
+        }
         if (Array.isArray(effects?.removed)) unionRemoved.push(...effects.removed);
         unionSucceeded = Array.isArray(effects?.removed)
           && effects.removed.some((solid) => solidsMatch(solid, parentSolid));
@@ -343,7 +358,26 @@ export class SheetMetalFlangeFeature {
     if (fallbackSolids.length) finalAdded.push(...fallbackSolids);
     if (!finalAdded.length) finalAdded.push(...generatedSolids);
 
+    // Preserve parent solid names on outputs derived from that parent.
+    for (const state of parentSolidStates.values()) {
+      const parentName = state?.original?.name;
+      if (!parentName || !Array.isArray(state?.solids)) continue;
+      const known = new Set(state.solids);
+      for (const solid of finalAdded) {
+        if (known.has(solid)) setSolidNameSafe(solid, parentName);
+      }
+    }
+    for (const solid of finalAdded) {
+      const name = solidParentNames.get(solid);
+      if (name) setSolidNameSafe(solid, name);
+    }
+
     applySheetMetalMetadata(finalAdded, partHistory?.metadataManager, sheetMetalMetadata);
+
+    // Ensure final solids keep the original parent solid name (never the flange feature ID).
+    for (const solid of finalAdded) {
+      if (parentSolidName) setSolidNameSafe(solid, parentSolidName);
+    }
 
     // skip removal if debugging
 
@@ -869,6 +903,14 @@ function applyCylMetadataToRevolve(revolve, axisEdge, radiusValue, baseNormal, o
       });
     }
   } catch { /* ignore cyl metadata errors */ }
+}
+
+function setSolidNameSafe(solid, name) {
+  try {
+    if (solid && name && typeof name === "string" && name.length) {
+      solid.name = name;
+    }
+  } catch { /* ignore naming errors */ }
 }
 
 function resolveDirectionVector(vec) {

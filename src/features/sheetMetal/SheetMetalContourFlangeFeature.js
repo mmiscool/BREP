@@ -99,7 +99,7 @@ export class SheetMetalContourFlangeFeature {
 
     const planeBasis = computePlaneBasis(rawPath, basisHint);
     const filletResult = bendRadius > 0
-      ? filletPolyline(rawPath, bendRadius, planeBasis, pathSegmentNames)
+      ? filletPolyline(rawPath, bendRadius, planeBasis, pathSegmentNames, sheetSide, thicknessAbs)
       : { points: rawPath.map((pt) => pt.clone()), points2D: null, tangents2D: null, segmentNames: pathSegmentNames.slice(), arcs: [] };
     const filletedPath = filletResult.points;
     const filletedPath2D = Array.isArray(filletResult.points2D) ? filletResult.points2D : null;
@@ -140,7 +140,16 @@ export class SheetMetalContourFlangeFeature {
       tagContourFlangeFaceTypes(sweep);
       // Add cylinder metadata and centerlines for bend arcs (if any).
       const axisDir = extrudeVector.clone().normalize();
-      addCylMetadataToSideFaces(sweep, filletedArcs, converters, extrudeVector, axisDir);
+      addCylMetadataToSideFaces(
+        sweep,
+        filletedArcs,
+        converters,
+        extrudeVector,
+        axisDir,
+        thicknessAbs,
+        bendRadius,
+        sheetSide,
+      );
       return sweep;
     });
     if (!sweeps.length) {
@@ -153,6 +162,10 @@ export class SheetMetalContourFlangeFeature {
       } catch {
         combinedSweep = sweeps[i];
       }
+    }
+
+    if (this.inputParams?.featureID && combinedSweep) {
+      try { combinedSweep.name = this.inputParams.featureID; } catch { /* best effort */ }
     }
 
     const effects = await BREP.applyBooleanOperation(
@@ -569,7 +582,7 @@ function computePlaneBasis(points, hintBasis = null) {
   return { origin, planeNormal, xAxis: xAxisCorrected, yAxis };
 }
 
-function filletPolyline(points, radius, basis, segmentNames = []) {
+function filletPolyline(points, radius, basis, segmentNames = [], sheetSide = "left", thickness = 0) {
   if (!Array.isArray(points) || points.length < 2) {
     return {
       points: Array.isArray(points) ? points.map((pt) => pt.clone()) : [],
@@ -665,15 +678,20 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
     const normalNext = insideSign > 0
       ? { x: -dirNext.y, y: dirNext.x }
       : { x: dirNext.y, y: -dirNext.x };
-
+    
+    // The center offset depends on sheet side to maintain constant inside/outside radii
+    // sheetSide "right" (checked): sheet on right side of path, center at radius from path
+    // sheetSide "left" (unchecked): sheet on left side of path, center at radius + thickness from path
+    const centerOffset = sheetSide === "right" ? radius : radius + thickness;
+    
     const centerPrev = {
-      u: start.u + normalPrev.x * radius,
-      v: start.v + normalPrev.y * radius,
+      u: start.u + normalPrev.x * centerOffset,
+      v: start.v + normalPrev.y * centerOffset,
       w: curr.w,
     };
     const centerNext = {
-      u: end.u + normalNext.x * radius,
-      v: end.v + normalNext.y * radius,
+      u: end.u + normalNext.x * centerOffset,
+      v: end.v + normalNext.y * centerOffset,
       w: curr.w,
     };
     const center = {
@@ -682,26 +700,64 @@ function filletPolyline(points, radius, basis, segmentNames = []) {
       w: curr.w,
     };
 
-    const startAng = Math.atan2(start.v - center.v, start.u - center.u);
-    const endAng = Math.atan2(end.v - center.v, end.u - center.u);
+    // Path follows the bend at radius distance from the shifted center
+    const pathRadius = radius;
+
+    // Calculate new tangent points: project center onto each line to find where
+    // a circle of pathRadius from center touches the incoming/outgoing segments
+    const centerRelToCurr = { u: center.u - curr.u, v: center.v - curr.v };
+    
+    // For incoming segment: project center displacement onto line direction
+    const projPrev = centerRelToCurr.u * dirPrev.x + centerRelToCurr.v * dirPrev.y;
+    const perpDistPrevSq = centerRelToCurr.u * centerRelToCurr.u + centerRelToCurr.v * centerRelToCurr.v - projPrev * projPrev;
+    const tangentDistPrev = -projPrev + Math.sqrt(Math.max(0, pathRadius * pathRadius - perpDistPrevSq));
+    
+    // For outgoing segment
+    const projNext = centerRelToCurr.u * dirNext.x + centerRelToCurr.v * dirNext.y;
+    const perpDistNextSq = centerRelToCurr.u * centerRelToCurr.u + centerRelToCurr.v * centerRelToCurr.v - projNext * projNext;
+    const tangentDistNext = projNext + Math.sqrt(Math.max(0, pathRadius * pathRadius - perpDistNextSq));
+    
+    // Clamp to segment lengths
+    const clampedOffsetPrev = Math.min(tangentDistPrev, lenPrev * 0.9);
+    const clampedOffsetNext = Math.min(tangentDistNext, lenNext * 0.9);
+    
+    const arcStart = {
+      u: curr.u - dirPrev.x * clampedOffsetPrev,
+      v: curr.v - dirPrev.y * clampedOffsetPrev,
+      w: curr.w,
+    };
+    
+    const arcEnd = {
+      u: curr.u + dirNext.x * clampedOffsetNext,
+      v: curr.v + dirNext.y * clampedOffsetNext,
+      w: curr.w,
+    };
+
+    // Calculate the actual radius from center to the tangent points
+    const actualRadiusStart = Math.hypot(arcStart.u - center.u, arcStart.v - center.v);
+    const actualRadiusEnd = Math.hypot(arcEnd.u - center.u, arcEnd.v - center.v);
+    const actualArcRadius = (actualRadiusStart + actualRadiusEnd) * 0.5;
+    
+    const startAng = Math.atan2(arcStart.v - center.v, arcStart.u - center.u);
+    const endAng = Math.atan2(arcEnd.v - center.v, arcEnd.u - center.u);
     const sweepDir = insideSign > 0 ? 1 : -1;
     let delta = endAng - startAng;
     if (sweepDir > 0 && delta <= 0) delta += Math.PI * 2;
     if (sweepDir < 0 && delta >= 0) delta -= Math.PI * 2;
     const steps = Math.max(1, Math.ceil(Math.abs(delta) / (Math.PI / 18)));
 
-    segmentEnd[i - 1] = start;
-    segmentStart[i] = end;
-    const arcPts = [start];
+    segmentEnd[i - 1] = arcStart;
+    segmentStart[i] = arcEnd;
+    const arcPts = [arcStart];
     for (let step = 1; step < steps; step++) {
       const ang = startAng + sweepDir * (Math.abs(delta) * (step / steps));
       arcPts.push({
-        u: center.u + Math.cos(ang) * radius,
-        v: center.v + Math.sin(ang) * radius,
+        u: center.u + Math.cos(ang) * actualArcRadius,
+        v: center.v + Math.sin(ang) * actualArcRadius,
         w: curr.w,
       });
     }
-    arcPts.push(end);
+    arcPts.push(arcEnd);
     arcSamples[i] = arcPts;
     arcNames[i] = buildFilletEdgeName(baseNames[i - 1], baseNames[i]);
     arcInfo.push({
@@ -832,7 +888,7 @@ function buildContourFlangeStripFaces({
   }
 
   const converters = createPlaneBasisConverters(planeBasis);
-  const path2D = Array.isArray(path2DOverride) && path2DOverride.length === pathPoints.length
+  let path2D = Array.isArray(path2DOverride) && path2DOverride.length === pathPoints.length
     ? path2DOverride.map((coord) => ({ u: coord.u, v: coord.v, w: coord.w }))
     : pathPoints.map((pt) => converters.to2D(pt));
   const tangentHints = Array.isArray(pathTangents2D) && pathTangents2D.length === path2D.length
@@ -847,11 +903,10 @@ function buildContourFlangeStripFaces({
     })
     : null;
   const pathNames = normalizeSegmentNameCount(pathSegmentNames, path2D.length - 1);
-  const offset2D = offsetPolyline2D(path2D, thickness, sheetSide, tangentHints);
+  let offset2D = offsetPolyline2D(path2D, thickness, sheetSide, tangentHints);
   if (!offset2D || offset2D.length !== path2D.length) {
     throw new Error("Contour flange failed to compute the offset path.");
   }
-
   const areaTolerance = Math.max(thickness * thickness * 1e-6, 1e-9);
   const pathGroups = groupSegmentsByName(pathNames);
   if (!pathGroups.length && path2D.length >= 2) {
@@ -1070,6 +1125,8 @@ function createPlaneBasisConverters(basis) {
       ? new THREE.Vector3().fromArray(basis.planeNormal)
       : new THREE.Vector3(0, 0, 1);
   return {
+    origin,
+    planeNormal,
     to2D(vec) {
       const rel = vec.clone().sub(origin);
       return {
@@ -1293,7 +1350,16 @@ function tagContourFlangeFaceTypes(sweep) {
   setSheetMetalFaceTypeMetadata(sweep, thicknessFaces, SHEET_METAL_FACE_TYPES.THICKNESS);
 }
 
-function addCylMetadataToSideFaces(sweep, arcs, converters, extrudeVector, axisDir) {
+function addCylMetadataToSideFaces(
+  sweep,
+  arcs,
+  converters,
+  extrudeVector,
+  axisDir,
+  thickness = 0,
+  bendRadius = null,
+  sheetSide = "left",
+) {
   if (!sweep || !Array.isArray(sweep.faces)) return;
   const arcList = Array.isArray(arcs) ? arcs.filter((a) => a && a.center && Number.isFinite(a.radius)) : [];
   if (!arcList.length) return;
@@ -1367,12 +1433,15 @@ function addCylMetadataToSideFaces(sweep, arcs, converters, extrudeVector, axisD
       if (best) {
         const arc = best.arc;
         const axisN = best.axisN || arc.axisEnd.clone().sub(arc.axisStart).normalize();
+        const snappedR = best.radius;
+        const adjustedCenter = best.center.clone();
         sweep.setFaceMetadata(face.name, {
           type: "cylindrical",
-          radius: best.radius,
+          radius: snappedR, // enforce stable bend radius independent of sheet side
           height: best.height || height,
           axis: [axisN.x, axisN.y, axisN.z],
-          center: [best.center.x, best.center.y, best.center.z],
+          center: [adjustedCenter.x, adjustedCenter.y, adjustedCenter.z],
+          pmiRadiusOverride: snappedR,
         });
       }
     } catch { /* ignore */ }
