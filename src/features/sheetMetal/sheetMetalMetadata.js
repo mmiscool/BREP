@@ -49,11 +49,20 @@ export function normalizeBendRadius(rawValue, fallback = 0.5) {
 export function applySheetMetalMetadata(
   solids,
   metadataManager,
-  { featureID = null, thickness = null, bendRadius = null, baseType = null, extra = null } = {},
+  {
+    featureID = null,
+    thickness = null,
+    bendRadius = null,
+    baseType = null,
+    extra = null,
+    forceBaseOverwrite = false,
+  } = {},
 ) {
   if (!Array.isArray(solids) || !solids.length) return;
   for (const solid of solids) {
     if (!solid || typeof solid !== 'object') continue;
+    const incomingThickness = isValidThickness(thickness) ? Number(thickness) : null;
+    const incomingBendRadius = isValidBendRadius(bendRadius) ? Number(bendRadius) : null;
     let lockedThickness = null;
     let lockedBendRadius = null;
     try {
@@ -69,10 +78,12 @@ export function applySheetMetalMetadata(
         bendRadius,
         isValidBendRadius,
       );
+      if (forceBaseOverwrite && incomingThickness != null) lockedThickness = incomingThickness;
+      if (forceBaseOverwrite && incomingBendRadius != null) lockedBendRadius = incomingBendRadius;
 
       solid.userData.sheetMetal = {
         ...(existingSM || {}),
-        baseType: existingSM.baseType || baseType || null,
+        baseType: baseType || existingSM.baseType || null,
         thickness: lockedThickness ?? null,
         bendRadius: lockedBendRadius ?? null,
         baseThickness: lockedThickness ?? null,
@@ -88,13 +99,19 @@ export function applySheetMetalMetadata(
     if (metaTarget && metadataManager && typeof metadataManager.setMetadata === 'function') {
       const existing = metadataManager.getOwnMetadata(metaTarget);
       const merged = existing ? deepClone(existing) : {};
-      if (!isValidThickness(merged.sheetMetalThickness) && isValidThickness(lockedThickness)) {
-        merged.sheetMetalThickness = Number(lockedThickness);
+      if (
+        (forceBaseOverwrite && incomingThickness != null)
+        || (!isValidThickness(merged.sheetMetalThickness) && isValidThickness(lockedThickness))
+      ) {
+        merged.sheetMetalThickness = incomingThickness != null ? incomingThickness : Number(lockedThickness);
       }
-      if (!isValidBendRadius(merged.sheetMetalBendRadius) && isValidBendRadius(lockedBendRadius)) {
-        merged.sheetMetalBendRadius = Number(lockedBendRadius);
+      if (
+        (forceBaseOverwrite && incomingBendRadius != null)
+        || (!isValidBendRadius(merged.sheetMetalBendRadius) && isValidBendRadius(lockedBendRadius))
+      ) {
+        merged.sheetMetalBendRadius = incomingBendRadius != null ? incomingBendRadius : Number(lockedBendRadius);
       }
-      if (baseType && !merged.sheetMetalBaseType) merged.sheetMetalBaseType = baseType;
+      if (baseType && (forceBaseOverwrite || !merged.sheetMetalBaseType)) merged.sheetMetalBaseType = baseType;
       merged.sheetMetalFeatureId = featureID ?? merged.sheetMetalFeatureId ?? null;
       if (extra !== undefined) merged.sheetMetalExtra = extra || null;
       metadataManager.setMetadataObject(metaTarget, merged);

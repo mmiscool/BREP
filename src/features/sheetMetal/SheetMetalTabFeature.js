@@ -94,6 +94,7 @@ export class SheetMetalTabFeature {
       bendRadius,
       baseType: "TAB",
       extra: { placementMode: placement, signedThickness },
+      forceBaseOverwrite: true,
     });
 
     this.persistentData = this.persistentData || {};

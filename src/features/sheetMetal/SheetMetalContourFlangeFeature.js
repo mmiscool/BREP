@@ -40,7 +40,7 @@ const inputParamsSchema = {
   },
   bendRadius: {
     type: "number",
-    default_value: 1,
+    default_value: 2,
     min: 0,
     hint: "Default inside bend radius inserted wherever two lines meet.",
   },
@@ -182,13 +182,7 @@ export class SheetMetalContourFlangeFeature {
       ...(effects?.removed || []),
     ];
     const added = effects?.added || [];
-    try {
-      for (const obj of removed) {
-        if (obj) obj.__removeFlag = true;
-      }
-    } catch { /* best effort */ }
-
-    applySheetMetalMetadata(added, partHistory?.metadataManager, {
+    const sheetMetalMetadata = {
       featureID: this.inputParams?.featureID || null,
       thickness: thicknessAbs,
       bendRadius,
@@ -201,6 +195,21 @@ export class SheetMetalContourFlangeFeature {
         distance,
         pathPointCount: filletedPath.length,
       },
+    };
+    try {
+      for (const obj of removed) {
+        if (obj) obj.__removeFlag = true;
+      }
+    } catch { /* best effort */ }
+
+    const sheetMetalTargets = Array.isArray(added) ? added.slice() : [];
+    if (combinedSweep && !sheetMetalTargets.includes(combinedSweep)) {
+      sheetMetalTargets.push(combinedSweep);
+    }
+
+    applySheetMetalMetadata(sheetMetalTargets, partHistory?.metadataManager, {
+      ...sheetMetalMetadata,
+      forceBaseOverwrite: true,
     });
 
     this.persistentData = this.persistentData || {};
