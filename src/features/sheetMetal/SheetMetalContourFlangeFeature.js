@@ -672,6 +672,12 @@ function filletPolyline(points, radius, basis, segmentNames = [], sheetSide = "l
       w: curr.w,
     };
     const insideSign = Math.sign(turn) || 1;
+    // Determine which side is "inside" the bend (where the sheet material is)
+    // For sheet metal: the bend creates two arcs
+    // - Inner arc (smaller radius) = bendRadius
+    // - Outer arc (larger radius) = bendRadius + thickness
+    
+    // The "inside" of the bend is determined by the turn direction
     const normalPrev = insideSign > 0
       ? { x: -dirPrev.y, y: dirPrev.x }
       : { x: dirPrev.y, y: -dirPrev.x };
@@ -679,29 +685,36 @@ function filletPolyline(points, radius, basis, segmentNames = [], sheetSide = "l
       ? { x: -dirNext.y, y: dirNext.x }
       : { x: dirNext.y, y: -dirNext.x };
     
-    // The center offset depends on sheet side to maintain constant inside/outside radii
-    // sheetSide "right" (checked): sheet on right side of path, center at radius from path
-    // sheetSide "left" (unchecked): sheet on left side of path, center at radius + thickness from path
-    const centerOffset = sheetSide === "right" ? radius : radius + thickness;
+    // Calculate the bisector direction (average of the two normals)
+    const bisectorX = normalPrev.x + normalNext.x;
+    const bisectorY = normalPrev.y + normalNext.y;
+    const bisectorLen = Math.hypot(bisectorX, bisectorY);
     
-    const centerPrev = {
-      u: start.u + normalPrev.x * centerOffset,
-      v: start.v + normalPrev.y * centerOffset,
-      w: curr.w,
-    };
-    const centerNext = {
-      u: end.u + normalNext.x * centerOffset,
-      v: end.v + normalNext.y * centerOffset,
-      w: curr.w,
-    };
+    if (bisectorLen < 1e-10) continue; // Skip if normals cancel out (180° turn)
+    
+    const bisectorNormX = bisectorX / bisectorLen;
+    const bisectorNormY = bisectorY / bisectorLen;
+    
+    // For sheet metal bends, we need to consider which side the sheet is on
+    // sheetSide "left" means sheet material is on the left looking along the path
+    // sheetSide "right" means sheet material is on the right
+    
+    // Determine if the bend is on the same side as the sheet
+    const bendOnSheetSide = (sheetSide === "left" && insideSign > 0) || (sheetSide === "right" && insideSign < 0);
+    
+    // If bend is on sheet side: path follows outer radius (bendRadius + thickness)
+    // If bend is away from sheet: path follows inner radius (bendRadius)
+    const pathRadius = bendOnSheetSide ? radius + thickness : radius;
+    
+    // The distance from vertex to center along bisector: radius / sin(angle/2)
+    const halfAngleSin = Math.sin(angle / 2);
+    const centerDist = halfAngleSin > 1e-10 ? pathRadius / halfAngleSin : pathRadius;
+    
     const center = {
-      u: 0.5 * (centerPrev.u + centerNext.u),
-      v: 0.5 * (centerPrev.v + centerNext.v),
+      u: curr.u + bisectorNormX * centerDist,
+      v: curr.v + bisectorNormY * centerDist,
       w: curr.w,
     };
-
-    // Path follows the bend at radius distance from the shifted center
-    const pathRadius = radius;
 
     // Calculate new tangent points: project center onto each line to find where
     // a circle of pathRadius from center touches the incoming/outgoing segments
