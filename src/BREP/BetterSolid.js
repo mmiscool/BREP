@@ -319,8 +319,7 @@ export class Solid extends THREE.Group {
     }
 
     fillet(options = {}) {
-        return 
-        SolidMethods.fillet.apply(this, [options]);
+        return SolidMethods.fillet.apply(this, [options]);
     }
 
 

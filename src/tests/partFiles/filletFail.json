@@ -1,0 +1,59 @@
+{
+  "features": [
+    {
+      "type": "P.CU",
+      "inputParams": {
+        "sizeX": 10,
+        "sizeY": 10,
+        "sizeZ": 10,
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotationEuler": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "boolean": {
+          "targets": [],
+          "operation": "NONE"
+        },
+        "id": "P.CU1"
+      },
+      "persistentData": {},
+      "timestamp": 1764217516156
+    },
+    {
+      "type": "F",
+      "inputParams": {
+        "edges": [
+          "P.CU1_PY|P.CU1_PZ[0]"
+        ],
+        "radius": "2",
+        "inflate": 0,
+        "direction": "INSET",
+        "snapSeam": false,
+        "debug": true,
+        "__open": false,
+        "id": "F4"
+      },
+      "persistentData": {},
+      "timestamp": 1764217579380
+    }
+  ],
+  "idCounter": 4,
+  "expressions": "//Examples:\nx = 10 + 6; \ny = x * 2;",
+  "pmiViews": [],
+  "metadata": {},
+  "assemblyConstraints": [],
+  "assemblyConstraintIdCounter": 0
+}

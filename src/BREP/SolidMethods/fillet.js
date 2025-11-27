@@ -29,6 +29,17 @@ export async function fillet(opts = {}) {
   const debug = !!opts.debug;
   const snapSeam = (opts.snapSeam === undefined) ? true : !!opts.snapSeam;
   const featureID = opts.featureID || 'FILLET';
+  console.log('[Solid.fillet] Begin', {
+    featureID,
+    solid: this?.name,
+    radius,
+    direction: dir,
+    inflate,
+    debug,
+    snapSeam,
+    requestedEdgeNames: Array.isArray(opts.edgeNames) ? opts.edgeNames : [],
+    providedEdgeCount: Array.isArray(opts.edges) ? opts.edges.length : 0,
+  });
 
   // Resolve edges from names and/or provided objects
   const edgeObjs = [];
@@ -50,6 +61,7 @@ export async function fillet(opts = {}) {
   const seen = new Set();
   for (const e of edgeObjs) { if (e && !seen.has(e)) { seen.add(e); unique.push(e); } }
   if (unique.length === 0) {
+    console.warn('[Solid.fillet] No edges resolved on target solid; returning clone.', { featureID, solid: this?.name });
     // Nothing to do — return an unchanged clone so caller can replace scene node safely
     const c = this.clone();
     try { c.name = this.name; } catch { }
@@ -74,8 +86,16 @@ export async function fillet(opts = {}) {
         console.warn(`Fillet failed for edge ${e?.name || idx}: ${res.error}`);
       }
     }
-    
-    if (!res.finalSolid) continue;
+    if (!res.finalSolid) {
+      console.warn('[Solid.fillet] Fillet builder returned no finalSolid.', {
+        featureID,
+        edge: e?.name,
+        error: res.error,
+        hasTube: !!res.tube,
+        hasWedge: !!res.wedge,
+      });
+      continue;
+    }
     
     const tangents = [];
     // Use actual tangent polylines returned from builder for accurate snapping and overlays
@@ -92,15 +112,25 @@ export async function fillet(opts = {}) {
     }
   }
   if (filletEntries.length === 0) {
+    console.error('[Solid.fillet] All edge fillets failed; returning clone.', { featureID, edgeCount: unique.length });
     const c = this.clone();
     try { c.name = this.name; } catch { }
     return c;
   }
+  console.log('[Solid.fillet] Built fillet solids for edges', filletEntries.length);
 
   // Apply to base solid (union for OUTSET, subtract for INSET)
   let result = this;
   for (const { filletSolid } of filletEntries) {
+    const beforeTri = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
     result = (dir === 'OUTSET') ? result.union(filletSolid) : result.subtract(filletSolid);
+    const afterTri = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
+    console.log('[Solid.fillet] Applied fillet boolean', {
+      featureID,
+      operation: (dir === 'OUTSET') ? 'union' : 'subtract',
+      beforeTriangles: beforeTri,
+      afterTriangles: afterTri,
+    });
     // Name the result for scene grouping/debugging
     try { result.name = this.name; } catch { }
   }
@@ -139,6 +169,20 @@ export async function fillet(opts = {}) {
   // await result._manifoldize();
   // await result.visualize();
 
+  const finalTriCount = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
+  const finalVertCount = Array.isArray(result?._vertProperties) ? (result._vertProperties.length / 3) : 0;
+  if (!result || finalTriCount === 0 || finalVertCount === 0) {
+    console.error('[Solid.fillet] Fillet result is empty or missing geometry.', {
+      featureID,
+      finalTriCount,
+      finalVertCount,
+      edgeCount: unique.length,
+      direction: dir,
+      inflate,
+    });
+  } else {
+    console.log('[Solid.fillet] Completed', { featureID, triangles: finalTriCount, vertices: finalVertCount });
+  }
 
   return result;
 }

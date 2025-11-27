@@ -415,7 +415,6 @@ function reorderPolyLine(pointsArray) {
 // Falls back to direction/cross heuristics when radius is unavailable.
 function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = null) {
     try {
-        console.log('Analyzing polyline winding directions...');
         // Fast-path: if any array is too small or lengths differ, do nothing
         if (!Array.isArray(centerline) || !Array.isArray(tangentA) || !Array.isArray(tangentB)) {
             return { centerlineReversed: false, tangentAReversed: false, tangentBReversed: false };
@@ -604,17 +603,6 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
         const avgAToB = validAToB.length > 0 ?
             validAToB.reduce((a, b) => a + Math.sign(b), 0) / validAToB.length : 0;
 
-        console.log(`Winding analysis:
-            Center→TangentA avg: ${avgCenterToA.toFixed(3)}
-            Center→TangentB avg: ${avgCenterToB.toFixed(3)}
-            TangentA→TangentB avg: ${avgAToB.toFixed(3)}`);
-
-        // Decision logic for which polylines to reverse (augmenting primary heuristic)
-        console.log('Winding analysis results:');
-        console.log(`  Center→A: ${avgCenterToA.toFixed(3)}`);
-        console.log(`  Center→B: ${avgCenterToB.toFixed(3)}`);
-        console.log(`  A→B: ${avgAToB.toFixed(3)}`);
-
         // For a proper fillet, we expect:
         // 1. Centerline and tangents should have consistent progression direction
         // 2. Tangent A and B should generally go in opposite directions relative to each other
@@ -625,33 +613,26 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
         const tangentsGoOppositeDirection = avgAToB < -0.5; // Strong negative correlation means opposite directions
 
         if (centerRelationshipInconsistent && !(centerlineReversed || tangentAReversed || tangentBReversed)) {
-            console.log('Detected inconsistent centerline-to-tangent relationships');
-
             // If centerline relationships are inconsistent AND tangents go in same direction,
             // this suggests the centerline itself might need reversal
             if (tangentsGoSameDirection) {
-                console.log('Tangents go in same direction with inconsistent center relationships - reversing centerline');
                 centerlineReversed = true;
             } else {
                 // Heuristic: reverse the tangent with stronger inconsistency
                 if (Math.abs(avgCenterToB) > Math.abs(avgCenterToA)) {
                     tangentBReversed = true;
-                    console.log('Reversing tangent B based on center relationship analysis');
                 } else {
                     tangentAReversed = true;
-                    console.log('Reversing tangent A based on center relationship analysis');
                 }
             }
         } else if (tangentsGoSameDirection && !(centerlineReversed || tangentAReversed || tangentBReversed)) {
             // Even if center relationships are consistent, if tangents go in same direction,
             // we likely need to reverse one tangent
-            console.log('Tangents go in same direction - reversing tangent B to create opposing flow');
             tangentBReversed = true;
         }
 
         // Additional check: if all relationships are weak, there might be a fundamental issue
         if (Math.abs(avgCenterToA) < 0.2 && Math.abs(avgCenterToB) < 0.2 && Math.abs(avgAToB) < 0.2) {
-            console.log('All winding relationships are weak - polylines may be nearly perpendicular or have issues');
         }
 
         return {
@@ -705,10 +686,11 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         }
 
         const side = String(sideMode).toUpperCase();
-        console.log(`🔧 Starting fillet operation: edge=${edgeToFillet?.name || 'unnamed'}, radius=${radius}, side=${side}`);
+        const logDebug = (...args) => { if (debug) console.log(...args); };
+        logDebug(`🔧 Starting fillet operation: edge=${edgeToFillet?.name || 'unnamed'}, radius=${radius}, side=${side}`);
 
         const res = computeFilletCenterline(edgeToFillet, radius, side);
-        console.log('The fillet centerline result is:', res);
+        logDebug('The fillet centerline result is:', res);
 
         if (!res) {
             throw new Error('computeFilletCenterline returned null/undefined');
@@ -721,7 +703,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         const closedLoop = !!res?.closedLoop;
 
         if (debug) {
-            try { console.log('filletSolid: centerline/tangent edges computed'); } catch { }
+            try { logDebug('filletSolid: centerline/tangent edges computed'); } catch { }
         }
 
         // Clone into plain objects
@@ -763,12 +745,12 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             }
         }
 
-        console.log('Checking all polyline winding orders...');
+        logDebug('Checking all polyline winding orders...');
         if (centerlineCopy.length >= 2) {
             const c1 = centerlineCopy[0];
             const c2 = centerlineCopy[1];
             const cLast = centerlineCopy[centerlineCopy.length - 1];
-            console.log(`Centerline: start=(${c1.x.toFixed(3)}, ${c1.y.toFixed(3)}, ${c1.z.toFixed(3)}) → (${c2.x.toFixed(3)}, ${c2.y.toFixed(3)}, ${c2.z.toFixed(3)}) ... end=(${cLast.x.toFixed(3)}, ${cLast.y.toFixed(3)}, ${cLast.z.toFixed(3)})`);
+            logDebug(`Centerline: start=(${c1.x.toFixed(3)}, ${c1.y.toFixed(3)}, ${c1.z.toFixed(3)}) → (${c2.x.toFixed(3)}, ${c2.y.toFixed(3)}, ${c2.z.toFixed(3)}) ... end=(${cLast.x.toFixed(3)}, ${cLast.y.toFixed(3)}, ${cLast.z.toFixed(3)})`);
         }
 
         // Validate polyline data integrity before processing
@@ -800,7 +782,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                             }
                         }
                     }
-                    console.log(`Applied wedge inset of ${Math.abs(wedgeInsetDistance)} units to edge points only`);
+                    logDebug(`Applied wedge inset of ${Math.abs(wedgeInsetDistance)} units to edge points only`);
 
                     // Make edgeWedgeCopy available for wedge construction
                 }
@@ -837,7 +819,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                     }
                 }
             }
-            try { if (offsetDistance) console.log(`Applied tangent offsetDistance=${offsetDistance} to ${n} samples`); } catch { }
+            try { if (offsetDistance) logDebug(`Applied tangent offsetDistance=${offsetDistance} to ${n} samples`); } catch { }
         }
 
         // Push wedge edge points slightly relative to the centerline to ensure
@@ -896,7 +878,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             }
         }
 
-        if (wedgeInsetMagnitude) console.log(`Applied wedge inset of ${wedgeInsetMagnitude} units (${side === 'INSET' ? 'outward' : 'inward'}) to ${edgeWedgeCopy.length} edge points`);
+        if (wedgeInsetMagnitude) logDebug(`Applied wedge inset of ${wedgeInsetMagnitude} units (${side === 'INSET' ? 'outward' : 'inward'}) to ${edgeWedgeCopy.length} edge points`);
 
 
         // Do not reorder edge points. Centerline/tangent/edge points are produced in
@@ -933,7 +915,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             }
         }
 
-        console.log('centerlines all generated fine');
+        logDebug('centerlines all generated fine');
 
         // Validate spacing/variation for the path we will actually use for the tube
         const tubePathOriginal = Array.isArray(centerline) ? centerline : [];
@@ -988,7 +970,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             let tubePoints = tubePathOriginal.map(p => [p.x, p.y, p.z]);
 
             if (closedLoop) {
-                console.log('Closed loop detected: preparing tube centerline...');
+                logDebug('Closed loop detected: preparing tube centerline...');
                 // For closed loops: ensure the tube polyline has the same point at start and end
                 if (tubePoints.length >= 2) {
                     const firstPt = tubePoints[0];
@@ -1002,14 +984,14 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
 
                     // Add the first point at the end to close the loop
                     tubePoints.push([firstPt[0], firstPt[1], firstPt[2]]);
-                    console.log('Closed loop: Added first point at end for tube generation');
+                    logDebug('Closed loop: Added first point at end for tube generation');
 
                 }
             } else {
-                console.log('Non-closed loop detected: preparing tube centerline...');
+                logDebug('Non-closed loop detected: preparing tube centerline...');
                 // For non-closed loops: extend the start and end segments of the centerline polyline for tube only
                 if (tubePoints.length >= 2) {
-                    console.log('Non-closed loop: Extending tube centerline segments...');
+                    logDebug('Non-closed loop: Extending tube centerline segments...');
                     const extensionDistance = 0.1;
 
                     // Extend first segment backwards
@@ -1045,7 +1027,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                         tubePoints[lastIdx] = extendedEnd;
                     }
 
-                    console.log(`Extended tube centerline by ${extensionDistance} units at both ends`);
+                    logDebug(`Extended tube centerline by ${extensionDistance} units at both ends`);
                 }
             }
 
@@ -1094,7 +1076,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
 
 
         // Build wedge solid from triangles between centerline and tangency edges
-        console.log('Creating wedge solid...');
+        logDebug('Creating wedge solid...');
         const wedgeSolid = new Solid();
         wedgeSolid.name = `${name}_WEDGE`;
 
@@ -1150,7 +1132,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                         if (isValidTriangle(e2, tB2, tB1) && addTriangleWithValidation(`${name}_SIDE_B`, e2, tB2, tB1)) validTriangles++; else skippedTriangles++;
                     }
                 }
-                console.log(`Wedge triangles added successfully (closed loop): ${validTriangles} valid, ${skippedTriangles} skipped`);
+                logDebug(`Wedge triangles added successfully (closed loop): ${validTriangles} valid, ${skippedTriangles} skipped`);
                 if (validTriangles === 0) {
                     console.error('No valid triangles could be created for wedge solid - all were degenerate');
                     // Return debug information even on wedge failure
@@ -1180,7 +1162,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         } else {
             // NON-CLOSED LOOP PATH - specialized handling for open edges
             try {
-                console.log('Creating wedge solid for non-closed loop...');
+                logDebug('Creating wedge solid for non-closed loop...');
                 const minTriangleArea = radius * radius * 1e-8;
                 let validTriangles = 0;
                 let skippedTriangles = 0;
@@ -1240,7 +1222,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
 
                 // Add end caps for open edges to create a closed solid
                 if (centerlineCopy.length >= 2) {
-                    console.log('Adding end caps for non-closed loop...');
+                    logDebug('Adding end caps for non-closed loop...');
 
                     // First end cap
                     const firstC = centerlineCopy[0];
@@ -1278,7 +1260,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                     }
                 }
 
-                console.log(`Wedge triangles added successfully (non-closed loop): ${validTriangles} valid, ${skippedTriangles} skipped`);
+                logDebug(`Wedge triangles added successfully (non-closed loop): ${validTriangles} valid, ${skippedTriangles} skipped`);
                 if (validTriangles === 0) {
                     console.error('No valid triangles could be created for non-closed wedge solid - all were degenerate');
                     // Return debug information even on wedge failure
@@ -1293,7 +1275,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                     };
                 }
             } catch (wedgeError) {
-                console.log('Failed to create wedge triangles (non-closed loop):', wedgeError?.message || wedgeError);
+                console.error('Failed to create wedge triangles (non-closed loop):', wedgeError?.message || wedgeError);
                 // Return debug information even on wedge error
                 return {
                     tube: filletTube,
@@ -1317,25 +1299,23 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         if (debug) {
             console.log('Debug mode: wedge solid stored');
         }
-        console.log('Wedge solid creation completed');
+        logDebug('Wedge solid creation completed');
         const triangleCount = wedgeSolid._triVerts ? wedgeSolid._triVerts.length / 3 : 0;
-        console.log('Wedge solid created with', triangleCount, 'triangles (raw count)');
+        logDebug('Wedge solid created with', triangleCount, 'triangles (raw count)');
         try { wedgeSolid.visualize(); } catch { }
-
-        console.log(wedgeSolid);
 
         wedgeSolid.pushFace(`${name}_FACE_A`, 0.0001);
         wedgeSolid.pushFace(`${name}_FACE_B`, 0.0001);
 
         // Apply end cap offset for INSET fillets using pushFace method
         if (side === 'INSET' && !closedLoop) {
-            console.log('Applying end cap offset to INSET fillet using pushFace...');
+            logDebug('Applying end cap offset to INSET fillet using pushFace...');
             try {
                 // Push both end caps outward by 0.001
                 wedgeSolid.pushFace(`${name}_END_CAP_1`, 0.0001);
                 wedgeSolid.pushFace(`${name}_END_CAP_2`, 0.0001);
                 wedgeSolid.visualize();
-                console.log('End cap offset applied successfully');
+                logDebug('End cap offset applied successfully');
             } catch (pushError) {
                 console.warn('Failed to apply end cap offset:', pushError?.message || pushError);
             }
@@ -1345,11 +1325,11 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             const finalSolid = wedgeSolid.subtract(filletTube);
             finalSolid.name = `${name}_FINAL_FILLET`;
             try { finalSolid.visualize(); } catch { }
-            console.log('Final fillet solid created by subtracting tube from wedge', finalSolid);
+            logDebug('Final fillet solid created by subtracting tube from wedge', finalSolid);
 
             return { tube: filletTube, wedge: wedgeSolid, finalSolid, centerline: centerlineCopy, tangentA: tangentACopy, tangentB: tangentBCopy };
         } catch (booleanError) {
-            console.log('Boolean operation failed:', booleanError?.message || booleanError);
+            console.error('Boolean operation failed:', booleanError?.message || booleanError);
             // Return debug information even on boolean failure
             return {
                 tube: filletTube,
@@ -1362,7 +1342,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             };
         }
     } catch (globalError) {
-        console.log('Fillet operation failed completely:', globalError?.message || globalError);
+        console.error('Fillet operation failed completely:', globalError?.message || globalError);
         // Return minimal debug information even on complete failure
         return {
             tube: null,

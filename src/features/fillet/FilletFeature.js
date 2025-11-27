@@ -54,6 +54,14 @@ export class FilletFeature {
     }
 
     async run(partHistory) {
+        console.log('[FilletFeature] Starting fillet run...', {
+            featureID: this.inputParams?.featureID,
+            direction: this.inputParams?.direction,
+            radius: this.inputParams?.radius,
+            inflate: this.inputParams?.inflate,
+            snapSeam: this.inputParams?.snapSeam,
+            debug: this.inputParams?.debug,
+        });
         try { clearFilletCaches(); } catch { }
         const added = [];
         const removed = [];
@@ -70,15 +78,29 @@ export class FilletFeature {
             }
         }
         edgeObjs = Array.from(new Set(edgeObjs)).filter(e => (e && (e.parentSolid || e.parent)));
-        if (edgeObjs.length === 0) return { added: [], removed: [] };
+        if (edgeObjs.length === 0) {
+            console.warn('[FilletFeature] No edges resolved for fillet feature; aborting.');
+            return { added: [], removed: [] };
+        }
 
         const solids = new Set(edgeObjs.map(e => e.parentSolid || e.parent));
-        if (solids.size !== 1) return { added: [], removed: [] };
+        if (solids.size !== 1) {
+            console.warn('[FilletFeature] Edges reference multiple solids; aborting fillet.', { solids: Array.from(solids).map(s => s?.name) });
+            return { added: [], removed: [] };
+        }
         const targetSolid = solids.values().next().value;
+        console.log('[FilletFeature] Target solid resolved', {
+            name: targetSolid?.name,
+            edgeCount: edgeObjs.length,
+            edgeNames: edgeObjs.map(e => e?.name).filter(Boolean),
+        });
 
         const dir = String(this.inputParams.direction || 'INSET').toUpperCase();
         const r = Number(this.inputParams.radius);
-        if (!Number.isFinite(r) || !(r > 0)) return { added: [], removed: [] };
+        if (!Number.isFinite(r) || !(r > 0)) {
+            console.warn('[FilletFeature] Invalid radius supplied; aborting.', { radius: this.inputParams.radius });
+            return { added: [], removed: [] };
+        }
 
         const fid = this.inputParams.featureID;
         const result = await targetSolid.fillet({
@@ -90,16 +112,36 @@ export class FilletFeature {
             debug: !!this.inputParams.debug,
             snapSeam: !!this.inputParams.snapSeam,
         });
+        const triCount = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
+        const vertCount = Array.isArray(result?._vertProperties) ? (result._vertProperties.length / 3) : 0;
+        if (!result) {
+            console.error('[FilletFeature] Fillet returned no result; skipping scene replacement.', { featureID: fid });
+            return { added: [], removed: [] };
+        }
+        if (triCount === 0 || vertCount === 0) {
+            console.error('[FilletFeature] Fillet produced an empty solid; skipping scene replacement.', {
+                featureID: fid,
+                triangleCount: triCount,
+                vertexCount: vertCount,
+                direction: dir,
+                radius: r,
+                inflate: this.inputParams.inflate,
+            });
+            return { added: [], removed: [] };
+        }
+        console.log('[FilletFeature] Fillet succeeded; replacing target solid.', {
+            featureID: fid,
+            triangles: triCount,
+            vertices: vertCount,
+        });
         added.push(result);
         // In debug mode, include wedge/tube debug solids produced during fillet construction
         if (this.inputParams.debug && Array.isArray(result?.__debugAddedSolids)) {
             // prepend the feature ID to the debug solids
             for (const dbg of result.__debugAddedSolids) {
                 if (dbg) {
-                    console.log(this.inputParams?.featureID)
-                    console.log(fid, dbg);
                     dbg.name = `${fid}_${dbg.name || 'DEBUG'}`;
-                    console.log("Fillet debug solid:", dbg);
+                    console.log('[FilletFeature] Adding fillet debug solid', { featureID: fid, name: dbg.name });
                     added.push(dbg);
                 }
             }
