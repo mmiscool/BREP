@@ -70,6 +70,7 @@ See [Dialog Screenshots](docs/dialog-screenshots.md) for the capture helpers, ou
 - [Boolean](docs/features/boolean.md) — Implemented
 - [Fillet](docs/features/fillet.md) — Implemented
 - [Chamfer](docs/features/chamfer.md) — Implemented
+- [Offset Shell](docs/features/offset-shell.md) — Implemented
 - [Remesh](docs/features/remesh.md) — Implemented
 - [Import 3D Model (STL or 3MF)](docs/features/import-3d-model.md) — Implemented
 - [Image to Face (image trace)](docs/features/image-to-face.md) — Implemented
@@ -78,6 +79,7 @@ See [Dialog Screenshots](docs/dialog-screenshots.md) for the capture helpers, ou
 - [Pattern Radial](docs/features/pattern-radial.md) — Implemented
 - [Sheet Metal Tab](docs/features/sheet-metal-tab.md) — Implemented
 - [Sheet Metal Contour Flange](docs/features/sheet-metal-contour-flange.md) — Implemented
+- [Sheet Metal Flange](docs/features/sheet-metal-flange.md) — Implemented
 
 
 ## Assembly Constraints
