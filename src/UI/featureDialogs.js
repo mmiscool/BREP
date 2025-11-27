@@ -224,6 +224,20 @@ export class SchemaForm {
     }
 
     destroy() {
+        // If this form owns the active reference selector, clear it before tearing down
+        try {
+            const activeRef = (typeof SchemaForm.getActiveReferenceInput === 'function')
+                ? SchemaForm.getActiveReferenceInput()
+                : (SchemaForm.__activeRefInput || null);
+            const ownsActiveRef = activeRef
+                && (
+                    (this._shadow && typeof this._shadow.contains === 'function' && this._shadow.contains(activeRef))
+                    || (this.uiElement && typeof this.uiElement.contains === 'function' && this.uiElement.contains(activeRef))
+                    || (typeof activeRef.getRootNode === 'function' && activeRef.getRootNode && activeRef.getRootNode() === this._shadow)
+                );
+            if (ownsActiveRef) this._stopActiveReferenceSelection();
+        } catch (_) { /* ignore */ }
+
         // Clean up any active transform session owned by this instance
         try {
             const s = SchemaForm.__activeXform;

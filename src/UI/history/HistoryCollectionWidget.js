@@ -102,8 +102,8 @@ export class HistoryCollectionWidget {
     this._listenerUnsub = null;
     this._boundHistoryListener = null;
     this._expandedId = null;
+    this._destroyAllForms();
     this._titleEls.clear();
-    this._forms.clear();
     this._addBtn = null;
     this._addMenu = null;
     if (this._onGlobalClick) {
@@ -137,7 +137,7 @@ export class HistoryCollectionWidget {
     this._toggleAddMenu(false);
     this._refreshAddMenu();
     this._titleEls.clear();
-    this._forms.clear();
+    this._destroyAllForms();
     const entries = this._getEntries();
     this._listEl.textContent = '';
 
@@ -181,6 +181,25 @@ export class HistoryCollectionWidget {
       const id = entryIds[i];
       const itemEl = this._renderEntry(entry, id, i, targetId === id, entries.length);
       this._listEl.appendChild(itemEl);
+    }
+  }
+
+  _destroyForm(id) {
+    if (id == null) return;
+    const key = String(id);
+    const form = this._forms.get(key);
+    if (!form) return;
+    try {
+      if (typeof form.destroy === 'function') form.destroy();
+    } catch (_) { /* ignore form destroy errors */ }
+    this._forms.delete(key);
+  }
+
+  _destroyAllForms() {
+    if (!this._forms || this._forms.size === 0) return;
+    const keys = Array.from(this._forms.keys());
+    for (const key of keys) {
+      this._destroyForm(key);
     }
   }
 
@@ -588,7 +607,7 @@ export class HistoryCollectionWidget {
     if (this._expandedId && String(id) === this._expandedId) {
       this._expandedId = null;
     }
-    this._forms.delete(String(id));
+    this._destroyForm(id);
     if (this._autoSyncOpenState && removed) {
       this._applyOpenState(removed, false);
     }

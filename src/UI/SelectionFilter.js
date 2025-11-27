@@ -238,6 +238,31 @@ export class SelectionFilter {
         restoreOne(obj);
     }
 
+    static #isInputUsable(el) {
+        // Use the closest visible wrapper as the visibility anchor; hidden inputs themselves render display:none
+        const anchor = (el && typeof el.closest === 'function')
+            ? (el.closest('.ref-single-wrap, .ref-multi-wrap') || el)
+            : el;
+        if (!anchor || !anchor.isConnected) return false;
+        const seen = new Set();
+        let node = anchor;
+        while (node && !seen.has(node)) {
+            seen.add(node);
+            if (node.hidden === true) return false;
+            try {
+                const style = window.getComputedStyle(node);
+                if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+            } catch (_) { /* ignore */ }
+            const root = (typeof node.getRootNode === 'function') ? node.getRootNode() : null;
+            if (root && root.host && root !== node) {
+                node = root.host;
+                continue;
+            }
+            node = node.parentElement;
+        }
+        return true;
+    }
+
     static toggleSelection(objectToToggleSelectionOn) {
         // get the type of the object
         const type = objectToToggleSelectionOn.type;
@@ -250,6 +275,15 @@ export class SelectionFilter {
                 try { activeRefInput = window.__BREP_activeRefInput || null; } catch (_) { /* ignore */ }
             }
             if (activeRefInput) {
+                const usable = SelectionFilter.#isInputUsable(activeRefInput);
+                if (!usable) {
+                    try { activeRefInput.removeAttribute('active-reference-selection'); } catch (_) { }
+                    try { activeRefInput.style.filter = 'none'; } catch (_) { }
+                    try { if (window.__BREP_activeRefInput === activeRefInput) window.__BREP_activeRefInput = null; } catch (_) { }
+                    SelectionFilter.restoreAllowedSelectionTypes();
+                    return false;
+                }
+
                 const dataset = activeRefInput.dataset || {};
                 const isMultiRef = dataset.multiple === 'true';
                 const maxSelections = Number(dataset.maxSelections);
