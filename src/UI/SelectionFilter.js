@@ -219,15 +219,34 @@ export class SelectionFilter {
         const restoreOne = (t) => {
             if (!t) return;
             const ud = t.userData || {};
-            if (ud.__hoverMatApplied) {
-                try {
-                    if (ud.__hoverOrigMat) t.material = ud.__hoverOrigMat;
-                    if (ud.__hoverMat && ud.__hoverMat !== ud.__hoverOrigMat && typeof ud.__hoverMat.dispose === 'function') ud.__hoverMat.dispose();
-                } catch {}
-                try { delete t.userData.__hoverMatApplied; } catch {}
-                try { delete t.userData.__hoverOrigMat; } catch {}
-                try { delete t.userData.__hoverMat; } catch {}
-            }
+            if (!ud.__hoverMatApplied) return;
+            const applySelectionMaterial = () => {
+                if (t.type === SelectionFilter.FACE) return CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE ?? t.material;
+                if (t.type === SelectionFilter.PLANE) return CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? t.material;
+                if (t.type === SelectionFilter.EDGE) return CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE ?? t.material;
+                if (t.type === SelectionFilter.SOLID || t.type === SelectionFilter.COMPONENT) return CADmaterials.SOLID?.SELECTED ?? t.material;
+                return t.material;
+            };
+            const applyDeselectedMaterial = () => {
+                if (t.type === SelectionFilter.FACE) return CADmaterials.FACE?.BASE ?? CADmaterials.FACE ?? ud.__hoverOrigMat ?? t.material;
+                if (t.type === SelectionFilter.PLANE) return CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? ud.__hoverOrigMat ?? t.material;
+                if (t.type === SelectionFilter.EDGE) return CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE ?? ud.__hoverOrigMat ?? t.material;
+                if (t.type === SelectionFilter.SOLID || t.type === SelectionFilter.COMPONENT) return ud.__hoverOrigMat ?? t.material;
+                return ud.__hoverOrigMat ?? t.material;
+            };
+            try {
+                if (t.selected) {
+                    const selMat = applySelectionMaterial();
+                    if (selMat) t.material = selMat;
+                } else {
+                    const baseMat = applyDeselectedMaterial();
+                    if (baseMat) t.material = baseMat;
+                }
+                if (ud.__hoverMat && ud.__hoverMat !== ud.__hoverOrigMat && typeof ud.__hoverMat.dispose === 'function') ud.__hoverMat.dispose();
+            } catch {}
+            try { delete t.userData.__hoverMatApplied; } catch {}
+            try { delete t.userData.__hoverOrigMat; } catch {}
+            try { delete t.userData.__hoverMat; } catch {}
         };
 
         if (obj.type === SelectionFilter.SOLID || obj.type === SelectionFilter.COMPONENT) {
