@@ -73,10 +73,13 @@ See [Dialog Screenshots](docs/dialog-screenshots.md) for the capture helpers, ou
 - [Offset Shell](docs/features/offset-shell.md) — Implemented
 - [Remesh](docs/features/remesh.md) — Implemented
 - [Import 3D Model (STL or 3MF)](docs/features/import-3d-model.md) — Implemented
+- [Image Heightmap Solid](docs/features/image-heightmap-solid.md) — Implemented
 - [Image to Face (image trace)](docs/features/image-to-face.md) — Implemented
 - [Transform (move, rotate, scale)](docs/features/transform.md) — Implemented
 - [Pattern Linear](docs/features/pattern-linear.md) — Implemented
 - [Pattern Radial](docs/features/pattern-radial.md) — Implemented
+- [Pattern (legacy combined)](docs/features/pattern.md) — Implemented
+- [Assembly Component](docs/features/assembly-component.md) — Implemented
 - [Sheet Metal Tab](docs/features/sheet-metal-tab.md) — Implemented
 - [Sheet Metal Contour Flange](docs/features/sheet-metal-contour-flange.md) — Implemented
 - [Sheet Metal Flange](docs/features/sheet-metal-flange.md) — Implemented

@@ -40,3 +40,6 @@ Built-in constraints are registered in the registry and documented individually:
 - [Fixed Constraint](fixed-constraint.md)
 - [Parallel Constraint](parallel-constraint.md)
 - [Touch Align Constraint](touch-align-constraint.md)
+
+## Adding Components for Constraints
+Assembly constraints operate on `AssemblyComponent` instances, not ad-hoc solids. Add every part to the assembly using the [Assembly Component](../features/assembly-component.md) feature first; this inserts the 3MF-backed component into the assembly graph, preserves face/body naming for selections, and exposes the transform that constraints manipulate. Solids added by other modeling features won’t participate in the constraint solver until they’re brought in as assembly components.
