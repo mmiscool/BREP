@@ -34,6 +34,11 @@ const inputParamsSchema = {
     min: 0,
     hint: "Default bend radius captured with the sheet-metal base feature.",
   },
+  consumeProfileSketch: {
+    type: "boolean",
+    default_value: true,
+    hint: "Remove the referenced sketch after creating the tab. Turn off to keep it in the scene.",
+  },
   boolean: {
     type: "boolean_operation",
     default_value: { targets: [], operation: "NONE" },
@@ -83,7 +88,11 @@ export class SheetMetalTabFeature {
       this.inputParams?.featureID
     );
 
-    const removedArtifacts = [...sketchParentsToRemove, ...(effects?.removed || [])];
+    const consumeSketch = this.inputParams?.consumeProfileSketch !== false;
+    const removedArtifacts = [
+      ...(consumeSketch ? sketchParentsToRemove : []),
+      ...(effects?.removed || []),
+    ];
     const added = effects?.added || [];
 
     propagateSheetMetalFaceTypesToEdges(added);
@@ -93,7 +102,7 @@ export class SheetMetalTabFeature {
       thickness: thicknessAbs,
       bendRadius,
       baseType: "TAB",
-      extra: { placementMode: placement, signedThickness },
+      extra: { placementMode: placement, signedThickness, consumeProfileSketch: consumeSketch },
       forceBaseOverwrite: true,
     });
 
@@ -104,6 +113,7 @@ export class SheetMetalTabFeature {
       bendRadius,
       placementMode: placement,
       signedThickness,
+      consumeProfileSketch: consumeSketch,
       profileName: faceObj?.name || null,
     };
 
