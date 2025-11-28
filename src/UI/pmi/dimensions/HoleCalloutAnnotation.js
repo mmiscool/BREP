@@ -197,8 +197,9 @@ function formatHoleCallout(desc, quantity = 1) {
   if (!desc) return '';
   const lines = [];
   const prefix = quantity > 1 ? `${quantity}× ` : '';
-  const depthStr = (!desc.throughAll && Number(desc.straightDepth) > 0)
-    ? ` ↧ ${fmt(desc.straightDepth)}`
+  const depthValue = Number(desc.totalDepth ?? desc.straightDepth);
+  const depthStr = (!desc.throughAll && depthValue > 0)
+    ? ` ↧ ${fmt(depthValue)}`
     : (desc.throughAll ? ' THRU ALL' : '');
 
   lines.push(`${prefix}⌀${fmt(desc.diameter)}${depthStr}`);
