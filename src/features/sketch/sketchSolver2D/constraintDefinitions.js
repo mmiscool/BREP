@@ -447,7 +447,7 @@ const shortestAngleDelta = (target, current) => {
 
 (constraintFunctions["⏛"] = function (solverObject, constraint, points, constraintValue) {
     //const [pointA, pointB, pointC] = coinToss() ? points : [points[1], points[0], points[2]];
-    alert("The 'Point on Line' constraint");
+
     const [pointA, pointB, pointC] = shuffleArray(points);
 
     // simplify the constraint if possible for vertical and horizontal lines
