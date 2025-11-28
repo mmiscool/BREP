@@ -1,5 +1,5 @@
 "use strict";
-import { calculateAngle, rotatePoint, coinToss, distance, shuffle, shuffleArray, roundToDecimals } from "./mathHelpersMod.js";
+import { calculateAngle, rotatePoint, coinToss, distance, roundToDecimals } from "./mathHelpersMod.js";
 let tolerance = 0.00001;
 const constraintFunctions = [];
 
@@ -446,9 +446,8 @@ const shortestAngleDelta = (target, current) => {
 
 
 (constraintFunctions["⏛"] = function (solverObject, constraint, points, constraintValue) {
-    //const [pointA, pointB, pointC] = coinToss() ? points : [points[1], points[0], points[2]];
-
-    const [pointA, pointB, pointC] = shuffleArray(points);
+    // Treat the first two points as the line definition and the third as the point to project.
+    const [pointA, pointB, pointC] = points;
 
     // simplify the constraint if possible for vertical and horizontal lines
     if (participateInConstraint(solverObject, "━", [pointA, pointB])) return constraintFunctions["━"](solverObject, constraint, [pointA, pointC], 0);
@@ -496,7 +495,7 @@ const shortestAngleDelta = (target, current) => {
         }
     }
 }).hints = {
-    commandTooltip: "Pont on Line Constraint",
+    commandTooltip: "Point on Line Constraint",
     pointsRequired: 3,
 };
 

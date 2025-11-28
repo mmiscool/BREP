@@ -88,9 +88,9 @@ class ConstraintEngine {
         this.processConstraintsOfType("all");
 
         const order = [
-            "━", "│", "⏛", "⋯",
+            "━", "│",  "⋯",
             "⟺", "⇌", "∠", "⟂", "∥",
-            "⇌", "⟺", "⇌", "⟺" // repeated passes for convergence
+            "⇌", "⟺", "⇌", "⟺","⏛", "━", "│", // repeated passes for convergence
         ];
 
         let prev = JSON.stringify(this.points);
