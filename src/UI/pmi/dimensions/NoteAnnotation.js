@@ -3,6 +3,7 @@
 
 import * as THREE from 'three';
 import { BaseAnnotation } from '../BaseAnnotation.js';
+import { getPMIStyle } from '../pmiStyle.js';
 
 const inputParamsSchema = {
   id: {
@@ -41,9 +42,10 @@ export class NoteAnnotation extends BaseAnnotation {
   async run(renderingContext) {
     const { pmimode, group, idx, ctx } = renderingContext;
     const ann = this.inputParams;
+    const style = getPMIStyle();
     const p = new THREE.Vector3(ann.position?.x || 0, ann.position?.y || 0, ann.position?.z || 0);
-    const g = new THREE.SphereGeometry(0.08, 16, 12);
-    const m = new THREE.MeshBasicMaterial({ color: 0x93c5fd, depthTest: false, depthWrite: false, transparent: true });
+    const g = new THREE.SphereGeometry(style.noteDotRadius ?? 0.08, 16, 12);
+    const m = new THREE.MeshBasicMaterial({ color: style.noteDotColor ?? style.dotColor ?? 0x93c5fd, depthTest: false, depthWrite: false, transparent: true });
     const dot = new THREE.Mesh(g, m);
     dot.position.copy(p);
     group.add(dot);

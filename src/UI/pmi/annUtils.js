@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getPMIStyle } from './pmiStyle.js';
 
 function safeCloneJSON(obj) {
   try {
@@ -502,17 +503,20 @@ export function adjustOrthographicFrustum(camera, projection = null, viewport = 
   } catch {}
 }
 
-export function makeOverlayLine(a, b, color = 0x93c5fd) {
+export function makeOverlayLine(a, b, color = undefined) {
+  const style = getPMIStyle();
+  const resolvedColor = (color == null) ? (style.lineColor ?? 0x93c5fd) : color;
   const geom = new THREE.BufferGeometry().setFromPoints([a.clone(), b.clone()]);
-  const mat = new THREE.LineBasicMaterial({ color });
+  const mat = new THREE.LineBasicMaterial({ color: resolvedColor, linewidth: style.lineWidth || 1 });
   mat.depthTest = false; mat.depthWrite = false; mat.transparent = true;
   return new THREE.Line(geom, mat);
 }
 
-export function makeOverlayDashedLine(a, b, color = 0x93c5fd, options = {}) {
+export function makeOverlayDashedLine(a, b, color = undefined, options = {}) {
+  const style = getPMIStyle();
   const { viewer = null, dashPixels = 10, gapPixels = 10 } = options || {};
   const len = a.distanceTo(b);
-  if (!(len > 1e-6)) return makeOverlayLine(a, b, color);
+  if (!(len > 1e-6)) return makeOverlayLine(a, b, color ?? style.lineColor ?? 0x93c5fd);
 
   const dir = b.clone().sub(a).normalize();
   const midPoint = a.clone().add(b).multiplyScalar(0.5);
@@ -535,10 +539,10 @@ export function makeOverlayDashedLine(a, b, color = 0x93c5fd, options = {}) {
     travelled += gapSegment;
   }
 
-  if (points.length < 2) return makeOverlayLine(a, b, color);
+  if (points.length < 2) return makeOverlayLine(a, b, color ?? style.lineColor ?? 0x93c5fd);
 
   const geom = new THREE.BufferGeometry().setFromPoints(points);
-  const mat = new THREE.LineBasicMaterial({ color });
+  const mat = new THREE.LineBasicMaterial({ color: (color == null) ? (style.lineColor ?? 0x93c5fd) : color, linewidth: style.lineWidth || 1 });
   mat.depthTest = false; mat.depthWrite = false; mat.transparent = true;
   const line = new THREE.LineSegments(geom, mat);
   line.renderOrder = 9994;
@@ -580,17 +584,20 @@ function clampGapLength(value, totalLength) {
   return Math.max(1e-4, Math.min(value, maxGap));
 }
 
-export function makeOverlaySphere(size, color = 0xffffff) {
+export function makeOverlaySphere(size, color = undefined) {
+  const style = getPMIStyle();
+  const resolvedColor = (color == null) ? (style.dotColor ?? 0xffffff) : color;
   const g = new THREE.SphereGeometry(size, 12, 8);
-  const m = new THREE.MeshBasicMaterial({ color });
+  const m = new THREE.MeshBasicMaterial({ color: resolvedColor });
   m.depthTest = false; m.depthWrite = false; m.transparent = true;
   return new THREE.Mesh(g, m);
 }
 
 export function addArrowCone(group, tip, direction, arrowLength, arrowWidth, color) {
   try {
+    const style = getPMIStyle();
     const coneGeometry = new THREE.ConeGeometry(arrowWidth, arrowLength, 8);
-    const coneMaterial = new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true });
+    const coneMaterial = new THREE.MeshBasicMaterial({ color: (color == null) ? (style.arrowColor ?? 0x93c5fd) : color, depthTest: false, depthWrite: false, transparent: true });
     const arrowCone = new THREE.Mesh(coneGeometry, coneMaterial);
     const conePosition = tip.clone().addScaledVector(direction, -arrowLength * 0.5);
     arrowCone.position.copy(conePosition);

@@ -8,9 +8,11 @@
 
 import * as THREE from 'three';
 import { annotationRegistry } from './AnnotationRegistry.js';
+import { getPMIStyle, setPMIStyle, sanitizePMIStyle } from './pmiStyle.js';
 import { AnnotationHistory } from './AnnotationHistory.js';
 import { LabelOverlay } from './LabelOverlay.js';
 import { AnnotationCollectionWidget } from './AnnotationCollectionWidget.js';
+import { localStorage as LS } from '../../localStorageShim.js';
 
 const cssEscape = (value) => {
   if (window.CSS && typeof window.CSS.escape === 'function') {
@@ -53,6 +55,7 @@ export class PMIMode {
     this._pmiViewsDomRestore = null;
     this._pmiAnnotationsSection = null;
     this._pmiToolOptionsSection = null;
+    this._pmiStyleStorageKey = '__PMI_STYLE_SETTINGS__';
     this._sectionCreationPromises = [];
     this._opts = { noteText: '', leaderText: 'TEXT HERE', dimDecimals: 3 };
     this._onCanvasDown = this._handlePointerDown.bind(this);
@@ -66,6 +69,7 @@ export class PMIMode {
     this._annotationHistory = new AnnotationHistory(this);
     const src = Array.isArray(this.viewEntry.annotations) ? this.viewEntry.annotations : [];
     this._annotationHistory.load(JSON.parse(JSON.stringify(src)));
+    this.#loadPMIStyle();
     try {
       for (const entity of this._annotationHistory.getEntries()) {
         try { this.#normalizeAnnotation(entity.inputParams); } catch { }
@@ -416,7 +420,7 @@ export class PMIMode {
         'PMI Views (PMI Mode)',
         'Annotations — ' + this.#getViewDisplayName(''),
         'View Settings',
-        'Tool Options'
+        'PMI Settings'
       ];
 
 
@@ -467,7 +471,7 @@ export class PMIMode {
         // Remove elements that match PMI section patterns
         allTitles.forEach(titleEl => {
           const text = titleEl.textContent || '';
-          if (text.includes('Annotations') || text === 'View Settings' || text === 'Tool Options') {
+          if (text.includes('Annotations') || text === 'View Settings' || text === 'PMI Settings') {
             // Find and remove the associated content element as well
             const nextEl = titleEl.nextElementSibling;
             if (nextEl && nextEl.classList.contains('accordion-content')) {
@@ -482,8 +486,8 @@ export class PMIMode {
           if (!contentEl.parentNode) return; // Already removed
           const id = contentEl.id || '';
           const name = contentEl.getAttribute('name') || '';
-          if (name.includes('Annotations') || name === 'accordion-content-View Settings' || name === 'accordion-content-Tool Options' ||
-            id.includes('Annotations') || id === 'accordion-content-View Settings' || id === 'accordion-content-Tool Options') {
+          if (name.includes('Annotations') || name === 'accordion-content-View Settings' || name === 'accordion-content-PMI Settings' ||
+            id.includes('Annotations') || id === 'accordion-content-View Settings' || id === 'accordion-content-PMI Settings') {
             contentEl.remove();
           }
         });
@@ -603,10 +607,10 @@ export class PMIMode {
       });
       this._sectionCreationPromises.push(annotationsPromise);
 
-      // Tool Options section
+      // PMI Settings section
       this._toolOptsEl = document.createElement('div');
       this._toolOptsEl.style.padding = '6px';
-      const toolOptionsPromise = this._acc.addSection('Tool Options').then((sec) => {
+      const toolOptionsPromise = this._acc.addSection('PMI Settings').then((sec) => {
         try {
           sec.uiElement.appendChild(this._toolOptsEl);
           this.#renderToolOptions();
@@ -736,6 +740,63 @@ export class PMIMode {
 
     const dimDec = mkNumber(this._opts.dimDecimals, (v) => { this._opts.dimDecimals = v | 0; this._annotationWidget?.render(); }, { min: 0, max: 8 });
     el.appendChild(makeVField('Dim decimals', dimDec));
+
+    // Global PMI style controls
+    const style = getPMIStyle();
+    const mkColor = (value, onChange) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'pmi-color-wrap';
+      const inp = document.createElement('input');
+      inp.type = 'color';
+      inp.value = toHex(value);
+      inp.className = 'pmi-color';
+      inp.addEventListener('input', () => onChange(inp.value));
+      wrap.appendChild(inp);
+      return wrap;
+    };
+
+    const updateStyle = (patch) => {
+      setPMIStyle(patch);
+      this.#markAnnotationsDirty();
+      this._annotationWidget?.render();
+      this.#savePMIStyle();
+    };
+
+    el.appendChild(makeVField('Line color', mkColor(style.lineColor, (v) => updateStyle({ lineColor: hexToInt(v) }))));
+    el.appendChild(makeVField('Dot color', mkColor(style.dotColor, (v) => updateStyle({ dotColor: hexToInt(v) }))));
+    el.appendChild(makeVField('Arrow color', mkColor(style.arrowColor, (v) => updateStyle({ arrowColor: hexToInt(v) }))));
+    const mkPxNumber = (label, key, min = 1, max = 64) => {
+      const inp = mkNumber(style[key] ?? 0, (v) => updateStyle({ [key]: v }), { min, max });
+      el.appendChild(makeVField(label, inp));
+    };
+    mkPxNumber('Line width', 'lineWidth', 1, 8);
+    mkPxNumber('Arrow length (px)', 'arrowLengthPx', 1, 64);
+    mkPxNumber('Arrow width (px)', 'arrowWidthPx', 1, 32);
+    mkPxNumber('Leader dot (px)', 'leaderDotRadiusPx', 1, 32);
+    mkPxNumber('Hole dot (px)', 'holeDotRadiusPx', 1, 32);
+    mkPxNumber('Note dot radius', 'noteDotRadius', 0.01, 1);
+  }
+
+  #loadPMIStyle() {
+    try {
+      const raw = LS.getItem(this._pmiStyleStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        setPMIStyle(sanitizePMIStyle(parsed));
+      }
+    } catch (e) {
+      console.warn('[PMI] Failed to load PMI style settings:', e);
+    }
+  }
+
+  #savePMIStyle() {
+    try {
+      const style = sanitizePMIStyle(getPMIStyle());
+      LS.setItem(this._pmiStyleStorageKey, JSON.stringify(style));
+    } catch (e) {
+      console.warn('[PMI] Failed to save PMI style settings:', e);
+    }
   }
 
   #toggleWireframeMode(isWireframe) {
@@ -1401,4 +1462,18 @@ export class PMIMode {
     try { this.viewer?.camera?.getWorldDirection?.(n); } catch { }
     return n.lengthSq() ? n : new THREE.Vector3(0, 0, 1);
   }
+}
+
+function toHex(value) {
+  const n = Number(value);
+  const safe = Number.isFinite(n) ? n : 0;
+  const hex = `000000${(safe >>> 0).toString(16)}`.slice(-6);
+  return `#${hex}`;
+}
+
+function hexToInt(value) {
+  if (typeof value !== 'string') return 0;
+  const str = value.startsWith('#') ? value.slice(1) : value;
+  const n = parseInt(str, 16);
+  return Number.isFinite(n) ? n : 0;
 }

@@ -2,10 +2,11 @@ import * as THREE from 'three';
 import { BaseAnnotation } from '../BaseAnnotation.js';
 import {
   makeOverlayLine,
-  makeOverlaySphere,
   objectRepresentativePoint,
   screenSizeWorld,
+  addArrowCone,
 } from '../annUtils.js';
+import { getPMIStyle } from '../pmiStyle.js';
 
 const inputParamsSchema = {
   id: {
@@ -83,12 +84,18 @@ export class HoleCalloutAnnotation extends BaseAnnotation {
       ctx.updateLabel(idx, labelText, labelPos, ann);
     }
 
-    const color = 0xffea00;
+    const style = getPMIStyle();
+    const color = style.lineColor ?? 0xffea00;
     group.add(makeOverlayLine(labelPos, targetPoint, color));
-    const dotRadius = ctx?.screenSizeWorld ? ctx.screenSizeWorld(5) : screenSizeWorld(viewer, 5);
-    const targetDot = makeOverlaySphere(Math.max(dotRadius, 1e-4), 0x00d1ff);
-    targetDot.position.copy(targetPoint);
-    group.add(targetDot);
+    const arrowLenPx = style.arrowLengthPx ?? 12;
+    const arrowWidthPx = style.arrowWidthPx ?? 4;
+    const arrowLength = ctx?.screenSizeWorld ? ctx.screenSizeWorld(arrowLenPx) : screenSizeWorld(viewer, arrowLenPx);
+    const arrowWidth = ctx?.screenSizeWorld ? ctx.screenSizeWorld(arrowWidthPx) : screenSizeWorld(viewer, arrowWidthPx);
+    const dir = targetPoint.clone().sub(labelPos);
+    if (dir.lengthSq() > 1e-12) {
+      dir.normalize();
+      addArrowCone(group, targetPoint, dir, arrowLength, arrowWidth, style.arrowColor ?? color);
+    }
 
     return [];
   }

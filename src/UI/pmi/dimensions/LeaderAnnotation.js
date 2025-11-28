@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BaseAnnotation } from '../BaseAnnotation.js';
+import { getPMIStyle } from '../pmiStyle.js';
 import {
   addArrowCone,
   makeOverlayLine,
@@ -73,6 +74,7 @@ export class LeaderAnnotation extends BaseAnnotation {
     this.renderingContext = renderingContext;
     const { pmimode, group, idx, ctx } = renderingContext;
     const ann = this.inputParams || {};
+    const style = getPMIStyle();
     ensurePersistentData(ann);
     ann.anchorPosition = normalizeAnchorPosition(ann.anchorPosition ?? ann.anchorSide);
     delete ann.anchorSide;
@@ -96,12 +98,15 @@ export class LeaderAnnotation extends BaseAnnotation {
       return [];
     }
 
-    const color = 0x93c5fd;
+    const color = style.lineColor ?? 0x93c5fd;
     const basis = computeViewBasis(viewer, ann);
     const originPoint = averageTargets(targets) || labelPos;
     const shoulderDir = computeShoulderDirection(labelPos, originPoint, basis);
     const approachSpacing = Math.max(ctx?.screenSizeWorld ? ctx.screenSizeWorld(18) : screenSizeWorld(viewer, 18), 1e-4);
-    const shoulderLength = Math.max(ctx?.screenSizeWorld ? ctx.screenSizeWorld(36) : screenSizeWorld(viewer, 36), 1e-4);
+    const shoulderLength = Math.max(
+      ctx?.screenSizeWorld ? ctx.screenSizeWorld(36) : screenSizeWorld(viewer, 36),
+      1e-4,
+    );
     const sortedTargets = sortTargetsByViewUp(targets, basis, labelPos);
 
     const halfCount = (sortedTargets.length - 1) * 0.5;
@@ -115,17 +120,20 @@ export class LeaderAnnotation extends BaseAnnotation {
       group.add(makeOverlayLine(approachPoint, labelPos, color));
 
       if (ann.endStyle === 'dot') {
-        const dotRadius = ctx?.screenSizeWorld ? ctx.screenSizeWorld(6) : screenSizeWorld(viewer, 6);
-        const dot = makeOverlaySphere(Math.max(dotRadius, 1e-4), color);
+        const dotPx = style.leaderDotRadiusPx ?? 6;
+        const dotRadius = ctx?.screenSizeWorld ? ctx.screenSizeWorld(dotPx) : screenSizeWorld(viewer, dotPx);
+        const dot = makeOverlaySphere(Math.max(dotRadius, 1e-4), style.dotColor ?? color);
         dot.position.copy(point);
         group.add(dot);
       } else {
         const direction = point.clone().sub(approachPoint);
         if (!direction.lengthSq()) direction.copy(shoulderDir);
         direction.normalize();
-        const arrowLength = ctx?.screenSizeWorld ? ctx.screenSizeWorld(12) : screenSizeWorld(viewer, 12);
-        const arrowWidth = ctx?.screenSizeWorld ? ctx.screenSizeWorld(4) : screenSizeWorld(viewer, 4);
-        addArrowCone(group, point, direction, arrowLength, arrowWidth, color);
+        const arrowLenPx = style.arrowLengthPx ?? 12;
+        const arrowWidthPx = style.arrowWidthPx ?? 4;
+        const arrowLength = ctx?.screenSizeWorld ? ctx.screenSizeWorld(arrowLenPx) : screenSizeWorld(viewer, arrowLenPx);
+        const arrowWidth = ctx?.screenSizeWorld ? ctx.screenSizeWorld(arrowWidthPx) : screenSizeWorld(viewer, arrowWidthPx);
+        addArrowCone(group, point, direction, arrowLength, arrowWidth, style.arrowColor ?? color);
       }
     });
     return [];
