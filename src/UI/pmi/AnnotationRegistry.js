@@ -6,6 +6,7 @@ import { AngleDimensionAnnotation } from './dimensions/AngleDimensionAnnotation.
 import { LeaderAnnotation } from './dimensions/LeaderAnnotation.js';
 import { NoteAnnotation } from './dimensions/NoteAnnotation.js';
 import { ExplodeBodyAnnotation } from './dimensions/ExplodeBodyAnnotation.js';
+import { HoleCalloutAnnotation } from './dimensions/HoleCalloutAnnotation.js';
 
 const normalizeKey = (name) => {
   if (!name && name !== 0) return '';
@@ -86,3 +87,4 @@ annotationRegistry.register(AngleDimensionAnnotation);
 annotationRegistry.register(LeaderAnnotation);
 annotationRegistry.register(NoteAnnotation);
 annotationRegistry.register(ExplodeBodyAnnotation);
+annotationRegistry.register(HoleCalloutAnnotation);

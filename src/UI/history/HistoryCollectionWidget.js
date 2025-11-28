@@ -88,6 +88,7 @@ export class HistoryCollectionWidget {
     this._expandedId = null;
     this._titleEls = new Map();
     this._forms = new Map();
+    this._uiFieldSignatures = new Map();
     this._boundHistoryListener = null;
     this._listenerUnsub = null;
     this._suppressHistoryListener = false;
@@ -104,6 +105,7 @@ export class HistoryCollectionWidget {
     this._expandedId = null;
     this._destroyAllForms();
     this._titleEls.clear();
+    this._uiFieldSignatures.clear();
     this._addBtn = null;
     this._addMenu = null;
     if (this._onGlobalClick) {
@@ -122,6 +124,7 @@ export class HistoryCollectionWidget {
       this.render();
       return;
     }
+    this._uiFieldSignatures.clear();
     if (typeof this._listenerUnsub === 'function') {
       try { this._listenerUnsub(); } catch (_) {}
     }
@@ -337,43 +340,54 @@ export class HistoryCollectionWidget {
 
     if (isOpen) {
       const schema = this._resolveSchema(entry);
+      const filtered = this._filterSchemaForEntry(entry, schema, entryId);
+      const effectiveSchema = filtered.schema;
+      this._recordUiFieldSignature(entryId, filtered.visibleKeys);
       if (!schema) {
         const missing = document.createElement('div');
         missing.className = 'hc-missing';
         missing.textContent = `No schema available for "${this._guessTypeLabel(entry) || 'entity'}".`;
         body.appendChild(missing);
       } else {
-        const params = entry && entry.inputParams ? entry.inputParams : {};
-        const contextInfo = {
-          entry,
-          id: entryId,
-          index,
-          schema,
-          params,
-        };
-        let formRef = null;
-        const options = this._composeFormOptions(contextInfo, () => formRef);
-        options.excludeKeys = Array.isArray(options.excludeKeys) ? options.excludeKeys : [];
-        if (!options.excludeKeys.includes('id')) {
-          options.excludeKeys = [...options.excludeKeys, 'id'];
-        }
+        const hasFields = effectiveSchema && Object.keys(effectiveSchema).length > 0;
+        if (!hasFields) {
+          const empty = document.createElement('div');
+          empty.className = 'hc-missing';
+          empty.textContent = 'No inputs available for this configuration.';
+          body.appendChild(empty);
+        } else {
+          const params = entry && entry.inputParams ? entry.inputParams : {};
+          const contextInfo = {
+            entry,
+            id: entryId,
+            index,
+            schema: effectiveSchema,
+            params,
+          };
+          let formRef = null;
+          const options = this._composeFormOptions(contextInfo, () => formRef);
+          options.excludeKeys = Array.isArray(options.excludeKeys) ? options.excludeKeys : [];
+          if (!options.excludeKeys.includes('id')) {
+            options.excludeKeys = [...options.excludeKeys, 'id'];
+          }
 
-        if (!Object.prototype.hasOwnProperty.call(options, 'viewer')) {
-          options.viewer = this.viewer || null;
-        }
-        if (!Object.prototype.hasOwnProperty.call(options, 'scene')) {
-          options.scene = this.viewer && this.viewer.scene ? this.viewer.scene : null;
-        }
-        if (!Object.prototype.hasOwnProperty.call(options, 'partHistory')) {
-          options.partHistory = this.history || null;
-        }
+          if (!Object.prototype.hasOwnProperty.call(options, 'viewer')) {
+            options.viewer = this.viewer || null;
+          }
+          if (!Object.prototype.hasOwnProperty.call(options, 'scene')) {
+            options.scene = this.viewer && this.viewer.scene ? this.viewer.scene : null;
+          }
+          if (!Object.prototype.hasOwnProperty.call(options, 'partHistory')) {
+            options.partHistory = this.history || null;
+          }
 
-        const form = new SchemaForm(schema, params, options);
-        formRef = form;
-        body.appendChild(form.uiElement);
-        this._forms.set(entryId, form);
-        if (this._onFormReady) {
-          try { this._onFormReady({ id: entryId, index, entry, form }); } catch (_) { /* ignore */ }
+          const form = new SchemaForm(effectiveSchema || {}, params, options);
+          formRef = form;
+          body.appendChild(form.uiElement);
+          this._forms.set(entryId, form);
+          if (this._onFormReady) {
+            try { this._onFormReady({ id: entryId, index, entry, form }); } catch (_) { /* ignore */ }
+          }
         }
       }
     }
@@ -611,6 +625,7 @@ export class HistoryCollectionWidget {
     if (this._autoSyncOpenState && removed) {
       this._applyOpenState(removed, false);
     }
+    this._uiFieldSignatures.delete(String(id));
     this.render();
     this._emitCollectionChange('remove', removed);
   }
@@ -1001,6 +1016,7 @@ export class HistoryCollectionWidget {
       }
       const entryId = (context && context.id != null) ? String(context.id) : context?.id;
       this._handleSchemaChange(entryId, context?.entry, changeDetails);
+      this._maybeRefreshUiFields(entryId, context?.entry);
     };
 
     options.onAction = (featureID, actionKey) => {
@@ -1099,6 +1115,115 @@ export class HistoryCollectionWidget {
       if (str.length) return str;
     }
     return '';
+  }
+
+  _filterSchemaForEntry(entry, schema, entryId = null) {
+    const fallbackKeys = schema && typeof schema === 'object' ? Object.keys(schema) : [];
+    if (!schema || typeof schema !== 'object') {
+      return { schema, visibleKeys: fallbackKeys };
+    }
+    let entityClass = this._resolveEntityClass(entry?.type || entry?.entityType || null);
+    if (!entityClass && this.history && this.history.featureRegistry) {
+      try {
+        entityClass =
+          this.history.featureRegistry.getSafe?.(entry?.type)
+          || this.history.featureRegistry.get?.(entry?.type)
+          || null;
+      } catch {
+        entityClass = null;
+      }
+    }
+    const context = this._createHelperContext({
+      entry,
+      id: entryId,
+      schema,
+      params: entry?.inputParams || {},
+      form: entryId ? this.getFormForEntry(entryId) : null,
+    }) || {};
+    if (entityClass) context.entityClass = entityClass;
+    const runTest = (owner, fn) => {
+      if (typeof fn !== 'function') return null;
+      try {
+        return fn.call(owner || entry || null, context);
+      } catch (error) {
+        console.warn('[HistoryCollectionWidget] uiFieldsTest failed; falling back to full schema.', error);
+        return null;
+      }
+    };
+    let result = runTest(entry, entry?.uiFieldsTest);
+    if (result == null && entityClass) {
+      if (typeof entityClass.uiFieldsTest === 'function') {
+        result = runTest(entityClass, entityClass.uiFieldsTest);
+      } else if (entityClass.prototype && entityClass.prototype.uiFieldsTest && entityClass.prototype.uiFieldsTest !== entry?.uiFieldsTest) {
+        result = runTest(entry, entityClass.prototype.uiFieldsTest);
+      }
+    }
+    const { include, exclude } = this._normalizeUiFieldsResult(result);
+    const allowedSet = this._normalizeKeySet(include, fallbackKeys);
+    const blockedSet = this._normalizeKeySet(exclude, fallbackKeys);
+    let keys = [...fallbackKeys];
+    if (allowedSet.size > 0) keys = keys.filter((key) => allowedSet.has(key));
+    if (blockedSet.size > 0) keys = keys.filter((key) => !blockedSet.has(key));
+    if (keys.length === 0) return { schema: {}, visibleKeys: [] };
+    const filtered = {};
+    for (const key of keys) {
+      filtered[key] = schema[key];
+    }
+    return { schema: filtered, visibleKeys: keys };
+  }
+
+  _normalizeUiFieldsResult(result) {
+    if (result == null) return { include: null, exclude: null };
+    if (Array.isArray(result)) return { include: result, exclude: null };
+    if (typeof result === 'object') {
+      const include = Array.isArray(result.include) ? result.include : null;
+      const exclude = Array.isArray(result.exclude) ? result.exclude : null;
+      if (include || exclude) return { include, exclude };
+      const keys = Object.keys(result);
+      if (!keys.length) return { include: null, exclude: null };
+      const includeFromBools = keys.filter((k) => result[k] === true);
+      const excludeFromBools = keys.filter((k) => result[k] === false);
+      return {
+        include: includeFromBools.length ? includeFromBools : null,
+        exclude: excludeFromBools.length ? excludeFromBools : null,
+      };
+    }
+    return { include: null, exclude: null };
+  }
+
+  _normalizeKeySet(list, fallbackKeys = []) {
+    const set = new Set();
+    if (!Array.isArray(list)) return set;
+    const allowed = new Set(fallbackKeys);
+    for (const raw of list) {
+      if (raw == null) continue;
+      const key = String(raw);
+      if (allowed.has(key)) set.add(key);
+    }
+    return set;
+  }
+
+  _recordUiFieldSignature(entryId, keys = []) {
+    if (entryId == null) return;
+    const sig = this._uiFieldsSignatureFromKeys(keys);
+    this._uiFieldSignatures.set(String(entryId), sig);
+  }
+
+  _maybeRefreshUiFields(entryId, entry) {
+    if (entryId == null) return;
+    const baseSchema = this._resolveSchema(entry);
+    const { visibleKeys } = this._filterSchemaForEntry(entry, baseSchema, entryId);
+    const nextSig = this._uiFieldsSignatureFromKeys(visibleKeys);
+    const prevSig = this._uiFieldSignatures.get(String(entryId)) || null;
+    if (nextSig !== prevSig) {
+      this._uiFieldSignatures.set(String(entryId), nextSig);
+      this.render();
+    }
+  }
+
+  _uiFieldsSignatureFromKeys(keys = []) {
+    if (!Array.isArray(keys) || !keys.length) return '';
+    return keys.join('|');
   }
 
   _makeStyle() {

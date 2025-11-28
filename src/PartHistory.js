@@ -474,6 +474,7 @@ export class PartHistory {
 
     for (const a of added) {
       if (a && typeof a === 'object') {
+        if (a === this.scene) continue;
         // Free first to force rebuild from latest arrays, then visualize
         try { await a.free(); } catch { }
         try { await a.visualize(); } catch { }

@@ -20,6 +20,7 @@ import { RemeshFeature } from './features/remesh/RemeshFeature.js';
 import { ImageToFaceFeature } from './features/imageToFace/ImageToFaceFeature.js';
 import { ImageHeightmapSolidFeature } from './features/imageHeightSolid/ImageHeightmapSolidFeature.js';
 import { TransformFeature } from './features/transform/TransformFeature.js';
+import { HoleFeature } from './features/hole/HoleFeature.js';
 import { PatternFeature } from './features/pattern/PatternFeature.js';
 import { PatternLinearFeature } from './features/patternLinear/PatternLinearFeature.js';
 import { PatternRadialFeature } from './features/patternRadial/PatternRadialFeature.js';
@@ -87,6 +88,7 @@ export class FeatureRegistry {
     this.register(MirrorFeature);
     this.register(RevolveFeature);
     this.register(SweepFeature);
+    this.register(HoleFeature);
     this.register(TubeFeature);
     this.register(RemeshFeature);
     this.register(ImageToFaceFeature);
