@@ -190,6 +190,10 @@ export class SheetMetalFlangeFeature {
     for (const face of faces) {
       const context = analyzeFace(face);
       if (!context) continue;
+      const orientationInfo = resolveABOrientation(face, context);
+      const desiredBendSide = useOppositeCenterline
+        ? SHEET_METAL_FACE_TYPES.B
+        : SHEET_METAL_FACE_TYPES.A;
 
       const offsetVector = shouldExtrudeOffset
         ? buildOffsetTranslationVector(context.baseNormal, offsetValue)
@@ -206,23 +210,8 @@ export class SheetMetalFlangeFeature {
       let chosen = null;
       for (const hingeEdge of hingeOptions) {
         const defaultOffset = bendRadiusUsed + thickness;
-        const primary = buildFlangeRevolve({
-          face,
-          context,
-          hingeEdge,
-          appliedAngle,
-          bendRadiusUsed,
-          thickness,
-          offsetVector,
-          featureID: this.inputParams?.featureID,
-          offsetMagnitudeOverride: defaultOffset,
-          useOppositeCenterline,
-        });
-        chosen = chooseBetterRadiusMatch(chosen, primary, targetRadius);
-
-        const err = radiusError(primary?.measuredRadius, targetRadius);
-        if (err > tolerance) {
-          const tighter = buildFlangeRevolve({
+        const primary = evaluateFlangeCandidate({
+          raw: buildFlangeRevolve({
             face,
             context,
             hingeEdge,
@@ -231,12 +220,36 @@ export class SheetMetalFlangeFeature {
             thickness,
             offsetVector,
             featureID: this.inputParams?.featureID,
-            offsetMagnitudeOverride: bendRadiusUsed,
-            useOppositeCenterline,
+            offsetMagnitudeOverride: defaultOffset,
+          }),
+          targetRadius,
+          desiredBendSide,
+          orientationInfo,
+        });
+        chosen = pickBetterFlangeCandidate(chosen, primary);
+
+        if ((primary?.radiusErr ?? Infinity) > tolerance) {
+          const tighter = evaluateFlangeCandidate({
+            raw: buildFlangeRevolve({
+              face,
+              context,
+              hingeEdge,
+              appliedAngle,
+              bendRadiusUsed,
+              thickness,
+              offsetVector,
+              featureID: this.inputParams?.featureID,
+              offsetMagnitudeOverride: bendRadiusUsed,
+            }),
+            targetRadius,
+            desiredBendSide,
+            orientationInfo,
           });
-          chosen = chooseBetterRadiusMatch(chosen, tighter, targetRadius);
+          chosen = pickBetterFlangeCandidate(chosen, tighter);
         }
-        if (chosen?.revolve && radiusError(chosen.measuredRadius, targetRadius) <= tolerance) {
+        if (chosen?.revolve
+          && (chosen.orientationPenalty ?? 0) === 0
+          && (chosen.radiusErr ?? Infinity) <= tolerance) {
           break;
         }
       }
@@ -746,6 +759,81 @@ function computeFaceCenter(face) {
   return null;
 }
 
+function collectNeighborFaces(face) {
+  const neighbors = new Set();
+  for (const edge of face?.edges || []) {
+    if (!edge?.faces) continue;
+    for (const neighbor of edge.faces) {
+      if (neighbor && neighbor !== face) neighbors.add(neighbor);
+    }
+  }
+  return Array.from(neighbors);
+}
+
+function resolveABOrientation(face, context) {
+  try {
+    const THREE = BREP.THREE;
+    const origin = context?.origin?.clone?.() || computeFaceCenter(face) || new THREE.Vector3();
+    const neighbors = collectNeighborFaces(face);
+    let centerA = null;
+    let centerB = null;
+    let countA = 0;
+    let countB = 0;
+    let normalA = null;
+    let normalB = null;
+    const accumulate = (acc, vec) => {
+      if (!vec || typeof vec.clone !== "function") return acc;
+      const clone = vec.clone();
+      if (clone.lengthSq && clone.lengthSq() < 1e-12) return acc;
+      return acc ? acc.add(clone) : clone;
+    };
+    for (const neighbor of neighbors) {
+      const type = resolveSMFaceType(neighbor);
+      if (type !== SHEET_METAL_FACE_TYPES.A && type !== SHEET_METAL_FACE_TYPES.B) continue;
+      const center = computeFaceCenter(neighbor);
+      const normal = typeof neighbor.getAverageNormal === "function"
+        ? neighbor.getAverageNormal().clone()
+        : null;
+      if (type === SHEET_METAL_FACE_TYPES.A) {
+        if (center) { centerA = accumulate(centerA, center); countA++; }
+        if (normal) normalA = accumulate(normalA, normal);
+      } else if (type === SHEET_METAL_FACE_TYPES.B) {
+        if (center) { centerB = accumulate(centerB, center); countB++; }
+        if (normal) normalB = accumulate(normalB, normal);
+      }
+    }
+    const average = (vec, count) => (vec && count ? vec.multiplyScalar(1 / count) : null);
+    centerA = average(centerA, countA);
+    centerB = average(centerB, countB);
+    if (normalA && normalA.lengthSq() > 1e-12) normalA.normalize(); else normalA = null;
+    if (normalB && normalB.lengthSq() > 1e-12) normalB.normalize(); else normalB = null;
+
+    let dir = null;
+    if (centerA && centerB) {
+      dir = centerA.clone().sub(centerB);
+    } else if (centerA && normalA) {
+      dir = normalA.clone();
+    } else if (centerB && normalB) {
+      dir = normalB.clone().multiplyScalar(-1);
+    }
+    if (dir && dir.lengthSq() > 1e-12) {
+      dir.normalize();
+    } else {
+      dir = null;
+    }
+
+    if (!dir && !centerA && !centerB) return null;
+    return {
+      dir,
+      origin,
+      hasA: countA > 0,
+      hasB: countB > 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildAxisEdge(start, end, featureID) {
   const geom = new BREP.THREE.BufferGeometry();
   const positions = new Float32Array([
@@ -1100,11 +1188,52 @@ function radiusError(measured, target) {
   return Math.abs(measured - target);
 }
 
-function chooseBetterRadiusMatch(current, candidate, targetRadius) {
+function evaluateFlangeCandidate({
+  raw,
+  targetRadius,
+  desiredBendSide = null,
+  orientationInfo = null,
+}) {
+  if (!raw?.revolve) return null;
+  const result = {
+    ...raw,
+    radiusErr: radiusError(raw.measuredRadius, targetRadius),
+    orientationPenalty: 0,
+    bendSide: null,
+  };
+  const bendOrientation = determineBendSide(raw, orientationInfo);
+  if (bendOrientation?.side) {
+    result.bendSide = bendOrientation.side;
+    if (desiredBendSide) {
+      result.orientationPenalty = bendOrientation.side === desiredBendSide ? 0 : 1;
+    }
+  }
+  return result;
+}
+
+function determineBendSide(candidate, orientationInfo) {
+  const dir = orientationInfo?.dir;
+  const origin = orientationInfo?.origin;
+  if (!candidate?.bendEndFace || !dir || typeof dir.dot !== "function" || dir.lengthSq() < 1e-12) {
+    return null;
+  }
+  const center = computeFaceCenter(candidate.bendEndFace);
+  if (!center || !origin) return null;
+  const offset = center.clone().sub(origin);
+  const dot = offset.dot(dir);
+  if (!Number.isFinite(dot) || Math.abs(dot) < 1e-9) return null;
+  const side = dot >= 0 ? SHEET_METAL_FACE_TYPES.A : SHEET_METAL_FACE_TYPES.B;
+  return { side, alignment: Math.abs(dot) };
+}
+
+function pickBetterFlangeCandidate(current, candidate) {
   if (!candidate?.revolve) return current;
   if (!current?.revolve) return candidate;
-  const currErr = radiusError(current.measuredRadius, targetRadius);
-  const candErr = radiusError(candidate.measuredRadius, targetRadius);
+  if (candidate.orientationPenalty !== current.orientationPenalty) {
+    return candidate.orientationPenalty < current.orientationPenalty ? candidate : current;
+  }
+  const currErr = current.radiusErr ?? Infinity;
+  const candErr = candidate.radiusErr ?? Infinity;
   return candErr + 1e-9 < currErr ? candidate : current;
 }
 
