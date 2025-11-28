@@ -232,13 +232,55 @@ function chooseNearestSolid(solids, point) {
   return best;
 }
 
-function makeHoleTool({ holeType, radius, straightDepth, sinkDia, sinkAngle, boreDia, boreDepth, res, featureID }) {
+function collectSketchVertices(sketch) {
+  const verts = [];
+  try {
+    if (!sketch || !Array.isArray(sketch.children)) return verts;
+    for (const child of sketch.children) {
+      if (!child) continue;
+      const sid = child?.userData?.sketchPointId;
+      const name = child?.name || '';
+      const isCenter = sid === 0 || sid === '0' || name === 'P0' || name.endsWith(':P0');
+      if (isCenter) continue;
+      const isVertexLike = child.type === 'Vertex' || child.isVertex || child.userData?.isVertex || child.userData?.type === 'VERTEX';
+      if (isVertexLike) verts.push(child);
+    }
+  } catch { /* ignore */ }
+  return verts;
+}
+
+function collectSketchVerticesByName(scene, sketchName) {
+  const verts = [];
+  if (!scene || !sketchName) return verts;
+  const prefix = `${sketchName}:P`;
+  const re = new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`);
+  const walk = (obj) => {
+    if (!obj) return;
+    const nm = obj.name || '';
+    const m = nm.match(re);
+    if (m) {
+      const id = Number(m[1]);
+      if (id !== 0) verts.push(obj);
+    }
+    const children = Array.isArray(obj.children) ? obj.children : [];
+    for (const c of children) walk(c);
+  };
+  walk(scene);
+  return verts;
+}
+
+function escapeRegExp(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function makeHoleTool({ holeType, radius, straightDepthTotal, sinkDia, sinkAngle, boreDia, boreDepth, res, featureID }) {
   const solids = [];
   const descriptors = [];
   if (holeType === 'COUNTERSINK') {
     const sinkRadius = Math.max(radius, sinkDia * 0.5);
     const angleRad = sinkAngle * (Math.PI / 180);
     const sinkHeight = (sinkRadius - radius) / Math.tan(angleRad * 0.5);
+    const coreDepth = Math.max(0, straightDepthTotal - sinkHeight);
     if (sinkHeight > 0) {
       solids.push(new BREP.Cone({
         r1: radius,
@@ -248,10 +290,10 @@ function makeHoleTool({ holeType, radius, straightDepth, sinkDia, sinkAngle, bor
         name: featureID ? `${featureID}_CSK` : 'CSK',
       }));
     }
-    if (straightDepth > 0) {
+    if (coreDepth > 0) {
       const cyl = new BREP.Cylinder({
         radius,
-        height: straightDepth,
+        height: coreDepth,
         resolution: res,
         name: featureID ? `${featureID}_Hole` : 'Hole',
       });
@@ -260,8 +302,8 @@ function makeHoleTool({ holeType, radius, straightDepth, sinkDia, sinkAngle, bor
     }
     descriptors.push({
       type: 'COUNTERSINK',
-      totalDepth: straightDepth + sinkHeight,
-      straightDepth,
+      totalDepth: straightDepthTotal,
+      straightDepth: coreDepth,
       countersinkHeight: sinkHeight,
       countersinkDiameter: sinkRadius * 2,
       diameter: radius * 2,
@@ -270,6 +312,7 @@ function makeHoleTool({ holeType, radius, straightDepth, sinkDia, sinkAngle, bor
       counterboreDiameter: 0,
     });
   } else if (holeType === 'COUNTERBORE') {
+    const coreDepth = Math.max(0, straightDepthTotal - boreDepth);
     if (boreDepth > 0) {
       solids.push(new BREP.Cylinder({
         radius: Math.max(radius, boreDia * 0.5),
@@ -278,10 +321,10 @@ function makeHoleTool({ holeType, radius, straightDepth, sinkDia, sinkAngle, bor
         name: featureID ? `${featureID}_CBore` : 'CBore',
       }));
     }
-    if (straightDepth > 0) {
+    if (coreDepth > 0) {
       const cyl = new BREP.Cylinder({
         radius,
-        height: straightDepth,
+        height: coreDepth,
         resolution: res,
         name: featureID ? `${featureID}_Hole` : 'Hole',
       });
@@ -290,8 +333,8 @@ function makeHoleTool({ holeType, radius, straightDepth, sinkDia, sinkAngle, bor
     }
     descriptors.push({
       type: 'COUNTERBORE',
-      totalDepth: straightDepth + boreDepth,
-      straightDepth,
+      totalDepth: straightDepthTotal,
+      straightDepth: coreDepth,
       countersinkHeight: 0,
       countersinkDiameter: 0,
       diameter: radius * 2,
@@ -300,18 +343,18 @@ function makeHoleTool({ holeType, radius, straightDepth, sinkDia, sinkAngle, bor
       counterboreDiameter: Math.max(radius, boreDia * 0.5) * 2,
     });
   } else {
-    if (straightDepth > 0) {
+    if (straightDepthTotal > 0) {
       solids.push(new BREP.Cylinder({
         radius,
-        height: straightDepth,
+        height: straightDepthTotal,
         resolution: res,
         name: featureID ? `${featureID}_Hole` : 'Hole',
       }));
     }
     descriptors.push({
       type: 'SIMPLE',
-      totalDepth: straightDepth,
-      straightDepth,
+      totalDepth: straightDepthTotal,
+      straightDepth: straightDepthTotal,
       countersinkHeight: 0,
       countersinkDiameter: 0,
       diameter: radius * 2,
@@ -368,8 +411,26 @@ export class HoleFeature {
       const onlyCenterSelected = !sketch && pointObjsRaw.length === 1;
       return onlyCenterSelected;
     });
-    const pointPositions = pointObjs.map((o) => getWorldPosition(o)).filter(Boolean);
-    const hasPoints = pointPositions.length > 0;
+    let pointPositions = pointObjs.map((o) => getWorldPosition(o)).filter(Boolean);
+    let hasPoints = pointPositions.length > 0;
+
+    // If a sketch is selected but no explicit point refs were provided, use its sketch vertices (excluding center).
+    if (!hasPoints && sketch) {
+      const extraPts = collectSketchVertices(sketch);
+      if (extraPts.length) {
+        pointObjs.push(...extraPts);
+        pointPositions = pointObjs.map((o) => getWorldPosition(o)).filter(Boolean);
+        hasPoints = pointPositions.length > 0;
+      }
+      if (!hasPoints && partHistory?.scene && sketch?.name) {
+        const fallbackPts = collectSketchVerticesByName(partHistory.scene, sketch.name);
+        if (fallbackPts.length) {
+          pointObjs.push(...fallbackPts);
+          pointPositions = pointObjs.map((o) => getWorldPosition(o)).filter(Boolean);
+          hasPoints = pointPositions.length > 0;
+        }
+      }
+    }
 
     let normal = new THREE.Vector3(0, 1, 0);
     let center = new THREE.Vector3();
@@ -451,7 +512,7 @@ export class HoleFeature {
       const { solids: toolSolids, descriptors } = makeHoleTool({
         holeType,
         radius,
-        straightDepth,
+        straightDepthTotal: straightDepth,
         sinkDia,
         sinkAngle,
         boreDia,
