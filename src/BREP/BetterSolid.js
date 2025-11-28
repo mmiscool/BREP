@@ -318,6 +318,10 @@ export class Solid extends THREE.Group {
         return SolidMethods.removeInternalTrianglesByWinding.apply(this, [options]);
     }
 
+    chamfer(options = {}) {
+        return SolidMethods.chamfer.apply(this, [options]);
+    }
+
     fillet(options = {}) {
         return SolidMethods.fillet.apply(this, [options]);
     }

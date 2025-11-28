@@ -1,5 +1,3 @@
-import { BREP } from '../../BREP/BREP.js'
-
 const inputParamsSchema = {
     id: {
         type: "string",
@@ -66,7 +64,7 @@ export class ChamferFeature {
             console.warn("No edges selected for chamfer");
             return { added: [], removed: [] };
         }
-        const solids = new Set(edgeObjs.map(e => e.parentSolid));
+        const solids = new Set(edgeObjs.map(e => e.parentSolid || e.parent));
         if (solids.size === 0) {
             console.warn("Selected edges do not belong to any solid");
             return { added: [], removed: [] };
@@ -76,51 +74,50 @@ export class ChamferFeature {
             return { added: [], removed: [] };
         }
 
-        const targetSolid = edgeObjs[0].parentSolid || edgeObjs[0].parent;
-
+        const targetSolid = solids.values().next().value;
         const direction = String(this.inputParams.direction || "INSET").toUpperCase();
-        const objectsForBoolean = [];
-        for (const edgeObj of edgeObjs) {
-            const chamferSolid = makeSingleChamferSolid(edgeObj,
-                this.inputParams.distance,
-                this.inputParams.inflate,
-                direction,
-                this.inputParams.debug);
-            objectsForBoolean.push(chamferSolid);
+        const distance = Number(this.inputParams.distance);
+        if (!Number.isFinite(distance) || !(distance > 0)) {
+            console.warn("Invalid chamfer distance supplied; aborting.", { distance: this.inputParams.distance });
+            return { added: [], removed: [] };
         }
 
-        let finalSolid = targetSolid;
-        for (const obj of objectsForBoolean) {
-            if (direction === "OUTSET") {
-                finalSolid = finalSolid.union(obj);
-            } else if (direction === "INSET") {
-                finalSolid = finalSolid.subtract(obj);
-            } else { // AUTO (not exposed currently)
-                try {
-                    finalSolid = finalSolid.subtract(obj);
-                } catch (e) {
-                    try { finalSolid = finalSolid.union(obj); } catch (e2) { console.error("Chamfer union failed:", e2); }
-                }
+        const fid = this.inputParams.featureID;
+        const result = await targetSolid.chamfer({
+            distance,
+            edges: edgeObjs,
+            direction,
+            inflate: Number(this.inputParams.inflate),
+            debug: !!this.inputParams.debug,
+            featureID: fid,
+        });
+
+        const triCount = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
+        const vertCount = Array.isArray(result?._vertProperties) ? (result._vertProperties.length / 3) : 0;
+        if (!result || triCount === 0 || vertCount === 0) {
+            console.error("[ChamferFeature] Chamfer produced an empty result; skipping scene replacement.", {
+                featureID: fid,
+                triangleCount: triCount,
+                vertexCount: vertCount,
+                direction,
+                distance,
+                inflate: this.inputParams.inflate,
+            });
+            return { added: [], removed: [] };
+        }
+
+        try { result.name = targetSolid.name; } catch {}
+        try { targetSolid.__removeFlag = true; } catch {}
+        result.visualize();
+
+        const added = [result];
+        if (this.inputParams.debug && Array.isArray(result.__debugChamferSolids)) {
+            for (const dbg of result.__debugChamferSolids) {
+                if (!dbg) continue;
+                try { dbg.name = `${fid || "CHAMFER"}_${dbg.name || "DEBUG"}`; } catch {}
+                added.push(dbg);
             }
         }
-
-        finalSolid.name = `${targetSolid.name}`;
-        finalSolid.visualize();
-        // Flag the original solid for removal; PartHistory will handle it
-        try { targetSolid.__removeFlag = true; } catch {}
-        const out = [];
-        if (this.inputParams.debug) out.push(...objectsForBoolean);
-        out.push(finalSolid);
-        return { added: out, removed: [targetSolid] };
+        return { added, removed: [targetSolid] };
     }
-}
-
-function makeSingleChamferSolid(edgeObj, distance = 1, inflate = 0, direction = 'INSET', debug = false) {
-    const dir = String(direction || 'INSET').toUpperCase();
-    const inflateValue = Number(inflate) || 0;
-    const inflateForSolid = (dir === 'OUTSET') ? -inflateValue : inflateValue;
-    const tool = new BREP.ChamferSolid({ edgeToChamfer: edgeObj, distance, inflate: inflateForSolid, direction: dir, debug });
-    tool.name = "CHAMFER_TOOL";
-    tool.visualize();
-    return tool;
 }
