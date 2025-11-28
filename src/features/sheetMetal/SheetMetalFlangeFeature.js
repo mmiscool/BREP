@@ -33,7 +33,7 @@ const inputParamsSchema = {
   flangeLengthReference: {
     type: "options",
     options: ["inside", "outside", "web"],
-    default_value: "web",
+    default_value: "outside",
     hint: "Placeholder: retained for UI compatibility (currently unused).",
   },
   angle: {
@@ -46,7 +46,7 @@ const inputParamsSchema = {
   inset: {
     type: "options",
     options: ["material_inside", "material_outside", "bend_outside"],
-    default_value: "material_outside",
+    default_value: "material_inside",
     hint: "Placeholder: retained for UI compatibility (currently unused).",
   },
   reliefWidth: {
