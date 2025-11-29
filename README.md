@@ -26,24 +26,30 @@ This project is actively evolving; expect rough edges while APIs settle.
 - [Recent Inspector Improvements](docs/inspector-improvements.md)
 - [Inspector](docs/inspector.md)
 
-## Using as an npm package
-
-- Install:
-  - `pnpm add brep-io-kernel`
-- Import options:
-  - `import { BREP, PartHistory } from 'brep-io-kernel';`
-  - `import { BREP } from 'brep-io-kernel/BREP';`
-  - `import { PartHistory } from 'brep-io-kernel/PartHistory';`
-  - `import { AssemblyConstraintHistory, AssemblyConstraintRegistry } from 'brep-io-kernel';`
 
 
 ## Dialog Screenshots
 
 See [Dialog Screenshots](docs/dialog-screenshots.md) for the capture helpers, output locations, and configuration options.
 
+
+## Run Local Dev Environment
+```
+# clone repo and cd to the folder
+pnpm install
+pnpm dev
+```
+
+## Produce Static build
+```
+# clone repo and cd to the folder
+pnpm install
+pnpm build
+```
+Generating a static build will create a  ```dist``` folder containing a static build suitable for hosting on a CDN or just being copied to a web server. 
+
+
 ## Application Mode Guides
-
-
 
 - [Modeling Mode](docs/modes/modeling.md)
 - [Sketch Mode](docs/modes/sketch.md)
@@ -112,6 +118,19 @@ PMI mode focuses on downstream manufacturing communication. Annotating the model
 - [Hole Callout](docs/pmi-annotations/hole-callout.md) – leader-style callout that reports hole feature parameters (diameters, depths, countersink/counterbore).
 
 Each annotation stores associative references and view metadata so reloading a part restores the PMI viewport, label placement, and formatting settings.
+
+## Using as an npm package (not completed yet. Will change and is not currently working)
+
+- Install:
+  - `pnpm add brep-io-kernel`
+- Import options:
+  - `import { BREP, PartHistory } from 'brep-io-kernel';`
+  - `import { BREP } from 'brep-io-kernel/BREP';`
+  - `import { PartHistory } from 'brep-io-kernel/PartHistory';`
+  - `import { AssemblyConstraintHistory, AssemblyConstraintRegistry } from 'brep-io-kernel';`
+
+
+
 
 ## License
 
