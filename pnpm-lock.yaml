@@ -14,9 +14,6 @@ importers:
       manifold-3d:
         specifier: ^3.3.2
         version: 3.3.2
-      playwright:
-        specifier: ^1.57.0
-        version: 1.57.0
       tess2:
         specifier: ^1.0.0
         version: 1.0.0
@@ -30,6 +27,9 @@ importers:
       nodemon:
         specifier: ^3.1.11
         version: 3.1.11
+      playwright:
+        specifier: ^1.57.0
+        version: 1.57.0
       vite:
         specifier: ^7.2.4
         version: 7.2.4(@types/node@24.3.0)
