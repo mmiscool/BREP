@@ -1,5 +1,9 @@
 # Hole Callout
 
+Status: Implemented
+
+![Hole Callout dialog](Hole_Callout_dialog.png)
+
 Creates a leader-style note that reports hole parameters from the hole feature.
 
 ## Inputs
@@ -15,4 +19,4 @@ Creates a leader-style note that reports hole parameters from the hole feature.
 
 ## Tips
 - Holes carry metadata (center, normal, type, diameters, depths) from the Hole feature. Pick the actual hole geometry to bind the callout to that specific hole.
-- Depth matches the Hole feature’s total depth; Through All skips depth text.***
+- Depth matches the Hole feature’s total depth; Through All skips depth text.

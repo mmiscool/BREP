@@ -17,6 +17,7 @@ Use PMI Mode after modeling is complete to capture critical tolerances, notes, a
 - [Linear Dimension](../pmi-annotations/linear-dimension.md)
 - [Radial Dimension](../pmi-annotations/radial-dimension.md)
 - [Angle Dimension](../pmi-annotations/angle-dimension.md)
+- [Hole Callout](../pmi-annotations/hole-callout.md)
 - [Leader](../pmi-annotations/leader.md)
 - [Note](../pmi-annotations/note.md)
 - [Explode Body (View Transform)](../pmi-annotations/explode-body.md)

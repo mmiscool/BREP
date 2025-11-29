@@ -1,5 +1,9 @@
 # Hole
 
+Status: Implemented
+
+![Hole feature dialog](Hole_dialog.png)
+
 Adds drilled-style holes with optional countersink or counterbore. The feature accepts a sketch or one or more vertices as placement inputs and produces separate holes for every point selected (sketch center P0 is ignored by default).
 
 ## Inputs
