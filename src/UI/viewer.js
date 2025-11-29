@@ -35,6 +35,8 @@ import { SchemaForm } from './featureDialogs.js';
 import './dialogs.js';
 import { cloneSplineData } from '../features/spline/splineUtils.js';
 
+const ASSEMBLY_CONSTRAINTS_TITLE = 'Assembly Constraints';
+
 export class Viewer {
     /**
      * @param {Object} opts
@@ -174,6 +176,8 @@ export class Viewer {
         this._pendingToolbarButtons = [];
         // Component transform gizmo session state
         this._componentTransformSession = null;
+        // Assembly constraints accordion visibility state
+        this._assemblyConstraintsVisible = null;
 
         // Raycaster for picking
         this.raycaster = new THREE.Raycaster();
@@ -258,12 +262,14 @@ export class Viewer {
         this.partHistory.callbacks.reset = async () => {
             //await this.historyWidget.reset();
         };
+        this.partHistory.callbacks.afterRunHistory = () => this._refreshAssemblyConstraintsPanelVisibility();
+        this.partHistory.callbacks.afterReset = () => this._refreshAssemblyConstraintsPanelVisibility();
         const historySection = await this.accordion.addSection("History");
         await historySection.uiElement.appendChild(await this.historyWidget.uiElement);
 
         this.assemblyConstraintsWidget = new AssemblyConstraintsWidget(this);
-        const constraintsSection = await this.accordion.addSection('Assembly Constraints');
-        constraintsSection.uiElement.appendChild(this.assemblyConstraintsWidget.uiElement);
+        this._assemblyConstraintsSection = await this.accordion.addSection(ASSEMBLY_CONSTRAINTS_TITLE);
+        this._assemblyConstraintsSection.uiElement.appendChild(this.assemblyConstraintsWidget.uiElement);
 
         // setup expressions
         this.expressionsManager = await new expressionsManager(this);
@@ -307,9 +313,13 @@ export class Viewer {
         await this.accordion.expandSection("Scene Manager");
 
         await this.accordion.expandSection("History");
-        await this.accordion.expandSection("Assembly Constraints");
+        const hasAssemblyComponents = !!this.partHistory?.hasAssemblyComponents?.();
+        if (hasAssemblyComponents) {
+            await this.accordion.expandSection(ASSEMBLY_CONSTRAINTS_TITLE);
+        }
         await this.accordion.expandSection("PMI Views");
 
+        this._refreshAssemblyConstraintsPanelVisibility();
 
 
         // Mount the main toolbar (layout only; buttons registered externally)
@@ -382,6 +392,32 @@ export class Viewer {
         this._pendingSidePanels = this._pendingSidePanels || [];
         this._pendingSidePanels.push(item);
         return null;
+    }
+
+    _refreshAssemblyConstraintsPanelVisibility() {
+        if (!this.accordion || !this.accordion.uiElement) return;
+        const shouldShow = !!this.partHistory?.hasAssemblyComponents?.();
+        const prevVisible = this._assemblyConstraintsVisible;
+        this._assemblyConstraintsVisible = shouldShow;
+
+        if (shouldShow) {
+            this.accordion.showSection?.(ASSEMBLY_CONSTRAINTS_TITLE);
+            if (prevVisible === false) {
+                try { this.accordion.expandSection?.(ASSEMBLY_CONSTRAINTS_TITLE); } catch { /* ignore */ }
+            }
+        } else {
+            const applied = this.accordion.hideSection?.(ASSEMBLY_CONSTRAINTS_TITLE);
+            if (!applied) {
+                // Retry once after next paint in case the nodes weren't available yet.
+                setTimeout(() => {
+                    try { this.accordion.hideSection?.(ASSEMBLY_CONSTRAINTS_TITLE); } catch { /* ignore */ }
+                }, 0);
+            }
+        }
+
+        if (prevVisible !== shouldShow) {
+            // No-op; kept for future hooks
+        }
     }
 
     // ————————————————————————————————————————

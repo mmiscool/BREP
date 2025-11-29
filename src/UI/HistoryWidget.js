@@ -190,6 +190,7 @@ export class HistoryWidget extends HistoryCollectionWidget {
     this._idsSignature = this.#computeIdsSignature();
     this._syncHeaderState();
     this.#refreshOpenForms();
+    try { this.viewer?._refreshAssemblyConstraintsPanelVisibility?.(); } catch { /* ignore */ }
   }
 
   async #createFeatureEntry(typeStr) {

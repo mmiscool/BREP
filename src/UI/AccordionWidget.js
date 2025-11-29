@@ -197,6 +197,83 @@ export class AccordionWidget {
     await _flushAfterPaint();
     return true;
   }
+
+  /**
+   * Hide a section (title + content) by title.
+   * @param {string} title
+   * @returns {boolean} true if found
+   */
+  hideSection(title) {
+    const titleEl = this._findTitleEl(title);
+    const contentEl = this._findContentEl(title, titleEl);
+    let changed = false;
+    if (titleEl) {
+      titleEl.style.display = 'none';
+      titleEl.hidden = true;
+      titleEl.setAttribute('aria-hidden', 'true');
+      changed = true;
+    }
+    if (contentEl) {
+      contentEl.style.display = 'none';
+      contentEl.hidden = true;
+      contentEl.setAttribute('aria-hidden', 'true');
+      contentEl.classList.add('collapsed');
+      changed = true;
+    }
+    return changed;
+  }
+
+  /**
+   * Show a section (title + content) by title.
+   * @param {string} title
+   * @returns {boolean} true if found
+   */
+  showSection(title) {
+    const titleEl = this._findTitleEl(title);
+    const contentEl = this._findContentEl(title, titleEl);
+    let changed = false;
+    if (titleEl) {
+      titleEl.style.display = '';
+      titleEl.hidden = false;
+      titleEl.setAttribute('aria-hidden', 'false');
+      changed = true;
+    }
+    if (contentEl) {
+      contentEl.style.display = '';
+      contentEl.hidden = false;
+      contentEl.setAttribute('aria-hidden', 'false');
+      contentEl.classList.remove('collapsed');
+      changed = true;
+    }
+    return changed;
+  }
+
+  _findTitleEl(title) {
+    const direct = this.uiElement.querySelector(`.accordion-title[name="accordion-title-${title}"]`);
+    if (direct) return direct;
+    const titles = Array.from(this.uiElement.querySelectorAll('.accordion-title'));
+    const norm = String(title || '').trim().toUpperCase();
+    return titles.find((el) => {
+      const text = (el.textContent || '').trim().toUpperCase();
+      return text === norm || text.startsWith(norm) || norm.startsWith(text);
+    }) || null;
+  }
+
+  _findContentEl(title, titleEl = null) {
+    const direct = this.uiElement.querySelector(`.accordion-content[name="accordion-content-${title}"]`);
+    if (direct) return direct;
+    if (titleEl && titleEl.nextElementSibling && titleEl.nextElementSibling.classList.contains('accordion-content')) {
+      return titleEl.nextElementSibling;
+    }
+    // Fallback: find content by id match start
+    const contents = Array.from(this.uiElement.querySelectorAll('.accordion-content'));
+    const norm = String(title || '').trim().toUpperCase();
+    return contents.find((el) => {
+      const id = (el.id || '').trim().toUpperCase();
+      const name = (el.getAttribute('name') || '').trim().toUpperCase();
+      return id.includes(norm) || name.includes(norm);
+    }) || null;
+  }
 }
 
 /* -------------------------------------------------------

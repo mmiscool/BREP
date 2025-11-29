@@ -255,6 +255,10 @@ export class PartHistory {
       this.assemblyConstraintHistory.setPartHistory(this);
     }
 
+    if (this.callbacks.afterReset) {
+      try { await this.callbacks.afterReset(); } catch { /* ignore */ }
+    }
+
     // sleep for a short duration to allow scene updates to complete
     //await new Promise(resolve => setTimeout(resolve, 1000));
     // console.log("PartHistory reset complete.");
@@ -435,6 +439,10 @@ export class PartHistory {
     // Do not clear currentHistoryStepId here. Keeping it preserves the UX of
     // "stop at the currently expanded feature" across subsequent runs. The
     // UI will explicitly clear it when no section is expanded.
+
+    if (this.callbacks.afterRunHistory) {
+      try { await this.callbacks.afterRunHistory(); } catch { /* ignore */ }
+    }
 
     return this;
   }
@@ -633,6 +641,38 @@ export class PartHistory {
     if (!this.assemblyConstraintHistory) return [];
     this.assemblyConstraintHistory.setPartHistory(this);
     return await this.assemblyConstraintHistory.runAll(this);
+  }
+
+  hasAssemblyComponents() {
+    const features = Array.isArray(this.features) ? this.features : [];
+    if (!features.length) return false;
+    const normalize = (value) => {
+      if (value === 0) return '0';
+      if (value == null) return '';
+      return String(value).trim().toUpperCase();
+    };
+    const targets = new Set([
+      normalize(AssemblyComponentFeature?.shortName),
+      normalize(AssemblyComponentFeature?.longName),
+      normalize(AssemblyComponentFeature?.name),
+    ]);
+    targets.delete('');
+
+    for (const feature of features) {
+      if (!feature) continue;
+      const rawType = feature?.type ?? feature?.inputParams?.type ?? null;
+      const typeKey = normalize(rawType);
+      if (typeKey && targets.has(typeKey)) return true;
+
+      try {
+        const FeatureClass = this.featureRegistry?.getSafe?.(rawType) || null;
+        if (FeatureClass === AssemblyComponentFeature) return true;
+        const resolvedKey = normalize(FeatureClass?.longName || FeatureClass?.shortName || FeatureClass?.name);
+        if (resolvedKey && targets.has(resolvedKey)) return true;
+      } catch { /* ignore unknown feature types */ }
+    }
+
+    return false;
   }
 
   syncAssemblyComponentTransforms() {
