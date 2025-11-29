@@ -70,6 +70,7 @@ See [Dialog Screenshots](docs/dialog-screenshots.md) for the capture helpers, ou
 - [Boolean](docs/features/boolean.md) — Implemented
 - [Fillet](docs/features/fillet.md) — Implemented
 - [Chamfer](docs/features/chamfer.md) — Implemented
+- [Hole](docs/features/hole.md) — Implemented
 - [Offset Shell](docs/features/offset-shell.md) — Implemented
 - [Remesh](docs/features/remesh.md) — Implemented
 - [Import 3D Model (STL or 3MF)](docs/features/import-3d-model.md) — Implemented
@@ -108,6 +109,7 @@ PMI mode focuses on downstream manufacturing communication. Annotating the model
 - [Leader](docs/pmi-annotations/leader.md) – callouts with free-form text, arrowhead placement, and captured drag offsets.
 - [Note](docs/pmi-annotations/note.md) – rich-text style annotations tied to PMI views without leader geometry.
 - [Explode Body](docs/pmi-annotations/explode-body.md) – stores exploded-view offsets per component for presentation layouts.
+- [Hole Callout](docs/pmi-annotations/hole-callout.md) – leader-style callout that reports hole feature parameters (diameters, depths, countersink/counterbore).
 
 Each annotation stores associative references and view metadata so reloading a part restores the PMI viewport, label placement, and formatting settings.
 
