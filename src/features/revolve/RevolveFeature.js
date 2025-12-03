@@ -38,7 +38,7 @@ const inputParamsSchema = {
 };
 
 export class RevolveFeature {
-    static shortName = "REVOLVE";
+    static shortName = "R";
     static longName = "Revolve";
     static inputParamsSchema = inputParamsSchema;
 
@@ -59,7 +59,8 @@ export class RevolveFeature {
         if (!faceObj || !faceObj.geometry) return { added: [], removed: [] };
         // if the face is a child of a sketch we need to remove the sketch from the scene
 
-        if (!axis) {
+        const axisObj = Array.isArray(axis) ? (axis[0] || null) : (axis || null);
+        if (!axisObj) {
             console.warn("RevolveFeature: no axis selected");
             return { added: [], removed: [] };
         }
@@ -71,7 +72,6 @@ export class RevolveFeature {
         const removed = [];
         if (faceObj && faceObj.type === 'FACE' && faceObj.parent && faceObj.parent.type === 'SKETCH') removed.push(faceObj.parent);
 
-        const axisObj = Array.isArray(axis) ? (axis[0] || null) : (axis || null);
         const revolve = new BREP.Revolve({
             face: faceObj,
             axis: axisObj,
