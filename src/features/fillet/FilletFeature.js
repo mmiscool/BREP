@@ -22,7 +22,7 @@ const inputParamsSchema = {
     inflate: {
         type: "number",
         step: 0.1,
-        default_value: 0,
+        default_value: 0.1,
         hint: "Grow the cutting solid by this amount (units). Keep tiny (e.g. 0.0005). Closed loops ignore inflation to avoid self‑intersection.",
     },
     direction: {
@@ -33,7 +33,7 @@ const inputParamsSchema = {
     },
     snapSeam: {
         type: "boolean",
-        default_value: true,
+        default_value: false,
         hint: "Experimental: snap boolean seam to computed tangents (INSET only)",
     },
     debug: {
