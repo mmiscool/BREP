@@ -542,9 +542,14 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
         try { if (typeof solid.fixTriangleWindingsByAdjacency === 'function') solid.fixTriangleWindingsByAdjacency(); } catch {}
       };
 
-      const addResult = (solid) => {
+      const addResult = (solid, target) => {
         solid.visualize();
-        try { solid.name = (featureID ? `${featureID}_${++idx}` : solid.name || 'RESULT'); } catch (_) { }
+        const inheritedName = target?.name || target?.uuid || null;
+        const finalName = inheritedName || (featureID ? `${featureID}_${++idx}` : solid.name || 'RESULT');
+        try { solid.name = finalName; } catch (_) { }
+        try {
+          if (target?.owningFeatureID) solid.owningFeatureID = target.owningFeatureID;
+        } catch (_) { }
         results.push(solid);
       };
 
@@ -552,7 +557,7 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
         let success = false;
         try {
           const out = target.subtract(baseSolid);
-          addResult(out);
+          addResult(out, target);
           success = true;
         } catch (e1) {
           debugLog('Primary subtract failed; attempting welded fallback', {
@@ -571,7 +576,7 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
           preCleanLocal(a, eps);
           preCleanLocal(b, eps);
           const out = a.subtract(b);
-          addResult(out);
+          addResult(out, target);
           success = true;
         } catch (e2) {
           debugLog('Welded subtract fallback failed; passing target through', {

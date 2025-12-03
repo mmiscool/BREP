@@ -165,4 +165,9 @@ export class FeatureRegistry {
   has(featureName) {
     return !!this.getSafe(featureName);
   }
+
+  // list all registered feature names
+  listFeatureNames(shortNames = false) {
+    return this.features.map((fc) => (shortNames ? getShortName(fc) : getLongName(fc)));
+  }
 }
