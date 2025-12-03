@@ -8,12 +8,12 @@ const inputParamsSchema = {
   },
   face: {
     type: 'reference_selection',
-    label: 'Placement (sketch or points)',
-    selectionFilter: ['SKETCH', 'VERTEX'],
-    multiple: true,
+    label: 'Placement (sketch)',
+    selectionFilter: ['SKETCH'],
+    multiple: false,
     minSelections: 1,
-    default_value: [],
-    hint: 'Select a sketch plane or 3+ points to place the hole',
+    default_value: null,
+    hint: 'Select a sketch to place the hole',
   },
   holeType: {
     type: 'options',
@@ -150,18 +150,28 @@ function getWorldPosition(obj) {
 }
 
 function normalFromSketch(sketch) {
-  const n = new THREE.Vector3(0, 0, 1);
-  if (!sketch) return n;
+  const fallback = new THREE.Vector3(0, 0, 1);
+  if (!sketch) return fallback;
+
+  // Prefer an explicit sketch basis if provided by the sketch feature.
+  const basis = sketch.userData?.sketchBasis;
+  if (basis && Array.isArray(basis.x) && Array.isArray(basis.y)) {
+    const bx = new THREE.Vector3().fromArray(basis.x);
+    const by = new THREE.Vector3().fromArray(basis.y);
+    const bz = Array.isArray(basis.z) ? new THREE.Vector3().fromArray(basis.z) : new THREE.Vector3().crossVectors(bx, by);
+    if (bz.lengthSq() > 1e-12) return bz.normalize();
+  }
+
+  // Fallback to world transform normal if available.
   try {
+    const n = new THREE.Vector3(0, 0, 1);
     const nm = new THREE.Matrix3();
     nm.getNormalMatrix(sketch.matrixWorld || new THREE.Matrix4());
     n.applyMatrix3(nm);
-  } catch {
-    /* ignore */
-  }
-  if (n.lengthSq() < 1e-12) n.set(0, 1, 0);
-  n.normalize();
-  return n;
+    if (n.lengthSq() > 1e-12) return n.normalize();
+  } catch { /* ignore */ }
+
+  return new THREE.Vector3(0, 1, 0);
 }
 
 function centerFromObject(obj) {
@@ -172,19 +182,6 @@ function centerFromObject(obj) {
     /* ignore */
   }
   return new THREE.Vector3();
-}
-
-function normalFromPoints(points) {
-  if (!Array.isArray(points) || points.length < 3) return null;
-  const a = points[0], b = points[1];
-  for (let i = 2; i < points.length; i++) {
-    const c = points[i];
-    const ab = b.clone().sub(a);
-    const ac = c.clone().sub(a);
-    const n = new THREE.Vector3().crossVectors(ab, ac);
-    if (n.lengthSq() > 1e-12) return n.normalize();
-  }
-  return null;
 }
 
 function collectSceneSolids(scene) {
@@ -396,60 +393,30 @@ export class HoleFeature {
     const params = this.inputParams || {};
     const featureID = params.featureID || params.id || null;
     const selectionRaw = Array.isArray(params.face) ? params.face.filter(Boolean) : (params.face ? [params.face] : []);
-    if (!selectionRaw.length) throw new Error('HoleFeature requires a sketch or point selection.');
     const sketch = selectionRaw.find((o) => o && o.type === 'SKETCH') || null;
-    const faceSel = selectionRaw.find((o) => o && o.type === 'FACE') || null; // legacy fallback
-    const pointObjsRaw = selectionRaw.filter((o) => o && (o.type === 'VERTEX' || o.isVertex || o.userData?.isVertex || o.isPoint));
-    const includesSketch = !!sketch;
-    const pointObjs = pointObjsRaw.filter((pt) => {
-      if (!includesSketch) return true;
-      const sid = pt?.userData?.sketchPointId;
-      const name = pt?.name || '';
-      const isCenter = sid === 0 || sid === '0' || name === 'P0' || name.endsWith(':P0');
-      if (!isCenter) return true;
-      // If user explicitly picked only P0 (and no sketch), keep it; otherwise skip center when sketch is selected.
-      const onlyCenterSelected = !sketch && pointObjsRaw.length === 1;
-      return onlyCenterSelected;
-    });
-    let pointPositions = pointObjs.map((o) => getWorldPosition(o)).filter(Boolean);
-    let hasPoints = pointPositions.length > 0;
+    if (!sketch) throw new Error('HoleFeature requires a sketch selection; individual vertex picks are not supported.');
 
-    // If a sketch is selected but no explicit point refs were provided, use its sketch vertices (excluding center).
-    if (!hasPoints && sketch) {
-      const extraPts = collectSketchVertices(sketch);
-      if (extraPts.length) {
-        pointObjs.push(...extraPts);
+    const pointObjs = [];
+    const sceneSolids = collectSceneSolids(partHistory?.scene);
+    let pointPositions = [];
+
+    // Use sketch-defined points (excluding the sketch origin) as hole centers.
+    const extraPts = collectSketchVertices(sketch);
+    if (extraPts.length) {
+      pointObjs.push(...extraPts);
+      pointPositions = pointObjs.map((o) => getWorldPosition(o)).filter(Boolean);
+    }
+    if (!pointPositions.length && partHistory?.scene && sketch?.name) {
+      const fallbackPts = collectSketchVerticesByName(partHistory.scene, sketch.name);
+      if (fallbackPts.length) {
+        pointObjs.push(...fallbackPts);
         pointPositions = pointObjs.map((o) => getWorldPosition(o)).filter(Boolean);
-        hasPoints = pointPositions.length > 0;
-      }
-      if (!hasPoints && partHistory?.scene && sketch?.name) {
-        const fallbackPts = collectSketchVerticesByName(partHistory.scene, sketch.name);
-        if (fallbackPts.length) {
-          pointObjs.push(...fallbackPts);
-          pointPositions = pointObjs.map((o) => getWorldPosition(o)).filter(Boolean);
-          hasPoints = pointPositions.length > 0;
-        }
       }
     }
 
-    let normal = new THREE.Vector3(0, 1, 0);
-    let center = new THREE.Vector3();
-
-    if (faceSel) {
-      normal = typeof faceSel.getAverageNormal === 'function'
-        ? fallbackVector(faceSel.getAverageNormal(), new THREE.Vector3(0, 1, 0))
-        : normal;
-      if (normal.lengthSq() < 1e-12) normal.set(0, 1, 0);
-      normal.normalize();
-      center = centerFromObject(faceSel);
-    } else if (sketch) {
-      normal = normalFromSketch(sketch);
-      center = centerFromObject(sketch);
-    } else if (hasPoints) {
-      center = pointPositions.reduce((acc, p) => acc.add(p), new THREE.Vector3()).multiplyScalar(1 / pointPositions.length);
-      const n = normalFromPoints(pointPositions);
-      if (n) normal = n;
-    }
+    const hasPoints = pointPositions.length > 0;
+    const normal = normalFromSketch(sketch); // keep hole axis perpendicular to the sketch plane
+    const center = centerFromObject(sketch);
 
     const holeType = String(params.holeType || 'SIMPLE').toUpperCase();
     const diameter = Math.max(0, Number(params.diameter) || 0);
@@ -463,19 +430,17 @@ export class HoleFeature {
 
     let booleanParam = params.boolean || { targets: [], operation: 'SUBTRACT' };
     const rawTargets = Array.isArray(booleanParam.targets) ? booleanParam.targets : [];
-    const filteredTargets = rawTargets.filter((t) => collectSceneSolids(partHistory?.scene).includes(t));
+    const filteredTargets = rawTargets.filter((t) => sceneSolids.includes(t));
     if (!filteredTargets.length) {
-      const parent = (faceSel && collectSceneSolids(partHistory?.scene).includes(faceSel.parent)) ? faceSel.parent : null;
-      const sketchParent = (sketch && collectSceneSolids(partHistory?.scene).includes(sketch.parent)) ? sketch.parent : null;
-      const firstParent = selectionRaw[0] && collectSceneSolids(partHistory?.scene).includes(selectionRaw[0].parent)
+      const sketchParent = (sketch && sceneSolids.includes(sketch.parent)) ? sketch.parent : null;
+      const firstParent = selectionRaw[0] && sceneSolids.includes(selectionRaw[0].parent)
         ? selectionRaw[0].parent
         : null;
-      const candidate = parent || sketchParent || firstParent || null;
+      const candidate = sketchParent || firstParent || null;
       if (candidate) {
         booleanParam = { ...booleanParam, targets: [candidate], operation: booleanParam.operation || 'SUBTRACT' };
-      } else if (partHistory && partHistory.scene) {
-        const solids = collectSceneSolids(partHistory.scene);
-        const nearest = chooseNearestSolid(solids, center);
+      } else if (sceneSolids.length) {
+        const nearest = chooseNearestSolid(sceneSolids, center);
         if (nearest) booleanParam = { ...booleanParam, targets: [nearest], operation: booleanParam.operation || 'SUBTRACT' };
       }
     } else {
@@ -485,14 +450,17 @@ export class HoleFeature {
       booleanParam = { ...booleanParam, operation: String(booleanParam.operation).toUpperCase() };
     }
     const primaryTarget = (booleanParam.targets && booleanParam.targets[0])
-      || (faceSel && faceSel.parent)
-      || (sketch && sketch.parent)
-      || chooseNearestSolid(collectSceneSolids(partHistory?.scene), center)
+      || (sketch && sceneSolids.includes(sketch.parent) ? sketch.parent : null)
+      || chooseNearestSolid(sceneSolids, center)
       || null;
     if (primaryTarget) {
+      // Choose the normal direction that points into the target solid.
       try {
-        const parentCenter = new THREE.Box3().setFromObject(primaryTarget).getCenter(new THREE.Vector3());
-        const toCenter = parentCenter.clone().sub(center);
+        const box = new THREE.Box3().setFromObject(primaryTarget);
+        const toCenter = box.clampPoint(center, new THREE.Vector3()).sub(center);
+        if (toCenter.lengthSq() < 1e-12) {
+          toCenter.copy(box.getCenter(new THREE.Vector3()).sub(center));
+        }
         if (toCenter.lengthSq() > 1e-10 && normal.dot(toCenter) < 0) {
           normal.multiplyScalar(-1);
         }
@@ -500,10 +468,11 @@ export class HoleFeature {
         /* ignore orientation flip issues */
       }
     }
-    const diag = primaryTarget ? boxDiagonalLength(primaryTarget) : boxDiagonalLength(chooseNearestSolid(collectSceneSolids(partHistory?.scene), center));
+    const diag = primaryTarget ? boxDiagonalLength(primaryTarget) : boxDiagonalLength(chooseNearestSolid(sceneSolids, center));
     const straightDepth = throughAll ? Math.max(straightDepthInput, diag * 1.5 || 50) : straightDepthInput;
 
     const res = 48;
+    const backOffset = 1e-5; // small pullback to avoid coincident faces in booleans
     const centers = hasPoints ? pointPositions : [center];
     const sourceNames = hasPoints ? pointObjs.map((o) => o?.name || o?.uuid || null) : [null];
     const tools = [];
@@ -522,8 +491,10 @@ export class HoleFeature {
       });
       // annotate faces with hole metadata before union so labels propagate
       const descriptor = descriptors[0] || null;
+      const basePos = (c || center).clone();
+      const originPos = basePos.clone().addScaledVector(normal, -backOffset);
       if (descriptor) {
-        descriptor.center = [c?.x ?? center.x, c?.y ?? center.y, c?.z ?? center.z];
+        descriptor.center = [originPos.x, originPos.y, originPos.z];
         descriptor.normal = [normal.x, normal.y, normal.z];
         descriptor.throughAll = throughAll;
         descriptor.targetId = primaryTarget?.uuid || primaryTarget?.id || primaryTarget?.name || null;
@@ -540,12 +511,12 @@ export class HoleFeature {
       const tool = unionSolids(toolSolids);
       if (!tool) return;
       const basis = buildBasisFromNormal(normal);
-      basis.setPosition(c || center);
+      basis.setPosition(originPos);
       try { tool.bakeTransform(basis); }
       catch (error) { console.warn('[HoleFeature] Failed to transform tool:', error); }
       // add centerline for PMI/visualization
       const totalDepth = descriptor?.totalDepth || straightDepth || 1;
-      const start = c || center;
+      const start = originPos;
       const end = start.clone().add(normal.clone().multiplyScalar(totalDepth));
       try {
         tool.addCenterline([start.x, start.y, start.z], [end.x, end.y, end.z], featureID ? `${featureID}_AXIS_${idx}` : `HOLE_AXIS_${idx}`, { materialKey: 'OVERLAY' });

@@ -322,6 +322,14 @@ export class SketchFeature {
         sceneGroup.onClick = () => {};
 
         const basis = this._getOrCreateBasis(partHistory);
+        sceneGroup.userData = sceneGroup.userData || {};
+        // Expose the sketch basis so downstream features (e.g., holes) can use the plane normal.
+        sceneGroup.userData.sketchBasis = {
+            origin: Array.isArray(basis.origin) ? basis.origin.slice() : [0, 0, 0],
+            x: Array.isArray(basis.x) ? basis.x.slice() : [1, 0, 0],
+            y: Array.isArray(basis.y) ? basis.y.slice() : [0, 1, 0],
+            z: Array.isArray(basis.z) ? basis.z.slice() : null,
+        };
         const bO = new THREE.Vector3().fromArray(basis.origin);
         const bX = new THREE.Vector3().fromArray(basis.x);
         const bY = new THREE.Vector3().fromArray(basis.y);
