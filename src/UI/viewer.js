@@ -127,7 +127,8 @@ export class Viewer {
      * @param {number} [opts.near=-1000]
      * @param {number} [opts.far=1000]
      * @param {number} [opts.pixelRatio=window.devicePixelRatio || 1]
-     * @param {THREE.Color | number | string} [opts.clearColor=0x0b0d10] - dark background
+     * @param {THREE.Color | number | string} [opts.clearColor=0x0b0d10] - base clear color (alpha set separately)
+     * @param {number} [opts.clearAlpha=0] - clear alpha for transparent captures
      */
     constructor({
         container,
@@ -136,6 +137,7 @@ export class Viewer {
         far = 10000000,
         pixelRatio = (window.devicePixelRatio || 1),
         clearColor = 0x0b0d10,
+        clearAlpha = 0,
         sidebar = null,
         partHistory = new PartHistory(),
     }) {
@@ -168,14 +170,15 @@ export class Viewer {
         } catch { /* ignore */ }
 
         // Renderer
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true, });
-        this.renderer.setClearColor(new THREE.Color(clearColor), 1);
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, });
+        const clear = new THREE.Color(clearColor);
+        this.renderer.setClearColor(clear, clearAlpha);
         this.pixelRatio = pixelRatio; // persist for future resizes
         this.renderer.setPixelRatio(pixelRatio);
         this.renderer.domElement.style.display = 'block';
         this.renderer.domElement.style.outline = 'none';
         this.renderer.domElement.style.userSelect = 'none';
-        this.renderer.domElement.style.background = '#0b0d10'; // dark mode
+        this.renderer.domElement.style.background = clearAlpha === 0 ? 'transparent' : clear.getStyle();
         this.container.appendChild(this.renderer.domElement);
 
 

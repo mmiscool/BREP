@@ -45,7 +45,7 @@ export function createSaveButton(viewer) {
       dst.width = size; dst.height = size;
       const ctx = dst.getContext('2d');
       if (!ctx) return null;
-      try { ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, size, size); } catch { }
+      try { ctx.clearRect(0, 0, size, size); } catch { }
       const scale = Math.min(size / srcW, size / srcH);
       const dw = Math.max(1, Math.floor(srcW * scale));
       const dh = Math.max(1, Math.floor(srcH * scale));

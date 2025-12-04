@@ -611,8 +611,8 @@ export class FileManagerWidget {
       dst.width = size; dst.height = size;
       const ctx = dst.getContext('2d');
       if (!ctx) return null;
-      // Fill with viewer background for letterboxing
-      try { ctx.fillStyle = '#0b0e14'; ctx.fillRect(0, 0, size, size); } catch {}
+      // Leave background transparent so captures can be composited cleanly
+      try { ctx.clearRect(0, 0, size, size); } catch {}
       // Compute contain fit
       const scale = Math.min(size / srcW, size / srcH);
       const dw = Math.max(1, Math.floor(srcW * scale));
