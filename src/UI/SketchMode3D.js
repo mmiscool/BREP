@@ -115,16 +115,27 @@ export class SketchMode3D {
         }
       }
     } catch { }
-    const currentDist = v.camera.position.distanceTo(pivotLook) * (-1); // read-only
+    const currentDist = v.camera.position.distanceTo(pivotLook);
     this._lock = { basis, distance: currentDist || 20 };
 
     // Reposition and orient camera to face the sketch plane head-on.
     try {
       const cam = v.camera;
-      const dist = Math.max(0.01, this._lock.distance || 20);
+      const dist = Math.max(0.01, Math.abs(this._lock.distance || 20));
       const z = basis.z.clone().normalize();
+      // Ensure we view the front side of the reference face/plane
+      let viewDir = z.clone();
+      try {
+        const faceBasis = basis.rawNormal
+          ? { z: basis.rawNormal }
+          : (refObj ? this.#basisFromReference(refObj) : null);
+        const faceNormal = faceBasis?.z?.clone()?.normalize();
+        if (faceNormal && viewDir.dot(faceNormal) < 0) {
+          viewDir.multiplyScalar(-1);
+        }
+      } catch { }
       const y = basis.y.clone().normalize();
-      const pos = pivotLook.clone().add(z.multiplyScalar(dist));
+      const pos = pivotLook.clone().add(viewDir.multiplyScalar(dist));
       cam.position.copy(pos);
       cam.up.copy(y);
       cam.lookAt(pivotLook);
@@ -260,6 +271,9 @@ export class SketchMode3D {
     });
     // ESC key clears selection
     this._onKeyDown = (ev) => {
+      const dialogOpen = (typeof window !== 'undefined') &&
+        (((typeof window.isDialogOpen === 'function') && window.isDialogOpen()) || window.__BREPDialogOpen);
+      if (dialogOpen) return; // Ignore shortcuts when a modal dialog is shown
       const k = ev.key || ev.code || '';
       if (k === 'Escape' || k === 'Esc') {
         if (this._selection.size) {

@@ -48,10 +48,21 @@ const emphasizedButtonStyle = {
 const confirmButtonStyle = emphasizedButtonStyle;   // used for the default/emphasized action
 const cancelButtonStyle = neutralButtonStyle;       // used for the secondary action
 
+let _dialogOpenCount = 0;
+const markDialogOpen = () => {
+    _dialogOpenCount += 1;
+    window.__BREPDialogOpen = _dialogOpenCount > 0;
+};
+const markDialogClosed = () => {
+    _dialogOpenCount = Math.max(0, _dialogOpenCount - 1);
+    window.__BREPDialogOpen = _dialogOpenCount > 0;
+};
+window.isDialogOpen = () => _dialogOpenCount > 0;
 
 
 window.confirm = async (message, timeoutInSeconds = null, defaultValue = true) => {
     return new Promise((resolve) => {
+        markDialogOpen();
         const overlay = document.createElement('div');
         const dialog = document.createElement('div');
         const messageDiv = document.createElement('div');
@@ -133,6 +144,7 @@ window.confirm = async (message, timeoutInSeconds = null, defaultValue = true) =
             confirmButton.removeEventListener('click', onConfirm);
             cancelButton.removeEventListener('click', onCancel);
             try { overlay.remove(); } catch (_) { try { dialog.remove(); } catch (_) {} }
+            markDialogClosed();
         };
 
         const onConfirm = () => {
@@ -158,6 +170,7 @@ window.confirm = async (message, timeoutInSeconds = null, defaultValue = true) =
 
 window.alert = async (message, timeoutInSeconds = null) => {
     return new Promise((resolve) => {
+        markDialogOpen();
         const overlay = document.createElement('div');
         const dialog = document.createElement('div');
         const messageDiv = document.createElement('div');
@@ -225,6 +238,7 @@ window.alert = async (message, timeoutInSeconds = null) => {
             if (countdownInterval) clearInterval(countdownInterval); // Clear the countdown interval
             okButton.removeEventListener('click', onOk);
             try { overlay.remove(); } catch (_) { try { dialog.remove(); } catch (_) {} }
+            markDialogClosed();
         };
 
         const onOk = () => {
@@ -245,6 +259,7 @@ window.alert = async (message, timeoutInSeconds = null) => {
 
 window.prompt = async (message, defaultValue = '') => {
     return new Promise((resolve) => {
+        markDialogOpen();
         const overlay = document.createElement('div');
         const dialog = document.createElement('div');
         const messageDiv = document.createElement('div');
@@ -302,6 +317,7 @@ window.prompt = async (message, defaultValue = '') => {
             cancelButton.removeEventListener('click', onCancel);
             inputField.removeEventListener('keydown', onEnter);
             try { overlay.remove(); } catch (_) { try { dialog.remove(); } catch (_) {} }
+            markDialogClosed();
         };
 
         const onOk = () => {
