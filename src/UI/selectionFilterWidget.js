@@ -100,36 +100,83 @@ export class SelectionFilterWidget {
                 user-select: none;
             }
 
-            .sfw-select {
-                appearance: none;
-                -webkit-appearance: none;
-                background: #0e1116;
-                border: 1px solid var(--sfw-border);
+            .sfw-type-chips {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+            }
+
+            .sfw-chip {
+                background: rgba(255,255,255,0.06);
                 color: var(--sfw-text);
-                border-radius: 6px;
-                padding: 6px 26px 6px 8px;
-                outline: none;
-                font-size: 12px;
-                line-height: 1;
-                cursor: pointer;
-                box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
-            }
-
-            .sfw-select:focus {
-                border-color: var(--sfw-accent);
-                box-shadow: 0 0 0 2px rgba(122,162,247,0.25);
-            }
-
-            .sfw-spacer { flex: 1; }
-            .sfw-kbd {
-                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-                background: #0e1116;
                 border: 1px solid var(--sfw-border);
-                color: var(--sfw-muted);
-                padding: 2px 6px;
-                border-radius: 4px;
-                font-size: 11px;
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-weight: 600;
+                letter-spacing: .3px;
+                box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
                 user-select: none;
+            }
+
+            .sfw-hint {
+                margin-top: 6px;
+                color: var(--sfw-muted);
+                font-size: 11px;
+                line-height: 1.4;
+            }
+
+            .selection-picker {
+                position: fixed;
+                min-width: 240px;
+                max-width: 340px;
+                max-height: 260px;
+                overflow: auto;
+                background: linear-gradient(180deg, rgba(18,21,25,0.96), rgba(18,21,25,0.90));
+                border: 1px solid var(--sfw-border);
+                border-radius: 10px;
+                box-shadow: 0 12px 30px var(--sfw-shadow);
+                color: var(--sfw-text);
+                padding: 10px;
+                z-index: 1200;
+                backdrop-filter: blur(6px);
+            }
+
+            .selection-picker__title {
+                font-weight: 700;
+                margin-bottom: 6px;
+                color: var(--sfw-muted);
+                letter-spacing: .3px;
+            }
+
+            .selection-picker__list {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            .selection-picker__item {
+                width: 100%;
+                text-align: left;
+                border: 1px solid var(--sfw-border);
+                background: rgba(255,255,255,0.04);
+                color: var(--sfw-text);
+                border-radius: 8px;
+                padding: 8px 10px;
+                cursor: pointer;
+                transition: border-color .12s ease, transform .08s ease, background .12s ease;
+            }
+
+            .selection-picker__item:hover {
+                border-color: var(--sfw-accent);
+                background: rgba(122,162,247,0.10);
+                transform: translateY(-1px);
+            }
+
+            .selection-picker__item-label { font-weight: 700; }
+            .selection-picker__item-meta {
+                font-size: 11px;
+                color: var(--sfw-muted);
+                margin-top: 2px;
             }
         `;
         document.head.appendChild(style);
@@ -202,50 +249,38 @@ export class SelectionFilterWidget {
 
     updateUI() { // Update the UI based on the current selection
         this.uiElement.innerHTML = ""; // Clear existing UI
-        // Build a single-select dropdown with only available types
         const wrap = document.createElement('div');
         wrap.className = 'sfw-row';
 
         const title = document.createElement('div');
         title.className = 'sfw-title';
-        title.textContent = 'Selection';
+        title.textContent = 'Allowed';
         wrap.appendChild(title);
 
-        const select = document.createElement('select');
-        select.className = 'sfw-select';
-        select.title = 'Selection Type';
+        const chipWrap = document.createElement('div');
+        chipWrap.className = 'sfw-type-chips';
         const types = SelectionFilter.getAvailableTypes();
-
-        // Populate options
-        select.innerHTML = '';
-        for (const t of types) {
-            const opt = document.createElement('option');
-            opt.value = t;
-            opt.textContent = t;
-            select.appendChild(opt);
+        if (types.length === 0) {
+            const chip = document.createElement('div');
+            chip.className = 'sfw-chip';
+            chip.textContent = 'ALL';
+            chipWrap.appendChild(chip);
+        } else {
+            for (const t of types) {
+                const chip = document.createElement('div');
+                chip.className = 'sfw-chip';
+                chip.textContent = t;
+                chipWrap.appendChild(chip);
+            }
         }
+        wrap.appendChild(chipWrap);
 
-        // Default current type to first available if not set
-        const cur = SelectionFilter.getCurrentType();
-        const defaultType = cur && types.includes(cur) ? cur : (types[0] || null);
-        if (defaultType && defaultType !== cur) {
-            SelectionFilter.setCurrentType(defaultType);
-        }
-        if (defaultType) select.value = defaultType;
+        const hint = document.createElement('div');
+        hint.className = 'sfw-hint';
+        hint.textContent = 'Click near geometry to choose from nearby matches.';
 
-        // Change handler: updates the active single selection type
-        select.addEventListener('change', () => {
-            const next = select.value;
-            SelectionFilter.setCurrentType(next);
-            // Do not alter existing selections; only future picks are affected
-        });
-
-        wrap.appendChild(select);
-        const spacer = document.createElement('div');
-        spacer.className = 'sfw-spacer';
-        wrap.appendChild(spacer);
-        this.uiElement.innerHTML = ""; // Clear existing UI
         this.uiElement.appendChild(wrap);
+        this.uiElement.appendChild(hint);
     }
 
 

@@ -112,6 +112,13 @@ export class SelectionFilter {
         return v === SelectionFilter.ALL ? SelectionFilter.ALL : Array.from(v);
     }
 
+    // Check against the allowed set only (ignores currentType)
+    static matchesAllowedType(type) {
+        if (!type) return false;
+        if (SelectionFilter.allowedSelectionTypes === SelectionFilter.ALL) return true;
+        return SelectionFilter.allowedSelectionTypes?.has?.(type) || false;
+    }
+
     static IsAllowed(type) {
         // Single-selection mode: only the currentType is allowed for new interactions
         const cur = SelectionFilter.currentType;
@@ -140,12 +147,13 @@ export class SelectionFilter {
         }
     }
 
-    static setHoverObject(obj) {
+    static setHoverObject(obj, options = {}) {
+        const { ignoreFilter = false } = options;
         // Clear existing hover first
         SelectionFilter.clearHover();
         if (!obj) return;
         // Highlight depending on type
-        SelectionFilter.#applyHover(obj);
+        SelectionFilter.#applyHover(obj, { ignoreFilter });
     }
 
     static setHoverByName(scene, name) {
@@ -163,10 +171,14 @@ export class SelectionFilter {
         SelectionFilter._hovered.clear();
     }
 
-    static #applyHover(obj) {
+    static #applyHover(obj, options = {}) {
+        const { ignoreFilter = false } = options;
         if (!obj) return;
         // Respect selection filter: skip if disallowed
-        if (!SelectionFilter.IsAllowed(obj.type)) return;
+        const allowed = ignoreFilter
+            || SelectionFilter.IsAllowed(obj.type)
+            || SelectionFilter.matchesAllowedType(obj.type);
+        if (!allowed) return;
 
         // Only ever highlight one object: the exact object provided, if it has a color
         const target = obj;

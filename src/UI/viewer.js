@@ -37,6 +37,88 @@ import { cloneSplineData } from '../features/spline/splineUtils.js';
 
 const ASSEMBLY_CONSTRAINTS_TITLE = 'Assembly Constraints';
 
+function ensureSelectionPickerStyles() {
+    if (typeof document === 'undefined') return;
+    if (document.getElementById('selection-picker-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'selection-picker-styles';
+    style.textContent = `
+        :root {
+            --sfw-bg: #121519;
+            --sfw-border: #1c2128;
+            --sfw-shadow: rgba(0,0,0,0.35);
+            --sfw-text: #d6dde6;
+            --sfw-accent: #7aa2f7;
+            --sfw-muted: #8b98a5;
+        }
+        .selection-picker {
+            position: fixed;
+            min-width: 240px;
+            max-width: 500px;
+            max-height: 260px;
+            overflow: auto;
+            background: linear-gradient(180deg, rgba(18,21,25,0.96), rgba(18,21,25,0.90));
+            border: 1px solid var(--sfw-border);
+            border-radius: 10px;
+            box-shadow: 0 12px 30px var(--sfw-shadow);
+            color: var(--sfw-text);
+            padding: 10px;
+            z-index: 1200;
+            backdrop-filter: blur(6px);
+            opacity: 0.3;
+            transition: opacity .15s ease, transform .08s ease;
+        }
+        .selection-picker.is-hovered,
+        .selection-picker.dragging {
+            opacity: 1;
+        }
+        .selection-picker.dragging {
+            cursor: grabbing;
+        }
+        .selection-picker__title {
+            font-weight: 700;
+            margin-bottom: 6px;
+            color: var(--sfw-muted);
+            letter-spacing: .3px;
+            cursor: grab;
+            user-select: none;
+            border: 1px solid var(--sfw-border);
+            border-radius: 8px;
+            padding: 6px 8px;
+            background: rgba(255,255,255,0.05);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+        .selection-picker__list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .selection-picker__item {
+            width: 100%;
+            text-align: left;
+            border: 1px solid var(--sfw-border);
+            background: rgba(255,255,255,0.04);
+            color: var(--sfw-text);
+            border-radius: 8px;
+            padding: 8px 10px;
+            cursor: pointer;
+            transition: border-color .12s ease, transform .08s ease, background .12s ease;
+        }
+        .selection-picker__item:hover {
+            border-color: var(--sfw-accent);
+            background: rgba(122,162,247,0.10);
+            transform: translateY(-1px);
+        }
+        .selection-picker__item-label { font-weight: 700; }
+        .selection-picker__item-meta {
+            font-size: 11px;
+            color: var(--sfw-muted);
+            margin-top: 2px;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
 export class Viewer {
     /**
      * @param {Object} opts
@@ -69,6 +151,7 @@ export class Viewer {
         this.container = container;
         this.sidebar = sidebar;
         this.scene = partHistory instanceof PartHistory ? partHistory.scene : new THREE.Scene();
+        ensureSelectionPickerStyles();
 
         // Apply persisted sidebar width early (before building UI)
         try {
@@ -167,6 +250,7 @@ export class Viewer {
         this._sketchMode = null;
         this._splineMode = null;
         this._lastPointerEvent = null;
+        this._selectionOverlay = null;
         this._cubeActive = false;
         // Inspector panel state
         this._inspectorOpen = false;
@@ -212,6 +296,8 @@ export class Viewer {
         el.addEventListener('dblclick', this._onDoubleClick, { passive: false });
         el.addEventListener('contextmenu', this._onContextMenu);
         window.addEventListener('resize', this._onResize);
+        this._onKeyDown = this._onKeyDown.bind(this);
+        window.addEventListener('keydown', this._onKeyDown, { passive: true });
         // Keep camera updates; no picking to sync
         this.controls.addEventListener('change', this._onControlsChange);
 
@@ -435,6 +521,7 @@ export class Viewer {
         el.removeEventListener('dblclick', this._onDoubleClick);
         el.removeEventListener('contextmenu', this._onContextMenu);
         window.removeEventListener('resize', this._onResize);
+        window.removeEventListener('keydown', this._onKeyDown, { passive: true });
         this.controls.dispose();
         this.renderer.dispose();
         try { if (this._sketchMode) this._sketchMode.dispose(); } catch { }
@@ -755,9 +842,20 @@ export class Viewer {
         return new THREE.Vector2(x * 2 - 1, -(y * 2 - 1));
     }
 
-    _mapIntersectionToTarget(intersection) {
+    _mapIntersectionToTarget(intersection, options = {}) {
         if (!intersection || !intersection.object) return null;
+        const { allowAnyAllowedType = false } = options;
         const curType = SelectionFilter.getCurrentType && SelectionFilter.getCurrentType();
+        const isAllowed = (type) => {
+            if (!type) return false;
+            if (allowAnyAllowedType && typeof SelectionFilter.matchesAllowedType === 'function') {
+                return SelectionFilter.matchesAllowedType(type);
+            }
+            if (typeof SelectionFilter.IsAllowed === 'function') {
+                return SelectionFilter.IsAllowed(type);
+            }
+            return true;
+        };
 
         // Prefer the intersected object if it is clickable
         let obj = intersection.object;
@@ -778,31 +876,32 @@ export class Viewer {
         if (!target) return null;
 
         // Respect selection filter: ensure target is a permitted type, or ALL
-        if (typeof SelectionFilter.IsAllowed === 'function') {
+        if (typeof isAllowed === 'function') {
             // Allow selecting already-selected items regardless (toggle off), consistent with SceneListing
-            if (!SelectionFilter.IsAllowed(target.type) && !target.selected) {
+            if (!isAllowed(target.type) && !target.selected) {
                 // Try to find a closer ancestor/descendant of allowed type that is clickable
                 // Ascend first (e.g., FACE hit while EDGE is active should try parent SOLID only if allowed)
                 let t = target.parent;
-                while (t && typeof t.onClick === 'function' && !SelectionFilter.IsAllowed(t.type)) t = t.parent;
-                if (t && typeof t.onClick === 'function' && SelectionFilter.IsAllowed(t.type)) target = t;
+                while (t && typeof t.onClick === 'function' && !isAllowed(t.type)) t = t.parent;
+                if (t && typeof t.onClick === 'function' && isAllowed(t.type)) target = t;
                 else return null;
             }
         }
         return target;
     }
 
-    _pickAtEvent(event) {
+    _pickAtEvent(event, options = {}) {
+        const { collectAll = false, allowAnyAllowedType = false } = options;
         // While Sketch Mode is active, suppress normal scene picking
         // SketchMode3D manages its own picking for sketch points/curves and model edges.
-        if (this._sketchMode) return { hit: null, target: null };
+        if (this._sketchMode) return collectAll ? { hit: null, target: null, candidates: [] } : { hit: null, target: null };
 
         // DEBUG: Log current mode
         //debugLog(`_pickAtEvent called - splineMode active: ${!!this._splineMode}, sketchMode active: ${!!this._sketchMode}`);
 
         // In spline mode, allow picking only spline vertices, suppress other scene picking
         if (this._splineMode) {
-            if (!event) return { hit: null, target: null };
+            if (!event) return collectAll ? { hit: null, target: null, candidates: [] } : { hit: null, target: null };
             const ndc = this._getPointerNDC(event);
             this.raycaster.setFromCamera(ndc, this.camera);
             // Set up raycaster params for vertex picking
@@ -852,10 +951,10 @@ export class Viewer {
                 }
             }
             //debugLog(`SPLINE MODE: No spline vertices found under cursor`);
-            return { hit: null, target: null };
+            return collectAll ? { hit: null, target: null, candidates: [] } : { hit: null, target: null };
         }
 
-        if (!event) return { hit: null, target: null };
+        if (!event) return collectAll ? { hit: null, target: null, candidates: [] } : { hit: null, target: null };
         const ndc = this._getPointerNDC(event);
         this.raycaster.setFromCamera(ndc, this.camera);
         // Tune line picking thresholds per-frame based on zoom and DPI
@@ -905,6 +1004,7 @@ export class Viewer {
             });
         }
 
+        const candidates = [];
         for (const it of intersects) {
             // skip entities that are not visible (or have invisible parents)
             if (!it || !it.object) continue;
@@ -924,12 +1024,25 @@ export class Viewer {
 
                 //debugLog('Intersect object visibility result:', visibleResult, it.object.name);
                 //debugLog('Pick intersect object:', it.object);
-                const target = this._mapIntersectionToTarget(it);
-                if (target) return { hit: it, target };
+                const target = this._mapIntersectionToTarget(it, { allowAnyAllowedType });
+                if (target) {
+                    if (collectAll) {
+                        candidates.push({ hit: it, target, distance: it.distance ?? Infinity });
+                        continue;
+                    }
+                    return { hit: it, target };
+                }
             }
 
 
 
+        }
+        if (collectAll) {
+            return {
+                hit: candidates[0]?.hit || null,
+                target: candidates[0]?.target || null,
+                candidates,
+            };
         }
         return { hit: null, target: null };
     }
@@ -944,8 +1057,52 @@ export class Viewer {
     }
 
     _selectAt(event) {
-        const { target } = this._pickAtEvent(event);
+        const allowedTypes = (() => {
+            try {
+                const list = SelectionFilter.getAvailableTypes?.() || [];
+                if (Array.isArray(list) && list.length > 0) return list;
+                if (Array.isArray(SelectionFilter.TYPES)) return SelectionFilter.TYPES.filter(t => t !== SelectionFilter.ALL);
+            } catch { }
+            return [];
+        })();
+        const allowedSet = new Set(allowedTypes);
+
+        const { target, candidates = [] } = this._pickAtEvent(event, { collectAll: true, allowAnyAllowedType: true });
+        const deduped = [];
+        const seen = new Set();
+        for (const entry of candidates) {
+            const obj = entry?.target;
+            if (!obj) continue;
+            if (allowedSet.size > 0 && !allowedSet.has(obj.type)) continue;
+            const key = obj.uuid || obj.name || `${obj.type}-${seen.size}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            deduped.push({
+                target: obj,
+                distance: Number.isFinite(entry?.distance) ? entry.distance : (entry?.hit?.distance ?? Infinity),
+                label: this._describeSelectionCandidate(obj),
+            });
+        }
+        deduped.sort((a, b) => a.distance - b.distance);
+
+        if (deduped.length > 1) {
+            this._showSelectionOverlay(event, deduped);
+            return;
+        }
+
+        const chosen = deduped[0]?.target || target;
+        if (!chosen) return;
+        this._hideSelectionOverlay();
+        this._applySelectionTarget(chosen);
+    }
+
+    _applySelectionTarget(target) {
         if (!target) return;
+        try {
+            if (target.type && typeof SelectionFilter.matchesAllowedType === 'function' && SelectionFilter.matchesAllowedType(target.type)) {
+                SelectionFilter.setCurrentType?.(target.type);
+            }
+        } catch { }
         // One-shot diagnostic inspector
         if (this._diagPickOnce) {
             this._diagPickOnce = false;
@@ -970,6 +1127,185 @@ export class Viewer {
         }
     }
 
+    _describeSelectionCandidate(obj) {
+        if (!obj) return 'Selection';
+        const name = (obj.name && String(obj.name).trim()) ? String(obj.name).trim() : null;
+        const type = obj.type || 'object';
+        if (name) return `${name} (${type})`;
+        return type;
+    }
+
+    _showSelectionOverlay(event, candidates) {
+        this._hideSelectionOverlay();
+        if (!Array.isArray(candidates) || candidates.length === 0) return;
+
+        const wrap = document.createElement('div');
+        wrap.className = 'selection-picker';
+        wrap.classList.add('is-hovered');
+        const title = document.createElement('div');
+        title.className = 'selection-picker__title selection-picker__handle';
+        title.textContent = 'Select an object';
+        wrap.appendChild(title);
+
+        const list = document.createElement('div');
+        list.className = 'selection-picker__list';
+        candidates.forEach((entry) => {
+            if (!entry?.target) return;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'selection-picker__item';
+            const primary = document.createElement('div');
+            primary.className = 'selection-picker__item-label';
+            primary.textContent = entry.label || this._describeSelectionCandidate(entry.target);
+            const meta = document.createElement('div');
+            meta.className = 'selection-picker__item-meta';
+            const distLabel = Number.isFinite(entry.distance) ? entry.distance.toFixed(3) : 'n/a';
+            meta.textContent = `${entry.target.type || 'object'} · ${distLabel}`;
+            btn.appendChild(primary);
+            btn.appendChild(meta);
+            btn.addEventListener('mouseenter', () => {
+                try { SelectionFilter.setHoverObject(entry.target); } catch { }
+            });
+            btn.addEventListener('mouseleave', () => {
+                try { SelectionFilter.clearHover(); } catch { }
+            });
+            btn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                ev.preventDefault?.();
+                this._hideSelectionOverlay();
+                this._applySelectionTarget(entry.target);
+            });
+            list.appendChild(btn);
+        });
+        wrap.appendChild(list);
+
+        const startX = event?.clientX ?? (window.innerWidth / 2);
+        const startY = event?.clientY ?? (window.innerHeight / 2);
+        wrap.style.left = `${startX}px`;
+        wrap.style.top = `${startY}px`;
+
+        document.body.appendChild(wrap);
+
+        const overlayState = { wrap, drag: { active: false } };
+
+        const adjustWithinViewport = () => {
+            const bounds = wrap.getBoundingClientRect();
+            const firstItem = wrap.querySelector('.selection-picker__item');
+            let nextLeft = startX;
+            let nextTop = startY;
+            if (firstItem) {
+                const firstBounds = firstItem.getBoundingClientRect();
+                // Align pointer roughly to the center of the first item so the cursor is directly on it.
+                const offsetX = (firstBounds.left - bounds.left) + (firstBounds.width / 2);
+                const offsetY = (firstBounds.top - bounds.top) + (firstBounds.height / 2);
+                nextLeft = startX - offsetX;
+                nextTop = startY - offsetY;
+            }
+            const margin = 12;
+            const width = bounds.width;
+            const height = bounds.height;
+            if (nextLeft + width > window.innerWidth - margin) nextLeft = Math.max(margin, window.innerWidth - width - margin);
+            if (nextTop + height > window.innerHeight - margin) nextTop = Math.max(margin, window.innerHeight - height - margin);
+            if (nextLeft < margin) nextLeft = margin;
+            if (nextTop < margin) nextTop = margin;
+            wrap.style.left = `${nextLeft}px`;
+            wrap.style.top = `${nextTop}px`;
+        };
+        // Wait a frame so layout is accurate before aligning.
+        requestAnimationFrame(adjustWithinViewport);
+
+        const onEnter = () => {
+            wrap.classList.add('is-hovered');
+        };
+        const onLeave = () => {
+            if (!overlayState.drag.active) wrap.classList.remove('is-hovered');
+        };
+
+        const onDragMove = (ev) => {
+            if (!overlayState.drag.active) return;
+            const margin = 12;
+            const bounds = wrap.getBoundingClientRect();
+            const width = bounds.width;
+            const height = bounds.height;
+            let nextLeft = ev.clientX - overlayState.drag.offsetX;
+            let nextTop = ev.clientY - overlayState.drag.offsetY;
+            if (nextLeft + width > window.innerWidth - margin) nextLeft = Math.max(margin, window.innerWidth - width - margin);
+            if (nextTop + height > window.innerHeight - margin) nextTop = Math.max(margin, window.innerHeight - height - margin);
+            if (nextLeft < margin) nextLeft = margin;
+            if (nextTop < margin) nextTop = margin;
+            wrap.style.left = `${nextLeft}px`;
+            wrap.style.top = `${nextTop}px`;
+        };
+
+        const stopDrag = (ev) => {
+            if (!overlayState.drag.active) return;
+            overlayState.drag.active = false;
+            wrap.classList.remove('dragging');
+            if (!wrap.matches(':hover')) wrap.classList.remove('is-hovered');
+            window.removeEventListener('pointermove', onDragMove, { passive: true });
+            window.removeEventListener('pointerup', stopDrag, { passive: true, capture: true });
+            if (ev) { try { ev.stopPropagation(); } catch { } }
+        };
+
+        const onDragStart = (ev) => {
+            if (ev.button !== 0) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            const rect = wrap.getBoundingClientRect();
+            overlayState.drag.active = true;
+            overlayState.drag.offsetX = ev.clientX - rect.left;
+            overlayState.drag.offsetY = ev.clientY - rect.top;
+            wrap.classList.add('dragging');
+            wrap.classList.add('is-hovered');
+            window.addEventListener('pointermove', onDragMove, { passive: true });
+            window.addEventListener('pointerup', stopDrag, { passive: true, capture: true });
+        };
+
+        title.addEventListener('pointerdown', onDragStart);
+        wrap.addEventListener('pointerenter', onEnter);
+        wrap.addEventListener('pointerleave', onLeave);
+
+        const onPointerDown = (ev) => {
+            if (!wrap.contains(ev.target)) this._hideSelectionOverlay();
+        };
+        const onKey = (ev) => {
+            if (ev.key === 'Escape') this._hideSelectionOverlay();
+        };
+        document.addEventListener('pointerdown', onPointerDown, true);
+        document.addEventListener('keydown', onKey, true);
+
+        this._selectionOverlay = {
+            wrap,
+            onPointerDown,
+            onKey,
+            onEnter,
+            onLeave,
+            onDragStart,
+            onDragMove,
+            stopDrag,
+        };
+    }
+
+    _hideSelectionOverlay() {
+        const overlay = this._selectionOverlay;
+        if (!overlay) return;
+        try { overlay.stopDrag?.(); } catch { }
+        document.removeEventListener('pointerdown', overlay.onPointerDown, true);
+        document.removeEventListener('keydown', overlay.onKey, true);
+        try { overlay.wrap.removeEventListener('pointerenter', overlay.onEnter); } catch { }
+        try { overlay.wrap.removeEventListener('pointerleave', overlay.onLeave); } catch { }
+        try { overlay.wrap.querySelector('.selection-picker__handle')?.removeEventListener('pointerdown', overlay.onDragStart); } catch { }
+        try { window.removeEventListener('pointermove', overlay.onDragMove, { passive: true }); } catch { }
+        try { window.removeEventListener('pointerup', overlay.stopDrag, { passive: true, capture: true }); } catch { }
+        try { overlay.wrap.remove(); } catch { }
+        this._selectionOverlay = null;
+        try { SelectionFilter.clearHover(); } catch { }
+        // Restore hover state based on the last pointer position on the canvas
+        try {
+            if (this._lastPointerEvent) this._updateHover(this._lastPointerEvent);
+        } catch { }
+    }
+
     // ————————————————————————————————————————
     // Internal: Event Handlers
     // ————————————————————————————————————————
@@ -991,6 +1327,7 @@ export class Viewer {
 
     _onPointerDown(event) {
         if (this._disposed) return;
+        this._hideSelectionOverlay();
         // If pointer is over TransformControls gizmo, let it handle the interaction
         try {
             const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
@@ -1037,6 +1374,18 @@ export class Viewer {
     _onContextMenu(event) {
         // No interactive targets; allow default context menu
         void event;
+    }
+
+    _onKeyDown(event) {
+        if (this._disposed) return;
+        const k = event?.key || event?.code || '';
+        if (k === 'Escape' || k === 'Esc') {
+            try { this._hideSelectionOverlay(); } catch { }
+            try {
+                const scene = this.partHistory?.scene || this.scene;
+                if (scene) SelectionFilter.unselectAll(scene);
+            } catch { }
+        }
     }
 
     _findOwningComponent(obj) {

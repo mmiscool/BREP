@@ -1,8 +1,6 @@
 // MainToolbar.js — top toolbar that manages layout and button registration.
 // Button logic is implemented externally and registered via addCustomButton()/viewer.addToolbarButton.
 
-import { SelectionFilterWidget } from './selectionFilterWidget.js';
-
 export class MainToolbar {
   constructor(viewer) {
     this.viewer = viewer;
@@ -79,9 +77,6 @@ export class MainToolbar {
     const right = document.createElement('div');
     right.className = 'mtb-right';
 
-    // Inline Selection Filter (right side)
-    this.selectionFilter = new SelectionFilterWidget(this.viewer, { inline: true, mountEl: right });
-
     this.root.appendChild(left);
     this.root.appendChild(right);
     document.body.appendChild(this.root);
@@ -113,4 +108,3 @@ export class MainToolbar {
     } catch { this.root.style.left = '0px'; }
   }
 }
-
