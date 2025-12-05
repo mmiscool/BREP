@@ -1,7 +1,7 @@
 # File Formats: Import and Export
 
 ## 3MF (Feature Aware)
-- **Export**: Generates a 3MF container that includes triangulated geometry plus an embedded copy of the feature history at `Metadata/featureHistory.json`. Multiple solids export as separate objects in a single file. Units are configurable (default millimeter). Non-manifold solids are skipped with a notification, but the export proceeds.
+- **Export**: Generates a 3MF container that includes triangulated geometry plus an embedded copy of the feature history at `Metadata/featureHistory.json`. PMI views (camera, view settings, and annotations) are part of that history, and when views exist the exporter also writes labeled PNG captures to `/views/<view-name>.png` with relationships from the package root. Multiple solids export as separate objects in a single file. Units are configurable (default millimeter). Non-manifold solids are skipped with a notification, but the export proceeds.
 - **Import**: Loads 3MF files and restores the embedded feature history when present. If no history is stored, the geometry imports as editable mesh only.
 - **Compatibility**: The extra history metadata is ignored by other 3MF viewers, but the file remains valid.
 
