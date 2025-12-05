@@ -63,11 +63,28 @@ h1{margin:0 0 18px;font-size:22px;color:var(--accent);font-weight:700}
 .readme .header{padding:16px 18px;border-bottom:1px solid var(--border)}
 .readme .content{padding:18px}
 .doc-card{padding:18px}
-.doc-nav{margin:0 0 18px;display:flex;gap:12px;flex-wrap:wrap;color:var(--muted)}
+.doc-nav{margin:0 0 18px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;color:var(--muted)}
+.doc-nav-links{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 .doc-nav a{color:var(--accent);font-weight:600}
 .doc-list{list-style:none;margin:18px 0;padding:0}
 .doc-list li{margin:6px 0}
 .doc-list a{color:var(--accent)}
+.nav-search{margin-left:auto;position:relative;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;min-width:240px;max-width:520px}
+.search-title{font-weight:700;font-size:14px;margin-bottom:4px}
+.search-hint{color:var(--muted);font-size:12px;margin:0}
+.search-input-row{display:flex;gap:8px;align-items:center;width:100%}
+.search-input{flex:1;border:1px solid var(--border);border-radius:10px;background:var(--chip);color:var(--text);padding:10px 12px}
+.search-input:focus{outline:1px solid var(--accent);box-shadow:0 0 0 3px rgba(92,200,255,0.15)}
+.search-clear{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:10px;padding:9px 12px;cursor:pointer;font-weight:600}
+.search-clear:hover{border-color:var(--accent);color:var(--accent)}
+.search-status{color:var(--muted);font-size:12px;margin-top:4px;width:100%;text-align:right}
+.search-results{position:absolute;top:100%;right:0;margin-top:10px;border:1px solid var(--border);border-radius:12px;background:var(--panel);max-height:360px;overflow:auto;min-width:320px;max-width:520px;box-shadow:0 12px 30px rgba(0,0,0,0.35);z-index:25}
+.search-results ul{list-style:none;margin:0;padding:0}
+.search-item{padding:10px 12px;border-bottom:1px solid var(--border)}
+.search-item:last-child{border-bottom:none}
+.search-item a{display:block;color:var(--accent);font-weight:600}
+.search-snippet{color:var(--muted);font-size:13px;margin-top:4px}
+.search-results mark{background:rgba(92,200,255,0.2);color:var(--text);border-radius:4px;padding:0 2px}
 .prose h1{font-size:24px;margin:0 0 12px}
 .prose h2{font-size:18px;margin:18px 0 8px}
 .prose h3{font-size:16px;margin:14px 0 6px}
@@ -357,6 +374,42 @@ function renderMarkdown(md) {
 
 const toPosix = (p) => p.split(path.sep).join("/");
 
+const isExternalLink = (href = "") =>
+  /^[a-z]+:/i.test(href) || href.startsWith("//");
+
+const flattenPath = (p = "") => {
+  const normalized = toPosix(p).replace(/^(\.\/)+/, "");
+  return normalized.split("/").filter(Boolean).join("__");
+};
+
+const resolveRelativePath = (href = "", baseDir = "") => {
+  const base = toPosix(baseDir || "");
+  const cleanHref = toPosix(href || "");
+  if (!base) return cleanHref.replace(/^(\.\/)+/, "");
+  return path.posix.normalize(path.posix.join(base, cleanHref)).replace(/^(\.\/)+/, "");
+};
+
+const flattenHrefWithBase = (href = "", baseDir = "") => {
+  if (!href) return href;
+  if (isExternalLink(href)) return href;
+  if (href.startsWith("#")) return href;
+  if (href.startsWith("/")) return href;
+  const hashIndex = href.indexOf("#");
+  const hash = hashIndex >= 0 ? href.slice(hashIndex) : "";
+  const preHash = hashIndex >= 0 ? href.slice(0, hashIndex) : href;
+  const queryIndex = preHash.indexOf("?");
+  const query = queryIndex >= 0 ? preHash.slice(queryIndex) : "";
+  const pathOnly = queryIndex >= 0 ? preHash.slice(0, queryIndex) : preHash;
+  const resolved = resolveRelativePath(pathOnly, baseDir);
+  const flatPath = flattenPath(resolved);
+  return `${flatPath}${query}${hash}`;
+};
+
+const flattenDocResources = (html = "", baseDir = "") =>
+  html
+    .replace(/href="([^"]+)"/g, (_m, href) => `href="${flattenHrefWithBase(href, baseDir)}"`)
+    .replace(/src="([^"]+)"/g, (_m, src) => `src="${flattenHrefWithBase(src, baseDir)}"`);
+
 const convertMarkdownLinks = (html) =>
   html.replace(/href="([^"#]+?)\.md(#[^"]*)?"/g, (match, base, hash = "") => {
     const fullPath = `${base}.md`;
@@ -374,6 +427,40 @@ const convertReadmeLinks = (html) =>
     const next = `${cleanBase}.html${hash}`;
     return `href="${next}"`;
   }).replace(/src="docs\//g, 'src="');
+
+const decodeEntities = (text = "") =>
+  text
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+const htmlToSearchText = (html = "") => {
+  const withoutTags = html
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ");
+  return decodeEntities(withoutTags).replace(/\s+/g, " ").trim();
+};
+
+const summarizeText = (text = "", max = 240) => {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trim()}...`;
+};
+
+const addSearchEntry = (entries, { title, href, html }) => {
+  if (!href) return;
+  const normalizedHref = toPosix(href);
+  const textContent = htmlToSearchText(html ?? "");
+  entries.push({
+    title: title || normalizedHref,
+    href: normalizedHref,
+    summary: summarizeText(textContent),
+    content: textContent,
+  });
+};
 
 const extractTitle = (mdText, fallback) => {
   const heading = mdText.match(/^#\s+(.+)$/m);
@@ -395,7 +482,21 @@ const docTemplate = (title, content, { relativeRoot = ".", showTitle = false } =
 </head>
 <body>
 <main>
-  <nav class="doc-nav"><a href="${indexHref}">Help Home</a><span>&middot;</span><a href="/help/table-of-contents.html">Table of Contents</a><span>&middot;</span><a href="https://github.com/mmiscool/BREP" target="_blank" rel="noopener noreferrer">GitHub</a></nav>
+  <nav class="doc-nav">
+    <div class="doc-nav-links">
+      <a href="${indexHref}">Help Home</a><span>&middot;</span><a href="/help/table-of-contents.html">Table of Contents</a><span>&middot;</span><a href="https://github.com/mmiscool/BREP" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </div>
+    <div class="nav-search">
+      <div class="search-input-row">
+        <input type="search" id="doc-search" class="search-input" placeholder="Search docs... Type at least 2 characters to search" autocomplete="off" spellcheck="false" />
+        <button type="button" class="search-clear" id="doc-search-clear">Clear</button>
+      </div>
+      <div class="search-status" id="doc-search-status"></div>
+      <div class="search-results" id="doc-search-results" hidden>
+        <ul id="doc-search-list"></ul>
+      </div>
+    </div>
+  </nav>
   <section class="card doc-card">
     ${header}
     <div class="prose">
@@ -403,6 +504,152 @@ ${content}
     </div>
   </section>
 </main>
+<script>
+(() => {
+  const searchInput = document.getElementById("doc-search");
+  const resultsBox = document.getElementById("doc-search-results");
+  const resultsList = document.getElementById("doc-search-list");
+  const statusEl = document.getElementById("doc-search-status");
+  const clearBtn = document.getElementById("doc-search-clear");
+  if (!searchInput || !resultsBox || !resultsList || !statusEl || !clearBtn) return;
+  const indexUrl = "${navRoot}/search-index.json";
+  let indexPromise = null;
+  let cachedEntries = null;
+
+  const escapeHtml = (text = "") =>
+    text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+  const escapeRegExp = (text = "") => text.replace(/[.*+?^{}()|\[\]\\$]/g, "\\$&");
+
+  const highlight = (text, terms) => {
+    if (!terms.length) return escapeHtml(text);
+    const pattern = terms.map(escapeRegExp).join("|");
+    const regex = new RegExp(\`(\${pattern})\`, "gi");
+    return escapeHtml(text).replace(regex, "<mark>$1</mark>");
+  };
+
+  const buildSnippet = (entry, terms) => {
+    const source = entry.content || entry.summary || "";
+    if (!source) return { plain: "", highlighted: "" };
+    let hit = source.length;
+    for (const term of terms) {
+      const idx = entry.contentLower.indexOf(term);
+      if (idx !== -1 && idx < hit) hit = idx;
+    }
+    if (!Number.isFinite(hit) || hit === source.length) hit = 0;
+    const start = Math.max(0, hit - 60);
+    const end = Math.min(source.length, hit + 140);
+    const snippet = source.slice(start, end);
+    return { plain: snippet, highlighted: highlight(snippet, terms) };
+  };
+
+  const updateStatus = (message) => {
+    statusEl.textContent = message;
+  };
+
+  const loadIndex = async () => {
+    if (cachedEntries) return cachedEntries;
+    if (!indexPromise) {
+      indexPromise = fetch(indexUrl, { cache: "no-store" })
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to load search index");
+          return res.json();
+        })
+        .then((json) => {
+          cachedEntries = Array.isArray(json)
+            ? json.map((entry) => ({
+                ...entry,
+                contentLower: (entry.content || "").toLowerCase(),
+                titleLower: (entry.title || "").toLowerCase(),
+              }))
+            : [];
+          return cachedEntries;
+        })
+        .catch((err) => {
+          console.error("Search index load failed", err);
+          cachedEntries = [];
+          throw err;
+        });
+    }
+    return indexPromise;
+  };
+
+  const renderResults = (entries, terms) => {
+    if (!terms.length) {
+      resultsBox.hidden = true;
+      return;
+    }
+    if (!entries.length) {
+      resultsList.innerHTML = '<li class="search-item"><div class="search-snippet">No matches found.</div></li>';
+      resultsBox.hidden = false;
+      return;
+    }
+    const rendered = entries
+      .slice(0, 30)
+      .map((entry) => {
+        const snippet = buildSnippet(entry, terms);
+        const title = highlight(entry.title || entry.href, terms);
+        const hasFragment = snippet.plain && snippet.plain.trim().length > 0;
+        const fragment = hasFragment ? \`#:~:text=\${encodeURIComponent(snippet.plain.trim())}\` : "";
+        const hrefWithFragment = hasFragment
+          ? (entry.href.includes("#") ? \`\${entry.href}&:~:text=\${encodeURIComponent(snippet.plain.trim())}\` : \`\${entry.href}\${fragment}\`)
+          : entry.href;
+        const snippetHtml = snippet.highlighted ? \`<div class="search-snippet">\${snippet.highlighted}</div>\` : "";
+        return \`<li class="search-item"><a href="\${hrefWithFragment}">\${title}</a>\${snippetHtml}</li>\`;
+      })
+      .join("");
+    resultsList.innerHTML = rendered;
+    resultsBox.hidden = false;
+  };
+
+  const performSearch = async () => {
+    const rawQuery = searchInput.value.trim();
+    if (rawQuery.length < 2) {
+      updateStatus("Type at least 2 characters to search.");
+      resultsBox.hidden = true;
+      return;
+    }
+    const terms = rawQuery.toLowerCase().split(/\\s+/).filter(Boolean);
+    updateStatus("Searching...");
+    try {
+      const entries = await loadIndex();
+      const matches = entries.filter((entry) =>
+        terms.every((term) => entry.contentLower.includes(term) || entry.titleLower.includes(term))
+      );
+      renderResults(matches, terms);
+      updateStatus(matches.length ? \`\${matches.length} result\${matches.length === 1 ? "" : "s"} for "\${rawQuery}"\` : "No matches found.");
+    } catch (err) {
+      updateStatus("Search unavailable (could not load index).");
+    }
+  };
+
+  searchInput.addEventListener("input", performSearch);
+
+  searchInput.addEventListener("focus", () => {
+    if (!cachedEntries) {
+      loadIndex().catch(() => updateStatus("Search unavailable (could not load index)."));
+    }
+  });
+
+  clearBtn.addEventListener("click", () => {
+    searchInput.value = "";
+    resultsBox.hidden = true;
+    updateStatus("Type at least 2 characters to search.");
+    searchInput.focus();
+  });
+
+  document.addEventListener("keydown", (evt) => {
+    if (evt.key === "Escape" && document.activeElement === searchInput) {
+      searchInput.value = "";
+      resultsBox.hidden = true;
+      updateStatus("Type at least 2 characters to search.");
+    }
+  });
+})();
+</script>
 </body>
 </html>`;
 };
@@ -467,6 +714,7 @@ function generateTableOfContents(pages, outputDir) {
 
   const tocHtml = docTemplate("Table of Contents", tocContent, { relativeRoot: ".", showTitle: false });
   writeFileSync(path.join(outputDir, "table-of-contents.html"), tocHtml, "utf-8");
+  return { html: tocHtml, href: "table-of-contents.html" };
 }
 
 function generateDocsSite() {
@@ -480,42 +728,45 @@ function generateDocsSite() {
   mkdirSync(docsOutputDir, { recursive: true });
 
   const pages = [];
+  const searchEntries = [];
 
-  const walk = (srcDir, destDir) => {
+  const walk = (srcDir) => {
     const entries = readdirSync(srcDir, { withFileTypes: true });
     for (const entry of entries) {
       const srcPath = path.join(srcDir, entry.name);
       if (entry.isDirectory()) {
-        const nextDest = path.join(destDir, entry.name);
-        mkdirSync(nextDest, { recursive: true });
-        walk(srcPath, nextDest);
+        walk(srcPath);
         continue;
       }
 
       if (!entry.isFile()) continue;
 
+      const relFromDocs = path.relative(docsSourceDir, srcPath);
       const ext = path.extname(entry.name).toLowerCase();
       if (ext === ".md") {
-        const baseName = path.basename(entry.name, ext);
-        const destPath = path.join(destDir, `${baseName}.html`);
+        const baseName = path.basename(relFromDocs, ext);
+        const flatName = `${flattenPath(relFromDocs.replace(/\.md$/i, ""))}.html`;
+        const destPath = path.join(docsOutputDir, flatName);
         const md = readFileSync(srcPath, "utf-8");
         const pageTitle = extractTitle(md, baseName);
         let body = renderMarkdown(md);
+        const baseDir = path.posix ? path.posix.dirname(relFromDocs) : path.dirname(relFromDocs);
         body = convertMarkdownLinks(body);
-        const relRoot = path.relative(path.dirname(destPath), docsOutputDir) || ".";
+        body = flattenDocResources(body, baseDir);
+        const relRoot = ".";
         const htmlPage = docTemplate(pageTitle, body, { relativeRoot: relRoot, showTitle: false });
         writeFileSync(destPath, htmlPage, "utf-8");
-        const relativeHref = toPosix(path.relative(docsOutputDir, destPath));
-        pages.push({ title: pageTitle, href: relativeHref });
+        pages.push({ title: pageTitle, href: flatName });
+        addSearchEntry(searchEntries, { title: pageTitle, href: flatName, html: body });
         continue;
       }
 
-      const destAsset = path.join(destDir, entry.name);
+      const destAsset = path.join(docsOutputDir, flattenPath(relFromDocs));
       copyFileSync(srcPath, destAsset);
     }
   };
 
-  walk(docsSourceDir, docsOutputDir);
+  walk(docsSourceDir);
 
   // Also process LICENSE.md and CONTRIBUTING.md from root directory
   const rootMdFiles = ['LICENSE.md', 'CONTRIBUTING.md'];
@@ -527,12 +778,15 @@ function generateDocsSite() {
       const md = readFileSync(srcPath, "utf-8");
       const pageTitle = extractTitle(md, baseName);
       let body = renderMarkdown(md);
+      const baseDir = ".";
       body = convertMarkdownLinks(body);
+      body = flattenDocResources(body, baseDir);
       const relRoot = path.relative(path.dirname(destPath), docsOutputDir) || ".";
       const htmlPage = docTemplate(pageTitle, body, { relativeRoot: relRoot, showTitle: false });
       writeFileSync(destPath, htmlPage, "utf-8");
       const relativeHref = toPosix(path.relative(docsOutputDir, destPath));
       pages.push({ title: pageTitle, href: relativeHref });
+      addSearchEntry(searchEntries, { title: pageTitle, href: relativeHref, html: body });
     }
   }
 
@@ -545,7 +799,9 @@ function generateDocsSite() {
     const readmeMd = readFileSync(readmePath, "utf-8");
     const readmeTitle = extractTitle(readmeMd, "BREP");
     let readmeBody = renderMarkdown(readmeMd);
+    const baseDir = ".";
     readmeBody = convertReadmeLinks(readmeBody);
+    readmeBody = flattenDocResources(readmeBody, baseDir);
 
     // Add navigation to other docs at the end of README
     if (sortedPages.length > 0) {
@@ -607,15 +863,34 @@ function generateDocsSite() {
 
     const indexHtml = docTemplate(readmeTitle, readmeBody, { relativeRoot: ".", showTitle: false });
     writeFileSync(path.join(docsOutputDir, "index.html"), indexHtml, "utf-8");
+    addSearchEntry(searchEntries, { title: readmeTitle, href: "index.html", html: readmeBody });
   }
 
   // Generate table of contents
-  generateTableOfContents(sortedPages, docsOutputDir);
+  const tocPage = generateTableOfContents(sortedPages, docsOutputDir);
+  if (tocPage?.html) {
+    addSearchEntry(searchEntries, { title: "Table of Contents", href: tocPage.href, html: tocPage.html });
+  }
+
+  // Build a lightweight search index for client-side search
+  const searchByHref = new Map();
+  for (const entry of searchEntries) {
+    if (!entry?.href) continue;
+    const normalizedHref = toPosix(entry.href);
+    searchByHref.set(normalizedHref, {
+      title: entry.title || normalizedHref,
+      href: normalizedHref,
+      summary: summarizeText(entry.summary || entry.content || ""),
+      content: entry.content || "",
+    });
+  }
+  const searchIndex = Array.from(searchByHref.values()).sort((a, b) => a.href.localeCompare(b.href));
+  writeFileSync(path.join(docsOutputDir, "search-index.json"), JSON.stringify(searchIndex, null, 2), "utf-8");
 
   console.log(`✔ Generated ${sortedPages.length + 2} documentation page${sortedPages.length === -1 ? "" : "s"} in public/help`);
 }
 
-const readmeHTML = convertMarkdownLinks(renderMarkdown(readmeText));
+const readmeHTML = flattenDocResources(convertMarkdownLinks(renderMarkdown(readmeText)), ".");
 
 generateDocsSite();
 
