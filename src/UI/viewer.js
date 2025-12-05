@@ -56,7 +56,7 @@ function ensureSelectionPickerStyles() {
             min-width: 240px;
             max-width: 500px;
             max-height: 260px;
-            overflow: auto;
+            overflow: hidden;
             background: linear-gradient(180deg, rgba(18,21,25,0.96), rgba(18,21,25,0.90));
             border: 1px solid var(--sfw-border);
             border-radius: 10px;
@@ -87,11 +87,39 @@ function ensureSelectionPickerStyles() {
             padding: 6px 8px;
             background: rgba(255,255,255,0.05);
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+            flex: 1 1 auto;
+        }
+        .selection-picker__header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        .selection-picker__clear {
+            flex: 0 0 auto;
+            border-radius: 8px;
+            border: 1px solid var(--sfw-border);
+            background: rgba(255,255,255,0.08);
+            color: var(--sfw-text);
+            font-weight: 700;
+            padding: 6px 10px;
+            cursor: pointer;
+            transition: background .12s ease, border-color .12s ease, transform .05s ease;
+        }
+        .selection-picker__clear:hover {
+            background: rgba(122,162,247,0.12);
+            border-color: var(--sfw-accent);
+        }
+        .selection-picker__clear:active {
+            transform: translateY(1px);
         }
         .selection-picker__list {
             display: flex;
             flex-direction: column;
             gap: 6px;
+            max-height: 200px;
+            overflow: auto;
+            padding-right: 4px;
         }
         .selection-picker__item {
             width: 100%;
@@ -1237,7 +1265,37 @@ export class Viewer {
         const title = document.createElement('div');
         title.className = 'selection-picker__title selection-picker__handle';
         title.textContent = 'Select an object';
-        wrap.appendChild(title);
+        const headerRow = document.createElement('div');
+        headerRow.className = 'selection-picker__header';
+        headerRow.appendChild(title);
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.textContent = 'Clear Selection';
+        clearBtn.className = 'selection-picker__clear';
+        clearBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            ev.preventDefault();
+            try {
+                const scene = this.partHistory?.scene || this.scene;
+                if (scene) SelectionFilter.unselectAll(scene);
+            } catch { }
+            this._hideSelectionOverlay();
+        });
+        headerRow.appendChild(clearBtn);
+        wrap.appendChild(headerRow);
+
+        const overlayState = { wrap, drag: { active: false }, peekTimer: null };
+        const triggerPeek = () => {
+            if (overlayState.peekTimer) {
+                clearTimeout(overlayState.peekTimer);
+                overlayState.peekTimer = null;
+            }
+            try { wrap.style.opacity = '0.8'; } catch { }
+            overlayState.peekTimer = setTimeout(() => {
+                try { wrap.style.opacity = ''; } catch { }
+                overlayState.peekTimer = null;
+            }, 500);
+        };
 
         const list = document.createElement('div');
         list.className = 'selection-picker__list';
@@ -1258,6 +1316,7 @@ export class Viewer {
             line.appendChild(nameSpan);
             btn.appendChild(line);
             btn.addEventListener('mouseenter', () => {
+                triggerPeek();
                 try { SelectionFilter.setHoverObject(entry.target, { ignoreFilter: true }); } catch { }
             });
             btn.addEventListener('mouseleave', () => {
@@ -1271,6 +1330,19 @@ export class Viewer {
             });
             list.appendChild(btn);
         });
+        const onWheelRotate = (ev) => {
+            try { ev.preventDefault(); ev.stopPropagation(); } catch { }
+            if (!list || list.children.length === 0) return;
+            const delta = ev.deltaY || 0;
+            if (delta > 0) {
+                const first = list.firstElementChild;
+                if (first) list.appendChild(first);
+            } else if (delta < 0) {
+                const last = list.lastElementChild;
+                if (last) list.insertBefore(last, list.firstElementChild);
+            }
+        };
+        list.addEventListener('wheel', onWheelRotate, { passive: false });
         wrap.appendChild(list);
 
         const startX = event?.clientX ?? (window.innerWidth / 2);
@@ -1279,8 +1351,6 @@ export class Viewer {
         wrap.style.top = `${startY}px`;
 
         document.body.appendChild(wrap);
-
-        const overlayState = { wrap, drag: { active: false } };
 
         const adjustWithinViewport = () => {
             const bounds = wrap.getBoundingClientRect();
@@ -1377,6 +1447,9 @@ export class Viewer {
             onDragStart,
             onDragMove,
             stopDrag,
+            onWheelRotate,
+            list,
+            overlayState,
         };
     }
 
@@ -1391,6 +1464,14 @@ export class Viewer {
         try { overlay.wrap.querySelector('.selection-picker__handle')?.removeEventListener('pointerdown', overlay.onDragStart); } catch { }
         try { window.removeEventListener('pointermove', overlay.onDragMove, { passive: true }); } catch { }
         try { window.removeEventListener('pointerup', overlay.stopDrag, { passive: true, capture: true }); } catch { }
+        try { overlay.list?.removeEventListener('wheel', overlay.onWheelRotate, { passive: false }); } catch { }
+        try {
+            if (overlay.overlayState?.peekTimer) {
+                clearTimeout(overlay.overlayState.peekTimer);
+                overlay.overlayState.peekTimer = null;
+            }
+        } catch { }
+        try { overlay.wrap.style.opacity = ''; } catch { }
         try { overlay.wrap.remove(); } catch { }
         this._selectionOverlay = null;
         try { SelectionFilter.clearHover(); } catch { }
