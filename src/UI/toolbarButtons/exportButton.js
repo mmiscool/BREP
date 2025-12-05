@@ -254,6 +254,10 @@ function _openExportDialog(viewer) {
             additionalFiles = { 'Metadata/featureHistory.json': json };
             modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.json' };
           }
+          const viewFiles = await viewer?.pmiViewsWidget?.captureViewImagesForPackage?.();
+          if (viewFiles && typeof viewFiles === 'object') {
+            additionalFiles = { ...(additionalFiles || {}), ...viewFiles };
+          }
         } catch {}
 
         // Gracefully handle non-manifold solids by skipping them

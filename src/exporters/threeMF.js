@@ -208,13 +208,20 @@ function contentTypesXML() {
   ].join('\n');
 }
 
-function rootRelsXML({ thumbnailPath } = {}) {
+function rootRelsXML({ thumbnailPath, viewImages } = {}) {
   const lines = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
   lines.push('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">');
   lines.push('  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>');
   if (thumbnailPath) {
     lines.push(`  <Relationship Target="${xmlEsc(thumbnailPath)}" Id="relThumb" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"/>`);
+  }
+  if (Array.isArray(viewImages) && viewImages.length) {
+    viewImages.forEach((path, idx) => {
+      const id = `relView${idx}`;
+      const target = path.startsWith('/') ? path : `/${path}`;
+      lines.push(`  <Relationship Target="${xmlEsc(target)}" Id="${xmlEsc(id)}" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/other"/>`);
+    });
   }
   lines.push('</Relationships>');
   return lines.join('\n');
@@ -264,10 +271,20 @@ export async function generate3MF(solids, opts = {}) {
       }
     } catch { /* ignore thumbnail errors */ }
   }
-  // Root-level relationships (3D model and optional thumbnail)
-  zip.folder('_rels').file('.rels', rootRelsXML({ thumbnailPath: thumbPkgRelPath }));
   // Additional attachments (e.g., Metadata/featureHistory.json)
   const extra = opts.additionalFiles && typeof opts.additionalFiles === 'object' ? opts.additionalFiles : null;
+  // Root-level relationships (3D model and optional thumbnail)
+  const viewRelPaths = [];
+  if (extra) {
+    for (const p of Object.keys(extra)) {
+      const lower = p.toLowerCase();
+      if (lower.startsWith('views/') && lower.endsWith('.png')) {
+        const clean = p.startsWith('/') ? p : `/${p}`;
+        viewRelPaths.push(clean);
+      }
+    }
+  }
+  zip.folder('_rels').file('.rels', rootRelsXML({ thumbnailPath: thumbPkgRelPath, viewImages: viewRelPaths }));
   if (extra) {
     for (const p of Object.keys(extra)) {
       const path = String(p).replace(/^\/+/, '');

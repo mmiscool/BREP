@@ -265,6 +265,15 @@ export class FileManagerWidget {
       additionalFiles = { 'Metadata/featureHistory.json': jsonString };
       modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.json' };
     }
+    // Embed PMI view images under /views
+    try {
+      const viewFiles = await this.viewer?.pmiViewsWidget?.captureViewImagesForPackage?.();
+      if (viewFiles && typeof viewFiles === 'object') {
+        additionalFiles = { ...(additionalFiles || {}), ...viewFiles };
+      }
+    } catch (err) {
+      console.error('Failed to embed PMI view images:', err);
+    }
     // Capture a 60x60 thumbnail of the current view
     let thumbnail = null;
     try {

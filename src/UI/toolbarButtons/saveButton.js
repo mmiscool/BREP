@@ -76,6 +76,10 @@ export function createSaveButton(viewer) {
           additionalFiles = { 'Metadata/featureHistory.json': json };
           modelMetadata = { featureHistoryPath: '/Metadata/featureHistory.json' };
         }
+        const viewFiles = await viewer?.pmiViewsWidget?.captureViewImagesForPackage?.();
+        if (viewFiles && typeof viewFiles === 'object') {
+          additionalFiles = { ...(additionalFiles || {}), ...viewFiles };
+        }
       } catch { }
 
       const thumbnail = await _captureThumbnail(60);
