@@ -58,6 +58,7 @@ export class SelectionFilter {
             const first = SelectionFilter.getAvailableTypes()[0] || null;
             if (first) SelectionFilter.currentType = first;
             SelectionFilter.triggerUI();
+            SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'SetSelectionTypes');
             return;
         }
         const list = Array.isArray(types) ? types : [types];
@@ -70,6 +71,7 @@ export class SelectionFilter {
             SelectionFilter.currentType = first;
         }
         SelectionFilter.triggerUI();
+        SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'SetSelectionTypes');
     }
 
     static stashAllowedSelectionTypes() {
@@ -84,6 +86,7 @@ export class SelectionFilter {
             SelectionFilter.previouseAllowedSelectionTypes = null;
             SelectionFilter.previousCurrentType = null;
             SelectionFilter.triggerUI();
+            SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'RestoreSelectionTypes');
         }
     }
 
@@ -97,6 +100,7 @@ export class SelectionFilter {
             SelectionFilter.allowedSelectionTypes.add(type);
         } else throw new Error(`Unknown selection type: ${type}`);
         SelectionFilter.triggerUI();
+        SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'allowType');
     }
 
     static disallowType(type) {
@@ -105,6 +109,7 @@ export class SelectionFilter {
         if (SelectionFilter.TYPES.includes(type)) SelectionFilter.allowedSelectionTypes.delete(type);
         else throw new Error(`Unknown selection type: ${type}`);
         SelectionFilter.triggerUI();
+        SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'disallowType');
     }
 
     static GetSelectionTypes() {
@@ -132,6 +137,7 @@ export class SelectionFilter {
         SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL;
         SelectionFilter.currentType = SelectionFilter.getAvailableTypes()[0] || null;
         SelectionFilter.triggerUI();
+        SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'Reset');
     }
 
     // ---------------- Hover Highlighting ----------------
@@ -223,6 +229,17 @@ export class SelectionFilter {
             return;
         }
 
+        if (target.type === SelectionFilter.VERTEX) {
+            // Apply to the vertex object and any drawable children (e.g., Points)
+            applyToOne(target);
+            if (Array.isArray(target.children)) {
+                for (const ch of target.children) {
+                    applyToOne(ch);
+                }
+            }
+            return;
+        }
+
         applyToOne(target);
     }
 
@@ -262,6 +279,11 @@ export class SelectionFilter {
         };
 
         if (obj.type === SelectionFilter.SOLID || obj.type === SelectionFilter.COMPONENT) {
+            if (Array.isArray(obj.children)) {
+                for (const ch of obj.children) restoreOne(ch);
+            }
+        }
+        if (obj.type === SelectionFilter.VERTEX) {
             if (Array.isArray(obj.children)) {
                 for (const ch of obj.children) restoreOne(ch);
             }
@@ -575,5 +597,15 @@ export class SelectionFilter {
             const ev = new CustomEvent('selection-changed');
             window.dispatchEvent(ev);
         } catch (_) { /* noop */ }
+    }
+
+    static #logAllowedTypesChange(next, reason = '') {
+        try {
+            const desc = next === SelectionFilter.ALL
+                ? 'ALL'
+                : JSON.stringify(Array.from(next || []));
+            const prefix = reason ? `[SelectionFilter:${reason}]` : '[SelectionFilter]';
+            console.log(`${prefix} Allowed types -> ${desc}`);
+        } catch { /* ignore logging errors */ }
     }
 }

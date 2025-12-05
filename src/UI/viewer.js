@@ -110,10 +110,23 @@ function ensureSelectionPickerStyles() {
             transform: translateY(-1px);
         }
         .selection-picker__item-label { font-weight: 700; }
-        .selection-picker__item-meta {
-            font-size: 11px;
+        .selection-picker__line {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            overflow: hidden;
+        }
+        .selection-picker__type {
+            font-weight: 700;
             color: var(--sfw-muted);
-            margin-top: 2px;
+            flex: 0 0 auto;
+        }
+        .selection-picker__name {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
     `;
     document.head.appendChild(style);
@@ -1068,32 +1081,108 @@ export class Viewer {
             } catch { }
             return [];
         })();
-        const allowedSet = new Set(allowedTypes);
+        const normType = (t) => String(t || '').toUpperCase();
+        const allowedSet = new Set(allowedTypes.map(normType));
+        const priorityOrder = [
+            SelectionFilter.VERTEX,
+            SelectionFilter.EDGE,
+            SelectionFilter.FACE,
+            SelectionFilter.SKETCH,
+            SelectionFilter.PLANE,
+            SelectionFilter.SOLID,
+            SelectionFilter.COMPONENT,
+        ].map(t => normType(t));
+        const getPriority = (type) => {
+            const idx = priorityOrder.indexOf(normType(type));
+            return idx === -1 ? priorityOrder.length : idx;
+        };
+        const isAllowedType = (type) => {
+            if (allowedSet.size === 0) return true;
+            return allowedSet.has(normType(type));
+        };
 
         const { target, candidates = [] } = this._pickAtEvent(event, { collectAll: true, allowAnyAllowedType: true });
         const deduped = [];
         const seen = new Set();
+        const normalizeTarget = (obj) => {
+            if (!obj) return null;
+            let o = obj;
+            const nt = normType(o.type);
+            if (nt === 'POINTS' && o.parent && normType(o.parent.type) === normType(SelectionFilter.VERTEX)) {
+                o = o.parent;
+            }
+            if (!isAllowedType(o.type) && o.parent && isAllowedType(o.parent.type)) {
+                o = o.parent;
+            }
+            return o;
+        };
+        const addEntry = (obj, distance) => {
+            const normalized = normalizeTarget(obj);
+            if (!normalized) return;
+            if (!isAllowedType(normalized.type)) return;
+            const key = normalized.uuid || normalized.name || `${normalized.type}-${seen.size}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            deduped.push({
+                target: normalized,
+                distance: Number.isFinite(distance) ? distance : Infinity,
+                label: this._describeSelectionCandidate(normalized),
+            });
+        };
         for (const entry of candidates) {
             const obj = entry?.target;
             if (!obj) continue;
-            if (allowedSet.size > 0 && !allowedSet.has(obj.type)) continue;
-            const key = obj.uuid || obj.name || `${obj.type}-${seen.size}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            deduped.push({
-                target: obj,
-                distance: Number.isFinite(entry?.distance) ? entry.distance : (entry?.hit?.distance ?? Infinity),
-                label: this._describeSelectionCandidate(obj),
-            });
+            const distance = Number.isFinite(entry?.distance) ? entry.distance : (entry?.hit?.distance ?? Infinity);
+            addEntry(obj, distance);
         }
         deduped.sort((a, b) => a.distance - b.distance);
 
-        if (deduped.length > 1) {
-            this._showSelectionOverlay(event, deduped);
+        // When all types are allowed, also include ancestor SOLID/COMPONENT entries at the end
+        const extras = [];
+        const addExtra = (obj, distance) => {
+            const normalized = normalizeTarget(obj);
+            if (!normalized) return;
+            if (!isAllowedType(normalized.type)) return;
+            const key = normalized.uuid || normalized.name || `${normalized.type}-${seen.size}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            extras.push({
+                target: normalized,
+                distance: Number.isFinite(distance) ? distance : Infinity,
+                label: this._describeSelectionCandidate(normalized),
+            });
+        };
+        const findAncestorOfType = (obj, type) => {
+            let cur = obj?.parent || null;
+            while (cur) {
+                if (normType(cur.type) === normType(type)) return cur;
+                cur = cur.parent || null;
+            }
+            return null;
+        };
+        for (const entry of deduped.slice()) {
+            const obj = entry.target;
+            const dist = entry.distance;
+            const solid = findAncestorOfType(obj, SelectionFilter.SOLID);
+            const component = findAncestorOfType(obj, SelectionFilter.COMPONENT);
+            addExtra(component, dist);
+            addExtra(solid, dist);
+        }
+        extras.sort((a, b) => a.distance - b.distance);
+        const ordered = deduped.concat(extras);
+        ordered.sort((a, b) => {
+            const pa = getPriority(a?.target?.type);
+            const pb = getPriority(b?.target?.type);
+            if (pa !== pb) return pa - pb;
+            return (a?.distance ?? Infinity) - (b?.distance ?? Infinity);
+        });
+
+        if (ordered.length > 1) {
+            this._showSelectionOverlay(event, ordered);
             return;
         }
 
-        const chosen = deduped[0]?.target || target;
+        const chosen = ordered[0]?.target || target;
         if (!chosen) return;
         this._hideSelectionOverlay();
         this._applySelectionTarget(chosen);
@@ -1157,17 +1246,19 @@ export class Viewer {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'selection-picker__item';
-            const primary = document.createElement('div');
-            primary.className = 'selection-picker__item-label';
-            primary.textContent = entry.label || this._describeSelectionCandidate(entry.target);
-            const meta = document.createElement('div');
-            meta.className = 'selection-picker__item-meta';
-            const distLabel = Number.isFinite(entry.distance) ? entry.distance.toFixed(3) : 'n/a';
-            meta.textContent = `${entry.target.type || 'object'} · ${distLabel}`;
-            btn.appendChild(primary);
-            btn.appendChild(meta);
+            const line = document.createElement('div');
+            line.className = 'selection-picker__line';
+            const typeSpan = document.createElement('div');
+            typeSpan.className = 'selection-picker__type';
+            typeSpan.textContent = String(entry.target.type || '').toUpperCase() || 'OBJECT';
+            const nameSpan = document.createElement('div');
+            nameSpan.className = 'selection-picker__name';
+            nameSpan.textContent = entry.label || this._describeSelectionCandidate(entry.target);
+            line.appendChild(typeSpan);
+            line.appendChild(nameSpan);
+            btn.appendChild(line);
             btn.addEventListener('mouseenter', () => {
-                try { SelectionFilter.setHoverObject(entry.target); } catch { }
+                try { SelectionFilter.setHoverObject(entry.target, { ignoreFilter: true }); } catch { }
             });
             btn.addEventListener('mouseleave', () => {
                 try { SelectionFilter.clearHover(); } catch { }
