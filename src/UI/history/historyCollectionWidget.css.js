@@ -39,6 +39,7 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     display: flex;
     align-items: stretch;
     gap: 0px;
+    padding: 2px 5px;
   }
   .hc-toggle {
     appearance: none;
@@ -80,7 +81,7 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 6px;
+    padding: 1px;
     margin-left: auto;
   }
   .hc-meta {
