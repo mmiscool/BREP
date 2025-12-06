@@ -1,4 +1,5 @@
 import { HistoryCollectionWidget } from '../history/HistoryCollectionWidget.js';
+import { resolveEntryId } from '../history/historyDisplayInfo.js';
 import { SelectionFilter } from '../SelectionFilter.js';
 import { constraintStatusInfo } from './constraintStatusUtils.js';
 import { constraintLabelText } from './constraintLabelUtils.js';
@@ -57,14 +58,6 @@ const COLLECTION_EXTRA_CSS = `
     background: rgba(110,168,254,.15);
   }
 `;
-
-function resolveEntryId(entry, fallback = null) {
-  if (!entry) return fallback;
-  if (entry.inputParams?.id != null) return String(entry.inputParams.id);
-  if (entry.inputParams?.constraintID != null) return String(entry.inputParams.constraintID);
-  if (entry.id != null) return String(entry.id);
-  return fallback;
-}
 
 export class AssemblyConstraintCollectionWidget extends HistoryCollectionWidget {
   constructor({
@@ -200,30 +193,20 @@ export class AssemblyConstraintCollectionWidget extends HistoryCollectionWidget 
   #decorateEntry(context = {}) {
     const { entry = null, elements = {}, index = 0 } = context;
     if (!elements || !elements.item) return;
+    const info = this._applyDisplayInfo(entry, index, resolveEntryId(entry, index), {
+      titleEl: elements.titleEl,
+      metaEl: elements.metaEl,
+      item: elements.item,
+    });
     const constraintClass = entry?.constraintClass || null;
-    const statusInfo = constraintStatusInfo(entry);
-    elements.item.classList.toggle('has-error', !!statusInfo.error);
     elements.item.classList.toggle('constraint-disabled', entry?.enabled === false);
     elements.item.dataset.constraintId = resolveEntryId(entry) || '';
 
-    if (elements.metaEl) {
-      elements.metaEl.textContent = statusInfo.label || '';
-      elements.metaEl.title = statusInfo.title || '';
-      elements.metaEl.style.color = statusInfo.color || '';
-    }
-
-    if (elements.titleEl) {
+    if (info && info.name && elements.titleEl) {
+      elements.titleEl.textContent = info.name;
+    } else if (elements.titleEl) {
       elements.titleEl.textContent =
         constraintLabelText(entry, constraintClass, this.partHistory) || `Constraint ${index + 1}`;
-    }
-
-    if (elements.typeEl) {
-      const shortName = constraintClass?.shortName || constraintClass?.constraintShortName;
-      elements.typeEl.textContent =
-        shortName
-        || constraintClass?.constraintType
-        || entry?.type
-        || '';
     }
   }
 

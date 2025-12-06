@@ -41,6 +41,8 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     align-items: stretch;
     gap: 0px;
     padding: 2px 5px;
+    padding-right: 130px;
+    position: relative;
   }
   .hc-toggle {
     appearance: none;
@@ -64,26 +66,46 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
   .hc-toggle-main {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
     min-width: 0;
     flex: 1 1 auto;
   }
   .hc-title {
     font-size: 14px;
     font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .hc-type {
-    font-size: 11px;
-    color: var(--muted);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+  .hc-subline {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .hc-controls {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    right: 8px;
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 1px;
-    margin-left: auto;
+    padding: 0;
+    z-index: 2;
+  }
+  .hc-controls .hc-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
   }
   .hc-meta {
     display: inline-flex;
@@ -93,6 +115,8 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     gap: 6px;
     padding-right: 4px;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .hc-entry-toggle {
     display: inline-flex;
@@ -107,16 +131,15 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     accent-color: var(--accent);
   }
   .hc-item.annotation-disabled .hc-title,
-  .hc-item.annotation-disabled .hc-type,
   .hc-item.annotation-disabled .hc-meta {
     opacity: 0.55;
   }
   .hc-btn {
     appearance: none;
-    background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+    background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 999px;
+    border-radius: 8px;
     padding: 6px 10px;
     cursor: pointer;
     font-size: 12px;
@@ -128,17 +151,21 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
   }
   .hc-btn:not(:disabled):hover {
     border-color: var(--focus);
-    box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+    box-shadow: 0 0 0 2px rgba(59,130,246,.18);
   }
   .hc-btn:not(:disabled):active {
     transform: translateY(1px);
   }
   .hc-btn.danger:not(:disabled):hover {
     border-color: var(--danger);
-    box-shadow: 0 0 0 3px rgba(239,68,68,.2);
+    box-shadow: 0 0 0 2px rgba(239,68,68,.2);
   }
   .hc-body {
-    padding: 0 12px 12px;
+    padding: 8px 12px 12px;
+    margin-top: 6px;
+    background: #0c0f16;
+    border-top: 1px solid var(--border);
+    border-radius: 0 0 10px 10px;
   }
   .hc-missing {
     padding: 12px;

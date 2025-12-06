@@ -288,18 +288,13 @@ export class HistoryWidget extends HistoryCollectionWidget {
     const id = context?.id != null ? String(context.id) : null;
     const entry = context?.entry || null;
     const elements = context?.elements || {};
-    const titleEl = elements.titleEl || null;
-    const metaEl = elements.metaEl || null;
-    const item = elements.item || null;
-    if (titleEl) titleEl.textContent = this.#composeTitle(entry);
-    if (metaEl) {
-      metaEl.textContent = this.#composeStatus(entry);
-      if (id) this._metaEls.set(id, metaEl);
-    }
-    if (item && id) {
-      item.classList.toggle('has-error', this.#hasError(entry));
-      this._itemEls.set(id, item);
-    }
+    this._applyDisplayInfo(entry, context?.index || 0, id, {
+      titleEl: elements.titleEl,
+      metaEl: elements.metaEl,
+      item: elements.item,
+    });
+    if (id && elements.metaEl) this._metaEls.set(id, elements.metaEl);
+    if (id && elements.item) this._itemEls.set(id, elements.item);
     this.#decorateMissingFeaturePanel(entry, context);
   }
 
@@ -329,25 +324,21 @@ export class HistoryWidget extends HistoryCollectionWidget {
   }
 
   _syncHeaderState() {
-    const features = this._collectFeatureMap();
-    for (const [id, metaEl] of this._metaEls) {
-      const feature = features.get(id);
-      if (!feature || !metaEl) continue;
-      metaEl.textContent = this.#composeStatus(feature);
-      const item = this._itemEls.get(id);
-      if (item) item.classList.toggle('has-error', this.#hasError(feature));
-    }
-  }
-
-  _collectFeatureMap() {
-    const map = new Map();
     const entries = this._getEntries();
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       const id = this._extractEntryId(entry, i);
-      if (id != null) map.set(String(id), entry);
+      if (id == null) continue;
+      const titleEl = this._titleEls.get(String(id));
+      const metaEl = this._metaEls.get(String(id));
+      const item = this._itemEls.get(String(id));
+      if (!titleEl && !metaEl && !item) continue;
+      this._applyDisplayInfo(entry, i, String(id), {
+        titleEl,
+        metaEl,
+        item,
+      });
     }
-    return map;
   }
 
   #refreshOpenForms() {
@@ -376,34 +367,6 @@ export class HistoryWidget extends HistoryCollectionWidget {
     if (!exists) return;
     this._expandedId = String(target);
     this.render();
-  }
-
-  #hasError(entry) {
-    if (!entry) return false;
-    const missing = !this._resolveFeatureClass(entry.type);
-    const failed = entry?.lastRun?.ok === false;
-    return missing || failed;
-  }
-
-  #composeTitle(entry) {
-    const type = entry?.type || 'Feature';
-    const id = this.#entryId(entry) ?? '-';
-    return `${type} - #${id}`;
-  }
-
-  #composeStatus(entry) {
-    if (!entry) return '';
-    const parts = [];
-    const duration = entry?.lastRun?.durationMs;
-    if (Number.isFinite(duration)) parts.push(this.#formatDuration(duration));
-    if (entry?.lastRun && entry.lastRun.ok === false) parts.push('✖');
-    return parts.join(' ');
-  }
-
-  #formatDuration(ms) {
-    if (!Number.isFinite(ms)) return '';
-    if (ms >= 1000) return `${(ms / 1000).toFixed(2)} s`;
-    return `${Math.round(ms)} ms`;
   }
 
   #computeIdsSignature() {

@@ -1,4 +1,5 @@
 import { SchemaForm } from '../featureDialogs.js';
+import { resolveEntryId, resolveHistoryDisplayInfo } from './historyDisplayInfo.js';
 import { HISTORY_COLLECTION_WIDGET_CSS } from './historyCollectionWidget.css.js';
 
 export const HISTORY_COLLECTION_REFRESH_EVENT = 'brep:history-collections-refresh';
@@ -87,6 +88,8 @@ export class HistoryCollectionWidget {
 
     this._expandedId = null;
     this._titleEls = new Map();
+    this._metaEls = new Map();
+    this._itemEls = new Map();
     this._forms = new Map();
     this._uiFieldSignatures = new Map();
     this._boundHistoryListener = null;
@@ -105,6 +108,8 @@ export class HistoryCollectionWidget {
     this._expandedId = null;
     this._destroyAllForms();
     this._titleEls.clear();
+    this._metaEls.clear();
+    this._itemEls.clear();
     this._uiFieldSignatures.clear();
     this._addBtn = null;
     this._addMenu = null;
@@ -140,6 +145,8 @@ export class HistoryCollectionWidget {
     this._toggleAddMenu(false);
     this._refreshAddMenu();
     this._titleEls.clear();
+    this._metaEls.clear();
+    this._itemEls.clear();
     this._destroyAllForms();
     const entries = this._getEntries();
     this._listEl.textContent = '';
@@ -231,36 +238,29 @@ export class HistoryCollectionWidget {
   }
 
   _extractEntryId(entry, index) {
-    if (entry && entry.id != null) return String(entry.id);
-    const params = entry && entry.inputParams ? entry.inputParams : null;
-    if (params && params.id != null) return String(params.id);
-    if (params && params.featureID != null) return String(params.featureID);
-    return `entry-${index}`;
+    return resolveEntryId(entry, index);
   }
 
-  _guessEntryLabel(entry, index) {
-    const params = entry && entry.inputParams ? entry.inputParams : {};
-    const custom =
-      entry?.title ||
-      params.name ||
-      params.label ||
-      params.title;
-    if (custom) return String(custom);
-    const names = this._extractDisplayNames(entry?.constructor, entry?.type, entry?.entityType);
-    if (names.longName) return names.longName;
-    if (names.shortName) return names.shortName;
-    return params.id || entry?.type || entry?.entityType || `Entry ${index + 1}`;
-  }
-
-  _guessTypeLabel(entry) {
-    const names = this._extractDisplayNames(entry?.constructor, entry?.type, entry?.entityType);
-    if (names.shortName) return names.shortName;
-    if (names.longName) return names.longName;
-    return (
-      entry?.type ||
-      entry?.entityType ||
-      ''
-    );
+  _applyDisplayInfo(entry, index, entryId, elements = {}) {
+    const info = resolveHistoryDisplayInfo(entry, {
+      history: this.history,
+      index,
+    });
+    if (elements.titleEl) {
+      elements.titleEl.textContent = info.name || '';
+    }
+    if (elements.metaEl) {
+      const parts = [];
+      if (info.id) parts.push(`#${info.id}`);
+      if (info.statusText) parts.push(info.statusText);
+      elements.metaEl.textContent = parts.join(' · ');
+      elements.metaEl.title = info.statusTitle || '';
+      elements.metaEl.style.color = info.statusColor || '';
+    }
+    if (elements.item) {
+      elements.item.classList.toggle('has-error', Boolean(info.hasError));
+    }
+    return info;
   }
 
   _renderEntry(entry, id, index, isOpen = false, totalCount = 0) {
@@ -291,24 +291,20 @@ export class HistoryCollectionWidget {
     toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
     toggle.addEventListener('click', () => { this._toggleEntry(entryId); });
 
-    const title = document.createElement('span');
-    title.className = 'hc-title';
-    title.textContent = entryId || this._guessEntryLabel(entry, index);
-    this._titleEls.set(entryId, title);
-    toggle.appendChild(title);
-
-    const meta = document.createElement('span');
-    meta.className = 'hc-meta';
-    meta.textContent = this._guessEntryLabel(entry, index);
-    toggle.appendChild(meta);
-
     const toggleMain = document.createElement('span');
     toggleMain.className = 'hc-toggle-main';
+    const title = document.createElement('span');
+    title.className = 'hc-title';
+    this._titleEls.set(entryId, title);
+    toggleMain.appendChild(title);
+    const subline = document.createElement('span');
+    subline.className = 'hc-subline';
+    const meta = document.createElement('span');
+    meta.className = 'hc-meta';
+    this._metaEls.set(entryId, meta);
+    subline.appendChild(meta);
 
-    const badge = document.createElement('span');
-    badge.className = 'hc-type';
-    badge.textContent = this._guessTypeLabel(entry);
-    toggleMain.appendChild(badge);
+    toggleMain.appendChild(subline);
 
     toggle.appendChild(toggleMain);
     headerRow.appendChild(toggle);
@@ -325,11 +321,12 @@ export class HistoryCollectionWidget {
       toggle,
       toggleMain,
       titleEl: title,
-      typeEl: badge,
       metaEl: meta,
       controlsEl: controls,
       bodyEl: null,
     };
+    this._itemEls.set(entryId, item);
+    const displayInfo = this._applyDisplayInfo(entry, index, entryId, renderContext.elements);
 
     const controlsConfig = this._buildControlsForEntry(renderContext);
     this._renderControls(controls, controlsConfig, renderContext);
@@ -346,7 +343,7 @@ export class HistoryCollectionWidget {
       if (!schema) {
         const missing = document.createElement('div');
         missing.className = 'hc-missing';
-        missing.textContent = `No schema available for "${this._guessTypeLabel(entry) || 'entity'}".`;
+        missing.textContent = `No schema available for "${displayInfo?.name || 'entity'}".`;
         body.appendChild(missing);
       } else {
         const hasFields = effectiveSchema && Object.keys(effectiveSchema).length > 0;
@@ -694,11 +691,14 @@ export class HistoryCollectionWidget {
   }
 
   _updateTitleElement(id, entry) {
-    const titleEl = this._titleEls.get(id);
-    if (!titleEl) return;
     const entries = this._getEntries();
     const idx = entries.findIndex((it, i) => this._extractEntryId(it, i) === id);
-    titleEl.textContent = this._guessEntryLabel(entry, idx >= 0 ? idx : 0);
+    this._applyDisplayInfo(entry, idx >= 0 ? idx : 0, id, {
+      titleEl: this._titleEls.get(id),
+      metaEl: this._metaEls.get(id),
+      typeEl: null,
+      item: this._itemEls.get(id),
+    });
   }
 
   _resolveSchema(entry) {
