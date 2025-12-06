@@ -1,10 +1,10 @@
 // SketchMode3D: In-scene sketch editing overlay (no camera locking).
 
 import * as THREE from "three";
-import { ConstraintSolver } from "../features/sketch/sketchSolver2D/ConstraintEngine.js";
-import { updateListHighlights, applyHoverAndSelectionColors } from "./sketcher/highlights.js";
-import { renderDimensions as dimsRender } from "./sketcher/dimensions.js";
-import { AccordionWidget } from "./AccordionWidget.js";
+import { ConstraintSolver } from "../../features/sketch/sketchSolver2D/ConstraintEngine.js";
+import { updateListHighlights, applyHoverAndSelectionColors } from "./highlights.js";
+import { renderDimensions as dimsRender } from "./dimensions.js";
+import { AccordionWidget } from "../AccordionWidget.js";
 
 export class SketchMode3D {
   constructor(viewer, featureID) {
@@ -1307,7 +1307,7 @@ export class SketchMode3D {
     this._solver.fullSolve = () => this._solverSettings.maxIterations;
 
     // Update tolerance in constraint definitions (using dynamic import)
-    import('../features/sketch/sketchSolver2D/constraintDefinitions.js')
+    import('../../features/sketch/sketchSolver2D/constraintDefinitions.js')
       .then(({ constraints }) => {
         if (constraints && typeof constraints.tolerance !== 'undefined') {
           constraints.tolerance = this._solverSettings.tolerance;

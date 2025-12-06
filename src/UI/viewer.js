@@ -21,7 +21,7 @@ import { MainToolbar } from './MainToolbar.js';
 import { registerDefaultToolbarButtons } from './toolbarButtons/registerDefaultButtons.js';
 import { FileManagerWidget } from './fileManagerWidget.js';
 import './mobile.js';
-import { SketchMode3D } from './SketchMode3D.js';
+import { SketchMode3D } from './sketcher/SketchMode3D.js';
 import { ViewCube } from './ViewCube.js';
 import { FloatingWindow } from './FloatingWindow.js';
 import { generateObjectUI } from './objectDump.js';

@@ -1,4 +1,4 @@
-// browserTests.js — BrowserTesting with UI widget (dark mode, top-right)
+// browserTests.js - BrowserTesting with UI widget (dark mode, top-right)
 
 import { Viewer } from '../UI/viewer.js';
 import { FloatingWindow } from '../UI/FloatingWindow.js';

@@ -168,37 +168,24 @@ export class RadialDimensionAnnotation extends BaseAnnotation {
         ? data.planeNormal.clone().normalize()
         : (ctx.alignNormal ? ctx.alignNormal(ann.alignment || 'view', ann) : new THREE.Vector3(0, 0, 1));
       const planePoint = data.planePoint || data.radiusPoint;
-      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, planePoint);
-      try { pmimode?.showDragPlaneHelper?.(plane); } catch { }
+      const plane = (planeNormal && planePoint) ? new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, planePoint) : null;
       const radialDir = new THREE.Vector3().subVectors(data.radiusPoint, data.center).normalize();
 
-      const onMove = (ev) => {
-        const ray = ctx.raycastFromEvent ? ctx.raycastFromEvent(ev) : null;
-        if (!ray) return;
-        const out = new THREE.Vector3();
-        if (ctx.intersectPlane ? ctx.intersectPlane(ray, plane, out) : ray.intersectPlane(plane, out)) {
-          plane.projectPoint(out, out);
+      RadialDimensionAnnotation.dragLabelOnPlane(pmimode, ctx, {
+        makePlane: () => plane,
+        onDrag: (hit) => {
+          plane.projectPoint(hit, hit);
           ensurePersistent(ann);
-          ann.persistentData.labelWorld = [out.x, out.y, out.z];
-          const toMouse = new THREE.Vector3().subVectors(out, data.center);
+          ann.persistentData.labelWorld = [hit.x, hit.y, hit.z];
+          const toMouse = new THREE.Vector3().subVectors(hit, data.center);
           ann.offset = toMouse.dot(radialDir) - data.radius;
-          ctx.updateLabel(idx, null, out, ann);
+          ctx.updateLabel(idx, null, hit, ann);
           pmimode.refreshAnnotationsUI?.();
-        }
-      };
-
-      const onUp = (ev) => {
-        try {
-          window.removeEventListener('pointermove', onMove, true);
-          window.removeEventListener('pointerup', onUp, true);
-        } catch { }
-        try { pmimode?.hideDragPlaneHelper?.(); } catch { }
-        try { if (pmimode.viewer?.controls) pmimode.viewer.controls.enabled = true; } catch { }
-        try { ev.preventDefault(); ev.stopImmediatePropagation?.(); ev.stopPropagation(); } catch { }
-      };
-
-      window.addEventListener('pointermove', onMove, true);
-      window.addEventListener('pointerup', onUp, true);
+        },
+        onEnd: () => {
+          try { if (pmimode?.viewer?.controls) pmimode.viewer.controls.enabled = true; } catch { }
+        },
+      });
     } catch { /* ignore */ }
   }
 

@@ -1,6 +1,7 @@
 // BaseAnnotation.js
 // Base class for all PMI annotations built on the shared list entity foundation.
 
+import * as THREE from 'three';
 import { ListEntityBase } from '../../core/entities/ListEntityBase.js';
 
 export class BaseAnnotation extends ListEntityBase {
@@ -59,6 +60,62 @@ export class BaseAnnotation extends ListEntityBase {
     const sanitized = sanitizeAnnotationParams(this.inputParamsSchema, params, ann);
     Object.assign(ann, sanitized);
     return { paramsPatch: {} };
+  }
+
+  static ensurePersistentData(ann) {
+    if (!ann || typeof ann !== 'object') return null;
+    if (!ann.persistentData || typeof ann.persistentData !== 'object') {
+      ann.persistentData = {};
+    }
+    return ann.persistentData;
+  }
+
+  /**
+   * Shared label-drag helper. Creates a drag plane and wires pointer events so subclasses only
+   * need to provide the plane and what to do on drag.
+   */
+  static dragLabelOnPlane(pmimode, ctx, options = {}) {
+    if (!ctx || typeof options.makePlane !== 'function') return;
+    const plane = options.makePlane();
+    if (!plane || (!(plane instanceof THREE.Plane) && !plane.isPlane)) return;
+    const target = options.eventTarget || window;
+    const viewer = pmimode?.viewer;
+
+    const onMove = (ev) => {
+      const ray = ctx.raycastFromEvent ? ctx.raycastFromEvent(ev) : null;
+      if (!ray) return;
+      const hit = new THREE.Vector3();
+      const intersected = ctx.intersectPlane
+        ? ctx.intersectPlane(ray, plane, hit)
+        : ray.intersectPlane(plane, hit);
+      if (!intersected) return;
+      if (typeof options.onDrag === 'function') {
+        options.onDrag(hit, ev, plane);
+      }
+    };
+
+    const onUp = (ev) => {
+      try { target.removeEventListener('pointermove', onMove, true); } catch { }
+      try { target.removeEventListener('pointerup', onUp, true); } catch { }
+      if (options.suspendControls === true) {
+        try { if (viewer?.controls) viewer.controls.enabled = true; } catch { }
+      }
+      try { pmimode?.hideDragPlaneHelper?.(); } catch { }
+      if (typeof options.onEnd === 'function') {
+        try { options.onEnd(ev); } catch { /* ignore */ }
+      }
+      if (options.preventDefault !== false) {
+        try { ev.preventDefault(); ev.stopImmediatePropagation?.(); ev.stopPropagation(); } catch { }
+      }
+    };
+
+    try { pmimode?.showDragPlaneHelper?.(plane); } catch { }
+    if (options.suspendControls === true) {
+      try { if (viewer?.controls) viewer.controls.enabled = false; } catch { }
+    }
+
+    try { target.addEventListener('pointermove', onMove, true); } catch { }
+    try { target.addEventListener('pointerup', onUp, true); } catch { }
   }
 
   onIdChanged() {

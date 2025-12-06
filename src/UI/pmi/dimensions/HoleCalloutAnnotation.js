@@ -118,31 +118,16 @@ export class HoleCalloutAnnotation extends BaseAnnotation {
     const normal = basis.forward;
     if (!ctx?.raycastFromEvent) return;
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, targetPoint);
-    try { pmimode?.showDragPlaneHelper?.(plane); } catch { }
-
-    const onMove = (ev) => {
-      const ray = ctx.raycastFromEvent(ev);
-      if (!ray) return;
-      const hit = new THREE.Vector3();
-      if (ctx.intersectPlane ? ctx.intersectPlane(ray, plane, hit) : ray.intersectPlane(plane, hit)) {
+    HoleCalloutAnnotation.dragLabelOnPlane(pmimode, ctx, {
+      makePlane: () => plane,
+      suspendControls: true,
+      onDrag: (hit) => {
         ensurePersistentData(ann);
         ann.persistentData.labelWorld = [hit.x, hit.y, hit.z];
         ctx.updateLabel(idx, null, hit, ann);
         pmimode?.refreshAnnotationsUI?.();
-      }
-    };
-
-    const onUp = (evUp) => {
-      try { window.removeEventListener('pointermove', onMove, true); } catch {}
-      try { window.removeEventListener('pointerup', onUp, true); } catch {}
-      try { pmimode?.hideDragPlaneHelper?.(); } catch { }
-      try { if (viewer?.controls) viewer.controls.enabled = true; } catch {}
-      try { evUp.preventDefault(); evUp.stopImmediatePropagation?.(); evUp.stopPropagation(); } catch {}
-    };
-
-    try { if (viewer?.controls) viewer.controls.enabled = false; } catch {}
-    try { window.addEventListener('pointermove', onMove, true); } catch {}
-    try { window.addEventListener('pointerup', onUp, true); } catch {}
+      },
+    });
   }
 }
 

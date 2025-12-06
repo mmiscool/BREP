@@ -99,7 +99,7 @@ export class LeaderAnnotation extends BaseAnnotation {
     }
 
     const color = style.lineColor ?? 0x93c5fd;
-    const basis = computeViewBasis(viewer, ann);
+    const basis = computeViewBasis(pmimode, viewer, ann);
     const originPoint = averageTargets(targets) || labelPos;
     const shoulderDir = computeShoulderDirection(labelPos, originPoint, basis);
     const approachSpacing = Math.max(ctx?.screenSizeWorld ? ctx.screenSizeWorld(18) : screenSizeWorld(viewer, 18), 1e-4);
@@ -156,32 +156,23 @@ export class LeaderAnnotation extends BaseAnnotation {
       const viewer = pmimode?.viewer;
       const targets = resolveTargetPoints(viewer, viewer?.partHistory?.scene, ann);
       const labelPos = resolveLabelPosition(pmimode, ann, targets, ctx) || new THREE.Vector3();
-      const normal = computeViewBasis(viewer, ann).forward;
+      const basis = computeViewBasis(pmimode, viewer, ann);
+      const normal = basis.forward;
+      const anchor = (targets && targets.length && targets[0]) ? targets[0] : (averageTargets(targets) || labelPos);
       if (!ctx?.raycastFromEvent) return;
-      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, labelPos);
-      try { pmimode?.showDragPlaneHelper?.(plane); } catch { }
-
-      const onMove = (ev) => {
-        const ray = ctx.raycastFromEvent(ev);
-        if (!ray) return;
-        const hit = new THREE.Vector3();
-        if (ctx.intersectPlane ? ctx.intersectPlane(ray, plane, hit) : ray.intersectPlane(plane, hit)) {
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, anchor);
+      LeaderAnnotation.dragLabelOnPlane(pmimode, ctx, {
+        makePlane: () => plane,
+        onDrag: (hit) => {
+          ensurePersistentData(ann);
           ann.persistentData.labelWorld = [hit.x, hit.y, hit.z];
           ctx.updateLabel(idx, null, hit, ann);
           pmimode?.refreshAnnotationsUI?.();
-        }
-      };
-
-      const onUp = (evUp) => {
-        try { window.removeEventListener('pointermove', onMove, true); } catch {}
-        try { window.removeEventListener('pointerup', onUp, true); } catch {}
-        try { pmimode?.hideDragPlaneHelper?.(); } catch { }
-        try { if (pmimode?.viewer?.controls) pmimode.viewer.controls.enabled = true; } catch {}
-        try { evUp.preventDefault(); evUp.stopImmediatePropagation?.(); evUp.stopPropagation(); } catch {}
-      };
-
-      try { window.addEventListener('pointermove', onMove, true); } catch {}
-      try { window.addEventListener('pointerup', onUp, true); } catch {}
+        },
+        onEnd: () => {
+          try { if (pmimode?.viewer?.controls) pmimode.viewer.controls.enabled = true; } catch {}
+        },
+      });
     } catch {
       // ignore drag failures
     }
@@ -254,21 +245,36 @@ function resolveTargetPoints(viewer, scene, ann) {
 }
 
 function resolveLabelPosition(pmimode, ann, targets, ctx) {
-  const stored = vectorFromAny(ann?.persistentData?.labelWorld);
-  if (stored) return stored;
   const viewer = pmimode?.viewer;
-  const basis = computeViewBasis(viewer, ann);
-  const origin = averageTargets(targets) || new THREE.Vector3();
+  const basis = computeViewBasis(pmimode, viewer, ann);
+  const anchor = (targets && targets.length && targets[0])
+    ? targets[0].clone()
+    : (averageTargets(targets) || new THREE.Vector3());
+  const planeNormal = (basis?.forward && basis.forward.lengthSq()) ? basis.forward.clone() : new THREE.Vector3(0, 0, 1);
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(planeNormal, anchor);
+
+  const stored = vectorFromAny(ann?.persistentData?.labelWorld);
+  if (stored) {
+    const projected = stored.clone();
+    plane.projectPoint(projected, projected);
+    return projected;
+  }
+
   const horizontal = Math.max(ctx?.screenSizeWorld ? ctx.screenSizeWorld(90) : screenSizeWorld(viewer, 90), 1e-4);
   const vertical = Math.max(ctx?.screenSizeWorld ? ctx.screenSizeWorld(36) : screenSizeWorld(viewer, 36), 1e-4);
   const rightAxis = (basis?.right && basis.right.lengthSq()) ? basis.right.clone() : new THREE.Vector3(1, 0, 0);
   const upAxis = (basis?.up && basis.up.lengthSq()) ? basis.up.clone() : new THREE.Vector3(0, 1, 0);
-  return origin.clone()
+  const label = anchor.clone()
     .addScaledVector(rightAxis, horizontal)
     .addScaledVector(upAxis, vertical);
+  plane.projectPoint(label, label);
+  return label;
 }
 
-function computeViewBasis(viewer, ann) {
+function computeViewBasis(pmimode, viewer, ann) {
+  const saved = basisFromSavedCamera(pmimode?.viewEntry?.camera);
+  if (saved) return saved;
+
   const forward = new THREE.Vector3(0, 0, -1);
   const up = new THREE.Vector3(0, 1, 0);
   try {
@@ -321,6 +327,53 @@ function sortTargetsByViewUp(points, basis, labelPos) {
   });
   records.sort((a, b) => a.metric - b.metric);
   return records.map((rec, orderIndex) => ({ point: rec.point, order: orderIndex }));
+}
+
+function basisFromSavedCamera(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const quat = quaternionFromSnapshot(snapshot);
+  if (!quat) return null;
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+  if (!forward.lengthSq()) return null;
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+  let right = new THREE.Vector3().crossVectors(forward, up);
+  if (!right.lengthSq()) {
+    right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
+  }
+  if (!right.lengthSq()) right.set(1, 0, 0);
+  right.normalize();
+  const trueUp = new THREE.Vector3().crossVectors(right, forward);
+  if (!trueUp.lengthSq()) trueUp.copy(up.lengthSq() ? up : new THREE.Vector3(0, 1, 0));
+  trueUp.normalize();
+  const normForward = forward.clone().normalize();
+  return { right, up: trueUp, forward: normForward };
+}
+
+function quaternionFromSnapshot(snapshot) {
+  const q = snapshot?.quaternion || snapshot?.camera?.quaternion;
+  if (Array.isArray(q) && q.length >= 4) {
+    const [x, y, z, w] = q;
+    if ([x, y, z, w].every((n) => Number.isFinite(n))) {
+      return new THREE.Quaternion(x, y, z, w).normalize();
+    }
+  }
+  if (q && typeof q === 'object') {
+    const x = Number(q.x); const y = Number(q.y); const z = Number(q.z); const w = Number(q.w);
+    if ([x, y, z, w].every((n) => Number.isFinite(n))) {
+      return new THREE.Quaternion(x, y, z, w).normalize();
+    }
+  }
+  const matrixArr = snapshot?.worldMatrix || snapshot?.cameraMatrix || snapshot?.matrix;
+  const elements = Array.isArray(matrixArr?.elements) ? matrixArr.elements : matrixArr;
+  if (Array.isArray(elements) && elements.length === 16) {
+    const mat = new THREE.Matrix4().fromArray(elements);
+    const pos = new THREE.Vector3();
+    const quatOut = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    mat.decompose(pos, quatOut, scale);
+    return quatOut.normalize();
+  }
+  return null;
 }
 
 function vectorFromAny(value) {
