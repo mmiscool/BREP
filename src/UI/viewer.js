@@ -557,9 +557,9 @@ export class Viewer {
         }
     }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // Public API
-    // ————————————————————————————————————————
+    // ----------------------------------------
     dispose() {
         if (this._disposed) return;
         this._disposed = true;
@@ -580,9 +580,9 @@ export class Viewer {
         if (el.parentNode) el.parentNode.removeChild(el);
     }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // Sketch Mode API
-    // ————————————————————————————————————————
+    // ----------------------------------------
     startSketchMode(featureID) {
         // Hide the sketch in the scene if it exists
         try {
@@ -652,9 +652,9 @@ export class Viewer {
         } catch { }
     }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // Spline Mode API
-    // ————————————————————————————————————————
+    // ----------------------------------------
     startSplineMode(splineSession) {
         debugLog('Starting Spline Mode for session:', splineSession);
         this._splineMode = splineSession;
@@ -665,9 +665,9 @@ export class Viewer {
         this._splineMode = null;
     }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // PMI Edit Mode API
-    // ————————————————————————————————————————
+    // ----------------------------------------
     startPMIMode(viewEntry, viewIndex, widget = this.pmiViewsWidget) {
         const alreadyActive = !!this._pmiMode;
         if (!alreadyActive) {
@@ -865,9 +865,9 @@ export class Viewer {
     }
     toggleWireframe() { this.setWireframe(!this._wireframeEnabled); }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // Internal: Animation Loop
-    // ————————————————————————————————————————
+    // ----------------------------------------
     _loop() {
         this._raf = requestAnimationFrame(this._loop);
         this.controls.update();
@@ -882,9 +882,9 @@ export class Viewer {
         this.render();
     }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // Internal: Picking helpers
-    // ————————————————————————————————————————
+    // ----------------------------------------
     _getPointerNDC(event) {
         const rect = this.renderer.domElement.getBoundingClientRect();
         const x = (event.clientX - rect.left) / rect.width;
@@ -1519,9 +1519,9 @@ export class Viewer {
         } catch { }
     }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // Internal: Event Handlers
-    // ————————————————————————————————————————
+    // ----------------------------------------
     _onPointerMove(event) {
         if (this._disposed) return;
         // Keep last pointer position and refresh hover
@@ -1889,18 +1889,18 @@ export class Viewer {
         this._activateComponentTransform(component);
     }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // Diagnostics (one‑shot picker)
-    // ————————————————————————————————————————
+    // ----------------------------------------
     enableDiagnosticPick() {
         this._diagPickOnce = true;
         // Do not modify the SelectionFilter; inspect will honor the current filter.
         try { this._toast('Click an item to inspect'); } catch { }
     }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // Inspector panel (toggle + update-on-click)
-    // ————————————————————————————————————————
+    // ----------------------------------------
     toggleInspectorPanel() { this._inspectorOpen ? this._closeInspectorPanel() : this._openInspectorPanel(); }
     _openInspectorPanel() {
         if (this._inspectorOpen) return;
@@ -2384,9 +2384,9 @@ export class Viewer {
         document.body.appendChild(mask);
     }
 
-    // ————————————————————————————————————————
+    // ----------------------------------------
     // Internal: Resize & Camera Frustum
-    // ————————————————————————————————————————
+    // ----------------------------------------
     _getContainerSize() {
         // Prefer clientWidth/Height so we get the laid-out CSS size.
         // Fallback to window size if the container hasn't been laid out yet.

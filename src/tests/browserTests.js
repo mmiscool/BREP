@@ -358,7 +358,7 @@ export class BrowserTesting {
     });
 
     const title = document.createElement("div");
-    title.textContent = `Log — ${name}`;
+    title.textContent = `Log - ${name}`;
     Object.assign(title.style, { fontWeight: "700", marginBottom: "8px" });
 
     const screenshot = this.screenshots.get(name);

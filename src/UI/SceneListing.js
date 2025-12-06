@@ -414,7 +414,7 @@ export class SceneListing {
         const style = document.createElement("style");
         style.id = ID;
         style.textContent = `
-/* Dark, minimalist tree for CAD scene — Expand/Collapse fix included */
+/* Dark, minimalist tree for CAD scene - Expand/Collapse fix included */
 .scene-tree{
   color-scheme: dark;
   --bg:#0a0f14;

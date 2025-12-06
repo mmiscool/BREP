@@ -92,11 +92,11 @@ export class AssemblyConstraintControlsWidget {
 
     const loopLabel = document.createElement('span');
     loopLabel.className = 'solver-loop-label';
-    loopLabel.textContent = 'Loop: —';
+    loopLabel.textContent = 'Loop: -';
 
     const constraintLabel = document.createElement('span');
     constraintLabel.className = 'solver-constraint-label';
-    constraintLabel.textContent = 'Constraint: —';
+    constraintLabel.textContent = 'Constraint: -';
 
     statusRow.appendChild(statusLabel);
     statusRow.appendChild(loopLabel);

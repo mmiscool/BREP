@@ -534,7 +534,7 @@ function triangulateNonMonotoneLoop(loop3D, loopIdxMesh) {
   // Decompose into y-monotone pieces via diagonals (indices are local 0..n-1)
   const diagonals = monotoneDecompose(loop2D);
 
-  // Triangulate all monotone pieces; triangles are local indices — map back to mesh indices
+  // Triangulate all monotone pieces; triangles are local indices - map back to mesh indices
   const localTris = triangulateByMonotone(loop2D, diagonals);
   const meshTris = [];
   for (const [a,b,c] of localTris) {

@@ -39,7 +39,7 @@ function getNodePosixSync() {
     return (mod.default ?? mod).posix;
   }
 
-  // Pure ESM: no sync loader available — use the shim (POSIX semantics).
+  // Pure ESM: no sync loader available - use the shim (POSIX semantics).
   return browserPosix;
 }
 

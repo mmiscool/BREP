@@ -193,7 +193,7 @@ export class RadialDimensionAnnotation extends BaseAnnotation {
 
 function formatRadialLabel(measured, ann) {
   if (typeof measured !== 'number' || !Number.isFinite(measured)) {
-    return { raw: '—', display: '—' };
+    return { raw: '-', display: '-' };
   }
   const baseValue = ann?.displayStyle === 'diameter' ? measured * 2 : measured;
   const decRaw = Number(ann?.decimals);

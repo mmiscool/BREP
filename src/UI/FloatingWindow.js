@@ -1,4 +1,4 @@
-// FloatingWindow.js — lightweight draggable, shadable, resizable window
+// FloatingWindow.js - lightweight draggable, shadable, resizable window
 // Framework-free ES module used across UI widgets.
 
 export class FloatingWindow {

@@ -201,7 +201,7 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
 
 function formatLinearLabel(measured, ann, overrideDecimals) {
   if (typeof measured !== 'number' || !Number.isFinite(measured)) {
-    return { raw: '—', display: '—' };
+    return { raw: '-', display: '-' };
   }
   const decRaw = overrideDecimals !== undefined ? overrideDecimals : Number(ann?.decimals);
   const decimals = Number.isFinite(decRaw) ? Math.max(0, Math.min(8, decRaw | 0)) : 3;

@@ -188,7 +188,7 @@ export class ViewCube {
     mkFace(new THREE.Vector3(0, 0, 1), FACE.FRONT, 'FRONT');
     mkFace(new THREE.Vector3(0, 0, -1), FACE.BACK, 'BACK');
 
-    // Edge faces (12) — beveled rectangles to mimic chamfered edges
+    // Edge faces (12) - beveled rectangles to mimic chamfered edges
     const mkEdge = (normalMask, along, name) => {
       const n = normalMask.clone().normalize();
       const u = along.clone().normalize(); // width axis on the plane (edge direction)

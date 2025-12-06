@@ -420,7 +420,7 @@ export class PMIMode {
       // Remove PMI sections from the accordion
       const sectionsToRemove = [
         'PMI Views (PMI Mode)',
-        'Annotations — ' + this.#getViewDisplayName(''),
+        'Annotations - ' + this.#getViewDisplayName(''),
         'View Settings',
         'PMI Settings'
       ];
@@ -580,7 +580,7 @@ export class PMIMode {
       });
       this._sectionCreationPromises.push(pmiViewsPromise);
 
-      const annotationsPromise = this._acc.addSection(`Annotations — ${this.#getViewDisplayName('')}`).then((sec) => {
+      const annotationsPromise = this._acc.addSection(`Annotations - ${this.#getViewDisplayName('')}`).then((sec) => {
         try {
           const widgetWrap = document.createElement('div');
           widgetWrap.className = 'pmi-ann-widget-wrap';
@@ -688,7 +688,7 @@ export class PMIMode {
       if (!sec || !sec.uiElement) return;
       const titleEl = sec.uiElement.previousElementSibling;
       if (titleEl) {
-        titleEl.textContent = `Annotations — ${this.#getViewDisplayName('')}`;
+        titleEl.textContent = `Annotations - ${this.#getViewDisplayName('')}`;
       }
     } catch { /* ignore */ }
   }

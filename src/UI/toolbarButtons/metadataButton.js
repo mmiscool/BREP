@@ -392,7 +392,7 @@ class MetadataPanelController {
         addSelectCell.style.padding = '4px';
         addSelectCell.style.textAlign = 'center';
         addSelectCell.style.verticalAlign = 'middle';
-        addSelectCell.textContent = '—';
+        addSelectCell.textContent = '-';
         addSelectCell.style.color = '#475569';
 
         const addActionCell = document.createElement('td');

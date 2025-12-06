@@ -62,7 +62,7 @@ export async function fillet(opts = {}) {
   for (const e of edgeObjs) { if (e && !seen.has(e)) { seen.add(e); unique.push(e); } }
   if (unique.length === 0) {
     console.warn('[Solid.fillet] No edges resolved on target solid; returning clone.', { featureID, solid: this?.name });
-    // Nothing to do — return an unchanged clone so caller can replace scene node safely
+    // Nothing to do - return an unchanged clone so caller can replace scene node safely
     const c = this.clone();
     try { c.name = this.name; } catch { }
     return c;

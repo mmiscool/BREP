@@ -591,10 +591,10 @@ export class AssemblyConstraintsWidget {
         } else if (displayCurrent > 0) {
           this._solverLoopLabel.textContent = `Loop: ${displayCurrent}`;
         } else {
-          this._solverLoopLabel.textContent = 'Loop: —';
+          this._solverLoopLabel.textContent = 'Loop: -';
         }
       } else {
-        this._solverLoopLabel.textContent = 'Loop: —';
+        this._solverLoopLabel.textContent = 'Loop: -';
       }
     }
 
@@ -602,7 +602,7 @@ export class AssemblyConstraintsWidget {
       if (run && run.currentConstraintID) {
         this._solverConstraintLabel.textContent = `Constraint: ${run.currentConstraintID}`;
       } else {
-        this._solverConstraintLabel.textContent = 'Constraint: —';
+        this._solverConstraintLabel.textContent = 'Constraint: -';
       }
     }
 

@@ -1,4 +1,4 @@
-// fs.proxy.js — ESM-safe, works in Node (CJS & ESM) and browser.
+// fs.proxy.js - ESM-safe, works in Node (CJS & ESM) and browser.
 // - Node: proxies native fs (sync, callback, and promises).
 // - Browser: localStorage-backed VFS for a common subset.
 import { localStorage as LS } from './localStorageShim.js';
@@ -468,7 +468,7 @@ const universalFs = {
   stat: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.stat(...args); } return browserFs.stat(...args); },
   rm: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.rm(...args); } return browserFs.rm(...args); },
 
-  // Sync methods — supported in Node ESM via createRequire, and in CJS via require.
+  // Sync methods - supported in Node ESM via createRequire, and in CJS via require.
   readFileSync: (...args) => { if (isNode) return requireLikeFsSync().readFileSync(...args); return browserFs.readFileSync(...args); },
   writeFileSync: (...args) => { if (isNode) return requireLikeFsSync().writeFileSync(...args); return browserFs.writeFileSync(...args); },
   appendFileSync: (...args) => { if (isNode) return requireLikeFsSync().appendFileSync(...args); return browserFs.appendFileSync(...args); },

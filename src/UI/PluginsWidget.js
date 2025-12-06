@@ -1,4 +1,4 @@
-// PluginsWidget — manage plugin URLs (GitHub repos or generic base/entry URLs)
+// PluginsWidget - manage plugin URLs (GitHub repos or generic base/entry URLs)
 import { getSavedPluginUrls, savePluginUrls, loadPlugins, parseGithubUrl, getPluginEnabledMap, savePluginEnabledMap } from '../plugins/pluginManager.js';
 
 export class PluginsWidget {

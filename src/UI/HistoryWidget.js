@@ -387,8 +387,8 @@ export class HistoryWidget extends HistoryCollectionWidget {
 
   #composeTitle(entry) {
     const type = entry?.type || 'Feature';
-    const id = this.#entryId(entry) ?? '—';
-    return `${type} — #${id}`;
+    const id = this.#entryId(entry) ?? '-';
+    return `${type} - #${id}`;
   }
 
   #composeStatus(entry) {

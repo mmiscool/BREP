@@ -1,4 +1,4 @@
-// MainToolbar.js — top toolbar that manages layout and button registration.
+// MainToolbar.js - top toolbar that manages layout and button registration.
 // Button logic is implemented externally and registered via addCustomButton()/viewer.addToolbarButton.
 
 export class MainToolbar {

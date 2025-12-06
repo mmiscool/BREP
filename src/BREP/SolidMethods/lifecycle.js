@@ -83,7 +83,7 @@ export function clone() {
  *
  * Disposes the underlying Manifold instance (if any) to prevent
  * accumulating wasm memory across rebuilds. After calling free(),
- * the Solid remains usable — any subsequent call that needs the
+ * the Solid remains usable - any subsequent call that needs the
  * manifold will trigger a fresh _manifoldize().
  */
 export function free() {

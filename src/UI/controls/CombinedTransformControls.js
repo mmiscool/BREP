@@ -1,4 +1,4 @@
-// CombinedTransformControls — lightweight move + rotate gizmo
+// CombinedTransformControls - lightweight move + rotate gizmo
 // Drop-in replacement for three/examples TransformControls used by this app.
 // Focuses on orthographic cameras and the needs of the BREP Viewer.
 //
@@ -84,9 +84,9 @@ export class CombinedTransformControls extends THREE.Object3D {
     }
   }
 
-  // ————————————————————————————————————————
+  // ----------------------------------------
   // Internals: visuals
-  // ————————————————————————————————————————
+  // ----------------------------------------
   _buildGizmo() {
     const root = new THREE.Group();
     root.name = 'HybridXformGizmoRoot';
@@ -224,9 +224,9 @@ export class CombinedTransformControls extends THREE.Object3D {
     return (d * f) / 10; // heuristic constant
   }
 
-  // ————————————————————————————————————————
+  // ----------------------------------------
   // Internals: interaction
-  // ————————————————————————————————————————
+  // ----------------------------------------
   _setPointerFromEvent(e) {
     const rect = this.domElement.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;

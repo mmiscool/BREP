@@ -351,7 +351,7 @@ function clampToUnit(value) {
 
 function formatAngleLabel(measured, ann) {
   if (typeof measured !== 'number' || !Number.isFinite(measured)) {
-    return { raw: '—', display: '—' };
+    return { raw: '-', display: '-' };
   }
   const decRaw = Number(ann?.decimals);
   const decimals = Number.isFinite(decRaw) ? Math.max(0, Math.min(3, decRaw | 0)) : 1;
