@@ -172,12 +172,13 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
       const normal = planeInfo?.n || new THREE.Vector3(0, 0, 1);
       const anchorPoint = planeInfo?.p || new THREE.Vector3();
       const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, anchorPoint);
+      try { pmimode?.showDragPlaneHelper?.(plane); } catch { }
 
       const onMove = (ev) => {
         const ray = ctx.raycastFromEvent ? ctx.raycastFromEvent(ev) : null;
         if (!ray) return;
         const out = new THREE.Vector3();
-        if (ray.intersectPlane(plane, out)) {
+        if (ctx.intersectPlane ? ctx.intersectPlane(ray, plane, out) : ray.intersectPlane(plane, out)) {
           ensurePersistent(ann);
           ann.persistentData.labelWorld = [out.x, out.y, out.z];
           ctx.updateLabel(idx, null, out, ann);
@@ -190,6 +191,7 @@ export class AngleDimensionAnnotation extends BaseAnnotation {
           window.removeEventListener('pointermove', onMove, true);
           window.removeEventListener('pointerup', onUp, true);
         } catch { }
+        try { pmimode?.hideDragPlaneHelper?.(); } catch { }
         try { if (pmimode.viewer?.controls) pmimode.viewer.controls.enabled = true; } catch { }
         try { ev.preventDefault(); ev.stopImmediatePropagation?.(); ev.stopPropagation(); } catch { }
       };

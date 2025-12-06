@@ -159,12 +159,13 @@ export class LeaderAnnotation extends BaseAnnotation {
       const normal = computeViewBasis(viewer, ann).forward;
       if (!ctx?.raycastFromEvent) return;
       const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, labelPos);
+      try { pmimode?.showDragPlaneHelper?.(plane); } catch { }
 
       const onMove = (ev) => {
         const ray = ctx.raycastFromEvent(ev);
         if (!ray) return;
         const hit = new THREE.Vector3();
-        if (ray.intersectPlane(plane, hit)) {
+        if (ctx.intersectPlane ? ctx.intersectPlane(ray, plane, hit) : ray.intersectPlane(plane, hit)) {
           ann.persistentData.labelWorld = [hit.x, hit.y, hit.z];
           ctx.updateLabel(idx, null, hit, ann);
           pmimode?.refreshAnnotationsUI?.();
@@ -174,6 +175,7 @@ export class LeaderAnnotation extends BaseAnnotation {
       const onUp = (evUp) => {
         try { window.removeEventListener('pointermove', onMove, true); } catch {}
         try { window.removeEventListener('pointerup', onUp, true); } catch {}
+        try { pmimode?.hideDragPlaneHelper?.(); } catch { }
         try { if (pmimode?.viewer?.controls) pmimode.viewer.controls.enabled = true; } catch {}
         try { evUp.preventDefault(); evUp.stopImmediatePropagation?.(); evUp.stopPropagation(); } catch {}
       };

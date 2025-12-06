@@ -64,6 +64,7 @@ export class PMIMode {
     this._baseMatrixSessionKey = `pmi-base-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this._hasBaseMatrices = false;
     this._annotationWidget = null;
+    this._dragPlaneHelper = null;
 
     // Annotation history stores inputParams/persistentData similar to PartHistory
     this._annotationHistory = new AnnotationHistory(this);
@@ -215,6 +216,7 @@ export class PMIMode {
     try { if (this._annGroup && this._annGroup.parent) this._annGroup.parent.remove(this._annGroup); } catch { }
     this._annGroup = null;
     try { if (this._refreshTimer) clearInterval(this._refreshTimer); } catch { } this._refreshTimer = null;
+    try { this.hideDragPlaneHelper(); } catch { }
     // Remove labels overlay and destroy feature UIs
     try { this._labelOverlay?.dispose?.(); } catch { }
     this._labelOverlay = null;
@@ -1264,6 +1266,7 @@ export class PMIMode {
           screenSizeWorld: (px) => { try { return this.#_screenSizeWorld(px); } catch { return 0; } },
           alignNormal: (alignment, a) => { try { return this.#_alignNormal(alignment, a); } catch { return new THREE.Vector3(0, 0, 1); } },
           updateLabel: (i, text, worldPos, a) => { try { this._labelOverlay?.updateLabel?.(i, text, worldPos, a); } catch { } },
+          intersectPlane: (ray, plane, out) => { try { return this.#_intersectPlaneBothSides(ray, plane, out); } catch { return null; } },
           raycastFromEvent: (ev) => {
             const rect = v.renderer.domElement.getBoundingClientRect();
             const ndc = new THREE.Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -(((ev.clientY - rect.top) / rect.height) * 2 - 1));
@@ -1277,6 +1280,72 @@ export class PMIMode {
     } catch { }
 
     try { if (this.viewer?.controls) this.viewer.controls.enabled = true; } catch { }
+  }
+
+  // Debug helper: visualize the plane used during label drags
+  showDragPlaneHelper(plane) {
+    try {
+      if (!plane || !plane.normal) return;
+      this.hideDragPlaneHelper();
+      const scene = this.viewer?.scene;
+      if (!scene) return;
+      const size = this.#estimateSceneSpan();
+      const divisions = Math.max(6, Math.min(60, Math.round(size)));
+      const grid = new THREE.GridHelper(size, divisions, 0x00ffff, 0x00ffff);
+      const mats = Array.isArray(grid.material) ? grid.material : [grid.material];
+      mats.forEach((m) => { if (m) { m.transparent = true; m.opacity = 0.35; m.depthWrite = false; } });
+      const up = new THREE.Vector3(0, 1, 0);
+      const n = plane.normal.clone().normalize();
+      if (n.lengthSq() < 1e-12) return;
+      const q = new THREE.Quaternion().setFromUnitVectors(up, n);
+      grid.quaternion.copy(q);
+      const center = plane.coplanarPoint(new THREE.Vector3());
+      grid.position.copy(center);
+      grid.renderOrder = 9998;
+      grid.name = '__PMI_DRAG_PLANE__';
+      scene.add(grid);
+      this._dragPlaneHelper = grid;
+    } catch { }
+  }
+
+  hideDragPlaneHelper() {
+    try {
+      const g = this._dragPlaneHelper;
+      if (g && g.parent) g.parent.remove(g);
+      if (g?.geometry) g.geometry.dispose?.();
+      if (g?.material) {
+        const mats = Array.isArray(g.material) ? g.material : [g.material];
+        mats.forEach((m) => m?.dispose?.());
+      }
+    } catch { }
+    this._dragPlaneHelper = null;
+  }
+
+  #estimateSceneSpan() {
+    try {
+      const scene = this.viewer?.partHistory?.scene || this.viewer?.scene;
+      if (scene) {
+        const box = new THREE.Box3().setFromObject(scene);
+        if (!box.isEmpty()) {
+          const size = box.getSize(new THREE.Vector3());
+          const span = Math.max(size.x, size.y, size.z);
+          if (Number.isFinite(span) && span > 0) return Math.min(Math.max(span * 1.25, 1), 2000);
+        }
+      }
+    } catch { }
+    return 20;
+  }
+
+  // Allow ray-plane intersection even when the plane is "behind" the ray origin
+  // by retrying with a flipped ray direction (infinite line cast).
+  #_intersectPlaneBothSides(ray, plane, out = new THREE.Vector3()) {
+    try {
+      if (!ray || !plane) return null;
+      const direct = ray.intersectPlane(plane, out);
+      if (direct) return out;
+      const invRay = new THREE.Ray(ray.origin.clone(), ray.direction.clone().negate());
+      return invRay.intersectPlane(plane, out);
+    } catch { return null; }
   }
 
 

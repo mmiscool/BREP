@@ -176,12 +176,13 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
       const t = new THREE.Vector3().crossVectors(normal, dir).normalize();
       const mid = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
       const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, mid);
+      try { pmimode?.showDragPlaneHelper?.(plane); } catch { }
 
       const onMove = (ev) => {
         const ray = ctx.raycastFromEvent ? ctx.raycastFromEvent(ev) : null;
         if (!ray) return;
         const out = new THREE.Vector3();
-        if (ray.intersectPlane(plane, out)) {
+        if (ctx.intersectPlane ? ctx.intersectPlane(ray, plane, out) : ray.intersectPlane(plane, out)) {
           const toMouse = new THREE.Vector3().subVectors(out, mid);
           const offsetDist = toMouse.dot(t);
           ann.offset = offsetDist;
@@ -197,6 +198,7 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
           window.removeEventListener('pointermove', onMove, true);
           window.removeEventListener('pointerup', onUp, true);
         } catch { /* ignore */ }
+        try { pmimode?.hideDragPlaneHelper?.(); } catch { }
         try { if (pmimode.viewer?.controls) pmimode.viewer.controls.enabled = true; } catch { }
         try { ev.preventDefault(); ev.stopImmediatePropagation?.(); ev.stopPropagation(); } catch { }
       };
