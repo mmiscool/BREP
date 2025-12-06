@@ -50,6 +50,7 @@ function ensureSelectionPickerStyles() {
             --sfw-text: #d6dde6;
             --sfw-accent: #7aa2f7;
             --sfw-muted: #8b98a5;
+            --sfw-control-height: 25px;
         }
         .selection-picker {
             position: fixed;
@@ -65,7 +66,7 @@ function ensureSelectionPickerStyles() {
             padding: 10px;
             z-index: 1200;
             backdrop-filter: blur(6px);
-            opacity: 0.3;
+            opacity: 0.8;
             transition: opacity .15s ease, transform .08s ease;
         }
         .selection-picker.is-hovered,
@@ -77,17 +78,19 @@ function ensureSelectionPickerStyles() {
         }
         .selection-picker__title {
             font-weight: 700;
-            margin-bottom: 6px;
             color: var(--sfw-muted);
             letter-spacing: .3px;
             cursor: grab;
             user-select: none;
             border: 1px solid var(--sfw-border);
             border-radius: 8px;
-            padding: 6px 8px;
+            padding: 0 10px;
             background: rgba(255,255,255,0.05);
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
             flex: 1 1 auto;
+            min-height: var(--sfw-control-height);
+            display: flex;
+            align-items: center;
         }
         .selection-picker__header {
             display: flex;
@@ -102,9 +105,12 @@ function ensureSelectionPickerStyles() {
             background: rgba(255,255,255,0.08);
             color: var(--sfw-text);
             font-weight: 700;
-            padding: 6px 10px;
+            padding: 0 12px;
             cursor: pointer;
             transition: background .12s ease, border-color .12s ease, transform .05s ease;
+            min-height: var(--sfw-control-height);
+            display: flex;
+            align-items: center;
         }
         .selection-picker__clear:hover {
             background: rgba(122,162,247,0.12);
@@ -117,8 +123,9 @@ function ensureSelectionPickerStyles() {
             display: flex;
             flex-direction: column;
             gap: 6px;
-            max-height: 200px;
+            max-height: 100px;
             overflow: auto;
+            padding-top: 3px;
             padding-right: 4px;
         }
         .selection-picker__item {
@@ -1251,8 +1258,7 @@ export class Viewer {
         if (!obj) return 'Selection';
         const name = (obj.name && String(obj.name).trim()) ? String(obj.name).trim() : null;
         const type = obj.type || 'object';
-        if (name) return `${name} (${type})`;
-        return type;
+        return name || type;
     }
 
     _showSelectionOverlay(event, candidates) {
@@ -1299,6 +1305,35 @@ export class Viewer {
 
         const list = document.createElement('div');
         list.className = 'selection-picker__list';
+        const listMetrics = { itemHeight: 0, gap: 0, paddingTop: 0 };
+        const readListStyles = () => {
+            try {
+                const styles = getComputedStyle(list);
+                const gap = parseFloat(styles.rowGap || styles.gap || '0') || 0;
+                const paddingTop = parseFloat(styles.paddingTop || '0') || 0;
+                listMetrics.gap = gap;
+                listMetrics.paddingTop = paddingTop;
+            } catch { }
+        };
+        const ensureItemMetrics = () => {
+            if (!listMetrics.gap && !listMetrics.paddingTop) readListStyles();
+            if (listMetrics.itemHeight) return listMetrics.itemHeight;
+            const first = list.querySelector('.selection-picker__item');
+            if (!first) return 0;
+            const rect = first.getBoundingClientRect();
+            listMetrics.itemHeight = rect.height || first.offsetHeight || 0;
+            return listMetrics.itemHeight;
+        };
+        const updateListPadding = () => {
+            readListStyles();
+            const first = list.querySelector('.selection-picker__item');
+            if (!first) return;
+            const listRect = list.getBoundingClientRect();
+            const rect = first.getBoundingClientRect();
+            listMetrics.itemHeight = rect.height || listMetrics.itemHeight || 0;
+            const padding = Math.max(0, Math.round(listRect.height - listMetrics.paddingTop - rect.height));
+            list.style.paddingBottom = `${padding}px`;
+        };
         candidates.forEach((entry) => {
             if (!entry?.target) return;
             const btn = document.createElement('button');
@@ -1311,7 +1346,7 @@ export class Viewer {
             typeSpan.textContent = String(entry.target.type || '').toUpperCase() || 'OBJECT';
             const nameSpan = document.createElement('div');
             nameSpan.className = 'selection-picker__name';
-            nameSpan.textContent = entry.label || this._describeSelectionCandidate(entry.target);
+            nameSpan.textContent = entry.label;
             line.appendChild(typeSpan);
             line.appendChild(nameSpan);
             btn.appendChild(line);
@@ -1330,19 +1365,19 @@ export class Viewer {
             });
             list.appendChild(btn);
         });
-        const onWheelRotate = (ev) => {
+        const onWheelSnapScroll = (ev) => {
             try { ev.preventDefault(); ev.stopPropagation(); } catch { }
             if (!list || list.children.length === 0) return;
-            const delta = ev.deltaY || 0;
-            if (delta > 0) {
-                const first = list.firstElementChild;
-                if (first) list.appendChild(first);
-            } else if (delta < 0) {
-                const last = list.lastElementChild;
-                if (last) list.insertBefore(last, list.firstElementChild);
-            }
+            const dir = Math.sign(ev.deltaY || 0);
+            if (!dir) return;
+            const itemHeight = ensureItemMetrics();
+            if (!itemHeight) return;
+            const step = Math.max(1, Math.round(itemHeight + listMetrics.gap));
+            const maxScroll = Math.max(0, list.scrollHeight - list.clientHeight);
+            const next = Math.min(maxScroll, Math.max(0, list.scrollTop + (dir * step)));
+            list.scrollTo({ top: next });
         };
-        list.addEventListener('wheel', onWheelRotate, { passive: false });
+        list.addEventListener('wheel', onWheelSnapScroll, { passive: false });
         wrap.appendChild(list);
 
         const startX = event?.clientX ?? (window.innerWidth / 2);
@@ -1375,8 +1410,11 @@ export class Viewer {
             wrap.style.left = `${nextLeft}px`;
             wrap.style.top = `${nextTop}px`;
         };
-        // Wait a frame so layout is accurate before aligning.
-        requestAnimationFrame(adjustWithinViewport);
+        // Wait a frame so layout is accurate before aligning and padding the list.
+        requestAnimationFrame(() => {
+            updateListPadding();
+            adjustWithinViewport();
+        });
 
         const onEnter = () => {
             wrap.classList.add('is-hovered');
@@ -1447,7 +1485,7 @@ export class Viewer {
             onDragStart,
             onDragMove,
             stopDrag,
-            onWheelRotate,
+            onWheelRotate: onWheelSnapScroll,
             list,
             overlayState,
         };
