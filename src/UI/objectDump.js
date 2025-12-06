@@ -83,12 +83,12 @@ function ensureStyles() {
   style.id = 'objui-styles';
   style.textContent = `
     :root{ --bg:#0b0d10; --panel:#0f141a; --text:#e5e7eb; --muted:#9aa4b2; --border:#2a3442; --hover:#1b2433; --ok:#3b82f6; }
-    .objui{ color:var(--text); font:12px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; }
+    .objui{ color:var(--text); font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .objui .hr{ height:1px; background:#1e2430; margin:6px 0; }
 
     .objui-header{ display:grid; grid-template-columns: auto 1fr auto; align-items:center; gap:8px; }
     .objui-title{ font-weight:700; color:var(--text); white-space:nowrap; }
-    .objui-search input{ width:100%; box-sizing:border-box; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font:12px system-ui; }
+    .objui-search input{ width:100%; box-sizing:border-box; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font:12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .objui-actions{ display:flex; gap:6px; }
     .objui-btn{ background:var(--hover); color:var(--text); border:1px solid var(--border); padding:6px 8px; border-radius:8px; cursor:pointer; font-weight:700; font-size:12px; }
     .objui-btn:hover{ filter:brightness(1.1); }
@@ -102,7 +102,7 @@ function ensureStyles() {
     details[open] > summary .chev{ transform:rotate(90deg); }
     .key{ color:var(--text); font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; }
     .meta{ color:var(--muted); font-style:italic; }
-    .type-badge{ color:#b7c0cc; border:1px solid #2d3748; border-radius:6px; padding:2px 6px; font:11px system-ui; }
+    .type-badge{ color:#b7c0cc; border:1px solid #2d3748; border-radius:6px; padding:2px 6px; font:11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 
     .kv{ display:grid; grid-template-columns:14px 180px 1fr auto; align-items:center; gap:8px; padding:4px 4px; }
     .kv .key{ font-weight:600; }

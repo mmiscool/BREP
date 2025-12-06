@@ -68,7 +68,7 @@ export class SelectionFilterWidget {
                 background: linear-gradient(180deg, rgba(18,21,25,0.96), rgba(18,21,25,0.90));
                 border: 1px solid var(--sfw-border);
                 color: var(--sfw-text);
-                font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
                 font-size: 12px;
                 backdrop-filter: blur(6px);
             }

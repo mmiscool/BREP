@@ -122,7 +122,7 @@ class MetadataPanelController {
         const p = document.createElement('div');
         p.textContent = msg || '';
         p.style.color = '#9aa4b2';
-        p.style.font = '12px system-ui';
+        p.style.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
         p.style.opacity = '0.9';
         this.content.appendChild(p);
     }
@@ -228,7 +228,7 @@ class MetadataPanelController {
         this.content.innerHTML = '';
 
         const header = document.createElement('div');
-        header.style.font = '13px system-ui';
+        header.style.font = '13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
         header.style.fontWeight = '600';
         header.style.whiteSpace = 'nowrap';
         header.style.textOverflow = 'ellipsis';
@@ -240,7 +240,7 @@ class MetadataPanelController {
         controls.style.alignItems = 'center';
         controls.style.gap = '8px';
         controls.style.flexWrap = 'wrap';
-        controls.style.font = '12px system-ui';
+        controls.style.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
         const filterLabel = document.createElement('label');
         filterLabel.textContent = 'Filter';
@@ -250,7 +250,7 @@ class MetadataPanelController {
         filterInput.placeholder = 'key or value';
         filterInput.style.flex = '1 1 160px';
         filterInput.style.minWidth = '140px';
-        filterInput.style.font = '12px system-ui';
+        filterInput.style.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
         filterInput.style.padding = '4px 6px';
         filterInput.style.border = '1px solid #1f2937';
         filterInput.style.background = '#0f172a';
@@ -278,7 +278,7 @@ class MetadataPanelController {
         table.style.width = '100%';
         table.style.borderCollapse = 'collapse';
         table.style.tableLayout = 'auto';
-        table.style.font = '12px system-ui';
+        table.style.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
         const thead = document.createElement('thead');
         const headRow = document.createElement('tr');
@@ -570,7 +570,7 @@ class MetadataPanelController {
 
         if (faceMetadata) {
             const faceLabel = document.createElement('div');
-            faceLabel.style.font = '12px system-ui';
+            faceLabel.style.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
             faceLabel.style.color = '#cbd5e1';
             faceLabel.style.marginTop = '10px';
             faceLabel.textContent = `Face metadata (${faceMetadata.faceName})`;
@@ -593,7 +593,7 @@ class MetadataPanelController {
         }
 
         const effectiveLabel = document.createElement('div');
-        effectiveLabel.style.font = '12px system-ui';
+        effectiveLabel.style.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
         effectiveLabel.style.color = '#cbd5e1';
         effectiveLabel.style.marginTop = '6px';
         effectiveLabel.textContent = 'Effective metadata (after inheritance)';

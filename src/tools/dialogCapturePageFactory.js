@@ -132,11 +132,11 @@ function escapeHtml(value) {
 function injectPageStyles() {
   if (stylesInjected) return;
   stylesInjected = true;
-  const style = document.createElement('style');
-  style.textContent = `
+    const style = document.createElement('style');
+    style.textContent = `
     :root {
       color-scheme: dark;
-      font-family: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       background: #05070d;
       color: #e5ecff;
     }

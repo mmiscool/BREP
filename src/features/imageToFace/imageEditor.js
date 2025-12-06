@@ -85,11 +85,11 @@ export class ImageEditorUI {
     // ---------------------------- Initialization ---------------------------
     _initDOM() {
         // Overlay
-        const overlay = document.createElement('div');
-        overlay.className = 'img-editor-overlay';
-        overlay.innerHTML = `
+      const overlay = document.createElement('div');
+      overlay.className = 'img-editor-overlay';
+      overlay.innerHTML = `
       <style>
-        .img-editor-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;color:var(--ie-fg);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+        .img-editor-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;color:var(--ie-fg);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;}
         .img-editor-toolbar{position:absolute;left:0;right:0;top:0;height:48px;background:var(--ie-bg-2);border-bottom:1px solid var(--ie-border);display:flex;align-items:center;gap:12px;padding:0 12px;}
         .img-editor-spacer{flex:1 1 auto;}
         .img-editor-btn{border:1px solid var(--ie-border);background:var(--ie-bg-3);color:var(--ie-fg);border-radius:6px;padding:6px 10px;cursor:pointer;line-height:1;}

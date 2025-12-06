@@ -31,17 +31,17 @@ export function drawConstraintGlyphs(inst, constraints) {
       el.style.left = `${Math.round(x)}px`;
       el.style.top = `${Math.round(y)}px`;
       el.style.transform = 'translate(-50%, -50%)';
-      el.style.pointerEvents = 'auto';
-      // Prevent selecting glyph text while dragging/hovering
-      el.style.userSelect = 'none';
-      el.style.webkitUserSelect = 'none';
-      el.style.MozUserSelect = 'none';
-      el.setAttribute('draggable', 'false');
-      el.onselectstart = () => false;
-      el.style.font = '14px system-ui,sans-serif';
-      el.style.lineHeight = '1';
-      el.style.color = '#e6e6e6';
-      el.style.padding = '1px 6px';
+    el.style.pointerEvents = 'auto';
+    // Prevent selecting glyph text while dragging/hovering
+    el.style.userSelect = 'none';
+    el.style.webkitUserSelect = 'none';
+    el.style.MozUserSelect = 'none';
+    el.setAttribute('draggable', 'false');
+    el.onselectstart = () => false;
+    el.style.font = '14px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+    el.style.lineHeight = '1';
+    el.style.color = '#e6e6e6';
+    el.style.padding = '1px 6px';
       el.style.borderRadius = '6px';
       el.style.border = '1px solid #364053';
       el.style.background = 'rgba(20,24,30,.85)';

@@ -1,4 +1,5 @@
 export const HISTORY_COLLECTION_WIDGET_CSS = `
+  *{font:12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
   :host, .hc-widget {
     --bg: #0f1117;
     --bg-elev: #12141b;

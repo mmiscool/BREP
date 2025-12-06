@@ -736,7 +736,7 @@ export class PMIViewsWidget {
     const paddingY = 6 * dpr;
     const lineHeight = 18 * dpr;
     const radius = 8 * dpr;
-    const fontFamily = 'Segoe UI, "Helvetica Neue", Arial, sans-serif';
+    const fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
     const fontSize = 14 * dpr;
 
     const layout = [];
@@ -852,7 +852,7 @@ export class PMIViewsWidget {
       const style = doc.createElement('style');
       style.id = 'pmi-export-styles';
       style.textContent = `
-        body { margin: 16px; background: #0b0e14; color: #e5e7eb; font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+        body { margin: 16px; background: #0b0e14; color: #e5e7eb; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
         .pmi-export-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
         .pmi-export-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
         .pmi-export-card { background: #0f172a; border: 1px solid #1f2937; border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 8px 20px rgba(0,0,0,.45); }

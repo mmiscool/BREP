@@ -222,10 +222,10 @@ export class FloatingWindow {
     style.textContent = `
       .floating-window { position: fixed; background:#0b0b0e; color:#e5e7eb; border:1px solid #2a2a33; border-radius:12px; box-shadow:0 10px 28px rgba(0,0,0,.55); display:flex; flex-direction:column; overflow:hidden; user-select:none; }
       .floating-window.is-shaded { overflow:hidden; }
-      .floating-window__header { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid #23232b; cursor:grab; font:600 13px system-ui; letter-spacing:.2px; }
+      .floating-window__header { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid #23232b; cursor:grab; font:600 13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; letter-spacing:.2px; }
       .floating-window__title { flex:1; }
       .floating-window__actions { display:flex; align-items:center; gap:6px; }
-      .floating-window__actions .fw-btn { background:#1f2937; color:#f9fafb; border:1px solid #374151; padding:6px 8px; border-radius:8px; cursor:pointer; font:700 12px system-ui; }
+      .floating-window__actions .fw-btn { background:#1f2937; color:#f9fafb; border:1px solid #374151; padding:6px 8px; border-radius:8px; cursor:pointer; font:700 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
       .floating-window__actions .fw-btn:hover { background:#2b3545; }
       .floating-window__content { flex:1; overflow:auto; padding:8px; }
       .floating-window.is-shaded .floating-window__content { display:none; }

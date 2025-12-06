@@ -84,7 +84,7 @@ export function renderDimensions(inst) {
     d.style.borderRadius = '6px';
     d.style.background = 'rgba(20,24,30,.9)';
     d.style.color = '#e6e6e6';
-    d.style.font = '12px system-ui,sans-serif';
+    d.style.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
     d.style.pointerEvents = 'auto';
     d.style.userSelect = 'none';
     d.style.webkitUserSelect = 'none';

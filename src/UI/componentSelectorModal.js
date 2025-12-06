@@ -183,7 +183,7 @@ export function openComponentSelectorModal({ title = 'Select Component' } = {}) 
       flex-direction: column;
       overflow: hidden;
       color: #e5e7eb;
-      font: 14px/1.4 system-ui;
+      font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     }
     .cs-header {
       font-weight: 600;

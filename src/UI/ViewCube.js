@@ -109,7 +109,7 @@ export class ViewCube {
       ctx.fillRect(0, 0, size, size);
       // Imprinted text effect: shadow + highlight to look engraved
       const fontSize = 100; // smaller labels for better balance
-      ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.font = `bold ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const cx = size / 2, cy = size / 2;

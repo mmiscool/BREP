@@ -195,7 +195,7 @@ export class CombinedTransformControls extends THREE.Object3D {
     ctx.clearRect(0, 0, size, size);
     ctx.fillStyle = 'rgba(0,0,0,0)';
     ctx.fillRect(0, 0, size, size);
-    ctx.font = 'bold 64px system-ui, Arial, sans-serif';
+    ctx.font = 'bold 64px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = color;
@@ -385,5 +385,4 @@ export class CombinedTransformControls extends THREE.Object3D {
     return hit ? p.clone() : null;
   }
 }
-
 

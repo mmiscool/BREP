@@ -1961,7 +1961,7 @@ export class Viewer {
         const p = document.createElement('div');
         p.textContent = msg || '';
         p.style.color = '#9aa4b2';
-        p.style.font = '12px system-ui';
+        p.style.font = '12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
         p.style.opacity = '0.9';
         this._inspectorContent.appendChild(p);
         this._lastInspectorDownload = null;
@@ -2327,7 +2327,7 @@ export class Viewer {
         try {
             const el = document.createElement('div');
             el.textContent = msg;
-            el.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);background:#111c;backdrop-filter:blur(6px);color:#e5e7eb;padding:6px 10px;border:1px solid #2a3442;border-radius:8px;z-index:7;font:12px/1.2 system-ui;';
+            el.style.cssText = 'position:fixed;top:48px;left:50%;transform:translateX(-50%);background:#111c;backdrop-filter:blur(6px);color:#e5e7eb;padding:6px 10px;border:1px solid #2a3442;border-radius:8px;z-index:7;font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;';
             document.body.appendChild(el);
             setTimeout(() => { try { el.parentNode && el.parentNode.removeChild(el); } catch { } }, ms);
         } catch { }
@@ -2339,12 +2339,12 @@ export class Viewer {
         const box = document.createElement('div');
         box.style.cssText = 'width:min(980px,90vw);height:min(70vh,720px);background:#0b0d10;border:1px solid #2a3442;border-radius:10px;box-shadow:0 12px 28px rgba(0,0,0,.35);display:flex;flex-direction:column;overflow:hidden;';
         const header = document.createElement('div');
-        header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #1e2430;color:#e5e7eb;font:600 13px system-ui;';
+        header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #1e2430;color:#e5e7eb;font:600 13px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;';
         header.textContent = title || 'Diagnostics';
         const close = document.createElement('button');
         close.textContent = '✕';
         close.title = 'Close';
-        close.style.cssText = 'margin-left:auto;background:transparent;border:0;color:#9aa4b2;cursor:pointer;font:700 14px system-ui;padding:4px;';
+        close.style.cssText = 'margin-left:auto;background:transparent;border:0;color:#9aa4b2;cursor:pointer;font:700 14px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;padding:4px;';
         const pre = document.createElement('textarea');
         pre.readOnly = true;
         pre.value = text || '';
