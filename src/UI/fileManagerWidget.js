@@ -47,7 +47,7 @@ export class FileManagerWidget {
               const encName = key.slice(this._modelPrefix.length);
               const name = decodeURIComponent(encName);
               if (name) this._thumbCache.delete(name);
-            } catch {}
+            } catch { }
             this.refreshList();
           } else if (key === this._lastKey || key === '__BREP_FM_ICONSVIEW__') {
             // Preferences updated elsewhere; re-sync
@@ -68,25 +68,30 @@ export class FileManagerWidget {
           this._iconsOnly = this._loadIconsPref();
           this._migrateFromLegacy();
           this.refreshList();
-          const last = this._loadLastName();
-          if (last && this._getModel(last)) this.loadModel(last);
-        } catch { /* ignore */ }
+          this.autoLoadLast();
+        } catch { alert('Failed to initialize File Manager storage.'); }
       });
-    } catch { /* ignore */ }
-
-    // Auto-load the last opened/saved model (if present)
-    // Keeps the UX seamless across page reloads.
-    try {
-      const last = this._loadLastName();
-      if (last) {
-        const exists = this._getModel(last);
-        if (exists) {
-          // Fire and forget; constructor cannot be async
-          this.loadModel(last);
-        }
-      }
-    } catch { /* ignore auto-load failures */ }
+    } catch { alert('Failed to initialize File Manager storage.'); }
   }
+
+
+  async autoLoadLast() {
+    if (await confirm('Load the last opened model?', 5)) {
+      try {
+        const last = this._loadLastName();
+        if (last) {
+          const exists = this._getModel(last);
+          if (exists) {
+            // Fire and forget; constructor cannot be async
+            this.loadModel(last);
+          }
+        }
+      } catch { /* ignore auto-load failures */ }
+    }
+
+  }
+
+
 
   // ----- Storage helpers -----
   // Build a namespaced per-model key
@@ -143,7 +148,7 @@ export class FileManagerWidget {
     return LS.getItem(this._lastKey) || '';
   }
   _saveIconsPref(v) {
-    try { LS.setItem('__BREP_FM_ICONSVIEW__', v ? '1' : '0'); } catch {}
+    try { LS.setItem('__BREP_FM_ICONSVIEW__', v ? '1' : '0'); } catch { }
   }
   _loadIconsPref() {
     try { return LS.getItem('__BREP_FM_ICONSVIEW__') === '1'; } catch { return false; }
@@ -203,7 +208,7 @@ export class FileManagerWidget {
     this.nameInput.value = this.currentName;
     this.nameInput.className = 'fm-input fm-grow';
     header.appendChild(this.nameInput);
-    
+
     // View toggle: list ↔ icons-only
     this.viewToggleBtn = document.createElement('button');
     this.viewToggleBtn.className = 'fm-btn';
@@ -321,7 +326,7 @@ export class FileManagerWidget {
         if (fhKey) {
           const jsonData = await zip.file(fhKey).async('string');
           let root = null;
-          try { root = JSON.parse(jsonData); } catch {}
+          try { root = JSON.parse(jsonData); } catch { }
           // Ensure expressions is a string if present
           if (root && root.expressions != null && typeof root.expressions !== 'string') {
             try { root.expressions = String(root.expressions); } catch { root.expressions = String(root.expressions); }
@@ -329,8 +334,8 @@ export class FileManagerWidget {
           if (root) {
             await this.viewer.partHistory.fromJSON(JSON.stringify(root));
             // Sync Expressions UI with imported code
-            try { if (this.viewer?.expressionsManager?.textArea) this.viewer.expressionsManager.textArea.value = this.viewer.partHistory.expressions || ''; } catch {}
-            
+            try { if (this.viewer?.expressionsManager?.textArea) this.viewer.expressionsManager.textArea.value = this.viewer.partHistory.expressions || ''; } catch { }
+
             // Refresh PMI views widget from PartHistory
             try {
               if (this.viewer?.pmiViewsWidget) {
@@ -363,7 +368,7 @@ export class FileManagerWidget {
           this.nameInput.value = name;
           this._saveLastName(name);
           return;
-        } catch {}
+        } catch { }
       } catch (e) {
         console.warn('[FileManagerWidget] Failed to load 3MF from localStorage; falling back to legacy JSON if present.', e);
       }
@@ -373,7 +378,7 @@ export class FileManagerWidget {
       const payload = (typeof rec.data === 'string') ? rec.data : JSON.stringify(rec.data);
       await this.viewer.partHistory.fromJSON(payload);
       // Sync Expressions UI with imported code
-      try { if (this.viewer?.expressionsManager?.textArea) this.viewer.expressionsManager.textArea.value = this.viewer.partHistory.expressions || ''; } catch {}
+      try { if (this.viewer?.expressionsManager?.textArea) this.viewer.expressionsManager.textArea.value = this.viewer.partHistory.expressions || ''; } catch { }
     } catch (e) {
       alert('Failed to load model (invalid data).');
       console.error(e);
@@ -602,14 +607,14 @@ export class FileManagerWidget {
           cam.up.copy(up);
           cam.lookAt(pivot);
           cam.updateMatrixWorld(true);
-          if (controls?.updateMatrixState) { try { controls.updateMatrixState(); } catch {} }
+          if (controls?.updateMatrixState) { try { controls.updateMatrixState(); } catch { } }
         }
         // Fit geometry within this oriented view
-        try { this.viewer.zoomToFit(1.1); } catch {}
+        try { this.viewer.zoomToFit(1.1); } catch { }
       } catch { /* ignore orientation failures */ }
 
       // Ensure a fresh frame before capture
-      try { this.viewer.render(); } catch {}
+      try { this.viewer.render(); } catch { }
 
       // Wait one frame to be safe
       await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -621,14 +626,14 @@ export class FileManagerWidget {
       const ctx = dst.getContext('2d');
       if (!ctx) return null;
       // Leave background transparent so captures can be composited cleanly
-      try { ctx.clearRect(0, 0, size, size); } catch {}
+      try { ctx.clearRect(0, 0, size, size); } catch { }
       // Compute contain fit
       const scale = Math.min(size / srcW, size / srcH);
       const dw = Math.max(1, Math.floor(srcW * scale));
       const dh = Math.max(1, Math.floor(srcH * scale));
       const dx = Math.floor((size - dw) / 2);
       const dy = Math.floor((size - dh) / 2);
-      try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch {}
+      try { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; } catch { }
       ctx.drawImage(canvas, 0, 0, srcW, srcH, dx, dy, dw, dh);
       const dataUrl = dst.toDataURL('image/png');
       return dataUrl;
