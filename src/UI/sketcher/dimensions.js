@@ -290,7 +290,13 @@ function pointerToPlaneUV(inst, e) {
   const o = inst._lock?.basis?.origin?.clone();
   if (!n || !o) return null;
   const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(n, o);
-  const hit = new THREE.Vector3(); const ok = inst._raycaster.ray.intersectPlane(pl, hit); if (!ok) return null;
+  const hit = new THREE.Vector3();
+  let ok = inst._raycaster.ray.intersectPlane(pl, hit);
+  if (!ok) {
+    const invRay = new THREE.Ray(inst._raycaster.ray.origin.clone(), inst._raycaster.ray.direction.clone().negate());
+    ok = invRay.intersectPlane(pl, hit);
+  }
+  if (!ok) return null;
   const bx = inst._lock.basis.x; const by = inst._lock.basis.y;
   const u = hit.clone().sub(o).dot(bx.clone().normalize());
   const v2 = hit.clone().sub(o).dot(by.clone().normalize());

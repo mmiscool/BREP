@@ -955,7 +955,7 @@ export class SketchMode3D {
     const pl = this.#plane();
     if (!pl) return null;
     const hit = new THREE.Vector3();
-    const ok = this._raycaster.ray.intersectPlane(pl, hit);
+    const ok = this.#_intersectPlaneBothSides(this._raycaster.ray, pl, hit);
     if (!ok) return null;
     const o = this._lock.basis.origin;
     const bx = this._lock.basis.x;
@@ -989,6 +989,16 @@ export class SketchMode3D {
       const back = Math.max(1e6, span * 10);
       ray.origin.addScaledVector(ray.direction, -back);
     } catch { /* noop */ }
+  }
+
+  // Allow ray-plane intersection even if the plane is behind the ray origin
+  #_intersectPlaneBothSides(ray, plane, out = new THREE.Vector3()) {
+    try {
+      if (!ray || !plane) return null;
+      if (ray.intersectPlane(plane, out)) return out;
+      const flipped = new THREE.Ray(ray.origin.clone(), ray.direction.clone().negate());
+      return flipped.intersectPlane(plane, out);
+    } catch { return null; }
   }
 
   #basisFromReference(obj) {
