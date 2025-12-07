@@ -69,264 +69,572 @@ export { Edge, Vertex, Face } from "./SolidShared.js";
  * - Query triangles for a given face name after any CSG by reading runs back from MeshGL.
  */
 export class Solid extends THREE.Group {
+    /**
+     * Construct an empty Solid with authoring buffers, face/edge metadata, and aux-edge storage initialized.
+     */
     constructor() {
         super(...arguments);
         SolidMethods.constructorImpl.apply(this, arguments);
     }
 
+    /**
+     * Bake a Matrix4 into authored vertices (and aux edges/metadata), marking the manifold dirty.
+     * @param {THREE.Matrix4|{elements:number[]}} matrix Matrix or matrix-like object
+     * @returns {Solid}
+     */
     bakeTransform(matrix) {
         return SolidMethods.bakeTransform.apply(this, arguments);
     }
 
+    /**
+     * Compose TRS from `{ t, rDeg, s }` and bake it into authored geometry.
+     * @param {{t?:number[],rDeg?:number[],s?:number[]}} trs TRS description in degrees
+     * @returns {Solid}
+     */
     bakeTRS(trs) {
         return SolidMethods.bakeTRS.apply(this, arguments);
     }
 
+    /**
+     * Internal: build the exact vertex deduplication key for a coordinate triple.
+     * @param {[number,number,number]} param0
+     * @returns {string}
+     */
     _key([x, y, z]) {
         return SolidMethods._key.apply(this, arguments);
     }
 
+    /**
+     * Internal: fetch or create a vertex index for a point, validating finiteness.
+     * @param {number[]|{x:number,y:number,z:number}} p
+     * @returns {number} vertex index
+     */
     _getPointIndex(p) {
         return SolidMethods._getPointIndex.apply(this, arguments);
     }
 
+    /**
+     * Internal: map a face name to a globally unique Manifold ID (creates if missing).
+     * @param {string} faceName
+     * @returns {number}
+     */
     _getOrCreateID(faceName) {
         return SolidMethods._getOrCreateID.apply(this, arguments);
     }
 
+    /**
+     * Add a CCW triangle labeled with the given face name to the authoring buffers.
+     * @param {string} faceName
+     * @param {[number,number,number]} v1
+     * @param {[number,number,number]} v2
+     * @param {[number,number,number]} v3
+     * @returns {Solid}
+     */
     addTriangle(faceName, v1, v2, v3) {
         return SolidMethods.addTriangle.apply(this, arguments);
     }
 
+    /**
+     * Add an auxiliary polyline (e.g., centerline) to visualize alongside the solid.
+     * @param {string} name
+     * @param {Array<[number,number,number]>} points
+     * @param {object} [options]
+     * @param {boolean} [options.closedLoop=false] render as a closed loop when visualized
+     * @param {boolean} [options.polylineWorld=false] whether points are already in world space
+     * @param {'OVERLAY'|'BASE'|string} [options.materialKey='OVERLAY'] visualization material tag
+     * @returns {Solid}
+     */
     addAuxEdge(name, points, options = {}) {
         return SolidMethods.addAuxEdge.apply(this, arguments);
     }
 
+    /**
+     * Convenience helper to add a two-point centerline as an auxiliary edge.
+     * @param {number[]|{x:number,y:number,z:number}} a
+     * @param {number[]|{x:number,y:number,z:number}} b
+     * @param {string} [name='CENTERLINE']
+     * @param {object} [options]
+     * @param {boolean} [options.closedLoop=false] render as a closed loop when visualized
+     * @param {boolean} [options.polylineWorld=false] whether points are already in world space
+     * @param {'OVERLAY'|'BASE'|string} [options.materialKey='OVERLAY'] visualization material tag
+     * @returns {Solid}
+     */
     addCenterline(a, b, name = 'CENTERLINE', options = {}) {
         return SolidMethods.addCenterline.apply(this, arguments);
     }
 
+    /**
+     * Merge and set metadata for a face label.
+     * @param {string} faceName
+     * @param {object} metadata
+     * @returns {Solid}
+     */
     setFaceMetadata(faceName, metadata) {
         return SolidMethods.setFaceMetadata.apply(this, arguments);
     }
 
+    /**
+     * Get metadata for a face label (empty object if none).
+     * @param {string} faceName
+     * @returns {object}
+     */
     getFaceMetadata(faceName) {
         return SolidMethods.getFaceMetadata.apply(this, arguments);
     }
 
+    /**
+     * Merge and set metadata for a boundary edge label.
+     * @param {string} edgeName
+     * @param {object} metadata
+     * @returns {Solid}
+     */
     setEdgeMetadata(edgeName, metadata) {
         return SolidMethods.setEdgeMetadata.apply(this, arguments);
     }
 
+    /**
+     * Get metadata for a boundary edge label (null if none).
+     * @param {string} edgeName
+     * @returns {object|null}
+     */
     getEdgeMetadata(edgeName) {
         return SolidMethods.getEdgeMetadata.apply(this, arguments);
     }
 
+    /**
+     * Remesh by splitting edges longer than a threshold; preserves face IDs and fixes winding.
+     * @param {object} [options]
+     * @param {number} options.maxEdgeLength maximum allowed edge length before splitting (required)
+     * @param {number} [options.maxIterations=10] number of remesh passes to attempt
+     * @returns {Solid}
+     */
     remesh({ maxEdgeLength, maxIterations = 10 } = {}) {
         return SolidMethods.remesh.apply(this, arguments);
     }
 
+    /**
+     * Remove small disconnected triangle islands relative to the main shell.
+     * @param {object} [options]
+     * @param {number} [options.maxTriangles=30] triangle-count threshold for removal
+     * @param {boolean} [options.removeInternal=true] drop islands inside the main shell
+     * @param {boolean} [options.removeExternal=true] drop islands outside the main shell
+     * @returns {number} triangles removed
+     */
     removeSmallIslands({ maxTriangles = 30, removeInternal = true, removeExternal = true } = {}) {
         return SolidMethods.removeSmallIslands.apply(this, arguments);
     }
 
+    /**
+     * Remove only small internal islands (wrapper around removeSmallIslands).
+     * @param {number} [maxTriangles=30]
+     * @returns {number}
+     */
     removeSmallInternalIslands(maxTriangles = 30) {
         return SolidMethods.removeSmallInternalIslands.apply(this, arguments);
     }
 
+    /**
+     * Mirror the solid across a plane defined by a point and a normal, returning a new Solid.
+     * @param {number[]|THREE.Vector3} point
+     * @param {number[]|THREE.Vector3} normal
+     * @returns {Solid}
+     */
     mirrorAcrossPlane(point, normal) {
         return SolidMethods.mirrorAcrossPlane.apply(this, arguments);
     }
 
+    /**
+     * Push a named face along its outward normal by the given distance.
+     * @param {string} faceName
+     * @param {number} distance
+     * @returns {Solid}
+     */
     pushFace(faceName, distance) {
         return SolidMethods.pushFace.apply(this, arguments);
     }
 
+    /**
+     * Remove tiny boundary-adjacent triangles via edge flips under an area threshold.
+     * @param {number} areaThreshold
+     * @param {number} [maxIterations=1]
+     * @returns {number} flips applied
+     */
     removeTinyBoundaryTriangles(areaThreshold, maxIterations = 1) {
         return SolidMethods.removeTinyBoundaryTriangles.apply(this, arguments);
     }
 
+    /**
+     * Collapse triangles whose shortest edge is below a threshold and clean up the mesh.
+     * @param {number} lengthThreshold
+     * @returns {number} edge collapses performed
+     */
     collapseTinyTriangles(lengthThreshold) {
         return SolidMethods.collapseTinyTriangles.apply(this, arguments);
     }
 
+    /**
+     * Flip all triangle windings to invert normals and rebuild the manifold.
+     * @returns {Solid}
+     */
     invertNormals() {
         return SolidMethods.invertNormals.apply(this, arguments);
     }
 
+    /**
+     * Fix triangle winding coherency across shared edges.
+     * @returns {Solid}
+     */
     fixTriangleWindingsByAdjacency() {
         return SolidMethods.fixTriangleWindingsByAdjacency.apply(this, arguments);
     }
 
+    /**
+     * Check whether the authored mesh is a coherently oriented manifold.
+     * @returns {boolean}
+     */
     _isCoherentlyOrientedManifold() {
         return SolidMethods._isCoherentlyOrientedManifold.apply(this, arguments);
     }
 
+    /**
+     * Set vertex weld epsilon (<=0 disables) and optionally weld existing vertices.
+     * @param {number} [epsilon=0]
+     * @returns {Solid}
+     */
     setEpsilon(epsilon = 0) {
         return SolidMethods.setEpsilon.apply(this, arguments);
     }
 
+    /**
+     * Create a lightweight clone of this Solid (copies geometry, labels, metadata, aux edges).
+     * @returns {Solid}
+     */
     clone() {
         return SolidMethods.clone.apply(this, arguments);
     }
 
+    /**
+     * Internal: weld vertices within epsilon using grid hashing and drop degenerates.
+     * @param {number} eps
+     * @returns {Solid}
+     */
     _weldVerticesByEpsilon(eps) {
         return SolidMethods._weldVerticesByEpsilon.apply(this, arguments);
     }
 
+    /**
+     * Build (or reuse) the cached Manifold from authored arrays, fixing winding/orientation first.
+     * @returns {import('./SolidShared.js').Manifold}
+     */
     _manifoldize() {
         return SolidMethods._manifoldize.apply(this, arguments);
     }
 
+    /**
+     * Get a fresh MeshGL snapshot (`vertProperties`, `triVerts`, `faceID`) from the manifold.
+     * @returns {import('./SolidShared.js').ManifoldMesh}
+     */
     getMesh() {
         return SolidMethods.getMesh.apply(this, arguments);
     }
 
+    /**
+     * Dispose the cached Manifold to free wasm memory and mark the solid dirty.
+     * @returns {Solid}
+     */
     free() {
         return SolidMethods.free.apply(this, arguments);
     }
 
+    /**
+     * Offset all vertices of a named face along its average normal by a distance.
+     * @param {string} faceName
+     * @param {number} distance
+     * @returns {Solid}
+     */
     offsetFace(faceName, distance) {
         return SolidMethods.offsetFace.apply(this, arguments);
     }
 
+    /**
+     * Internal: build faceID -> triangle index cache if missing.
+     * @returns {void}
+     */
     _ensureFaceIndex() {
         return SolidMethods._ensureFaceIndex.apply(this, arguments);
     }
 
+    /**
+     * Get triangles belonging to a face label with positions and indices.
+     * @param {string} name
+     * @returns {Array<{faceName:string,indices:number[],p1:number[],p2:number[],p3:number[]}>}
+     */
     getFace(name) {
         return SolidMethods.getFace.apply(this, arguments);
     }
 
+    /**
+     * List all face labels present on this solid.
+     * @returns {string[]}
+     */
     getFaceNames() {
         return SolidMethods.getFaceNames.apply(this, arguments);
     }
 
+    /**
+     * Generate an ASCII STL string for the current manifold mesh.
+     * @param {string} [name='solid']
+     * @param {number} [precision=6]
+     * @returns {string}
+     */
     toSTL(name = "solid", precision = 6) {
         return SolidMethods.toSTL.apply(this, arguments);
     }
 
+    /**
+     * Write an ASCII STL file to disk (Node.js only).
+     * @param {string} filePath
+     * @param {string} [name='solid']
+     * @param {number} [precision=6]
+     * @returns {Promise<string>} resolves with file path
+     */
     async writeSTL(filePath, name = "solid", precision = 6) {
         return SolidMethods.writeSTL.apply(this, arguments);
     }
 
+    /**
+     * Enumerate faces with their triangles; optionally include empty labels.
+     * @param {boolean} [includeEmpty=false]
+     * @returns {Array<{faceName:string,triangles:any[]}>}
+     */
     getFaces(includeEmpty = false) {
         return SolidMethods.getFaces.apply(this, arguments);
     }
 
+    /**
+     * Build per-face meshes and boundary edges as children for visualization.
+     * @param {object} [options]
+     * @param {boolean} [options.showEdges=true] include boundary edge polylines
+     * @param {boolean} [options.forceAuthoring=false] force authoring arrays instead of manifold mesh
+     * @param {boolean} [options.authoringOnly=false] skip manifold path entirely (fallback visualization)
+     * @returns {void}
+     */
     visualize(options = {}) {
         return SolidMethods.visualize.apply(this, arguments);
     }
 
+    /**
+     * Extract boundary polylines between differing face labels from the current mesh.
+     * @returns {Array<{name:string,faceA:string,faceB:string,positions:number[][],indices:number[]}>}
+     */
     getBoundaryEdgePolylines() {
         return SolidMethods.getBoundaryEdgePolylines.apply(this, arguments);
     }
 
+    /**
+     * Internal: merge face ID -> name maps from two solids (used during booleans).
+     * @param {Solid} other
+     * @returns {Map<number,string>}
+     */
     _combineIdMaps(other) {
         return SolidMethods._combineIdMaps.apply(this, arguments);
     }
 
+    /**
+     * Internal: merge face metadata maps from two solids.
+     * @param {Solid} other
+     * @returns {Map<string,object>}
+     */
     _combineFaceMetadata(other) {
         return SolidMethods._combineFaceMetadata.apply(this, arguments);
     }
 
+    /**
+     * Static helper: expand face IDs from a MeshGL into a JS array (or zeros when absent).
+     * @param {import('./SolidShared.js').ManifoldMesh} mesh
+     * @returns {number[]}
+     */
     static _expandTriIDsFromMesh(mesh) {
         return SolidMethods._expandTriIDsFromMeshStatic.apply(this, arguments);
     }
 
+    /**
+     * Static helper: build a Solid from an existing Manifold and ID -> face-name map.
+     * @param {import('./SolidShared.js').Manifold} manifoldObj
+     * @param {Map<number,string>} idToFaceName
+     * @returns {Solid}
+     */
     static _fromManifold(manifoldObj, idToFaceName) {
         return SolidMethods._fromManifoldStatic.apply(this, arguments);
     }
 
+    /**
+     * Boolean union with another solid; merges face labels, metadata, and aux edges.
+     * @param {Solid} other
+     * @returns {Solid}
+     */
     union(other) {
         return SolidMethods.union.apply(this, arguments);
     }
 
+    /**
+     * Boolean subtraction (this minus other); merges face labels, metadata, and aux edges.
+     * @param {Solid} other
+     * @returns {Solid}
+     */
     subtract(other) {
         return SolidMethods.subtract.apply(this, arguments);
     }
 
+    /**
+     * Boolean intersection with another solid; merges face labels, metadata, and aux edges.
+     * @param {Solid} other
+     * @returns {Solid}
+     */
     intersect(other) {
         return SolidMethods.intersect.apply(this, arguments);
     }
 
+    /**
+     * Boolean difference alias using Manifold.difference (same as subtract).
+     * @param {Solid} other
+     * @returns {Solid}
+     */
     difference(other) {
         return SolidMethods.difference.apply(this, arguments);
     }
 
+    /**
+     * Simplify the manifold (optionally with tolerance and in-place update).
+     * @param {number} [tolerance]
+     * @param {boolean} [updateInPlace] when true, mutate this solid instead of returning a clone
+     * @returns {Solid}
+     */
     simplify(tolerance = undefined) {
         return SolidMethods.simplify.apply(this, arguments);
     }
 
+    /**
+     * Rebuild with Manifold tolerance applied, returning a new Solid.
+     * @param {number} tolerance
+     * @returns {Solid}
+     */
     setTolerance(tolerance) {
         return SolidMethods.setTolerance.apply(this, arguments);
     }
 
+    /**
+     * Compute volume from the current manifold mesh.
+     * @returns {number}
+     */
     volume() {
         return SolidMethods.volume.apply(this, arguments);
     }
 
+    /**
+     * Compute total surface area from the current manifold mesh.
+     * @returns {number}
+     */
     surfaceArea() {
         return SolidMethods.surfaceArea.apply(this, arguments);
     }
 
+    /**
+     * Count triangles in the current manifold mesh.
+     * @returns {number}
+     */
     getTriangleCount() {
         return SolidMethods.getTriangleCount.apply(this, arguments);
     }
 
     /**
-     * Split any self-intersecting triangle pairs in-place.
-     * Replaces the original triangles with subdivided triangles while
-     * preserving per-triangle face IDs. Operates on authoring arrays
-     * (_vertProperties/_triVerts/_triIDs) and marks the solid dirty.
+     * Split self-intersecting triangle pairs conservatively while preserving face IDs.
+     * @param {boolean} [diagnostics=false]
+     * @returns {number} splits applied
      */
     splitSelfIntersectingTriangles() {
         return SolidMethods.splitSelfIntersectingTriangles.apply(this, arguments);
     }
 
     /**
-     * Remove degenerate triangles (triangles with duplicate or collinear vertices).
-     * Returns the number of triangles removed.
+     * Remove triangles with duplicate or collinear vertices.
+     * @returns {number} triangles removed
      */
     removeDegenerateTriangles() {
         return SolidMethods.removeDegenerateTriangles.apply(this, arguments);
     }
 
     /**
-     * Remove internal triangles by rebuilding from the Manifold surface.
-     * Keeps only exterior triangles, preserving face IDs. In-place.
-     * Returns the number of triangles removed.
+     * Rebuild authoring arrays from the manifold’s exterior surface, dropping internal faces.
+     * @returns {number} triangles removed
      */
     removeInternalTriangles() {
         return SolidMethods.removeInternalTriangles.apply(this, arguments);
     }
 
     /**
-     * Remove internal triangles using a raycast point-in-solid test.
-     * Works even on non-manifold authoring meshes. In-place.
-     * Returns the number of triangles removed.
+     * Remove internal triangles via centroid ray tests without needing manifoldization.
+     * @returns {number} triangles removed
      */
     removeInternalTrianglesByRaycast() {
         return SolidMethods.removeInternalTrianglesByRaycast.apply(this, arguments);
     }
 
     /**
-     * Remove internal triangles using solid-angle (winding number) test.
-     * Robust to self-intersections; does not require manifold. In-place.
+     * Remove internal triangles using solid-angle (winding number) classification.
+     * @param {object} [options]
+     * @param {number} [options.offsetScale=1e-5] centroid offset scale relative to the model diagonal
+     * @param {number} [options.crossingTolerance=0.05] tolerance for inside/outside crossing detection
+     * @returns {number} triangles removed
      */
     removeInternalTrianglesByWinding(options = {}) {
         return SolidMethods.removeInternalTrianglesByWinding.apply(this, [options]);
     }
 
+    /**
+     * Apply chamfers to named edges and return the booleaned result (async).
+     * @param {object} [options]
+     * @param {number} options.distance chamfer distance (required, > 0)
+     * @param {string[]} [options.edgeNames] edge labels to chamfer
+     * @param {any[]} [options.edges] pre-resolved Edge objects on this solid
+     * @param {'INSET'|'OUTSET'|string} [options.direction='INSET'] subtract vs union behavior
+     * @param {number} [options.inflate=0.1] tool inflation (negated for OUTSET)
+     * @param {boolean} [options.debug=false] enable builder debug aids
+     * @param {string} [options.featureID='CHAMFER'] name prefix for generated solids
+     * @param {number} [options.sampleCount] optional sampling override for chamfer strip
+     * @param {boolean} [options.snapSeamToEdge] force seam to snap to edge
+     * @param {number} [options.sideStripSubdiv] side-strip subdivisions
+     * @param {number} [options.seamInsetScale] inset scale for seam
+     * @param {boolean} [options.flipSide] flip side selection
+     * @param {number} [options.debugStride] sampling stride for debug output
+     * @returns {Promise<Solid>}
+     */
     chamfer(options = {}) {
         return SolidMethods.chamfer.apply(this, [options]);
     }
 
+    /**
+     * Apply constant-radius fillets to named edges and return the booleaned result (async).
+     * @param {object} [options]
+     * @param {number} options.radius fillet radius (required, > 0)
+     * @param {string[]} [options.edgeNames] edge labels to fillet
+     * @param {any[]} [options.edges] pre-resolved Edge objects on this solid
+     * @param {'INSET'|'OUTSET'|string} [options.direction='INSET'] subtract vs union behavior
+     * @param {number} [options.inflate=0.1] tube inflation for cutting/union
+     * @param {boolean} [options.debug=false] enable builder debug aids
+     * @param {boolean} [options.snapSeam=true] snap boolean seams to tangent polylines (INSET)
+     * @param {string} [options.featureID='FILLET'] name prefix for generated solids
+     * @returns {Promise<Solid>}
+     */
     fillet(options = {}) {
         return SolidMethods.fillet.apply(this, [options]);
     }
 
 
+    /**
+     * Getter to access current FACE children; triggers visualize() before returning them.
+     * @returns {Array<any>}
+     */
     get faces(){
         this.visualize();
         return this.children.filter(c=>c.type==='FACE');

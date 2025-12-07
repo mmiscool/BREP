@@ -4,6 +4,10 @@
 
 /**
  * Remove small disconnected triangle islands relative to the largest shell.
+ * @param {object} [options]
+ * @param {number} [options.maxTriangles=30] triangle-count threshold for removal
+ * @param {boolean} [options.removeInternal=true] drop islands inside the main shell
+ * @param {boolean} [options.removeExternal=true] drop islands outside the main shell
  */
 export function removeSmallIslands({ maxTriangles = 30, removeInternal = true, removeExternal = true } = {}) {
     const tv = this._triVerts;
@@ -375,6 +379,9 @@ export function removeTinyBoundaryTriangles(areaThreshold, maxIterations = 1) {
 /**
  * Remesh by splitting long edges to improve triangle regularity while
  * preserving face labels.
+ * @param {object} [options]
+ * @param {number} options.maxEdgeLength maximum allowed edge length before splitting (required)
+ * @param {number} [options.maxIterations=10] number of remesh passes to attempt
  */
 export function remesh({ maxEdgeLength, maxIterations = 10 } = {}) {
     const Lmax = Number(maxEdgeLength);
@@ -2037,6 +2044,9 @@ export function removeInternalTrianglesByRaycast() {
  * Computes sum of solid angles of all triangles at each triangle's centroid.
  * If |sumOmega| > threshold (≈ 2π), marks that triangle as inside and removes it.
  * Robust to self-intersections and coplanar cases; does not require Manifold.
+ * @param {object} [options]
+ * @param {number} [options.offsetScale=1e-5] centroid offset scale relative to bounding box diagonal
+ * @param {number} [options.crossingTolerance=0.05] tolerance for deciding inside/outside crossings
  */
 export function removeInternalTrianglesByWinding({ offsetScale = 1e-5, crossingTolerance = 0.05 } = {}) {
     // Ensure local edge orientation is consistent to get meaningful normals

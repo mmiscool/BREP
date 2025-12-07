@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 
 export class AssemblyComponent extends THREE.Group {
+  /**
+   * @param {object} [options]
+   * @param {string} [options.name='Component'] Component name
+   * @param {boolean} [options.fixed=false] Whether the component is fixed in assemblies
+   */
   constructor({ name = 'Component', fixed = false } = {}) {
     super();
     this.type = 'COMPONENT';

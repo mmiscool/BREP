@@ -948,12 +948,46 @@ export class HistoryCollectionWidget {
   }
 
   _handleHistoryEvent(payload) {
-    this.render();
+    const reason = payload?.reason || 'update';
+    const skipRender = reason === 'update' && this._hasActiveReferenceSelection();
+    if (!skipRender) {
+      this.render();
+    }
     try {
       if (payload && payload.reason) {
         this._emitCollectionChange(payload.reason, payload.entry || null);
       }
     } catch (_) { /* ignore */ }
+  }
+
+  _hasActiveReferenceSelection() {
+    const getActive = (typeof SchemaForm?.getActiveReferenceInput === 'function')
+      ? SchemaForm.getActiveReferenceInput
+      : null;
+    if (!getActive) return false;
+
+    const active = getActive();
+    if (!active) return false;
+
+    try {
+      const root = (typeof active.getRootNode === 'function') ? active.getRootNode() : null;
+      if (root && root === this._shadow) return true;
+      if (root && root === this.uiElement) return true;
+    } catch (_) { /* ignore */ }
+
+    try {
+      if (this._shadow && typeof this._shadow.contains === 'function' && this._shadow.contains(active)) {
+        return true;
+      }
+    } catch (_) { /* ignore */ }
+
+    try {
+      if (this.uiElement && typeof this.uiElement.contains === 'function' && this.uiElement.contains(active)) {
+        return true;
+      }
+    } catch (_) { /* ignore */ }
+
+    return false;
   }
 
   _emitCollectionChange(reason, entry) {

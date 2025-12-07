@@ -7,6 +7,20 @@ import * as THREE from 'three';
 // - Two side strips that lie exactly on the original faces (edge → offset rail)
 // - End caps at first/last sections for open edges
 export class ChamferSolid extends Solid {
+    /**
+     * @param {object} opts
+     * @param {any} opts.edgeToChamfer Target edge (must belong to a Solid)
+     * @param {number} [opts.distance=1] Chamfer distance (> 0)
+     * @param {number} [opts.sampleCount=50] Sample count along the edge when resampling
+     * @param {boolean} [opts.snapSeamToEdge=true] Snap seam to the source edge instead of resampling
+     * @param {number} [opts.sideStripSubdiv=8] Subdivisions along side strips
+     * @param {number} [opts.seamInsetScale=1e-3] Inset scale for seam stabilization
+     * @param {'INSET'|'OUTSET'|string} [opts.direction='INSET'] Boolean behavior (subtract vs union)
+     * @param {number} [opts.inflate=0] Tool inflation (negated for OUTSET)
+     * @param {boolean} [opts.flipSide=false] Flip side selection
+     * @param {boolean} [opts.debug=false] Enable debug aids
+     * @param {number} [opts.debugStride=12] Sampling stride for debug output
+     */
     constructor({ edgeToChamfer, distance = 1, sampleCount = 50, snapSeamToEdge = true, sideStripSubdiv = 8, seamInsetScale = 1e-3, direction = 'INSET', inflate = 0, flipSide = false, debug = false, debugStride = 12 }) {
         super();
         this.edgeToChamfer = edgeToChamfer;

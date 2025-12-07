@@ -40,6 +40,10 @@ const _round = (n)=> Math.abs(n) < 1e-12 ? 0 : Number(n.toFixed(6));
 const _v3 = (v)=> (v && typeof v.x === 'number') ? [_round(v.x), _round(v.y), _round(v.z)] : v;
 
 export class FacesSolid extends Solid {
+  /**
+   * @param {object} [opts]
+   * @param {string} [opts.name='FromFaces'] Name of the solid
+   */
   constructor({ name = 'FromFaces' } = {}) {
     super();
     this.name = name;
@@ -188,6 +192,16 @@ export class FacesSolid extends Solid {
  *   and named `${edgeName}_SW`.
  */
 export class Sweep extends FacesSolid {
+  /**
+   * @param {object} [opts]
+   * @param {import('./Face.js').Face} opts.face Base face/profile to sweep
+   * @param {any[]} [opts.sweepPathEdges=[]] Edges defining the sweep path
+   * @param {number} [opts.distance=1] Forward sweep distance
+   * @param {number} [opts.distanceBack=0] Backward sweep distance
+   * @param {'translate'|'rotate'|string} [opts.mode='translate'] Sweep mode
+   * @param {string} [opts.name='Sweep'] Name of the resulting solid
+   * @param {boolean} [opts.omitBaseCap=false] Whether to skip the base cap
+   */
   constructor({ face, sweepPathEdges = [], distance = 1, distanceBack = 0, mode = 'translate', name = 'Sweep', omitBaseCap = false } = {}) {
     super({ name });
     this.params = { face, distance, distanceBack, sweepPathEdges, mode, name, omitBaseCap };

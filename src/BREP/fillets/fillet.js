@@ -654,7 +654,10 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
  * @param {number} radius Fillet radius (>0)
  * @param {'INSET'|'OUTSET'} sideMode Side preference
  * @param {string} name Edge name (default 'FILLET_CENTERLINE')
- * @param {object} options Additional aux edge options (materialKey defaults to 'OVERLAY')
+ * @param {object} [options] Additional aux edge options
+ * @param {boolean} [options.closedLoop=false] Render as closed loop when visualized
+ * @param {boolean} [options.polylineWorld=false] Whether points are already in world space
+ * @param {'OVERLAY'|'BASE'|string} [options.materialKey='OVERLAY'] Visualization material tag
  * @returns {{ points: {x:number,y:number,z:number}[], closedLoop: boolean } | null}
  */
 export function attachFilletCenterlineAuxEdge(solid, edgeObj, radius = 1, sideMode = 'INSET', name = 'FILLET_CENTERLINE', options = {}) {

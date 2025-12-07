@@ -219,6 +219,14 @@ function marchingCubesSDF({ nx, ny, nz, h, origin, sample, iso = 1.0 }) {
   return solid;
 }
 
+/**
+ * Build a tight point-cloud wrap as a Solid using marching cubes over a density field.
+ * @param {Array<[number,number,number]>|Array<{x:number,y:number,z:number}>} rawPoints input points
+ * @param {object} [opts]
+ * @param {number} [opts.padding] Absolute padding around the point cloud (default 2% of diagonal)
+ * @param {number} [opts.alphaRadius] Alpha radius used to choose grid spacing (default 0.6 * median kNN)
+ * @returns {Solid}
+ */
 export function buildTightPointCloudWrap(rawPoints, opts = {}) {
   const points = rawPoints
     .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z));

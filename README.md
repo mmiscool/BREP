@@ -21,6 +21,8 @@ This project is actively evolving; expect rough edges while APIs settle.
 - [History Systems](docs/history-systems.md)
 - [Input Params Schema](docs/input-params-schema.md)
 - [BREP Model and Classes](docs/brep-model.md)
+- [BREP API (BREP.js exports)](docs/brep-api.md)
+- [BREP Kernel (core classes & helpers)](docs/brep-kernel.md)
 - [File Formats: Import and Export](docs/file-formats.md)
 - [Plugins and Examples](docs/plugins.md)
 - [Recent Inspector Improvements](docs/inspector-improvements.md)

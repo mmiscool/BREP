@@ -2,6 +2,14 @@ import { Solid } from './BetterSolid.js';
 import * as THREE from 'three';
 
 export class Revolve extends Solid {
+  /**
+   * @param {object} [opts]
+   * @param {import('./Face.js').Face} opts.face Face/profile to revolve
+   * @param {any} opts.axis Axis reference (Edge/Line object or array with entry 0) defining rotation line
+   * @param {number} [opts.angle=360] Sweep angle in degrees
+   * @param {number} [opts.resolution=64] Segment resolution along the revolution
+   * @param {string} [opts.name='Revolve'] Name of the resulting solid
+   */
   constructor({ face, axis, angle = 360, resolution = 64, name = 'Revolve' } = {}) {
     super();
     this.params = { face, axis, angle, resolution };

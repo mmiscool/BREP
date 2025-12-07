@@ -45,6 +45,13 @@ class PrimitiveBase extends Solid {
 
 // Pyramid (regular base)
 export class Pyramid extends PrimitiveBase {
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.bL=1] Base edge length
+   * @param {number} [opts.s=4] Number of sides (>=3)
+   * @param {number} [opts.h=1] Height
+   * @param {string} [opts.name='Pyramid'] Solid name
+   */
   constructor({ bL = 1, s = 4, h = 1, name = 'Pyramid' } = {}) {
     super({ bL, s, h, name }, name);
   }
@@ -71,6 +78,12 @@ export class Pyramid extends PrimitiveBase {
 }
 
 export class Sphere extends PrimitiveBase {
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.r=1] Radius
+   * @param {number} [opts.resolution=24] Segment resolution (>=8)
+   * @param {string} [opts.name='Sphere'] Solid name
+   */
   constructor({ r = 1, resolution = 24, name = 'Sphere' } = {}) {
     super({ r, resolution, name }, name);
   }
@@ -88,6 +101,14 @@ export class Sphere extends PrimitiveBase {
 }
 
 export class Torus extends PrimitiveBase {
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.mR=2] Major radius
+   * @param {number} [opts.tR=0.5] Tube radius
+   * @param {number} [opts.resolution=48] Segment resolution (>=8)
+   * @param {number} [opts.arcDegrees=360] Arc angle in degrees
+   * @param {string} [opts.name='Torus'] Solid name
+   */
   constructor({ mR = 2, tR = 0.5, resolution = 48, arcDegrees = 360, name = 'Torus' } = {}) {
     super({ mR, tR, resolution, arcDegrees, name }, name);
   }
@@ -129,6 +150,13 @@ export class Torus extends PrimitiveBase {
 }
 
 export class Cube extends PrimitiveBase {
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.x=1] X dimension
+   * @param {number} [opts.y=1] Y dimension
+   * @param {number} [opts.z=1] Z dimension
+   * @param {string} [opts.name='Cube'] Solid name
+   */
   constructor({ x = 1, y = 1, z = 1, name = 'Cube' } = {}) {
     super({ x, y, z, name }, name);
   }
@@ -158,6 +186,13 @@ export class Cube extends PrimitiveBase {
 }
 
 export class Cylinder extends PrimitiveBase {
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.radius=1] Radius
+   * @param {number} [opts.height=1] Height
+   * @param {number} [opts.resolution=32] Segment resolution (>=8)
+   * @param {string} [opts.name='Cylinder'] Solid name
+   */
   constructor({ radius = 1, height = 1, resolution = 32, name = 'Cylinder' } = {}) {
     super({ radius, height, resolution, name }, name);
   }
@@ -193,6 +228,14 @@ export class Cylinder extends PrimitiveBase {
 }
 
 export class Cone extends PrimitiveBase {
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.r1=0.5] Base radius
+   * @param {number} [opts.r2=1] Top radius
+   * @param {number} [opts.h=1] Height
+   * @param {number} [opts.resolution=32] Segment resolution (>=8)
+   * @param {string} [opts.name='Cone'] Solid name
+   */
   constructor({ r1 = 0.5, r2 = 1, h = 1, resolution = 32, name = 'Cone' } = {}) {
     super({ r1, r2, h, resolution, name }, name);
   }

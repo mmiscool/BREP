@@ -30,6 +30,9 @@ export class OffsetShellSolid extends Solid {
    * Static convenience to perform the offset without instantiating the helper.
    * @param {Solid} sourceSolid Solid to offset.
    * @param {number} distance Signed offset distance.
+   * @param {object} [options]
+   * @param {string} [options.newSolidName] Optional name for the result solid
+   * @param {string} [options.featureId='OffsetShell'] Feature identifier used in naming/debug
    * @returns {Solid} New solid representing the offset shell.
    */
   static generate(sourceSolid, distance, options = {}) {

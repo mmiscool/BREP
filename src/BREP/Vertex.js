@@ -4,6 +4,11 @@ import { CADmaterials } from "../UI/CADmaterials.js";
 // Vertex: container at a specific position with a point marker.
 // When selected, swaps to the selected PointsMaterial; no extra sphere.
 export class Vertex extends THREE.Object3D {
+    /**
+     * @param {[number,number,number]} [position=[0,0,0]] Initial position
+     * @param {object} [opts]
+     * @param {string} [opts.name] Optional display name for the vertex
+     */
     constructor(position = [0, 0, 0], opts = {}) {
         super();
         this.type = 'VERTEX';

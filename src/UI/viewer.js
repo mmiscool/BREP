@@ -320,6 +320,9 @@ export class Viewer {
         try { this.raycaster.params.Line = this.raycaster.params.Line || {}; } catch { }
         try { this.raycaster.params.Line2 = this.raycaster.params.Line2 || {}; } catch { }
 
+        this._lastCanvasPointerDownAt = 0;
+        this._selectionOverlayTimer = null;
+        this._pendingSelectionOverlay = null;
         // Bindings
         this._onPointerMove = this._onPointerMove.bind(this);
         this._onPointerDown = this._onPointerDown.bind(this);
@@ -331,6 +334,7 @@ export class Viewer {
         this._updateHover = this._updateHover.bind(this);
         this._selectAt = this._selectAt.bind(this);
         this._onDoubleClick = this._onDoubleClick.bind(this);
+        this._onGlobalDoubleClick = this._onGlobalDoubleClick.bind(this);
 
         // Events
         const el = this.renderer.domElement;
@@ -345,6 +349,7 @@ export class Viewer {
         // Use capture on pointerup to ensure we end interactions even if pointerup fires off-element
         window.addEventListener('pointerup', this._onPointerUp, { passive: false, capture: true });
         el.addEventListener('dblclick', this._onDoubleClick, { passive: false });
+        document.addEventListener('dblclick', this._onGlobalDoubleClick, { passive: false, capture: true });
         el.addEventListener('contextmenu', this._onContextMenu);
         window.addEventListener('resize', this._onResize);
         this._onKeyDown = this._onKeyDown.bind(this);
@@ -570,6 +575,7 @@ export class Viewer {
         el.removeEventListener('pointerdown', this._onPointerDown);
         window.removeEventListener('pointerup', this._onPointerUp, { capture: true });
         el.removeEventListener('dblclick', this._onDoubleClick);
+        document.removeEventListener('dblclick', this._onGlobalDoubleClick, { capture: true });
         el.removeEventListener('contextmenu', this._onContextMenu);
         window.removeEventListener('resize', this._onResize);
         window.removeEventListener('keydown', this._onKeyDown, { passive: true });
@@ -893,12 +899,21 @@ export class Viewer {
         return new THREE.Vector2(x * 2 - 1, -(y * 2 - 1));
     }
 
+    _isEventOverRenderer(event) {
+        if (!event || !this.renderer?.domElement) return false;
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const x = event.clientX;
+        const y = event.clientY;
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    }
+
     _mapIntersectionToTarget(intersection, options = {}) {
         if (!intersection || !intersection.object) return null;
-        const { allowAnyAllowedType = false } = options;
+        const { allowAnyAllowedType = false, ignoreSelectionFilter = false } = options;
         const curType = SelectionFilter.getCurrentType && SelectionFilter.getCurrentType();
         const isAllowed = (type) => {
             if (!type) return false;
+            if (ignoreSelectionFilter) return true;
             if (allowAnyAllowedType && typeof SelectionFilter.matchesAllowedType === 'function') {
                 return SelectionFilter.matchesAllowedType(type);
             }
@@ -942,7 +957,7 @@ export class Viewer {
     }
 
     _pickAtEvent(event, options = {}) {
-        const { collectAll = false, allowAnyAllowedType = false } = options;
+        const { collectAll = false, allowAnyAllowedType = false, ignoreSelectionFilter = false } = options;
         // While Sketch Mode is active, suppress normal scene picking
         // SketchMode3D manages its own picking for sketch points/curves and model edges.
         if (this._sketchMode) return collectAll ? { hit: null, target: null, candidates: [] } : { hit: null, target: null };
@@ -1075,7 +1090,7 @@ export class Viewer {
 
                 //debugLog('Intersect object visibility result:', visibleResult, it.object.name);
                 //debugLog('Pick intersect object:', it.object);
-                const target = this._mapIntersectionToTarget(it, { allowAnyAllowedType });
+                const target = this._mapIntersectionToTarget(it, { allowAnyAllowedType, ignoreSelectionFilter });
                 if (target) {
                     if (collectAll) {
                         candidates.push({ hit: it, target, distance: it.distance ?? Infinity });
@@ -1213,7 +1228,7 @@ export class Viewer {
         });
 
         if (ordered.length > 1) {
-            this._showSelectionOverlay(event, ordered);
+            this._scheduleSelectionOverlay(event, ordered);
             return;
         }
 
@@ -1254,6 +1269,65 @@ export class Viewer {
         }
     }
 
+    _clearSelectionOverlayTimer() {
+        if (this._selectionOverlayTimer) {
+            clearTimeout(this._selectionOverlayTimer);
+            this._selectionOverlayTimer = null;
+        }
+        this._pendingSelectionOverlay = null;
+    }
+
+    _isAssemblyChildSelection(obj) {
+        if (!obj) return false;
+        const type = (obj.type || '').toUpperCase();
+        const isRefType = type === SelectionFilter.FACE || type === SelectionFilter.EDGE || type === SelectionFilter.VERTEX || type === 'POINTS';
+        if (!isRefType) return false;
+        const findAncestorOfType = (node, targetType) => {
+            const norm = (t) => (t || '').toUpperCase();
+            let cur = node?.parent || null;
+            while (cur) {
+                if (norm(cur.type) === norm(targetType)) return cur;
+                cur = cur.parent || null;
+            }
+            return null;
+        };
+        const solid = findAncestorOfType(obj, SelectionFilter.SOLID);
+        if (!solid) return false;
+        const parent = solid.parent || null;
+        if (!parent) return false;
+        const normParentType = (parent.type || '').toUpperCase();
+        const isComponent = normParentType === SelectionFilter.COMPONENT || normParentType === 'COMPONENT' || parent.isAssemblyComponent;
+        return !!isComponent;
+    }
+
+    _shouldDelaySelectionOverlay(candidates = []) {
+        try {
+            const sfAll = SelectionFilter.allowedSelectionTypes === SelectionFilter.ALL;
+            if (!sfAll) return false;
+            const top = Array.isArray(candidates) && candidates.length ? candidates[0].target : null;
+            return this._isAssemblyChildSelection(top);
+        } catch {
+            return false;
+        }
+    }
+
+    _scheduleSelectionOverlay(event, candidates) {
+        this._clearSelectionOverlayTimer();
+        const shouldDelay = this._shouldDelaySelectionOverlay(candidates);
+        if (!shouldDelay) {
+            this._showSelectionOverlay(event, candidates);
+            return;
+        }
+        const eventSnapshot = event ? { clientX: event.clientX, clientY: event.clientY } : null;
+        this._pendingSelectionOverlay = { event: eventSnapshot, candidates };
+        this._selectionOverlayTimer = setTimeout(() => {
+            this._selectionOverlayTimer = null;
+            const pending = this._pendingSelectionOverlay;
+            this._pendingSelectionOverlay = null;
+            if (pending) this._showSelectionOverlay(pending.event, pending.candidates);
+        }, 300);
+    }
+
     _describeSelectionCandidate(obj) {
         if (!obj) return 'Selection';
         const name = (obj.name && String(obj.name).trim()) ? String(obj.name).trim() : null;
@@ -1262,6 +1336,7 @@ export class Viewer {
     }
 
     _showSelectionOverlay(event, candidates) {
+        this._clearSelectionOverlayTimer();
         this._hideSelectionOverlay();
         if (!Array.isArray(candidates) || candidates.length === 0) return;
 
@@ -1494,6 +1569,7 @@ export class Viewer {
     _hideSelectionOverlay() {
         const overlay = this._selectionOverlay;
         if (!overlay) return;
+        this._clearSelectionOverlayTimer();
         try { overlay.stopDrag?.(); } catch { }
         document.removeEventListener('pointerdown', overlay.onPointerDown, true);
         document.removeEventListener('keydown', overlay.onKey, true);
@@ -1545,6 +1621,12 @@ export class Viewer {
         try {
             const ax = (typeof window !== 'undefined') ? (window.__BREP_activeXform || null) : null;
             if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) { try { event.preventDefault(); } catch { }; return; }
+        } catch { }
+        this._clearSelectionOverlayTimer();
+        try {
+            if (this._isEventOverRenderer(event)) {
+                this._lastCanvasPointerDownAt = Date.now();
+            }
         } catch { }
         // If pressing in the view cube region, disable controls for this gesture
         try {
@@ -1843,15 +1925,31 @@ export class Viewer {
         this.render();
     }
 
+    _onGlobalDoubleClick(event) {
+        if (this._disposed) return;
+        const lastDownAge = Date.now() - (this._lastCanvasPointerDownAt || 0);
+        // Only honor double-clicks that are closely preceded by a canvas pointerdown,
+        // even if the second click lands on the selection popover.
+        if (!Number.isFinite(lastDownAge) || lastDownAge > 750) return;
+        this._clearSelectionOverlayTimer();
+        this._onDoubleClick(event);
+    }
+
     _onDoubleClick(event) {
         if (this._disposed) return;
+        if (event && event.__brepHandledDblclick) return;
+        if (event) event.__brepHandledDblclick = true;
         try { event?.preventDefault?.(); } catch { }
+        try {
+            this._clearSelectionOverlayTimer();
+            this._hideSelectionOverlay();
+        } catch { }
         try {
             const ax = window.__BREP_activeXform;
             if (ax && typeof ax.isOver === 'function' && ax.isOver(event)) return;
         } catch { }
 
-        const pick = this._pickAtEvent(event);
+        const pick = this._pickAtEvent(event, { ignoreSelectionFilter: true, allowAnyAllowedType: true });
         const component = pick && pick.target ? this._findOwningComponent(pick.target) : null;
 
         if (!component) {

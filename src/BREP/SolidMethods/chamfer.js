@@ -7,10 +7,16 @@
  * @param {number} opts.distance Required chamfer distance (> 0)
  * @param {string[]} [opts.edgeNames] Optional edge names to chamfer
  * @param {any[]} [opts.edges] Optional pre-resolved Edge objects (must belong to this Solid)
- * @param {string} [opts.direction] 'INSET' | 'OUTSET' (default 'INSET')
- * @param {number} [opts.inflate] Grow/shrink chamfer tool (default 0.1; negated for OUTSET)
- * @param {boolean} [opts.debug] Enable debug helpers on ChamferSolid
- * @param {string} [opts.featureID] For naming of intermediates and result
+ * @param {'INSET'|'OUTSET'|string} [opts.direction='INSET'] Boolean behavior (subtract vs union)
+ * @param {number} [opts.inflate=0.1] Grow/shrink chamfer tool (negated for OUTSET)
+ * @param {boolean} [opts.debug=false] Enable debug helpers on ChamferSolid
+ * @param {string} [opts.featureID='CHAMFER'] For naming of intermediates and result
+ * @param {number} [opts.sampleCount] Optional sampling override for chamfer strip
+ * @param {boolean} [opts.snapSeamToEdge] Snap seam to the edge
+ * @param {number} [opts.sideStripSubdiv] Side strip subdivisions
+ * @param {number} [opts.seamInsetScale] Inset scale for seam
+ * @param {boolean} [opts.flipSide] Flip side selection
+ * @param {number} [opts.debugStride] Sampling stride for debug output
  * @returns {import('../BetterSolid.js').Solid}
  */
 export async function chamfer(opts = {}) {

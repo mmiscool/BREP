@@ -18,8 +18,11 @@ import { SHEET_METAL_FACE_TYPES, resolveSheetMetalFaceType } from "../../feature
  * @param {any} THREERef Optional reference to the three.js module/object.
  * @param {object} options Optional settings
  * @param {(name:string)=>any} options.materialForFace Optional factory returning a THREE.Material for a face
- * @param {boolean} options.wireframe Render materials as wireframe (default false)
- * @param {string} options.name Name for the group (default 'Solid')
+ * @param {boolean} [options.wireframe=false] Render materials as wireframe
+ * @param {string} [options.name='Solid'] Name for the group
+ * @param {boolean} [options.showEdges=true] Include boundary polylines between faces
+ * @param {boolean} [options.forceAuthoring=false] Force authoring-based grouping instead of manifold mesh
+ * @param {boolean} [options.authoringOnly=false] Skip manifold path entirely (always use authoring arrays)
  * @returns {any} THREE.Group containing one child Mesh per face
  */
 export function visualize(options = {}) {

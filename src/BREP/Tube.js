@@ -394,6 +394,16 @@ function addRingCap(solid, name, outerRing, innerRing, outwardDir) {
 }
 
 export class TubeSolid extends Solid {
+  /**
+   * Build a tube solid along a polyline.
+   * @param {object} [opts]
+   * @param {Array<[number,number,number]>} [opts.points=[]] Path points for the tube centerline
+   * @param {number} [opts.radius=1] Outer radius
+   * @param {number} [opts.innerRadius=0] Optional inner radius (0 for solid tube)
+   * @param {number} [opts.resolution=32] Segment count around the tube
+   * @param {boolean} [opts.closed=false] Whether the path is closed (auto-detected if endpoints match)
+   * @param {string} [opts.name='Tube'] Name for the solid
+   */
   constructor(opts = {}) {
     super();
     const { points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = false, name = 'Tube' } = opts;

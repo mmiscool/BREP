@@ -9,6 +9,7 @@
 - `Solid` is a `THREE.Group` subclass that handles authoring, CSG, queries, and export.
 - Geometry storage uses `_vertProperties` (flat positions), `_triVerts` (triangle indices), and `_triIDs` (face IDs) plus name-to-ID maps.
 - Key methods include `addTriangle`, `setEpsilon`, `mirrorAcrossPlane`, `invertNormals`, `fixTriangleWindingsByAdjacency`, `removeTinyBoundaryTriangles`, `getMesh`, `getFace`, `getFaces`, `getFaceNames`, `getBoundaryEdgePolylines`, `visualize`, `union`, `subtract`, `intersect`, `difference`, `simplify`, `setTolerance`, `volume`, `surfaceArea`, `toSTL`, and `writeSTL`.
+- Full per-method descriptions and examples live in `docs/solid-methods.md`.
 
 ## Face
 - `Face` is a `THREE.Mesh` representing all triangles that share a label.

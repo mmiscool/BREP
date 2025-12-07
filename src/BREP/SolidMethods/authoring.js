@@ -63,6 +63,12 @@ export function addTriangle(faceName, v1, v2, v3) {
 
 /**
  * Add a helper/auxiliary edge polyline to this solid (e.g., a centerline).
+ * @param {string} name Label for the edge
+ * @param {Array<[number,number,number]>} points Polyline points
+ * @param {object} [options]
+ * @param {boolean} [options.closedLoop=false] Render the edge as a closed loop when visualized
+ * @param {boolean} [options.polylineWorld=false] Whether the points are already in world space
+ * @param {'OVERLAY'|'BASE'|string} [options.materialKey='OVERLAY'] Material tag for visualization
  */
 export function addAuxEdge(name, points, options = {}) {
     try {

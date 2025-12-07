@@ -11,11 +11,11 @@ import { getDistanceTolerance } from "../fillets/inset.js";
  * @param {number} opts.radius Required fillet radius (> 0)
  * @param {string[]} [opts.edgeNames] Optional edge names to fillet (resolved from this Solid's children)
  * @param {any[]} [opts.edges] Optional pre-resolved Edge objects (must belong to this Solid)
- * @param {string} [opts.direction] 'INSET' | 'OUTSET' (default 'INSET')
- * @param {number} [opts.inflate] Inflation for cutting tube (default 0.1)
- * @param {boolean} [opts.debug] Enable debug visuals in fillet builder
- * @param {boolean} [opts.snapSeam] Snap boolean seams to tangent polylines (INSET only, default true)
- * @param {string} [opts.featureID] For naming of intermediates and result
+ * @param {'INSET'|'OUTSET'|string} [opts.direction='INSET'] Boolean behavior (subtract vs union)
+ * @param {number} [opts.inflate=0.1] Inflation for cutting tube
+ * @param {boolean} [opts.debug=false] Enable debug visuals in fillet builder
+ * @param {boolean} [opts.snapSeam=true] Snap boolean seams to tangent polylines (INSET only)
+ * @param {string} [opts.featureID='FILLET'] For naming of intermediates and result
  * @returns {import('../BetterSolid.js').Solid}
  */
 export async function fillet(opts = {}) {

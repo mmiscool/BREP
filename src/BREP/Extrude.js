@@ -13,6 +13,14 @@ import { Solid } from './BetterSolid.js';
 //   exactly identical. Consecutive duplicate points are removed.
 // - Calls `setEpsilon(adaptive)` to weld vertices and drop degenerates.
 export class ExtrudeSolid extends Solid {
+  /**
+   * @param {object} [opts]
+   * @param {import('./Face.js').Face} opts.face Source face to extrude
+   * @param {number|import('three').Vector3} [opts.distance=1] Extrusion distance or explicit vector
+   * @param {import('three').Vector3|null} [opts.dir=null] Optional direction vector override
+   * @param {number} [opts.distanceBack=0] Optional backward extrusion distance
+   * @param {string} [opts.name='Extrude'] Name of the resulting solid
+   */
   constructor({ face, distance = 1, dir = null, distanceBack = 0, name = 'Extrude' } = {}) {
     super();
     this.name = name;
