@@ -69,6 +69,7 @@ Generating a static build will create a  ```dist``` folder containing a static b
 - [Plane](docs/features/plane.md) — Implemented
 - [Datum](docs/features/datum.md) — Implemented
 - [Sketch](docs/features/sketch.md) — Implemented
+- [Helix](docs/features/helix.md) — Implemented
 - [Extrude](docs/features/extrude.md) — Implemented
 - [Sweep](docs/features/sweep.md) — Implemented
 - [Tube](docs/features/tube.md) — Implemented
