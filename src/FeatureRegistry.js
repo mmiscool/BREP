@@ -20,6 +20,7 @@ import { RemeshFeature } from './features/remesh/RemeshFeature.js';
 import { ImageToFaceFeature } from './features/imageToFace/ImageToFaceFeature.js';
 import { ImageHeightmapSolidFeature } from './features/imageHeightSolid/ImageHeightmapSolidFeature.js';
 import { TransformFeature } from './features/transform/TransformFeature.js';
+import { HelixFeature } from './features/helix/HelixFeature.js';
 import { HoleFeature } from './features/hole/HoleFeature.js';
 import { PatternFeature } from './features/pattern/PatternFeature.js';
 import { PatternLinearFeature } from './features/patternLinear/PatternLinearFeature.js';
@@ -76,6 +77,7 @@ export class FeatureRegistry {
     this.register(Import3dModelFeature);
     this.register(SketchFeature);
     this.register(SplineFeature);
+    this.register(HelixFeature);
     this.register(ExtrudeFeature);
     this.register(BooleanFeature);
     this.register(FilletFeature);

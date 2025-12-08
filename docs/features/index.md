@@ -9,6 +9,7 @@ Reference docs for the built-in modeling features.
 - [Datum](datum.md)
 - [Extrude](extrude.md)
 - [Fillet](fillet.md)
+- [Helix](helix.md)
 - [Hole](hole.md)
 - [Image to Face](image-to-face.md)
 - [Image Heightmap Solid](image-heightmap-solid.md)

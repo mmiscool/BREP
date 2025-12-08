@@ -100,8 +100,8 @@ export class SceneListing {
     // Internal -----------------------------------------------------------------
 
     #isSolid(obj) {
-        // Treat SOLID, COMPONENT, SKETCH, and DATUM groups as top-level items in the tree
-        return obj && obj.isObject3D && (obj.type === "SOLID" || obj.type === "COMPONENT" || obj.type === "SKETCH" || obj.type === "DATUM");
+        // Treat SOLID, COMPONENT, SKETCH, DATUM, and HELIX groups as top-level items in the tree
+        return obj && obj.isObject3D && (obj.type === "SOLID" || obj.type === "COMPONENT" || obj.type === "SKETCH" || obj.type === "DATUM" || obj.type === "HELIX");
     }
     #isFace(obj) { return obj && obj.type === "FACE"; }
     #isEdge(obj) { return obj && obj.type === "EDGE"; }
