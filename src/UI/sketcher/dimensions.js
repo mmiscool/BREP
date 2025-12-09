@@ -324,42 +324,60 @@ function attachDimLabelEvents(inst, el, c, world) {
   el.addEventListener('dblclick', async (e) => {
     e.preventDefault(); e.stopPropagation();
     dbg('dblclick-edit', { cid: c.id, type: c.type, value: c.value, expr: c.valueExpr });
+    const solver = inst?._solver || null;
+    const canPause = solver && typeof solver.pause === 'function' && typeof solver.resume === 'function' && typeof solver.isPaused === 'function';
+    const pausedByPrompt = !!(canPause && !solver.isPaused());
+    let resumed = false;
+    const resumeSolver = () => {
+      if (!resumed && pausedByPrompt) {
+        try { solver.resume(); } catch { }
+        resumed = true;
+      }
+    };
+    if (pausedByPrompt) {
+      try { solver.pause('dim-edit'); } catch { }
+    }
     const initial = (typeof c.valueExpr === 'string' && c.valueExpr.length)
       ? c.valueExpr
       : String(c.value ?? '');
-    const v = await prompt('Enter value', initial);
-    if (v == null) return;
-    const input = String(v?.trim?.() ?? v);
-    if (!input.length) return;
-    const ph = inst?.viewer?.partHistory;
-    const exprSrc = ph?.expressions || '';
-    const runExpr = (expressions, equation) => {
-      try {
-        const fn = `${expressions}; return ${equation} ;`;
-        let result = Function(fn)();
-        if (typeof result === 'string') {
-          const num = Number(result);
-          if (!Number.isNaN(num)) return num;
+    try {
+      const v = await prompt('Enter value', initial);
+      if (v == null) return;
+      const input = String(v?.trim?.() ?? v);
+      if (!input.length) return;
+      const ph = inst?.viewer?.partHistory;
+      const exprSrc = ph?.expressions || '';
+      const runExpr = (expressions, equation) => {
+        try {
+          const fn = `${expressions}; return ${equation} ;`;
+          let result = Function(fn)();
+          if (typeof result === 'string') {
+            const num = Number(result);
+            if (!Number.isNaN(num)) return num;
+          }
+          return result;
+        } catch (err) {
+          console.log('Expression eval failed:', err?.message || err);
+          return null;
         }
-        return result;
-      } catch (err) {
-        console.log('Expression eval failed:', err?.message || err);
-        return null;
+      };
+      const plainNumberRe = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?\s*$/i;
+      let numeric = null;
+      if (plainNumberRe.test(input)) {
+        numeric = parseFloat(input);
+        c.valueExpr = undefined;
+      } else {
+        numeric = runExpr(exprSrc, input);
+        if (numeric == null || !Number.isFinite(numeric)) return;
+        c.valueExpr = input;
       }
-    };
-    const plainNumberRe = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?\s*$/i;
-    let numeric = null;
-    if (plainNumberRe.test(input)) {
-      numeric = parseFloat(input);
-      c.valueExpr = undefined;
-    } else {
-      numeric = runExpr(exprSrc, input);
-      if (numeric == null || !Number.isFinite(numeric)) return;
-      c.valueExpr = input;
+      c.value = Number(numeric);
+      resumeSolver();
+      try { solver?.solveSketch('full'); } catch { }
+      try { solver?.hooks?.updateCanvas?.(); } catch { }
+    } finally {
+      resumeSolver();
     }
-    c.value = Number(numeric);
-    try { inst._solver.solveSketch('full'); } catch { }
-    try { inst._solver?.hooks?.updateCanvas?.(); } catch { }
   });
 
   // Drag handling with commit-on-drop

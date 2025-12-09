@@ -175,10 +175,30 @@ export class ConstraintSolver {
             geometries: [],
             constraints: [{ id: 0, type: "⏚", points: [0] }]
         };
+
+        this._paused = false;
+        this._pauseReason = "";
     }
+
+    // ---------- Solver control ----------
+    pause(reason = "") {
+        this._paused = true;
+        this._pauseReason = reason || "";
+    }
+
+    resume() {
+        this._paused = false;
+        this._pauseReason = "";
+    }
+
+    isPaused() { return !!this._paused; }
 
     // ---------- Core solve ----------
     solveSketch(iterations = null) {
+        if (this._paused) {
+            return this.sketchObject;
+        }
+
         const iters = iterations === "full"
             ? this.fullSolve()
             : (iterations == null ? this.defaultLoops() : iterations);
