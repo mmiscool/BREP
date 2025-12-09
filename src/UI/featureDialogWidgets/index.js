@@ -11,6 +11,7 @@ import { renderFileField } from './fileField.js';
 import { renderButtonField } from './buttonField.js';
 import { renderDefaultField } from './defaultField.js';
 import { renderComponentSelectorField } from './componentSelectorField.js';
+import { renderThreadDesignationField } from './threadDesignationField.js';
 
 const RENDERERS = {
     number: renderNumberField,
@@ -25,6 +26,7 @@ const RENDERERS = {
     file: renderFileField,
     button: renderButtonField,
     component_selector: renderComponentSelectorField,
+    thread_designation: renderThreadDesignationField,
 };
 
 export function getWidgetRenderer(type) {

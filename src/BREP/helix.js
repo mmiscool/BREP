@@ -104,7 +104,12 @@ export function buildHelixPolyline(opts = {}) {
   const hasEndRadius = opts.endRadius != null && Number.isFinite(Number(opts.endRadius));
   const r1 = hasEndRadius ? Math.max(1e-6, Math.abs(finiteOr(opts.endRadius, r0))) : r0;
 
-  let pitch = Math.max(1e-6, Math.abs(finiteOr(opts.pitch, 1)));
+  const minPitch = 1e-6;
+  const rawPitch = finiteOr(opts.pitch, finiteOr(opts.pitchDefault, NaN));
+  if (!Number.isFinite(rawPitch) || Math.abs(rawPitch) < minPitch) {
+    throw new Error('[buildHelixPolyline] pitch must be a finite, non-zero number.');
+  }
+  let pitch = Math.abs(rawPitch);
   const lengthMode = String(opts.lengthMode || opts.mode || 'turns').toLowerCase();
   let turns = finiteOr(opts.turns, NaN);
   let height = finiteOr(opts.height, NaN);

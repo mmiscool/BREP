@@ -14,6 +14,15 @@ const inputParamsSchema = {
     label: "Placement",
     hint: "Use transform or align to an existing axis and start point",
   },
+  transform: {
+    type: "transform",
+    default_value: {
+      position: [0, 0, 0],
+      rotationEuler: [0, 0, 0],
+      scale: [1, 1, 1],
+    },
+    hint: "Position, rotation, and scale to place the helix",
+  },
   axis: {
     type: "reference_selection",
     selectionFilter: ["EDGE"],
@@ -43,7 +52,9 @@ const inputParamsSchema = {
   pitch: {
     type: "number",
     default_value: 5,
-    hint: "Distance advanced per turn along the helix axis",
+    step:1,
+    min: 0.001,
+    hint: "Distance advanced per turn along the helix axis (must be non-zero)",
   },
   lengthMode: {
     type: "options",
@@ -76,15 +87,6 @@ const inputParamsSchema = {
     type: "number",
     default_value: 64,
     hint: "Segments per turn for the helix polyline",
-  },
-  transform: {
-    type: "transform",
-    default_value: {
-      position: [0, 0, 0],
-      rotationEuler: [0, 0, 0],
-      scale: [1, 1, 1],
-    },
-    hint: "Position, rotation, and scale to place the helix",
   },
 };
 
@@ -200,11 +202,26 @@ export class HelixFeature {
   }
 
   uiFieldsTest() {
-    const mode = String(this.inputParams?.placementMode || "transform").toLowerCase();
-    if (mode.startsWith("axis")) {
-      return { exclude: ["transform"] };
+    const placementMode = String(this.inputParams?.placementMode || "transform").toLowerCase();
+    const lengthMode = String(this.inputParams?.lengthMode || "turns").toLowerCase();
+
+    const include = ["placementMode"];
+    if (placementMode.startsWith("axis")) {
+      include.push("axis", "startPoint");
     }
-    return { exclude: ["axis", "startPoint"] };
+    include.push("radius", "endRadius", "lengthMode");
+    if (lengthMode === "height") {
+      include.push("pitch");
+      include.push("height");
+    } else {
+      include.push("turns");
+    }
+    include.push("startAngle", "handedness", "resolution");
+    if (!placementMode.startsWith("axis")) {
+      include.push("transform");
+    }
+
+    return { include };
   }
 
   async run(partHistory) { // partHistory reserved for future downstream needs
@@ -228,7 +245,13 @@ export class HelixFeature {
     const radius = Math.max(1e-6, Math.abs(toNumber(this.inputParams.radius, 5)));
     const endRadiusRaw = toNumber(this.inputParams.endRadius, radius);
     const endRadius = Math.max(1e-6, Math.abs(endRadiusRaw));
-    const pitch = Math.max(1e-6, Math.abs(toNumber(this.inputParams.pitch, 5)));
+    const pitchDefault = inputParamsSchema.pitch?.default_value ?? 5;
+    const rawPitch = toNumber(this.inputParams.pitch, pitchDefault);
+    const pitch = Math.abs(rawPitch);
+    const minPitch = 1e-6;
+    if (!Number.isFinite(pitch) || pitch < minPitch) {
+      throw new Error(`HelixFeature: pitch must be a non-zero number (received ${this.inputParams.pitch}).`);
+    }
     const lengthMode =
       String(this.inputParams.lengthMode || "turns").toLowerCase() === "height"
         ? "height"

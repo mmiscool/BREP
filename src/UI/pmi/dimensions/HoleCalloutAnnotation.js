@@ -196,6 +196,8 @@ function formatHoleCallout(desc, quantity = 1) {
   } else if (desc.type === 'COUNTERBORE') {
     lines.push(`⌴ ⌀${fmt(desc.counterboreDiameter)} ↧ ${fmt(desc.counterboreDepth)}`);
   }
+  const threadLine = formatThreadLine(desc?.thread);
+  if (threadLine) lines.push(threadLine);
   return lines.join('\n');
 }
 
@@ -239,6 +241,16 @@ function fmt(v, digits = 2) {
   const n = Number(v);
   if (!Number.isFinite(n)) return '';
   return n.toFixed(digits);
+}
+
+function formatThreadLine(thread) {
+  if (!thread || !thread.designation) return '';
+  let designation = String(thread.designation).replace(/\s+/g, '').toUpperCase();
+  const series = thread.series ? String(thread.series).toUpperCase() : '';
+  if (series && !designation.includes(series)) {
+    designation += series;
+  }
+  return `THREAD ${designation}`;
 }
 
 function arrToVec(arr) {
