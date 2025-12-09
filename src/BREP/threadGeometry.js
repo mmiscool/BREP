@@ -650,6 +650,7 @@ export class ThreadGeometry {
     const d0 = diamAt(0);
     const d1 = diamAt(length);
 
+    // For symbolic internal threads, drill to minor diameter and show dashed major diameter rings
     const pickRadius = (diam) => {
       switch (radiusMode) {
         case "root":
@@ -662,8 +663,14 @@ export class ThreadGeometry {
       }
     };
 
-    let r0 = Math.max(EPS, pickRadius(d0) + radialOffset);
-    let r1 = Math.max(EPS, pickRadius(d1) + radialOffset);
+    // Hole radius: use minor diameter for internal threads regardless of symbolicRadius
+    const holeRadius = (diam) => {
+      if (!this.isExternal) return (diam.minor || 0) * 0.5;
+      return pickRadius(diam);
+    };
+
+    let r0 = Math.max(EPS, holeRadius(d0) + radialOffset);
+    let r1 = Math.max(EPS, holeRadius(d1) + radialOffset);
     if (!this.isExternal) {
       const overlap = computeInternalOverlap(this);
       r0 = Math.max(EPS, r0 - overlap);
@@ -672,6 +679,31 @@ export class ThreadGeometry {
     }
     const manifold = Manifold.cylinder(length, r0, r1, res, false);
     const solid = manifoldToSolid(manifold, name, faceName);
+
+    // Add centerline through the symbolic thread (matches minor diameter cylinder axis)
+    solid.addAuxEdge(`${faceName}:CENTERLINE`, [
+      [0, 0, 0],
+      [0, 0, length],
+    ], { materialKey: 'OVERLAY' });
+
+    if (!this.isExternal) {
+      // Rings are attached to the same z planes as the minor cylinder (start/end)
+      const majorR0 = Math.max(EPS, d0.major * 0.5 + radialOffset);
+      const majorR1 = Math.max(EPS, d1.major * 0.5 + radialOffset);
+      const edgeRes = Math.max(24, res);
+      const makeCircle = (r, z) => {
+        const pts = [];
+        for (let i = 0; i <= edgeRes; i++) {
+          const a = (i / edgeRes) * Math.PI * 2;
+          pts.push([r * Math.cos(a), r * Math.sin(a), z]);
+        }
+        return pts;
+      };
+      // Use the exact start/end planes of the minor-diameter cylinder: z=0 and z=length
+      solid.addAuxEdge(`${faceName}:MAJOR_RING_START`, makeCircle(majorR0, 0), { closedLoop: true, materialKey: 'OVERLAY' });
+      solid.addAuxEdge(`${faceName}:MAJOR_RING_END`, makeCircle(majorR1, length), { closedLoop: true, materialKey: 'OVERLAY' });
+    }
+
     applyPlacement(solid, options);
     return solid;
   }

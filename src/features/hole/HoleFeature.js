@@ -812,13 +812,17 @@ export class HoleFeature {
                 taperDirection: threadGeom.taperDirection,
               });
             }
-            // Extend one full pitch past both start and end to avoid flats
+            // Extend one full pitch past both start and end to avoid flats for modeled threads only
             const extraThreadLength = Math.max(0, threadGeomScaled.pitch || threadGeom.pitch || 0);
-            const threadStartExtended = threadStart - extraThreadLength;
-            const threadLengthExtended = Math.max(0, threadLength + extraThreadLength * 2);
+            const threadStartEffective = threadMode === 'MODELED'
+              ? threadStart - extraThreadLength
+              : threadStart;
+            const threadLengthEffective = threadMode === 'MODELED'
+              ? Math.max(0, threadLength + extraThreadLength * 2)
+              : threadLength;
 
             const threadSolid = threadGeomScaled.toSolid({
-              length: threadLengthExtended,
+              length: threadLengthEffective,
               mode: threadMode === 'MODELED' ? 'modeled' : 'symbolic',
               radialOffset: threadRadialOffset,
               symbolicRadius: 'crest',
@@ -828,7 +832,7 @@ export class HoleFeature {
               name: featureID ? `${featureID}_THREAD_${idx}` : 'THREAD',
               faceName: featureID ? `${featureID}_THREAD_FACE` : 'THREAD',
               axis: [0, 1, 0],
-              origin: [0, threadStartExtended, 0],
+              origin: [0, threadStartEffective, 0],
               xDirection: [1, 0, 0],
             });
             console.log('[HoleFeature] Thread solid created:', {
@@ -853,9 +857,9 @@ export class HoleFeature {
               return Math.max(1e-4, threadGeomScaled.crestRadius + threadRadialOffset);
             };
             const coreR0 = minorRadiusAt(0);
-            const coreR1 = minorRadiusAt(threadLengthExtended);
+            const coreR1 = minorRadiusAt(threadLengthEffective);
             const coreName = featureID ? `${featureID}_THREAD_CORE_${idx}` : 'THREAD_CORE';
-            const coreHeight = threadLengthExtended;
+            const coreHeight = threadLengthEffective;
             if (coreHeight > 0) {
               const coreSolid = threadGeomScaled.isTapered && Math.abs(coreR0 - coreR1) > 1e-6
                 ? new BREP.Cone({
@@ -872,7 +876,7 @@ export class HoleFeature {
                   name: coreName,
                 });
               coreSolid.bakeTRS({
-                position: [0, threadStartExtended, 0],
+                position: [0, threadStartEffective, 0],
                 rotationEuler: [0, 0, 0],
                 scale: [1, 1, 1],
               });
@@ -904,7 +908,7 @@ export class HoleFeature {
                 
                 // Create small spheres at each corner of the profile to visualize it
                 const markerSize = Math.max(0.5, pitch * 0.2);
-                const vizCenterZ = threadLengthExtended + 5; // Place it above the thread
+                const vizCenterZ = threadLengthEffective + 5; // Place it above the thread
                 
                 // Profile corners in [R, Z] cylindrical coords (R=radial, Z=axial position in thread)
                 // We need to display this as a cross-section shape oriented perpendicular to hole axis
@@ -975,8 +979,8 @@ export class HoleFeature {
                 series: threadGeom?.series || null,
                 mode: threadMode,
                 radialOffset: threadRadialOffset,
-                length: threadLengthExtended,
-                startOffset: threadStartExtended,
+                length: threadLengthEffective,
+                startOffset: threadStartEffective,
               };
             }
           }
