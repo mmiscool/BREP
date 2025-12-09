@@ -3,6 +3,17 @@
 
 import { getDistanceTolerance } from "../fillets/inset.js";
 
+// Heuristic threshold for island cleanup after fillet subtraction.
+// Uses current mesh size and fillet solid complexity, clamped to stay conservative.
+function estimateIslandThreshold(result, filletSolid) {
+  const triCount = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
+  const filletTris = Array.isArray(filletSolid?._triVerts) ? (filletSolid._triVerts.length / 3) : 0;
+  const triBased = Math.round(triCount * 0.015);     // ~1.5% of current mesh
+  const filletBased = Math.round(filletTris * 0.25); // quarter of fillet triangles
+  const raw = Math.max(30, triBased, filletBased);
+  return Math.min(5000, raw);
+}
+
 /**
  * Apply fillets to this Solid and return a new Solid with the result.
  * Accepts either `edgeNames` (preferred) or explicit `edges` objects.
@@ -123,13 +134,43 @@ export async function fillet(opts = {}) {
   let result = this;
   for (const { filletSolid } of filletEntries) {
     const beforeTri = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
-    result = (dir === 'OUTSET') ? result.union(filletSolid) : result.subtract(filletSolid);
+    const operation = (dir === 'OUTSET') ? 'union' : 'subtract';
+    result = (operation === 'union') ? result.union(filletSolid) : result.subtract(filletSolid);
+
+    const islandThreshold = estimateIslandThreshold(result, filletSolid);
+    let removedIslands = 0;
+    try {
+      removedIslands = result.removeSmallIslands({
+        maxTriangles: islandThreshold,
+        removeInternal: true,
+        removeExternal: true,
+      });
+      result.visualize();
+      if (removedIslands > 0) {
+        console.log('[Solid.fillet] Removed small islands after fillet boolean', {
+          featureID,
+          removedTriangles: removedIslands,
+          threshold: islandThreshold,
+          operation,
+        });
+      }
+    } catch (err) {
+      console.warn('[Solid.fillet] removeSmallIslands failed after fillet boolean', {
+        featureID,
+        error: err?.message || err,
+        threshold: islandThreshold,
+        operation,
+      });
+    }
+
     const afterTri = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
     console.log('[Solid.fillet] Applied fillet boolean', {
       featureID,
-      operation: (dir === 'OUTSET') ? 'union' : 'subtract',
+      operation,
       beforeTriangles: beforeTri,
       afterTriangles: afterTri,
+      removedIslands,
+      islandThreshold,
     });
     // Name the result for scene grouping/debugging
     try { result.name = this.name; } catch { }
