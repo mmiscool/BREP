@@ -1,4 +1,5 @@
 import { CADmaterials } from "./CADmaterials.js";
+import {BREP} from '../BREP/BREP.js';
 export class SelectionFilter {
     static SOLID = "SOLID";
     static COMPONENT = "COMPONENT";
@@ -52,6 +53,9 @@ export class SelectionFilter {
     }
 
     static SetSelectionTypes(types) {
+
+        this.viewer.endSplineMode();
+        //alert("Selection type changed to:");
         if (types === SelectionFilter.ALL) {
             SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL;
             // Default currentType if none set
@@ -198,13 +202,13 @@ export class SelectionFilter {
             if (t.userData.__hoverMatApplied) { SelectionFilter._hovered.add(t); return; }
             let clone;
             try { clone = typeof origMat.clone === 'function' ? origMat.clone() : origMat; } catch { clone = origMat; }
-            try { if (clone && clone.color && typeof clone.color.set === 'function') clone.color.set(SelectionFilter.hoverColor); } catch {}
+            try { if (clone && clone.color && typeof clone.color.set === 'function') clone.color.set(SelectionFilter.hoverColor); } catch { }
             try {
                 t.userData.__hoverOrigMat = origMat;
                 t.userData.__hoverMatApplied = true;
                 if (clone !== origMat) t.material = clone;
                 t.userData.__hoverMat = clone;
-            } catch {}
+            } catch { }
             SelectionFilter._hovered.add(t);
         };
 
@@ -245,37 +249,37 @@ export class SelectionFilter {
 
     static #restoreHover(obj) {
         if (!obj) return;
-            const restoreOne = (t) => {
-                if (!t) return;
-                const ud = t.userData || {};
-                if (!ud.__hoverMatApplied) return;
-                const cloneWithColor = (mat, colorHex) => {
-                    if (!mat) return mat;
-                    let c = mat;
-                    try {
-                        c = typeof mat.clone === 'function' ? mat.clone() : mat;
-                        if (c && c.color && typeof c.color.set === 'function' && colorHex) c.color.set(colorHex);
-                    } catch { c = mat; }
-                    return c;
-                };
-                const applySelectionMaterial = () => {
-                    if (t.type === SelectionFilter.FACE) return CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE ?? ud.__hoverOrigMat ?? t.material;
-                    if (t.type === SelectionFilter.PLANE) return CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? ud.__hoverOrigMat ?? t.material;
-                    if (t.type === SelectionFilter.EDGE) {
-                        const base = ud.__hoverOrigMat ?? t.material;
-                        const selColor = CADmaterials.EDGE?.SELECTED?.color || CADmaterials.EDGE?.SELECTED?.color?.getHexString?.();
-                        return cloneWithColor(base, selColor || '#ff00ff');
-                    }
-                    if (t.type === SelectionFilter.SOLID || t.type === SelectionFilter.COMPONENT) return CADmaterials.SOLID?.SELECTED ?? ud.__hoverOrigMat ?? t.material;
-                    return ud.__hoverOrigMat ?? t.material;
-                };
-                const applyDeselectedMaterial = () => {
-                    if (t.type === SelectionFilter.FACE) return ud.__hoverOrigMat ?? CADmaterials.FACE?.BASE ?? CADmaterials.FACE ?? t.material;
-                    if (t.type === SelectionFilter.PLANE) return ud.__hoverOrigMat ?? CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? t.material;
-                    if (t.type === SelectionFilter.EDGE) return ud.__hoverOrigMat ?? CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE ?? t.material;
-                    if (t.type === SelectionFilter.SOLID || t.type === SelectionFilter.COMPONENT) return ud.__hoverOrigMat ?? t.material;
-                    return ud.__hoverOrigMat ?? t.material;
-                };
+        const restoreOne = (t) => {
+            if (!t) return;
+            const ud = t.userData || {};
+            if (!ud.__hoverMatApplied) return;
+            const cloneWithColor = (mat, colorHex) => {
+                if (!mat) return mat;
+                let c = mat;
+                try {
+                    c = typeof mat.clone === 'function' ? mat.clone() : mat;
+                    if (c && c.color && typeof c.color.set === 'function' && colorHex) c.color.set(colorHex);
+                } catch { c = mat; }
+                return c;
+            };
+            const applySelectionMaterial = () => {
+                if (t.type === SelectionFilter.FACE) return CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE ?? ud.__hoverOrigMat ?? t.material;
+                if (t.type === SelectionFilter.PLANE) return CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? ud.__hoverOrigMat ?? t.material;
+                if (t.type === SelectionFilter.EDGE) {
+                    const base = ud.__hoverOrigMat ?? t.material;
+                    const selColor = CADmaterials.EDGE?.SELECTED?.color || CADmaterials.EDGE?.SELECTED?.color?.getHexString?.();
+                    return cloneWithColor(base, selColor || '#ff00ff');
+                }
+                if (t.type === SelectionFilter.SOLID || t.type === SelectionFilter.COMPONENT) return CADmaterials.SOLID?.SELECTED ?? ud.__hoverOrigMat ?? t.material;
+                return ud.__hoverOrigMat ?? t.material;
+            };
+            const applyDeselectedMaterial = () => {
+                if (t.type === SelectionFilter.FACE) return ud.__hoverOrigMat ?? CADmaterials.FACE?.BASE ?? CADmaterials.FACE ?? t.material;
+                if (t.type === SelectionFilter.PLANE) return ud.__hoverOrigMat ?? CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? t.material;
+                if (t.type === SelectionFilter.EDGE) return ud.__hoverOrigMat ?? CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE ?? t.material;
+                if (t.type === SelectionFilter.SOLID || t.type === SelectionFilter.COMPONENT) return ud.__hoverOrigMat ?? t.material;
+                return ud.__hoverOrigMat ?? t.material;
+            };
             try {
                 if (t.selected) {
                     const selMat = applySelectionMaterial();
@@ -285,10 +289,10 @@ export class SelectionFilter {
                     if (baseMat) t.material = baseMat;
                 }
                 if (ud.__hoverMat && ud.__hoverMat !== ud.__hoverOrigMat && typeof ud.__hoverMat.dispose === 'function') ud.__hoverMat.dispose();
-            } catch {}
-            try { delete t.userData.__hoverMatApplied; } catch {}
-            try { delete t.userData.__hoverOrigMat; } catch {}
-            try { delete t.userData.__hoverMat; } catch {}
+            } catch { }
+            try { delete t.userData.__hoverMatApplied; } catch { }
+            try { delete t.userData.__hoverOrigMat; } catch { }
+            try { delete t.userData.__hoverMat; } catch { }
         };
 
         if (obj.type === SelectionFilter.SOLID || obj.type === SelectionFilter.COMPONENT) {
@@ -371,7 +375,7 @@ export class SelectionFilter {
                             if (wrap) {
                                 wrap.classList.add('ref-limit-reached');
                                 setTimeout(() => {
-                                    try { wrap.classList.remove('ref-limit-reached'); } catch (_) {}
+                                    try { wrap.classList.remove('ref-limit-reached'); } catch (_) { }
                                 }, 480);
                             }
                         } catch (_) { }

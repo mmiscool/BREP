@@ -344,6 +344,8 @@ export class Viewer {
             // When pointer leaves the canvas, forget the last pointer event
             this._lastPointerEvent = null;
         }, { passive: true });
+
+        SelectionFilter.viewer = this;
         el.addEventListener('pointerenter', (ev) => { this._lastPointerEvent = ev; }, { passive: true });
         el.addEventListener('pointerdown', this._onPointerDown, { passive: false });
         // Use capture on pointerup to ensure we end interactions even if pointerup fires off-element
@@ -961,6 +963,19 @@ export class Viewer {
         // While Sketch Mode is active, suppress normal scene picking
         // SketchMode3D manages its own picking for sketch points/curves and model edges.
         if (this._sketchMode) return collectAll ? { hit: null, target: null, candidates: [] } : { hit: null, target: null };
+
+        // Auto-clear stale spline mode so normal picking resumes after leaving the spline dialog
+        if (this._splineMode) {
+            try {
+                const validSession = typeof this._splineMode.isActive === 'function';
+                const stillActive = validSession ? this._splineMode.isActive() : false;
+                if (!validSession || !stillActive) {
+                    this.endSplineMode();
+                }
+            } catch {
+                this.endSplineMode();
+            }
+        }
 
         // DEBUG: Log current mode
         //debugLog(`_pickAtEvent called - splineMode active: ${!!this._splineMode}, sketchMode active: ${!!this._sketchMode}`);
