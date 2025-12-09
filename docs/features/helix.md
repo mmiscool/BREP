@@ -4,7 +4,7 @@ Status: Implemented
 
 ![Helix feature dialog](Helix_dialog.png)
 
-Helix creates a parametric helical curve you can reuse as a path for sweeps, tubes, or future thread features. Geometry generation is delegated to the BREP kernel (`buildHelixPolyline`) so the same code can drive downstream operations.
+Helix creates a parametric helical curve you can reuse as a path for sweeps, tubes, or thread features. Geometry generation is delegated to the BREP kernel (`buildHelixPolyline`) so the same code can drive downstream operations and maintain consistent handedness/segmenting.
 
 ## Inputs
 - `radius` – Base radius of the helix.
@@ -23,5 +23,6 @@ Helix creates a parametric helical curve you can reuse as a path for sweeps, tub
 
 ## Behaviour
 - Computes helix points in the kernel for consistent reuse (threads, path-driven features).
-- Builds an EDGE with world-space `polylineLocal` data plus helper axis and endpoints.
+- Builds an EDGE with world-space `polylineLocal` data, plus helper axis/endpoint edges.
+- Axis placement derives origin/direction from the selected edge, optionally using a chosen start point.
 - Stores the generated helix data in `persistentData.helix` for later edits or inspection.

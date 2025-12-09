@@ -2521,6 +2521,7 @@ export class Viewer {
                 setRes(CADmaterials.EDGE.BASE);
                 setRes(CADmaterials.EDGE.SELECTED);
                 if (CADmaterials.EDGE.OVERLAY) setRes(CADmaterials.EDGE.OVERLAY);
+                if (CADmaterials.EDGE.THREAD_SYMBOLIC_MAJOR) setRes(CADmaterials.EDGE.THREAD_SYMBOLIC_MAJOR);
             }
             if (CADmaterials?.LOOP) {
                 setRes(CADmaterials.LOOP.BASE);
