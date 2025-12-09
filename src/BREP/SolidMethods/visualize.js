@@ -272,6 +272,7 @@ export function visualize(options = {}) {
                                 const fa = faceMap.get(nameA); const fb = faceMap.get(nameB);
                                 if (fa) fa.edges.push(edgeObj); if (fb) fb.edges.push(edgeObj);
                                 if (fa) edgeObj.faces.push(fa); if (fb) edgeObj.faces.push(fb);
+                                try { edgeObj.computeLineDistances(); } catch { }
                                 this.add(edgeObj);
                             }
                         }
@@ -327,10 +328,15 @@ export function visualize(options = {}) {
                     edgeObj.userData = { ...(edgeObj.userData || {}), polylineLocal: pts, polylineWorld: !!aux?.polylineWorld };
                     edgeObj.parentSolid = this;
                     try {
-                        const useOverlay = (aux?.materialKey || 'OVERLAY').toUpperCase() === 'OVERLAY';
-                        const mat = useOverlay ? (CADmaterials?.EDGE?.OVERLAY || CADmaterials?.EDGE?.BASE) : (CADmaterials?.EDGE?.BASE);
+                        const key = (aux?.materialKey || 'OVERLAY').toUpperCase();
+                        const edgeMats = CADmaterials?.EDGE || {};
+                        const mat = edgeMats[key] || (key === 'OVERLAY' ? edgeMats.OVERLAY : null) || edgeMats.BASE;
                         if (mat) edgeObj.material = mat;
-                        if (useOverlay && edgeObj.material) { edgeObj.material.depthTest = false; edgeObj.material.depthWrite = false; }
+                        if (edgeObj.material && (key !== 'BASE')) {
+                            edgeObj.material.depthTest = false;
+                            edgeObj.material.depthWrite = false;
+                        }
+                        try { edgeObj.computeLineDistances(); } catch { }
                         edgeObj.renderOrder = 10020;
                     } catch { }
                     this.add(edgeObj);

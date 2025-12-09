@@ -44,6 +44,8 @@ export const CADmaterials = {
         // updated alongside other fat-line materials.
         // dashed line
         OVERLAY: (()=>{ const m = new LineMaterial({ color: "#ff0000", linewidth: 5.0, transparent: true, dashed: true , dashSize: 0.5, gapSize: 0.5 }); try{ m.depthTest=false; m.depthWrite=false; }catch{} return m; })(),
+        // Dashed cyan overlay for symbolic thread major diameter rings
+        THREAD_SYMBOLIC_MAJOR: (()=>{ const m = new LineMaterial({ color: "#00c8ff", linewidth: 5.0, transparent: true, dashed: true, dashSize: 0.6, gapSize: 0.6 }); try{ m.depthTest=false; m.depthWrite=false; }catch{} return m; })(),
     },
     LOOP: {
         BASE: new LineMaterial({

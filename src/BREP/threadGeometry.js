@@ -700,8 +700,8 @@ export class ThreadGeometry {
         return pts;
       };
       // Use the exact start/end planes of the minor-diameter cylinder: z=0 and z=length
-      solid.addAuxEdge(`${faceName}:MAJOR_RING_START`, makeCircle(majorR0, 0), { closedLoop: true, materialKey: 'OVERLAY' });
-      solid.addAuxEdge(`${faceName}:MAJOR_RING_END`, makeCircle(majorR1, length), { closedLoop: true, materialKey: 'OVERLAY' });
+      solid.addAuxEdge(`${faceName}:MAJOR_RING_START`, makeCircle(majorR0, 0), { closedLoop: true, materialKey: 'THREAD_SYMBOLIC_MAJOR' });
+      solid.addAuxEdge(`${faceName}:MAJOR_RING_END`, makeCircle(majorR1, length), { closedLoop: true, materialKey: 'THREAD_SYMBOLIC_MAJOR' });
     }
 
     applyPlacement(solid, options);
