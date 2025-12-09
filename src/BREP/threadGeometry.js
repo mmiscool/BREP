@@ -863,8 +863,9 @@ export class ThreadGeometry {
       }
     }
 
-    const solid = manifoldToSolid(manifold, name, faceName);
+    const solid = manifoldToSolid(manifold, name, faceName, faceIdToName);
     applyPlacement(solid, options);
+    solid.threadFaceNames = threadFaceNames;
     return solid;
   }
 
