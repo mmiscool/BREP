@@ -9,7 +9,7 @@ export function generateObjectUI(target, options = {}) {
   const cfg = {
     title: options.title ?? 'Object Inspector',
     showTypes: options.showTypes ?? true,
-    collapsed: options.collapsed ?? false, // collapse all by default?
+    collapseChildren: options.collapseChildren ?? options.collapsed ?? true,
     maxPreview: options.maxPreview ?? 40,  // preview length for summaries
   };
 
@@ -69,9 +69,6 @@ export function generateObjectUI(target, options = {}) {
   // Filtering
   searchInput.addEventListener('input', () => filterTree(root, searchInput.value.trim().toLowerCase()));
 
-  // Initial collapse preference
-  if (cfg.collapsed) setAllDetails(root, false);
-
   return root;
 }
 
@@ -107,7 +104,7 @@ function ensureStyles() {
     .kv{ display:grid; grid-template-columns:14px 180px 1fr auto; align-items:center; gap:8px; padding:4px 4px; }
     .kv .key{ font-weight:600; }
     .value-input, .value-date{ width:100%; box-sizing:border-box; background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 7px; font:12px ui-monospace, Menlo, Consolas, monospace; }
-    .value-input.readonly{ background:#0f141a; color:#c9d1d9; border-color:#1e2430; }
+    .value-input.readonly, .value-date.readonly{ background:#0f141a; color:#c9d1d9; border-color:#1e2430; user-select:text; }
     .value-checkbox{ width:16px; height:16px; }
 
     .hidden{ display:none !important; }
@@ -151,6 +148,53 @@ function pulse(btn, text) {
 
 function setAllDetails(root, open) {
   root.querySelectorAll('details').forEach(d => d.open = open);
+}
+
+function lockInputForCopy(inp) {
+  inp.readOnly = true;
+  inp.setAttribute('aria-readonly', 'true');
+  inp.classList.add('readonly');
+  inp.title = 'Read-only (select to copy)';
+  inp.addEventListener('wheel', (e) => e.preventDefault());
+  return inp;
+}
+
+function createChevron() {
+  const chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  chev.setAttribute('viewBox', '0 0 24 24');
+  chev.classList.add('chev');
+  const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  pathEl.setAttribute('d', 'M15.5 19l-7-7 7-7');
+  pathEl.setAttribute('fill', 'none');
+  pathEl.setAttribute('stroke', 'currentColor');
+  pathEl.setAttribute('stroke-width', '2');
+  pathEl.setAttribute('stroke-linecap', 'round');
+  pathEl.setAttribute('stroke-linejoin', 'round');
+  chev.appendChild(pathEl);
+  return chev;
+}
+
+function buildSummaryRow(keyText, metaText, typeText, cfg) {
+  const summary = document.createElement('summary');
+  const keyEl = document.createElement('div');
+  keyEl.className = 'key';
+  keyEl.textContent = keyText;
+  const metaEl = document.createElement('div');
+  metaEl.className = 'meta';
+  metaEl.textContent = metaText;
+  const typeBadge = document.createElement('div');
+  typeBadge.className = 'type-badge';
+  typeBadge.textContent = typeText;
+  summary.append(createChevron(), keyEl, metaEl, cfg.showTypes ? typeBadge : document.createTextNode(''));
+  return { summary, metaEl };
+}
+
+function formatLazyKey(key) {
+  return key.replace(/^_lazy/, '').replace(/([A-Z])/g, ' $1').trim().toLowerCase() || key;
+}
+
+function shouldDetailsOpen(path, cfg) {
+  return path.length === 0 || !cfg.collapseChildren;
 }
 
 function filterTree(root, q) {
@@ -245,46 +289,20 @@ function buildNode(state, value, path, cfg) {
 
   // Container: <details> with children
   const details = document.createElement('details');
-  details.open = !cfg.collapsed;
+  details.open = shouldDetailsOpen(path, cfg);
   details.setAttribute('data-path', pathToString(path));
   details.setAttribute('data-key', path[path.length - 1] ?? '');
-  const summary = document.createElement('summary');
-
-  const chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  chev.setAttribute('viewBox', '0 0 24 24');
-  chev.classList.add('chev');
-  const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  pathEl.setAttribute('d', 'M15.5 19l-7-7 7-7');
-  pathEl.setAttribute('fill', 'none');
-  pathEl.setAttribute('stroke', 'currentColor');
-  pathEl.setAttribute('stroke-width', '2');
-  pathEl.setAttribute('stroke-linecap', 'round');
-  pathEl.setAttribute('stroke-linejoin', 'round');
-  chev.appendChild(pathEl);
-
-  const keyEl = document.createElement('div');
-  keyEl.className = 'key';
-  keyEl.textContent = path.length ? String(path[path.length - 1]) : '(root)';
-
-  const meta = document.createElement('div');
-  meta.className = 'meta';
-  if (t === 'object') {
-    const keys = Object.keys(value);
-    meta.textContent = `Object { ${previewKeys(keys, cfg.maxPreview)} }`;
-  } else {
-    meta.textContent = `Array(${value.length})`;
-  }
-
-  const typeBadge = document.createElement('div');
-  typeBadge.className = 'type-badge';
-  typeBadge.textContent = t;
-
-  summary.append(chev, keyEl, meta, cfg.showTypes ? typeBadge : document.createTextNode(''));
+  const keyLabel = path.length ? String(path[path.length - 1]) : '(root)';
+  const keysForObject = t === 'object' ? Object.keys(value) : null;
+  const metaText = t === 'object'
+    ? `Object { ${previewKeys(keysForObject, cfg.maxPreview)} }`
+    : `Array(${value.length})`;
+  const { summary } = buildSummaryRow(keyLabel, metaText, t, cfg);
   details.appendChild(summary);
 
   // Children
   if (t === 'object') {
-    const keys = Object.keys(value);
+    const keys = keysForObject || Object.keys(value);
     for (const k of keys) {
       const childVal = value[k];
       const childPath = path.concat(k);
@@ -293,59 +311,37 @@ function buildNode(state, value, path, cfg) {
       // Handle lazy properties (functions that start with _lazy)
       if (k.startsWith('_lazy') && typeof childVal === 'function') {
         const lazyDetails = document.createElement('details');
+        lazyDetails.open = shouldDetailsOpen(childPath, cfg);
         lazyDetails.setAttribute('data-path', pathToString(childPath));
         lazyDetails.setAttribute('data-key', k);
-        
-        const lazySummary = document.createElement('summary');
-        lazySummary.style.cursor = 'pointer';
-        lazySummary.style.color = '#6ea8fe';
-        lazySummary.style.fontStyle = 'italic';
-        lazySummary.style.padding = '2px 4px';
-        lazySummary.style.borderRadius = '4px';
-        lazySummary.style.backgroundColor = 'rgba(110, 168, 254, 0.1)';
-        lazySummary.style.border = '1px solid rgba(110, 168, 254, 0.2)';
-        
-        // Use display name or create from key
-        const displayName = k.replace('_lazy', '').replace(/([A-Z])/g, ' $1').toLowerCase();
-        lazySummary.textContent = `${displayName} (click to load)`;
-        
+        const friendlyName = formatLazyKey(k);
+        const { summary: lazySummary, metaEl } = buildSummaryRow(friendlyName, 'Lazy value', 'lazy', cfg);
         lazyDetails.appendChild(lazySummary);
-        
-        // Add hover effects
-        lazySummary.addEventListener('mouseenter', () => {
-          if (!lazyDetails.hasAttribute('data-loaded')) {
-            lazySummary.style.backgroundColor = 'rgba(110, 168, 254, 0.2)';
-            lazySummary.style.borderColor = 'rgba(110, 168, 254, 0.4)';
-          }
-        });
-        lazySummary.addEventListener('mouseleave', () => {
-          if (!lazyDetails.hasAttribute('data-loaded')) {
-            lazySummary.style.backgroundColor = 'rgba(110, 168, 254, 0.1)';
-            lazySummary.style.borderColor = 'rgba(110, 168, 254, 0.2)';
-          }
-        });
 
-        // Add toggle listener for lazy loading
-        lazySummary.addEventListener('click', (e) => {
-          e.preventDefault();
-          if (!lazyDetails.hasAttribute('data-loaded')) {
-            try {
-              lazySummary.textContent = `${displayName} (loading...)`;
-              const result = childVal();
-              lazyDetails.setAttribute('data-loaded', 'true');
-              
-              // Remove the summary and add actual content
-              lazyDetails.innerHTML = '';
-              const actualNode = buildNode(state, result, childPath, cfg);
-              lazyDetails.appendChild(actualNode);
-              lazyDetails.open = true;
-            } catch (err) {
-              lazySummary.textContent = `${displayName} (failed to load: ${err.message})`;
-              lazySummary.style.color = '#ef4444';
+        let loaded = false;
+        const loadLazyValue = () => {
+          if (loaded) return;
+          loaded = true;
+          if (metaEl) metaEl.textContent = 'Loading…';
+          try {
+            const result = childVal();
+            lazyDetails.setAttribute('data-loaded', 'true');
+            const actualNode = buildNode(state, result, childPath, cfg);
+            if (actualNode.tagName === 'DETAILS') actualNode.open = true;
+            lazyDetails.replaceWith(actualNode);
+          } catch (err) {
+            const msg = err?.message || String(err);
+            if (metaEl) {
+              metaEl.textContent = `Failed to load: ${msg}`;
+              metaEl.style.color = '#ef4444';
             }
           }
+        };
+
+        lazyDetails.addEventListener('toggle', () => {
+          if (lazyDetails.open) loadLazyValue();
         });
-        
+
         details.appendChild(lazyDetails);
       } else if (childType === 'object' || childType === 'array') {
         details.appendChild(buildNode(state, childVal, childPath, cfg));
@@ -380,9 +376,7 @@ function pathToString(path) {
   return path.map(p => typeof p === 'number' ? `[${p}]` : `.${String(p)}`).join('').replace(/^\./, '');
 }
 
-/**
- * Render a single key-value editable row.
- */
+// Render a single key-value row with read-only, copyable inputs.
 function renderKV(state, key, value, path, cfg) {
   const t = typeOf(value);
   const row = document.createElement('div');
@@ -400,11 +394,7 @@ function renderKV(state, key, value, path, cfg) {
 
   // Value editor
   const valueEl = document.createElement('div');
-  const editor = makeEditorForType(value, t, (newValRaw) => {
-    // For checkboxes we pass boolean directly; for others raw string
-    const coerced = t === 'boolean' ? newValRaw : coerceValue(newValRaw, t, value);
-    setByPath(state.target, path, coerced);
-  });
+  const editor = makeEditorForType(value, t);
   valueEl.appendChild(editor);
   row.appendChild(valueEl);
 
@@ -417,15 +407,14 @@ function renderKV(state, key, value, path, cfg) {
   return row;
 }
 
-function makeEditorForType(value, t, onCommit) {
+function makeEditorForType(value, t) {
   switch (t) {
     case 'string': {
       const inp = document.createElement('input');
       inp.className = 'value-input';
       inp.type = 'text';
       inp.value = value ?? '';
-      inp.addEventListener('change', () => onCommit(inp.value));
-      return inp;
+      return lockInputForCopy(inp);
     }
     case 'number': {
       const inp = document.createElement('input');
@@ -433,24 +422,21 @@ function makeEditorForType(value, t, onCommit) {
       inp.type = 'number';
       inp.value = Number.isFinite(value) ? String(value) : '';
       inp.step = 'any';
-      inp.addEventListener('change', () => onCommit(inp.value));
-      return inp;
+      return lockInputForCopy(inp);
     }
     case 'bigint': {
       const inp = document.createElement('input');
       inp.className = 'value-input';
       inp.type = 'text';
       inp.value = value?.toString() ?? '';
-      inp.addEventListener('change', () => onCommit(inp.value));
-      return inp;
+      return lockInputForCopy(inp);
     }
     case 'boolean': {
       const inp = document.createElement('input');
-      inp.className = 'value-checkbox';
-      inp.type = 'checkbox';
-      inp.checked = !!value;
-      inp.addEventListener('change', () => onCommit(inp.checked));
-      return inp;
+      inp.className = 'value-input';
+      inp.type = 'text';
+      inp.value = value ? 'true' : 'false';
+      return lockInputForCopy(inp);
     }
     case 'date': {
       const inp = document.createElement('input');
@@ -461,8 +447,7 @@ function makeEditorForType(value, t, onCommit) {
       const mm = String(d.getMonth() + 1).padStart(2, '0');
       const dd = String(d.getDate()).padStart(2, '0');
       inp.value = isNaN(d.getTime()) ? '' : `${yyyy}-${mm}-${dd}`;
-      inp.addEventListener('change', () => onCommit(inp.value));
-      return inp;
+      return lockInputForCopy(inp);
     }
     case 'undefined':
     case 'null':
@@ -484,16 +469,14 @@ function makeEditorForType(value, t, onCommit) {
       } catch {
         inp.value = String(value);
       }
-      inp.addEventListener('change', () => onCommit(inp.value));
-      return inp;
+      return lockInputForCopy(inp);
     }
     default: {
       const inp = document.createElement('input');
       inp.className = 'value-input';
       inp.type = 'text';
       inp.value = String(value ?? '');
-      inp.addEventListener('change', () => onCommit(inp.value));
-      return inp;
+      return lockInputForCopy(inp);
     }
   }
 }

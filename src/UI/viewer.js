@@ -2072,7 +2072,7 @@ export class Viewer {
             const { out, downloadFactory } = this._buildDiagnostics(target);
             this._inspectorContent.innerHTML = '';
             // Attach object UI tree
-            const ui = generateObjectUI(out, { title: 'Object Inspector', showTypes: true, collapsed: false });
+            const ui = generateObjectUI(out, { title: 'Object Inspector', showTypes: true, collapseChildren: true });
             this._inspectorContent.appendChild(ui);
             // Persist download factory and raw JSON for header button
             this._lastInspectorDownload = downloadFactory;
