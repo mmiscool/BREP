@@ -44,9 +44,29 @@ export const CADmaterials = {
         // it remains visible through faces. Viewer will keep its resolution
         // updated alongside other fat-line materials.
         // dashed line
-        OVERLAY: (()=>{ const m = new LineMaterial({ color: "#ff0000", linewidth: 5.0, transparent: true, dashed: true , dashSize: 0.5, gapSize: 0.5, worldUnits: false }); try{ m.depthTest=false; m.depthWrite=false; }catch{} return m; })(),
+        OVERLAY: new LineMaterial({
+            color: "#ff0000",
+            linewidth: 5.0,
+            transparent: true,
+            dashed: true,
+            dashSize: 0.5,
+            gapSize: 0.5,
+            worldUnits: false,
+            depthTest: false,
+            depthWrite: false,
+        }),
         // Dashed cyan overlay for symbolic thread major diameter rings
-        THREAD_SYMBOLIC_MAJOR: (()=>{ const m = new LineMaterial({ color: "#00c8ff", linewidth: 5.0, transparent: true, dashed: true, dashSize: 0.6, gapSize: 0.6, worldUnits: false }); try{ m.depthTest=false; m.depthWrite=false; }catch{} return m; })(),
+        THREAD_SYMBOLIC_MAJOR: new LineMaterial({
+            color: "#00c8ff",
+            linewidth: 5.0,
+            transparent: true,
+            dashed: true,
+            dashSize: 0.6,
+            gapSize: 0.6,
+            worldUnits: false,
+            depthTest: false,
+            depthWrite: false,
+        }),
     },
     LOOP: {
         BASE: new LineMaterial({
@@ -127,7 +147,7 @@ export class CADmaterialWidget {
         try {
             const savedHover = this._settings['__HOVER_COLOR__'];
             if (savedHover) SelectionFilter.setHoverColor(savedHover);
-        } catch (_) {}
+        } catch (_) { }
 
         const hoverRow = makeRightSpan();
         const hoverLabel = document.createElement('label');
@@ -251,7 +271,7 @@ export class CADmaterialWidget {
     _saveAllSettings() {
         try {
             LS.setItem(this._storageKey, JSON.stringify(this._settings));
-        } catch {/* ignore */}
+        } catch {/* ignore */ }
     }
     _getMatKey(labelText) {
         return String(labelText);

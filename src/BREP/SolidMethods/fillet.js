@@ -86,12 +86,12 @@ export async function fillet(opts = {}) {
   for (const e of unique) {
     const name = `${featureID}_FILLET_${idx++}`;
     const res = filletSolid({ edgeToFillet: e, radius, sideMode: dir, inflate, debug, name }) || {};
-    
+
     // Handle debug solids even on failure
     if (debug || !res.finalSolid) {
       try { if (res.tube) debugAdded.push(res.tube); } catch { }
       try { if (res.wedge) debugAdded.push(res.wedge); } catch { }
-      
+
       // If there was an error, log it and add debug info
       if (res.error) {
         console.warn(`Fillet failed for edge ${e?.name || idx}: ${res.error}`);
@@ -107,7 +107,7 @@ export async function fillet(opts = {}) {
       });
       continue;
     }
-    
+
     const tangents = [];
     // Use actual tangent polylines returned from builder for accurate snapping and overlays
     try {
@@ -140,11 +140,14 @@ export async function fillet(opts = {}) {
     const islandThreshold = estimateIslandThreshold(result, filletSolid);
     let removedIslands = 0;
     try {
-      removedIslands = result.removeSmallIslands({
+      removedIslands = await result.removeSmallIslands({
         maxTriangles: islandThreshold,
         removeInternal: true,
         removeExternal: true,
       });
+
+
+      await result.removeZeroThicknessSections();
       result.visualize();
       if (removedIslands > 0) {
         console.log('[Solid.fillet] Removed small islands after fillet boolean', {
