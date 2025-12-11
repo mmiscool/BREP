@@ -137,44 +137,46 @@ export async function fillet(opts = {}) {
     const operation = (dir === 'OUTSET') ? 'union' : 'subtract';
     result = (operation === 'union') ? result.union(filletSolid) : result.subtract(filletSolid);
 
-    const islandThreshold = estimateIslandThreshold(result, filletSolid);
-    let removedIslands = 0;
-    try {
-      removedIslands = await result.removeSmallIslands({
-        maxTriangles: islandThreshold,
-        removeInternal: true,
-        removeExternal: true,
-      });
+    // const islandThreshold = estimateIslandThreshold(result, filletSolid);
+    // let removedIslands = 0;
+    // try {
+    //   removedIslands = await result.removeSmallIslands({
+    //     maxTriangles: islandThreshold,
+    //     removeInternal: true,
+    //     removeExternal: true,
+    //   });
 
 
-      await result.removeZeroThicknessSections();
-      result.visualize();
-      if (removedIslands > 0) {
-        console.log('[Solid.fillet] Removed small islands after fillet boolean', {
-          featureID,
-          removedTriangles: removedIslands,
-          threshold: islandThreshold,
-          operation,
-        });
-      }
-    } catch (err) {
-      console.warn('[Solid.fillet] removeSmallIslands failed after fillet boolean', {
-        featureID,
-        error: err?.message || err,
-        threshold: islandThreshold,
-        operation,
-      });
-    }
+    //   await result.removeZeroThicknessSections();
+      
+    //   if (removedIslands > 0) {
+    //     console.log('[Solid.fillet] Removed small islands after fillet boolean', {
+    //       featureID,
+    //       removedTriangles: removedIslands,
+    //       threshold: islandThreshold,
+    //       operation,
+    //     });
+    //   }
+    // } catch (err) {
+    //   console.warn('[Solid.fillet] removeSmallIslands failed after fillet boolean', {
+    //     featureID,
+    //     error: err?.message || err,
+    //     threshold: islandThreshold,
+    //     operation,
+    //   });
+    // }
+    
+    result.visualize();
 
     const afterTri = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
-    console.log('[Solid.fillet] Applied fillet boolean', {
-      featureID,
-      operation,
-      beforeTriangles: beforeTri,
-      afterTriangles: afterTri,
-      removedIslands,
-      islandThreshold,
-    });
+    // console.log('[Solid.fillet] Applied fillet boolean', {
+    //   featureID,
+    //   operation,
+    //   beforeTriangles: beforeTri,
+    //   afterTriangles: afterTri,
+    //   removedIslands,
+    //   islandThreshold,
+    // });
     // Name the result for scene grouping/debugging
     try { result.name = this.name; } catch { }
   }

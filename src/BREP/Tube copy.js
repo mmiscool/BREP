@@ -44,81 +44,36 @@ function normalizePath(points, requestedClosed, tol) {
   return { points: clean, closed: isClosed };
 }
 
-function trimPlaneFromPoints(anchor, neighbor, invert = false) {
-  if (!anchor || !neighbor) return null;
-  const normalVec = new THREE.Vector3().subVectors(neighbor, anchor);
-  if (normalVec.lengthSq() <= EPS) return null;
-  if (invert) normalVec.negate();
-  normalVec.normalize();
-  return {
-    anchor,
-    normalVec,
-    normalArray: [normalVec.x, normalVec.y, normalVec.z],
-    offset: normalVec.dot(anchor),
-  };
-}
-
-function applyTrimPlaneSequentially(spheres, points, radius, plane, iterateForward = true) {
-  if (!plane || !Array.isArray(spheres) || !Array.isArray(points) || !(radius > 0)) return;
-
-  const start = iterateForward ? 0 : spheres.length - 1;
-  const end = iterateForward ? spheres.length : -1;
-  const step = iterateForward ? 1 : -1;
-  for (let idx = start; idx !== end; idx += step) {
-    const center = points[idx];
-    if (!center) continue;
-    if (center.distanceTo(plane.anchor) > radius) break;
-    const sphere = spheres[idx];
-    if (!sphere) continue;
-    const trimmed = sphere.trimByPlane(plane.normalArray, plane.offset);
-    if (!trimmed) {
-      spheres[idx] = trimmed;
-      continue;
-    }
-    if (trimmed !== sphere) {
-      try { if (typeof sphere.delete === 'function') sphere.delete(); } catch { }
-      spheres[idx] = trimmed;
-    } else {
-      spheres[idx] = trimmed;
-    }
-  }
-}
-
-function buildHullChain(points, radius, resolution, closed, { keepSpheres = false, trimPlanes = null } = {}) {
-  if (!Array.isArray(points) || points.length < 2) return { hull: null, spheres: [] };
+function buildHullChain(points, radius, resolution, closed, customSpheres = null) {
+  if (!Array.isArray(points) || points.length < 2) return null;
 
   const baseSphere = Manifold.sphere(radius, resolution);
-  const spheres = points.map(pt => baseSphere.translate([pt.x, pt.y, pt.z]));
-  try { if (typeof baseSphere.delete === 'function') baseSphere.delete(); } catch { }
-
-  if (!closed && trimPlanes) {
-    if (trimPlanes.start) applyTrimPlaneSequentially(spheres, points, radius, trimPlanes.start, true);
-    if (trimPlanes.end) applyTrimPlaneSequentially(spheres, points, radius, trimPlanes.end, false);
-  }
+  const spheres = customSpheres && Array.isArray(customSpheres) && customSpheres.length === points.length
+    ? customSpheres
+    : points.map(pt => baseSphere.translate([pt.x, pt.y, pt.z]));
+  try { if (!customSpheres && typeof baseSphere.delete === 'function') baseSphere.delete(); } catch { }
 
   const hulls = [];
   const segmentCount = closed ? points.length : points.length - 1;
   for (let i = 0; i < segmentCount; i++) {
     const a = points[i];
     const b = points[(i + 1) % points.length];
-    const sphereA = spheres[i];
-    const sphereB = spheres[(i + 1) % spheres.length];
-    if (!a || !b || !sphereA || !sphereB) continue;
+    if (!a || !b) continue;
     if (a.distanceToSquared(b) < EPS * EPS) continue;
-    hulls.push(Manifold.hull([sphereA, sphereB]));
+    hulls.push(Manifold.hull([spheres[i], spheres[(i + 1) % spheres.length]]));
   }
 
-  if (!keepSpheres) {
+  if (!customSpheres) {
     for (const s of spheres) { try { if (s && typeof s.delete === 'function') s.delete(); } catch { } }
   }
 
-  if (!hulls.length) return { hull: null, spheres: keepSpheres ? spheres : [] };
-  if (hulls.length === 1) return { hull: hulls[0], spheres: keepSpheres ? spheres : [] };
+  if (!hulls.length) return null;
+  if (hulls.length === 1) return hulls[0];
 
   let combined = null;
   try {
     combined = Manifold.union(hulls);
-    return { hull: combined, spheres: keepSpheres ? spheres : [] };
+    return combined;
   } finally {
     for (const h of hulls) {
       if (h && h !== combined) {
@@ -128,10 +83,41 @@ function buildHullChain(points, radius, resolution, closed, { keepSpheres = fals
   }
 }
 
-function buildHullTube(points, radius, resolution, closed, keepSpheres = false, trimPlanes = null) {
-  const { hull, spheres } = buildHullChain(points, radius, resolution, closed, { keepSpheres, trimPlanes });
+function trimOpenEnds(manifold, points, closed) {
+  if (closed || !manifold || points.length < 2) return manifold;
+
+  let trimmed = manifold;
+  const maybeTrim = (normalVec, anchorPoint) => {
+    if (!normalVec || normalVec.lengthSq() <= EPS || !anchorPoint) return;
+    normalVec.normalize();
+    const offset = normalVec.dot(anchorPoint);
+    const next = trimmed.trimByPlane([normalVec.x, normalVec.y, normalVec.z], offset);
+    if (next && next !== trimmed) {
+      try { if (trimmed !== manifold && typeof trimmed.delete === 'function') trimmed.delete(); } catch { }
+      trimmed = next;
+    } else {
+      trimmed = next;
+    }
+  };
+
+  const startDir = new THREE.Vector3().subVectors(points[1], points[0]);
+  maybeTrim(startDir, points[0]);
+
+  const endDir = new THREE.Vector3().subVectors(points[points.length - 1], points[points.length - 2]);
+  if (endDir.lengthSq() > EPS) endDir.normalize().negate(); // point back into the tube
+  maybeTrim(endDir, points[points.length - 1]);
+
+  return trimmed;
+}
+
+function buildHullTube(points, radius, resolution, closed) {
+  const hull = buildHullChain(points, radius, resolution, closed);
   if (!hull) throw new Error('Unable to build tube hulls from the supplied path.');
-  return { manifold: hull, spheres };
+  const trimmed = trimOpenEnds(hull, points, closed);
+  if (trimmed !== hull) {
+    try { if (hull && typeof hull.delete === 'function') hull.delete(); } catch { }
+  }
+  return trimmed;
 }
 
 function rebuildSolidFromManifold(target, manifold, faceMap) {
@@ -206,11 +192,9 @@ function relabelFaces(solid, pathPoints, startNormal, endNormal, outerRadius, in
     const centroid = new THREE.Vector3(cx, cy, cz);
 
     let assigned = idOuter;
-    const distToStart = centroid.distanceTo(pathPoints[0]);
-    const distToEnd = centroid.distanceTo(pathPoints[pathPoints.length - 1]);
-    if (!closed && nStart && Math.abs(nStart.dot(centroid) - startOffset) <= capTol && distToStart <= outerRadius + capTol) {
+    if (!closed && nStart && Math.abs(nStart.dot(centroid) - startOffset) <= capTol) {
       assigned = idCapStart;
-    } else if (!closed && nEnd && Math.abs(nEnd.dot(centroid) - endOffset) <= capTol && distToEnd <= outerRadius + capTol) {
+    } else if (!closed && nEnd && Math.abs(nEnd.dot(centroid) - endOffset) <= capTol) {
       assigned = idCapEnd;
     } else if (innerRadius > 0) {
       const dist = minDistanceToPolyline(centroid, polyline);
@@ -256,19 +240,6 @@ function lastTangent(points) {
   return null;
 }
 
-function singleFaceSolidFromManifold(manifold, faceName) {
-  const name = faceName || 'Sphere';
-  const solid = Solid._fromManifold(manifold, new Map([[0, name]]));
-  const id = solid._getOrCreateID(name);
-  const triCount = (solid._triVerts.length / 3) | 0;
-  solid._triIDs = new Array(triCount).fill(id);
-  solid._idToFaceName = new Map([[id, name]]);
-  solid._faceNameToID = new Map([[name, id]]);
-  solid._dirty = true;
-  try { solid._manifoldize(); } catch { }
-  return solid;
-}
-
 export class TubeSolid extends Solid {
   /**
    * Build a tube solid along a polyline using convex hulls between spheres.
@@ -282,8 +253,8 @@ export class TubeSolid extends Solid {
    */
   constructor(opts = {}) {
     super();
-    const { points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = false, name = 'Tube', debugSpheres = false } = opts;
-    this.params = { points, radius, innerRadius, resolution, closed, name, debugSpheres };
+    const { points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = false, name = 'Tube' } = opts;
+    this.params = { points, radius, innerRadius, resolution, closed, name };
     this.name = name;
 
     if (Array.isArray(points) && points.length >= 2) {
@@ -307,7 +278,7 @@ export class TubeSolid extends Solid {
   }
 
   generate() {
-    const { points, radius, innerRadius, resolution, closed, name, debugSpheres } = this.params;
+    const { points, radius, innerRadius, resolution, closed, name } = this.params;
     if (!(radius > 0)) {
       throw new Error('Tube radius must be greater than zero.');
     }
@@ -336,22 +307,30 @@ export class TubeSolid extends Solid {
     }
 
     const faceTag = name || 'Tube';
-    const keepSpheres = !!debugSpheres;
+    // Endpoint normals for relabeling and trimming
     const startNormal = isClosed ? null : firstTangent(cleanPoints);
     const endNormal = isClosed ? null : lastTangent(cleanPoints);
     const endCutNormal = endNormal ? endNormal.clone().negate() : null; // point back into tube
-    const trimPlanes = isClosed
-      ? null
-      : {
-          start: trimPlaneFromPoints(cleanPoints[0], cleanPoints[1]),
-          end: trimPlaneFromPoints(cleanPoints[cleanPoints.length - 1], cleanPoints[cleanPoints.length - 2]),
-        };
 
-    const { manifold: outerManifold, spheres: outerSpheres } = buildHullTube(cleanPoints, radius, segs, isClosed, keepSpheres, trimPlanes);
+    const outerHull = buildHullChain(cleanPoints, radius, segs, isClosed);
+    if (!outerHull) {
+      throw new Error('Unable to build tube hulls from the supplied path.');
+    }
+    const outerManifold = trimOpenEnds(outerHull, cleanPoints, isClosed);
+    if (outerManifold !== outerHull) {
+      try { if (outerHull && typeof outerHull.delete === 'function') outerHull.delete(); } catch { }
+    }
     let finalSolid;
 
     if (inner > 0) {
-      const { manifold: innerManifold, spheres: innerSpheres } = buildHullTube(cleanPoints, inner, segs, isClosed, keepSpheres, trimPlanes);
+      const innerHull = buildHullChain(cleanPoints, inner, segs, isClosed);
+      if (!innerHull) {
+        throw new Error('Unable to build tube hulls for inner radius.');
+      }
+      const innerManifold = trimOpenEnds(innerHull, cleanPoints, isClosed);
+      if (innerManifold !== innerHull) {
+        try { if (innerHull && typeof innerHull.delete === 'function') innerHull.delete(); } catch { }
+      }
 
       const outerSolid = Solid._fromManifold(outerManifold, new Map([[0, `${faceTag}_Outer`]]));
       const innerSolid = Solid._fromManifold(innerManifold, new Map([[0, `${faceTag}_Inner`]]));
@@ -359,18 +338,8 @@ export class TubeSolid extends Solid {
       try { outerSolid.free(); } catch { }
       try { innerSolid.free(); } catch { }
       try { if (innerManifold && typeof innerManifold.delete === 'function') innerManifold.delete(); } catch { }
-      if (keepSpheres) {
-        this.debugSphereSolids = [
-          ...(this.debugSphereSolids || []),
-          ...outerSpheres.map((m, idx) => singleFaceSolidFromManifold(m, `${faceTag}_sphere_outer_${idx + 1}`)),
-          ...innerSpheres.map((m, idx) => singleFaceSolidFromManifold(m, `${faceTag}_sphere_inner_${idx + 1}`)),
-        ];
-      }
     } else {
       finalSolid = Solid._fromManifold(outerManifold, new Map([[0, `${faceTag}_Outer`]]));
-      if (keepSpheres) {
-        this.debugSphereSolids = outerSpheres.map((m, idx) => singleFaceSolidFromManifold(m, `${faceTag}_sphere_${idx + 1}`));
-      }
     }
 
     let relabeled = relabelFaces(finalSolid, cleanPoints, startNormal, endCutNormal, radius, inner, isClosed, faceTag);
