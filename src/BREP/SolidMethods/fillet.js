@@ -205,6 +205,16 @@ export async function fillet(opts = {}) {
     console.log(`⚠️ Failure Debug: Added ${debugAdded.length} debug solids to result`);
   }
 
+  // Simplify the final result in place to clean up artifacts from booleans.
+  try {
+    const tol = getDistanceTolerance(radius);
+    await result.simplify(tol, true);
+    await result._weldVerticesByEpsilon(.01);
+    await result.collapseTinyTriangles();
+  } catch (err) {
+    console.warn('[Solid.fillet] simplify failed; continuing without simplification', { featureID, error: err?.message || err });
+  }
+
 
   // await result._manifoldize();
   // await result._weldVerticesByEpsilon(0.07);

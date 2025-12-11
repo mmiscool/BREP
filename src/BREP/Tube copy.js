@@ -165,6 +165,12 @@ function relabelFaces(solid, pathPoints, startNormal, endNormal, outerRadius, in
   const triCount = (solid._triVerts.length / 3) | 0;
   if (!triCount) return solid;
 
+  // Allocate fresh, globally unique face IDs. Manifold-built hulls may reuse
+  // low IDs (e.g., 0) which will collide across tube solids during booleans
+  // and merge separate faces under one label.
+  solid._faceNameToID = new Map();
+  solid._idToFaceName = new Map();
+
   const nStart = startNormal ? startNormal.clone().normalize() : null;
   const nEnd = endNormal ? endNormal.clone().normalize() : null;
   const startOffset = nStart ? nStart.dot(pathPoints[0]) : 0;
