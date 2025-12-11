@@ -2,6 +2,11 @@ import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 
 const inputParamsSchema = {
+    id: {
+    type: "string",
+    default_value: null,
+    hint: "unique identifier for the loft feature",
+  },
   solids: {
     type: "reference_selection",
     selectionFilter: ["SOLID"],
@@ -110,7 +115,7 @@ export class TransformFeature {
       } else {
         // Name copies with _COPY suffix
         const base = src.name || 'Solid';
-        dst.name = base.endsWith('_COPY') ? base : `${base}_COPY`;
+        dst.name = `${base}_${this.inputParams.id}`;
       }
       dst.visualize();
 
