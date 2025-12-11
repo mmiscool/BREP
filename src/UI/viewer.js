@@ -421,7 +421,9 @@ export class Viewer {
         await expressionsSection.uiElement.appendChild(await this.expressionsManager.uiElement);
 
         // Setup sceneManagerUi
-        this.sceneManagerUi = await new SceneListing(this.scene);
+        this.sceneManagerUi = await new SceneListing(this.scene, {
+            onSelection: (obj) => this._applySelectionTarget(obj, { triggerOnClick: false, allowDiagnostics: false }),
+        });
         const sceneSection = await this.accordion.addSection("Scene Manager");
         await sceneSection.uiElement.appendChild(this.sceneManagerUi.uiElement);
 
@@ -1253,15 +1255,19 @@ export class Viewer {
         this._applySelectionTarget(chosen);
     }
 
-    _applySelectionTarget(target) {
+    _applySelectionTarget(target, options = {}) {
         if (!target) return;
+        const {
+            triggerOnClick = true,
+            allowDiagnostics = true,
+        } = options;
         try {
             if (target.type && typeof SelectionFilter.matchesAllowedType === 'function' && SelectionFilter.matchesAllowedType(target.type)) {
                 SelectionFilter.setCurrentType?.(target.type);
             }
         } catch { }
         // One-shot diagnostic inspector
-        if (this._diagPickOnce) {
+        if (allowDiagnostics && this._diagPickOnce) {
             this._diagPickOnce = false;
             try { this._showDiagnosticsFor(target); } catch (e) { try { console.warn('Diagnostics failed:', e); } catch { } }
             // Restore selection filter if we changed it
@@ -1279,7 +1285,7 @@ export class Viewer {
             try { metadataPanel.handleSelection(target); }
             catch (e) { try { console.warn('Metadata panel update failed:', e); } catch { } }
         }
-        if (typeof target.onClick === 'function') {
+        if (triggerOnClick && typeof target.onClick === 'function') {
             try { target.onClick(); } catch { }
         }
     }

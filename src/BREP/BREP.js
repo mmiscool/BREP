@@ -3,7 +3,8 @@ import { Edge, Face, Solid, Vertex } from "./BetterSolid.js";
 import { Cube, Pyramid, Sphere, Cylinder, Cone, Torus } from "./primitives.js";
 import { Sweep } from "./Sweep.js";
 import { Revolve } from "./Revolve.js";
-import { TubeSolid } from "./Tube.js";
+import { Tube } from "./Tube.js";
+import { TubeFast } from "./TubeFast.js";
 import { ChamferSolid } from "./chamfer.js";
 import { ExtrudeSolid } from "./Extrude.js";
 import { filletSolid, computeFilletCenterline, attachFilletCenterlineAuxEdge } from "./fillets/fillet.js";
@@ -26,7 +27,8 @@ export const BREP = {
     Cylinder,
     Cone,
     Torus,
-    Tube: TubeSolid,
+    Tube,
+    TubeFast,
     Sweep,
     Revolve,
     ExtrudeSolid,

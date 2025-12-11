@@ -275,7 +275,7 @@ function singleFaceSolidFromManifold(manifold, faceName) {
   return solid;
 }
 
-export class TubeSolid extends Solid {
+export class Tube extends Solid {
   /**
    * Build a tube solid along a polyline using convex hulls between spheres.
    * @param {object} [opts]

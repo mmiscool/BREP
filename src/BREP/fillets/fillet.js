@@ -17,10 +17,30 @@ import {
     solveCenterFromOffsetPlanesAnchored,
 } from './outset.js';
 import { offsetAndMovePoints } from "./offsetHelper.js";
-import { TubeSolid } from "../Tube.js";
+import { Tube } from "../Tube.js";
+import { TubeFast } from "../TubeFast.js";
 
 export { clearFilletCaches, trimFilletCaches } from './inset.js';
 export { fixTJunctionsAndPatchHoles } from './outset.js';
+
+function computeFaceAreaFromTriangles(tris) {
+    if (!Array.isArray(tris)) return 0;
+    let area = 0;
+    for (const tri of tris) {
+        const p1 = tri?.p1, p2 = tri?.p2, p3 = tri?.p3;
+        if (!Array.isArray(p1) || !Array.isArray(p2) || !Array.isArray(p3)) continue;
+        const ax = Number(p1[0]) || 0, ay = Number(p1[1]) || 0, az = Number(p1[2]) || 0;
+        const bx = Number(p2[0]) || 0, by = Number(p2[1]) || 0, bz = Number(p2[2]) || 0;
+        const cx = Number(p3[0]) || 0, cy = Number(p3[1]) || 0, cz = Number(p3[2]) || 0;
+        const ux = bx - ax, uy = by - ay, uz = bz - az;
+        const vx = cx - ax, vy = cy - ay, vz = cz - az;
+        const nx = uy * vz - uz * vy;
+        const ny = uz * vx - ux * vz;
+        const nz = ux * vy - uy * vx;
+        area += 0.5 * Math.hypot(nx, ny, nz);
+    }
+    return area;
+}
 
 
 
@@ -678,7 +698,7 @@ export function attachFilletCenterlineAuxEdge(solid, edgeObj, radius = 1, sideMo
 
 
 // Functional API: builds fillet tube and wedge and returns them.
-export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debug = false, name = 'fillet', inflate = 0.1 } = {}) {
+export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debug = false, name = 'fillet', inflate = 0.1, useTubeFast = true } = {}) {
     try {
         // Validate inputs
         if (!edgeToFillet) {
@@ -969,7 +989,7 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         // Build tube from the ORIGINAL centerline (not the modified copy)
         let filletTube = null;
         try {
-            // TubeSolid expects [x,y,z] arrays; convert original {x,y,z} objects
+            // Tube expects [x,y,z] arrays; convert original {x,y,z} objects
             let tubePoints = tubePathOriginal.map(p => [p.x, p.y, p.z]);
 
             if (closedLoop) {
@@ -1035,7 +1055,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             }
 
             const inflatedTubeRadius = radius * 1.01;
-            filletTube = new TubeSolid({
+            const TubeBuilder = useTubeFast ? TubeFast : Tube;
+            filletTube = new TubeBuilder({
                 points: tubePoints,
                 radius: inflatedTubeRadius,
                 innerRadius: 0,
@@ -1057,11 +1078,29 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 };
                 if (edgeToFillet?.name) overrideMeta.edgeReference = edgeToFillet.name;
                 filletTube.setFaceMetadata(faceTag, overrideMeta);
+
+                // Capture tube cap area + round face label for post-boolean retagging (non-closed only).
+                if (!closedLoop) {
+                    const roundFaceName = faceTag;
+                    const markTubeCap = (capName) => {
+                        const tris = filletTube.getFace(capName);
+                        const area = computeFaceAreaFromTriangles(tris);
+                        if (area > 0) {
+                            filletTube.setFaceMetadata(capName, {
+                                filletSourceArea: area,
+                                filletRoundFace: roundFaceName,
+                                filletEndCap: true,
+                            });
+                        }
+                    };
+                    markTubeCap(`${name}_TUBE_CapStart`);
+                    markTubeCap(`${name}_TUBE_CapEnd`);
+                }
             } catch {
                 // Best-effort – lack of metadata should not abort fillet creation.
             }
         } catch (tubeError) {
-            console.error('TubeSolid creation failed:', tubeError?.message || tubeError);
+            console.error('Tube creation failed:', tubeError?.message || tubeError);
 
             // Return debug information even on tube failure
             const debugWedge = new Solid();
@@ -1323,6 +1362,26 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 console.warn('Failed to apply end cap offset:', pushError?.message || pushError);
             }
         }
+
+        // Record areas and target round-face label for post-boolean relabeling.
+        const roundFaceName = `${name}_TUBE_Outer`;
+        const markFace = (faceName, isEndCap = false) => {
+            const tris = wedgeSolid.getFace(faceName);
+            const area = computeFaceAreaFromTriangles(tris);
+            if (area > 0) {
+                wedgeSolid.setFaceMetadata(faceName, {
+                    filletSourceArea: area,
+                    filletRoundFace: roundFaceName,
+                    filletEndCap: !!isEndCap,
+                });
+            }
+        };
+        if (!closedLoop) {
+            markFace(`${name}_END_CAP_1`, true);
+            markFace(`${name}_END_CAP_2`, true);
+        }
+        markFace(`${name}_WEDGE_A`, false);
+        markFace(`${name}_WEDGE_B`, false);
 
         try {
             const finalSolid = wedgeSolid.subtract(filletTube);
