@@ -28,6 +28,12 @@ const inputParamsSchema = {
     default_value: 32,
     hint: 'Segments around the tube circumference'
   },
+  mode: {
+    type: 'options',
+    options: ['Light (fast)', 'Heavy (slow)'],
+    default_value: 'Light (fast)',
+    hint: 'Light uses TubeFast for speed; Heavy uses Tube for the most robust geometry'
+  },
   debug: {
     type: 'boolean',
     default_value: false,
@@ -370,7 +376,7 @@ export class TubeFeature {
   }
 
   async run(partHistory) {
-    const { featureID, path, radius, innerRadius, resolution, debug } = this.inputParams;
+    const { featureID, path, radius, innerRadius, resolution, debug, mode } = this.inputParams;
     const radiusValue = Number(radius);
     if (!(radiusValue > 0)) {
       throw new Error('Tube requires a positive radius.');
@@ -393,6 +399,11 @@ export class TubeFeature {
     }
 
     const baseResolution = Math.max(8, Math.floor(Number(resolution) || 32));
+    const modeSelection = typeof mode === 'string'
+      ? mode
+      : (mode == null ? inputParamsSchema.mode.default_value : String(mode));
+    const useTubeFast = String(modeSelection || '').toLowerCase().startsWith('light');
+    const TubeBuilder = useTubeFast ? BREP.TubeFast : BREP.Tube;
     const outerSolids = [];
     const innerSolids = [];
     const debugExtras = [];
@@ -438,6 +449,8 @@ export class TubeFeature {
           radius: radiusValue,
           innerRadius: inner,
           resolution: baseResolution,
+          mode: modeSelection,
+          builder: useTubeFast ? 'TubeFast' : 'Tube',
           groupIndex: i,
           isClosedLoop,
           pathPointCount: finalPoints.length,
@@ -445,7 +458,7 @@ export class TubeFeature {
         });
       }
 
-      const outerTube = new BREP.Tube({
+      const outerTube = new TubeBuilder({
         points: finalPoints,
         radius: radiusValue,
         innerRadius: 0,
@@ -468,7 +481,7 @@ export class TubeFeature {
         const innerPoints = (!isClosedLoop && capExtension > 0)
           ? extendPathEndpoints(finalPoints, capExtension)
           : finalPoints;
-        const innerTube = new BREP.Tube({
+        const innerTube = new TubeBuilder({
           points: innerPoints,
           radius: inner,
           innerRadius: 0,
