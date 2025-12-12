@@ -27,7 +27,7 @@ const dialogStyle = {
 
 // Buttons follow the app's neutral button style; the "confirm" style is the emphasized/primary look.
 const neutralButtonStyle = {
-    appearance: 'none',
+    //appearance: 'none',
     border: '1px solid var(--border, #262b36)',
     background: 'linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03))',
     color: 'var(--text, #e6e6e6)',

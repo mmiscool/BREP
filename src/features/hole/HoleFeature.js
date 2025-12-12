@@ -741,6 +741,8 @@ export class HoleFeature {
     const holeRecords = [];
     const debugVisualizationObjects = []; // Store debug viz objects separately
     centers.forEach((c, idx) => {
+      const pointName = sourceNames[idx] || null;
+      const holeFacePrefix = pointName || (featureID ? `${featureID}_${idx}` : `HOLE_${idx}`);
       const { solids: toolSolids, descriptors } = makeHoleTool({
         holeType,
         radius,
@@ -750,7 +752,7 @@ export class HoleFeature {
         boreDia,
         boreDepth,
         res,
-        featureID: featureID ? `${featureID}_${idx}` : null,
+        featureID: holeFacePrefix,
         omitStraight: threaded,
       });
       // annotate faces with hole metadata before union so labels propagate
@@ -829,8 +831,8 @@ export class HoleFeature {
               includeCore: false, // Core disabled - helical surface only for now
               resolution: res,
               segmentsPerTurn: threadSegmentsPerTurn,
-              name: featureID ? `${featureID}_THREAD_${idx}` : 'THREAD',
-              faceName: featureID ? `${featureID}_THREAD_FACE` : 'THREAD',
+              name: `${holeFacePrefix}_THREAD`,
+              faceName: `${holeFacePrefix}_THREAD_FACE`,
               axis: [0, 1, 0],
               origin: [0, threadStartEffective, 0],
               xDirection: [1, 0, 0],
@@ -858,7 +860,7 @@ export class HoleFeature {
             };
             const coreR0 = minorRadiusAt(0);
             const coreR1 = minorRadiusAt(threadLengthEffective);
-            const coreName = featureID ? `${featureID}_THREAD_CORE_${idx}` : 'THREAD_CORE';
+            const coreName = `${holeFacePrefix}_THREAD_CORE`;
             const coreHeight = threadLengthEffective;
             if (coreHeight > 0) {
               const coreSolid = threadGeomScaled.isTapered && Math.abs(coreR0 - coreR1) > 1e-6

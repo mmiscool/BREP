@@ -9,10 +9,10 @@ Helix creates a parametric helical curve you can reuse as a path for sweeps, tub
 ## Inputs
 - `radius` – Base radius of the helix.
 - `endRadius` – Optional end radius for tapering.
-- `pitch` – Distance advanced per turn along the axis.
-- `lengthMode` – Choose whether `turns` or `height` drives total length.
-- `turns` – Number of turns (used in `turns` mode).
-- `height` – Total height along the axis (used in `height` mode).
+- `mode` – Choose whether `turns` or `pitch` drives total length (height is always applied).
+- `pitch` – Distance advanced per turn along the axis (editable in `pitch` mode; derived in `turns` mode).
+- `turns` – Number of turns (used in `turns` mode; derived in `pitch` mode).
+- `height` – Total height along the axis.
 - `startAngle` – Starting angle in degrees.
 - `handedness` – Choose right- or left-handed winding.
 - `resolution` – Segments per turn for the preview polyline.

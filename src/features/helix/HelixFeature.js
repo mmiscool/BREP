@@ -49,35 +49,7 @@ const inputParamsSchema = {
     default_value: 5,
     hint: "Optional end radius to taper the helix",
   },
-  pitch: {
-    type: "number",
-    default_value: 5,
-    step:1,
-    min: 0.001,
-    hint: "Distance advanced per turn along the helix axis (must be non-zero)",
-  },
-  lengthMode: {
-    type: "options",
-    options: ["turns", "height"],
-    default_value: "turns",
-    hint: "Control helix length by turn count or explicit height",
-  },
-  turns: {
-    type: "number",
-    default_value: 3,
-    hint: "Number of turns (used when length mode is 'turns')",
-  },
-  height: {
-    type: "number",
-    default_value: 15,
-    hint: "Total height along the axis (used when length mode is 'height')",
-  },
-  startAngle: {
-    type: "number",
-    default_value: 0,
-    hint: "Starting angle in degrees",
-  },
-  handedness: {
+    handedness: {
     type: "options",
     options: ["right", "left"],
     default_value: "right",
@@ -87,6 +59,35 @@ const inputParamsSchema = {
     type: "number",
     default_value: 64,
     hint: "Segments per turn for the helix polyline",
+  },
+  mode: {
+    type: "options",
+    options: ["turns", "pitch"],
+    default_value: "turns",
+    label: "Mode",
+    hint: "Control helix using turn count or pitch; height is always applied",
+  },
+  height: {
+    type: "number",
+    default_value: 15,
+    hint: "Total height along the axis",
+  },
+  turns: {
+    type: "number",
+    default_value: 3,
+    hint: "Number of turns (used in mode 'turns'; derived in mode 'pitch')",
+  },
+  pitch: {
+    type: "number",
+    default_value: 5,
+    step: 1,
+    min: 0.001,
+    hint: "Distance advanced per turn along the helix axis (editable in mode 'pitch'; derived otherwise)",
+  },
+  startAngle: {
+    type: "number",
+    default_value: 0,
+    hint: "Starting angle in degrees",
   },
 };
 
@@ -203,20 +204,22 @@ export class HelixFeature {
 
   uiFieldsTest() {
     const placementMode = String(this.inputParams?.placementMode || "transform").toLowerCase();
-    const lengthMode = String(this.inputParams?.lengthMode || "turns").toLowerCase();
+    const modeRaw = this.inputParams?.mode ?? this.inputParams?.lengthMode;
+    const modeNormalized = String(modeRaw || "turns").toLowerCase();
+    const mode = modeNormalized === "pitch" || modeNormalized === "height" ? "pitch" : "turns";
+    if (!this.inputParams?.mode && this.inputParams?.lengthMode) {
+      this.inputParams.mode = mode;
+    }
 
-    const include = ["placementMode"];
+    const include = ["placementMode","radius", "endRadius", "mode","height","startAngle", "handedness", "resolution"];
     if (placementMode.startsWith("axis")) {
       include.push("axis", "startPoint");
     }
-    include.push("radius", "endRadius", "lengthMode");
-    if (lengthMode === "height") {
+    if (mode === "pitch") {
       include.push("pitch");
-      include.push("height");
     } else {
       include.push("turns");
     }
-    include.push("startAngle", "handedness", "resolution");
     if (!placementMode.startsWith("axis")) {
       include.push("transform");
     }
@@ -252,10 +255,12 @@ export class HelixFeature {
     if (!Number.isFinite(pitch) || pitch < minPitch) {
       throw new Error(`HelixFeature: pitch must be a non-zero number (received ${this.inputParams.pitch}).`);
     }
-    const lengthMode =
-      String(this.inputParams.lengthMode || "turns").toLowerCase() === "height"
-        ? "height"
-        : "turns";
+    const modeRaw = this.inputParams.mode ?? this.inputParams.lengthMode;
+    const normalizedMode = String(modeRaw || "turns").toLowerCase();
+    const mode = normalizedMode === "pitch" || normalizedMode === "height" ? "pitch" : "turns";
+    if (!this.inputParams.mode && this.inputParams.lengthMode) {
+      this.inputParams.mode = mode;
+    }
     const turns = toNumber(this.inputParams.turns, 3);
     const height = toNumber(
       this.inputParams.height,
@@ -292,7 +297,8 @@ export class HelixFeature {
       pitch,
       turns,
       height,
-      lengthMode,
+      mode,
+      lengthMode: mode, // support legacy naming
       startAngleDeg,
       handedness,
       segmentsPerTurn: resolution,
@@ -330,7 +336,8 @@ export class HelixFeature {
         handedness,
         clockwise: helixData.clockwise,
         startAngleDeg,
-        lengthMode,
+        mode,
+        lengthMode: mode,
         resolution,
         placementMode,
       },
