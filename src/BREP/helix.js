@@ -158,10 +158,12 @@ export function buildHelixPolyline(opts = {}) {
   const axisDir = new THREE.Vector3(0, 0, axisSign).applyMatrix3(normalMat).normalize();
 
   const polyline = [];
+  // Keep winding direction stable even if the helix height is negative by folding the axis sign into angular direction
+  const angularSign = angleSign * axisSign;
   const tmp = new THREE.Vector3();
   for (let i = 0; i <= totalSeg; i++) {
     const t = i / totalSeg;
-    const theta = startAngleRad + angleSign * (turns * t * Math.PI * 2);
+    const theta = startAngleRad + angularSign * (turns * t * Math.PI * 2);
     const radius = r0 + (r1 - r0) * t;
     tmp.set(Math.cos(theta) * radius, Math.sin(theta) * radius, height * t * axisSign);
     tmp.applyMatrix4(placement);
