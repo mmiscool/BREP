@@ -1251,7 +1251,7 @@ export class SchemaForm {
       .control-wrap { display: flex; flex-direction: column; gap: 6px; }
 
       .input, .select {
-        appearance: none;
+   
         background: var(--input-bg);
         color: var(--text);
         border: 1px solid var(--border);

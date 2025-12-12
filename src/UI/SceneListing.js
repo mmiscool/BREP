@@ -5,11 +5,12 @@ import { SelectionFilter } from './SelectionFilter.js';
 export class SceneListing {
     /**
      * @param {THREE.Scene} scene
-     * @param {{autoStart?: boolean}} [options]
+     * @param {{autoStart?: boolean, onSelection?: (obj: any) => void}} [options]
      */
-    constructor(scene, { autoStart = true } = {}) {
+    constructor(scene, { autoStart = true, onSelection = null } = {}) {
         if (!scene) throw new Error("SceneListing requires a THREE.Scene.");
         this.scene = scene;
+        this._onSelection = (typeof onSelection === 'function') ? onSelection : null;
 
         // --- UI root ----------------------------------------------------------------
         this.uiElement = document.createElement("div");
@@ -214,7 +215,8 @@ export class SceneListing {
             //this.#setSelectedRecursive(obj, target);
             this.#syncAttributes();
 
-            obj.onClick();
+            try { obj.onClick(); } catch { }
+            this.#notifySelection(obj);
             // Scroll highlight
             //li.scrollIntoView({ behavior: "smooth", block: "nearest" });
             e.stopPropagation();
@@ -357,6 +359,11 @@ export class SceneListing {
                             this.#isVertex(obj) ? (obj.name || "Vertex") :
                             (obj.name || obj.type || "Item");
         return base;
+    }
+
+    #notifySelection(obj) {
+        if (!this._onSelection) return;
+        try { this._onSelection(obj); } catch { }
     }
 
     #applyTypeClass(li, obj) {

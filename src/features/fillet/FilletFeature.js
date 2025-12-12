@@ -36,6 +36,11 @@ const inputParamsSchema = {
         default_value: false,
         hint: "Experimental: snap boolean seam to computed tangents (INSET only)",
     },
+    useTubeFast: {
+        type: "boolean",
+        default_value: true,
+        hint: "Use TubeFast to build the fillet cutting solid",
+    },
     debug: {
         type: "boolean",
         default_value: false,
@@ -60,6 +65,7 @@ export class FilletFeature {
             radius: this.inputParams?.radius,
             inflate: this.inputParams?.inflate,
             snapSeam: this.inputParams?.snapSeam,
+            useTubeFast: this.inputParams?.useTubeFast,
             debug: this.inputParams?.debug,
         });
         try { clearFilletCaches(); } catch { }
@@ -111,6 +117,7 @@ export class FilletFeature {
             inflate: Number(this.inputParams.inflate) || 0,
             debug: !!this.inputParams.debug,
             snapSeam: !!this.inputParams.snapSeam,
+            useTubeFast: this.inputParams.useTubeFast !== false,
         });
         const triCount = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
         const vertCount = Array.isArray(result?._vertProperties) ? (result._vertProperties.length / 3) : 0;

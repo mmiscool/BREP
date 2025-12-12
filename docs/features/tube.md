@@ -2,7 +2,7 @@
 
 ![Tube feature dialog](Tube_dialog.png)
 
-The Tube feature sweeps a circular profile along one or more connected edges to create pipes, hoses, or other cylindrical runs that follow a path. Corners are automatically rounded by inserting smooth arcs along the path, so the resulting tube keeps a constant outer radius without sharp kinks.
+The Tube feature now builds a sequence of convex hulls between overlapping spheres placed on the path points. Those hulls are united into the final body (with optional hollowing), so even very tight corners stay self-intersection free while keeping a consistent radius.
 
 ## Inputs
 
@@ -17,6 +17,7 @@ The Tube feature sweeps a circular profile along one or more connected edges to 
 - Path edges are evaluated in world space, so you can mix sketch geometry with edges from previous features.
 - When multiple edges are selected, the feature automatically chains them end-to-end. Use construction geometry or split edges if you need explicit control over path ordering.
 - Hollow tubes generate inner and outer walls plus ring faces at the ends, keeping the part watertight.
+- Open tubes are trimmed with planes perpendicular to the first and last segments, giving clean ring ends while retaining the rounded outer body.
 
 ## Typical Workflow
 

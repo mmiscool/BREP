@@ -96,7 +96,7 @@ const buildPlacementMatrix = (opts = {}) => {
  * - Generates points for a right/left-handed helix with optional taper.
  * - Orientation is controlled by a transform matrix, or by origin/axis/xDirection.
  * - Returns world-space polyline points for reuse by features (threads, sweep paths, etc.).
- * Options: radius/endRadius, pitch + (turns|height via lengthMode), startAngleDeg/startAngle, clockwise,
+ * Options: radius/endRadius, height + pitch with mode (turns|pitch) controlling which value is derived, startAngleDeg/startAngle, clockwise,
  * segmentsPerTurn (or resolution), and placement via `transform` or `{ origin, axis, xDirection }`.
  */
 export function buildHelixPolyline(opts = {}) {
@@ -110,7 +110,8 @@ export function buildHelixPolyline(opts = {}) {
     throw new Error('[buildHelixPolyline] pitch must be a finite, non-zero number.');
   }
   let pitch = Math.abs(rawPitch);
-  const lengthMode = String(opts.lengthMode || opts.mode || 'turns').toLowerCase();
+  const modeRaw = String(opts.lengthMode || opts.mode || 'turns').toLowerCase();
+  const lengthMode = modeRaw === 'pitch' || modeRaw === 'height' ? 'pitch' : 'turns';
   let turns = finiteOr(opts.turns, NaN);
   let height = finiteOr(opts.height, NaN);
 
@@ -121,7 +122,7 @@ export function buildHelixPolyline(opts = {}) {
     height = Math.abs(height);
   }
 
-  if (lengthMode === 'height' && Number.isFinite(height) && height > EPS) {
+  if (lengthMode === 'pitch' && Number.isFinite(height) && height > EPS) {
     turns = height / pitch;
   } else {
     if (!Number.isFinite(turns) || turns <= 0) {

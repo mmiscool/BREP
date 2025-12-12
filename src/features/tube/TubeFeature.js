@@ -28,6 +28,11 @@ const inputParamsSchema = {
     default_value: 32,
     hint: 'Segments around the tube circumference'
   },
+  debug: {
+    type: 'boolean',
+    default_value: false,
+    hint: 'Log path points and parameters for debugging'
+  },
   boolean: {
     type: 'boolean_operation',
     default_value: { targets: [], operation: 'NONE' },
@@ -365,7 +370,7 @@ export class TubeFeature {
   }
 
   async run(partHistory) {
-    const { featureID, path, radius, innerRadius, resolution } = this.inputParams;
+    const { featureID, path, radius, innerRadius, resolution, debug } = this.inputParams;
     const radiusValue = Number(radius);
     if (!(radiusValue > 0)) {
       throw new Error('Tube requires a positive radius.');
@@ -390,6 +395,7 @@ export class TubeFeature {
     const baseResolution = Math.max(8, Math.floor(Number(resolution) || 32));
     const outerSolids = [];
     const innerSolids = [];
+    const debugExtras = [];
     for (let i = 0; i < edgeGroups.length; i++) {
       const group = edgeGroups[i];
       const pathPoints = dedupePoints(combinePathPolylines(group));
@@ -426,6 +432,19 @@ export class TubeFeature {
         return `${featureID}_${i + 1}`;
       })();
 
+      if (debug) {
+        console.log('[TubeFeature debug] params', {
+          featureID,
+          radius: radiusValue,
+          innerRadius: inner,
+          resolution: baseResolution,
+          groupIndex: i,
+          isClosedLoop,
+          pathPointCount: finalPoints.length,
+          points: finalPoints
+        });
+      }
+
       const outerTube = new BREP.Tube({
         points: finalPoints,
         radius: radiusValue,
@@ -433,7 +452,11 @@ export class TubeFeature {
         resolution: baseResolution,
         closed: isClosedLoop,
         name: tubeName,
+        debugSpheres: !!debug,
       });
+      if (debug && Array.isArray(outerTube.debugSphereSolids)) {
+        debugExtras.push(...outerTube.debugSphereSolids);
+      }
       outerSolids.push(outerTube);
 
       if (inner > 0) {
@@ -452,7 +475,11 @@ export class TubeFeature {
           resolution: baseResolution,
           closed: isClosedLoop,
           name: innerName,
+          debugSpheres: !!debug,
         });
+        if (debug && Array.isArray(innerTube.debugSphereSolids)) {
+          debugExtras.push(...innerTube.debugSphereSolids);
+        }
         innerSolids.push(innerTube);
       }
     }
@@ -570,6 +597,12 @@ export class TubeFeature {
 
     baseSolids = baseSolids.filter(Boolean);
 
+    if (debug && debugExtras.length) {
+      for (const s of debugExtras) {
+        try { s.visualize(); } catch (_) { }
+      }
+    }
+
     if (!baseSolids.length) {
       throw new Error('Tube generation failed to produce a valid solid.');
     }
@@ -611,9 +644,14 @@ export class TubeFeature {
           }
         }
       }
+      if (debug && debugExtras.length) {
+        added.push(...debugExtras);
+      }
       return { added, removed };
     }
 
-    return { added: baseSolids, removed: [] };
+    const added = [...baseSolids];
+    if (debug && debugExtras.length) added.push(...debugExtras);
+    return { added, removed: [] };
   }
 }
