@@ -269,7 +269,6 @@ export class PartHistory {
     this.#disposeSceneObjects((obj) => !obj?.isLight && !obj?.isCamera && !obj?.isTransformGizmo);
     await this.scene.clear();
   
-    //this.scene.add(this.camera);
 
 
     let skipAllFeatures = false;

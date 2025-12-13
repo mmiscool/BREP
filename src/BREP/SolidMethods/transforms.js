@@ -200,6 +200,34 @@ export function mirrorAcrossPlane(point, normal) {
             mirrored._faceNameToID = new Map(this._faceNameToID);
         } catch (_) { }
 
+        // Mirror auxiliary edges (e.g., centerlines) across the same plane.
+        try {
+            const aux = Array.isArray(this._auxEdges) ? this._auxEdges : [];
+            const X = new THREE.Vector3();
+            const d = new THREE.Vector3();
+            const nScaled = new THREE.Vector3();
+            mirrored._auxEdges = aux.map(edge => {
+                const pts = [];
+                if (Array.isArray(edge?.points)) {
+                    for (const p of edge.points) {
+                        if (!Array.isArray(p) || p.length !== 3) continue;
+                        X.set(p[0], p[1], p[2]);
+                        d.subVectors(X, P0);
+                        nScaled.copy(n).multiplyScalar(2 * d.dot(n));
+                        X.sub(nScaled);
+                        pts.push([X.x, X.y, X.z]);
+                    }
+                }
+                return {
+                    name: edge?.name,
+                    closedLoop: !!edge?.closedLoop,
+                    polylineWorld: !!edge?.polylineWorld,
+                    materialKey: edge?.materialKey,
+                    points: pts,
+                };
+            }).filter(e => Array.isArray(e.points) && e.points.length);
+        } catch (_) { mirrored._auxEdges = []; }
+
         // Rebuild vertex key map for exact-key lookup consistency
         mirrored._vertKeyToIndex = new Map();
         for (let i = 0; i < mirrored._vertProperties.length; i += 3) {
