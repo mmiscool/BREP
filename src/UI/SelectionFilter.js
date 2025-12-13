@@ -13,11 +13,8 @@ export class SelectionFilter {
 
     // The set (or ALL) of types available in the current context
     static allowedSelectionTypes = SelectionFilter.ALL;
-    // The single, active selection type the user has chosen
-    static currentType = null;
     static viewer = null;
     static previouseAllowedSelectionTypes = null;
-    static previousCurrentType = null;
     static _hovered = new Set(); // objects currently hover-highlighted
     static hoverColor = '#fbff00'; // default hover tint
 
@@ -37,19 +34,13 @@ export class SelectionFilter {
     }
 
     static getCurrentType() {
-        return SelectionFilter.currentType;
+        // Current type tracking has been removed; keep method for compatibility.
+        return null;
     }
 
-    static setCurrentType(type) {
-        if (!type) return;
-        if (!SelectionFilter.TYPES.includes(type) || type === SelectionFilter.ALL) return;
-        // Ensure the chosen type is part of the available set (or ALL)
-        if (
-            SelectionFilter.allowedSelectionTypes !== SelectionFilter.ALL &&
-            !SelectionFilter.allowedSelectionTypes.has(type)
-        ) return;
-        SelectionFilter.currentType = type;
-        SelectionFilter.triggerUI();
+    static setCurrentType(_type) {
+        // No-op: current type is no longer tracked.
+        void _type;
     }
 
     static SetSelectionTypes(types) {
@@ -58,9 +49,6 @@ export class SelectionFilter {
         //alert("Selection type changed to:");
         if (types === SelectionFilter.ALL) {
             SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL;
-            // Default currentType if none set
-            const first = SelectionFilter.getAvailableTypes()[0] || null;
-            if (first) SelectionFilter.currentType = first;
             SelectionFilter.triggerUI();
             SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'SetSelectionTypes');
             return;
@@ -69,26 +57,18 @@ export class SelectionFilter {
         const invalid = list.filter(t => !SelectionFilter.TYPES.includes(t) || t === SelectionFilter.ALL);
         if (invalid.length) throw new Error(`Unknown selection type(s): ${invalid.join(", ")}`);
         SelectionFilter.allowedSelectionTypes = new Set(list);
-        // Default to first if currentType not in new set
-        const first = list[0] || null;
-        if (!SelectionFilter.currentType || (first && !SelectionFilter.allowedSelectionTypes.has(SelectionFilter.currentType))) {
-            SelectionFilter.currentType = first;
-        }
         SelectionFilter.triggerUI();
         SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'SetSelectionTypes');
     }
 
     static stashAllowedSelectionTypes() {
         SelectionFilter.previouseAllowedSelectionTypes = SelectionFilter.allowedSelectionTypes;
-        SelectionFilter.previousCurrentType = SelectionFilter.currentType;
     }
 
     static restoreAllowedSelectionTypes() {
         if (SelectionFilter.previouseAllowedSelectionTypes !== null) {
             SelectionFilter.allowedSelectionTypes = SelectionFilter.previouseAllowedSelectionTypes;
-            SelectionFilter.currentType = SelectionFilter.previousCurrentType;
             SelectionFilter.previouseAllowedSelectionTypes = null;
-            SelectionFilter.previousCurrentType = null;
             SelectionFilter.triggerUI();
             SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'RestoreSelectionTypes');
         }
@@ -129,17 +109,12 @@ export class SelectionFilter {
     }
 
     static IsAllowed(type) {
-        // Single-selection mode: only the currentType is allowed for new interactions
-        const cur = SelectionFilter.currentType;
-        if (cur && type) return cur === type;
-        // Fallback: if no currentType yet, allow any available type
-        if (SelectionFilter.allowedSelectionTypes === SelectionFilter.ALL) return true;
-        return SelectionFilter.allowedSelectionTypes.has(type);
+        if (!type) return false;
+        return SelectionFilter.matchesAllowedType(type);
     }
 
     static Reset() {
         SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL;
-        SelectionFilter.currentType = SelectionFilter.getAvailableTypes()[0] || null;
         SelectionFilter.triggerUI();
         SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'Reset');
     }
@@ -382,9 +357,18 @@ export class SelectionFilter {
                         return true;
                     }
                 }
-                // Respect the current selection type when a reference selection is active.
-                const want = SelectionFilter.getCurrentType?.();
                 const allowed = SelectionFilter.allowedSelectionTypes;
+                const allowAll = allowed === SelectionFilter.ALL;
+                const priorityOrder = [
+                    SelectionFilter.VERTEX,
+                    SelectionFilter.EDGE,
+                    SelectionFilter.FACE,
+                    SelectionFilter.PLANE,
+                    SelectionFilter.SOLID,
+                    SelectionFilter.COMPONENT,
+                ];
+                const allowedHas = (t) => !!(allowed && typeof allowed.has === 'function' && allowed.has(t));
+                const allowedPriority = allowAll ? priorityOrder : priorityOrder.filter(t => allowedHas(t));
 
                 // Helper: find first descendant matching a type
                 const findDescendantOfType = (root, desired) => {
@@ -398,7 +382,6 @@ export class SelectionFilter {
                     return found;
                 };
 
-                let targetObj = objectToToggleSelectionOn;
                 const findAncestorOfType = (obj, desired) => {
                     let cur = obj;
                     while (cur && cur.parent) {
@@ -407,24 +390,26 @@ export class SelectionFilter {
                     }
                     return null;
                 };
-                // If clicked type doesn't match the desired, try to find a proper descendant; if none, try ancestor
-                if (want && type !== want) {
-                    let picked = findDescendantOfType(objectToToggleSelectionOn, want);
-                    if (!picked) picked = findAncestorOfType(objectToToggleSelectionOn, want);
-                    if (picked) targetObj = picked; else return false;
-                }
-
-                // As a safeguard, if no single currentType is set but a set of allowed types exists, prefer VERTEX then EDGE
-                if (!want && allowed && allowed !== SelectionFilter.ALL) {
-                    const prefer = ['VERTEX', 'EDGE'];
-                    for (const t of prefer) {
-                        if (allowed.has && allowed.has(t)) {
-                            let picked = findDescendantOfType(objectToToggleSelectionOn, t);
-                            if (!picked) picked = findAncestorOfType(objectToToggleSelectionOn, t);
-                            if (picked) { targetObj = picked; break; }
-                        }
+                const pickByTypeList = (typeList) => {
+                    if (!Array.isArray(typeList)) return null;
+                    for (const desired of typeList) {
+                        if (!desired) continue;
+                        if (objectToToggleSelectionOn?.type === desired) return objectToToggleSelectionOn;
+                        let picked = findDescendantOfType(objectToToggleSelectionOn, desired);
+                        if (!picked) picked = findAncestorOfType(objectToToggleSelectionOn, desired);
+                        if (picked) return picked;
                     }
+                    return null;
+                };
+
+                let targetObj = pickByTypeList(allowedPriority);
+                if (!targetObj && !allowAll && allowed && typeof allowed[Symbol.iterator] === 'function') {
+                    targetObj = pickByTypeList(Array.from(allowed));
                 }
+                if (!targetObj && allowAll) {
+                    targetObj = objectToToggleSelectionOn;
+                }
+                if (!targetObj) return false;
 
                 // Update the reference input with the chosen object
                 const objType = targetObj.type;

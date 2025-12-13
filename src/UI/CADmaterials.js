@@ -33,12 +33,20 @@ export const CADmaterials = {
             dashSize: 0.5,
             gapSize: 0.5,
             worldUnits: false, // keep dash/line size constant in screen space
+            // Pull slightly toward the camera so edges aren't buried by coplanar faces.
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1,
         }),
         SELECTED: new LineMaterial({
             color: "#ff00ff",
             linewidth: 6,
             transparent: true,
             worldUnits: false,
+            // Pull slightly toward the camera so edges aren't buried by coplanar faces.
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1,
         }),
         // Overlay variant for helper/centerline edges. Uses depthTest=false so
         // it remains visible through faces. Viewer will keep its resolution
@@ -72,8 +80,8 @@ export const CADmaterials = {
         BASE: new LineMaterial({
             color: "#ff0000",
             linewidth: 5.5,
-            //linecap: "round",
-            //linejoin: "round",
+            linecap: "round",
+            linejoin: "round",
             transparent: true,
         }),
         SELECTED: new LineMaterial({
@@ -87,24 +95,30 @@ export const CADmaterials = {
     FACE: {
         BASE: new THREE.MeshStandardMaterial({
             color: "#00009e",
-            side: THREE.DoubleSide,
+            side: THREE.FrontSide,
             transparent: true,
-            opacity: 0.75,
-            wireframe: false,
+            opacity: 1,
             flatShading: true,
-            metalness: 0.5,
-            polygonOffset: true,
-
+            metalness: 0.05,
+            roughness: 0.85,
+            depthTest: true,
+            depthWrite: true,
+            polygonOffset: false,
+            emissiveIntensity: 0,
         }),
         SELECTED: new THREE.MeshStandardMaterial({
             color: "#00ffff",
-            side: THREE.DoubleSide,
-            transparent: true,
+            side: THREE.FrontSide,
+            transparent: false,
             opacity: 1,
             wireframe: true,
-            flatShading: true,
-            metalness: 0.5,
-            polygonOffset: true,
+            flatShading: false,
+            metalness: 0,
+            roughness: 0.5,
+            depthTest: true,
+            depthWrite: true,
+            polygonOffset: false,
+            emissiveIntensity: 0,
         })
     },
     VERTEX: {

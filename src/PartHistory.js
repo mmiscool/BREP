@@ -38,7 +38,6 @@ export class PartHistory {
     this.expressions = "//Examples:\nx = 10 + 6; \ny = x * 2;";
     this.pmiViewsManager = new PMIViewsManager(this);
     this.metadataManager = new MetadataManager
-    this.ambientLight = new THREE.AmbientLight(0xffffff, 2);
     if (this.assemblyConstraintHistory) {
       this.assemblyConstraintHistory.clear();
       this.assemblyConstraintHistory.setPartHistory(this);
@@ -269,7 +268,9 @@ export class PartHistory {
 
     this.#disposeSceneObjects((obj) => !obj?.isLight && !obj?.isCamera && !obj?.isTransformGizmo);
     await this.scene.clear();
-    this.scene.add(this.ambientLight);
+  
+    //this.scene.add(this.camera);
+
 
     let skipAllFeatures = false;
     const features = Array.isArray(this.features) ? this.features : [];

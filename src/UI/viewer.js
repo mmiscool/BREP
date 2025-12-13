@@ -249,6 +249,44 @@ export class Viewer {
 
 
 
+        // Camera-anchored light rig: key + fill + rim + ambient to keep surfaces lit at any zoom
+        const keyLight = new THREE.PointLight(0xffffff, 8);
+        const fillLight = new THREE.PointLight(0xffffff, 5);
+        const rimLight = new THREE.PointLight(0xffffff, 6);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x333333, 0.25);
+        // No distance attenuation so brightness stays consistent with huge scenes
+        [keyLight, fillLight, rimLight].forEach((l) => { l.distance = 0; l.decay = 0; });
+        keyLight.position.set(4.5, 6.5, 9);
+        fillLight.position.set(-4.5, 4.5, 7.5);
+        rimLight.position.set(-4, 6, -8.5);
+        this.camera.add(keyLight);
+        this.camera.add(fillLight);
+        this.camera.add(rimLight);
+        this.camera.add(ambientLight);
+        this.camera.add(hemiLight);
+
+
+
+
+
+
+
+
+        // Ensure the camera (and its light) participate in the scene graph for lighting calculations
+        try { this.camera.userData = { ...(this.camera.userData || {}), preventRemove: true }; } catch { /* ignore */ }
+        if (this.camera.parent !== this.scene) {
+            try { this.scene.add(this.camera); } catch { /* ignore */ }
+        }
+        try { this.partHistory.camera = this.camera; } catch { /* ignore */ }
+
+
+
+
+
+
+
+
 
         // Nice default vantage
         this.camera.position.set(15, 12, 15);
@@ -316,6 +354,8 @@ export class Viewer {
 
         // Raycaster for picking
         this.raycaster = new THREE.Raycaster();
+        this.raycaster.near = 0;
+        this.raycaster.far = Infinity;
         // Initialize params containers; thresholds set per-pick for stability
         try { this.raycaster.params.Line = this.raycaster.params.Line || {}; } catch { }
         try { this.raycaster.params.Line2 = this.raycaster.params.Line2 || {}; } catch { }
@@ -726,6 +766,10 @@ export class Viewer {
     }
 
     render() {
+        // Keep the camera (and its attached light) anchored in the scene
+        if (this.camera && this.camera.parent !== this.scene) {
+            try { this.scene.add(this.camera); } catch { /* ignore add errors */ }
+        }
         this.renderer.render(this.scene, this.camera);
         try { this.viewCube && this.viewCube.render(); } catch { }
     }
@@ -914,7 +958,6 @@ export class Viewer {
     _mapIntersectionToTarget(intersection, options = {}) {
         if (!intersection || !intersection.object) return null;
         const { allowAnyAllowedType = false, ignoreSelectionFilter = false } = options;
-        const curType = SelectionFilter.getCurrentType && SelectionFilter.getCurrentType();
         const isAllowed = (type) => {
             if (!type) return false;
             if (ignoreSelectionFilter) return true;
@@ -930,14 +973,6 @@ export class Viewer {
         // Prefer the intersected object if it is clickable
         let obj = intersection.object;
 
-        // If current selection is SOLID, promote to nearest SOLID ancestor
-        if (curType === SelectionFilter.SOLID) {
-            let p = obj;
-            while (p) {
-                if (p.type === SelectionFilter.SOLID) { obj = p; break; }
-                p = p.parent;
-            }
-        }
         //debugLog('Picked object:', obj);
 
         // If the object (or its ancestors) doesn't expose onClick, climb to one that does
@@ -996,7 +1031,7 @@ export class Viewer {
             } catch { }
 
             // Only intersect spline vertices
-            const intersects = this.raycaster.intersectObjects(this.scene.children, true);
+            const intersects = this._withDoubleSidedPicking(() => this.raycaster.intersectObjects(this.scene.children, true));
 
             // DEBUG: Log all objects under mouse pointer
             // debugLog(`SPLINE MODE CLICK DEBUG:`);
@@ -1039,6 +1074,7 @@ export class Viewer {
 
         if (!event) return collectAll ? { hit: null, target: null, candidates: [] } : { hit: null, target: null };
         const ndc = this._getPointerNDC(event);
+        try { this.camera.updateMatrixWorld(true); } catch { /* ignore */ }
         this.raycaster.setFromCamera(ndc, this.camera);
         // Tune line picking thresholds per-frame based on zoom and DPI
         try {
@@ -1053,20 +1089,20 @@ export class Viewer {
             this.raycaster.params.Points = this.raycaster.params.Points || {};
             this.raycaster.params.Points.threshold = Math.max(0.05, wpp * 6);
         } catch { }
-        // Fix ray origin - ensure it starts from behind the camera
+        // Fix ray origin - ensure it starts from behind the camera for large scenes
         try {
             const ray = this.raycaster.ray;
-            if (this.camera.isOrthographicCamera) {
-                // For orthographic cameras, move the origin back along the camera's forward direction
-                const backwardDistance = 1000; // Large distance to ensure we're behind all objects
-                ray.origin.add(ray.direction.clone().multiplyScalar(-backwardDistance));
-            } else if (this.camera.isPerspectiveCamera) {
-                // For perspective cameras, use the camera position as origin
-                ray.origin.copy(this.camera.position);
-            }
+            const dir = ray.direction.clone().normalize();
+            const span = Math.max(
+                1,
+                Math.abs(this.camera.far || 0),
+                Math.abs(this.camera.near || 0),
+                this.viewSize * 40
+            );
+            ray.origin.addScaledVector(dir, -span);
         } catch { }
         // Intersect everything; raycaster will skip non-geometry nodes
-        const intersects = this.raycaster.intersectObjects(this.scene.children, true);
+        const intersects = this._withDoubleSidedPicking(() => this.raycaster.intersectObjects(this.scene.children, true));
 
         // DEBUG: Log all objects under mouse pointer in normal mode
         if (intersects.length > 0) {
@@ -1130,16 +1166,43 @@ export class Viewer {
         return { hit: null, target: null };
     }
 
+    // Temporarily make FrontSide materials DoubleSide for picking without changing render appearance.
+    _withDoubleSidedPicking(fn) {
+        if (!fn) return null;
+        const touched = new Set();
+        const markMaterial = (mat) => {
+            if (!mat || typeof mat.side === 'undefined') return;
+            if (mat.side === THREE.FrontSide) {
+                touched.add(mat);
+                mat.side = THREE.DoubleSide;
+            }
+        };
+        try {
+            if (this.scene && typeof this.scene.traverse === 'function') {
+                this.scene.traverse((obj) => {
+                    if (!obj) return;
+                    const m = obj.material;
+                    if (Array.isArray(m)) m.forEach(markMaterial); else markMaterial(m);
+                });
+            }
+            return fn();
+        } finally {
+            for (const mat of touched) {
+                try { mat.side = THREE.FrontSide; } catch { /* ignore */ }
+            }
+        }
+    }
+
     _updateHover(event) {
-        const { target } = this._pickAtEvent(event);
-        if (target) {
-            try { SelectionFilter.setHoverObject(target); } catch { }
+        const { primary } = this._collectSelectionCandidates(event);
+        if (primary) {
+            try { SelectionFilter.setHoverObject(primary); } catch { }
         } else {
             try { SelectionFilter.clearHover(); } catch { }
         }
     }
 
-    _selectAt(event) {
+    _collectSelectionCandidates(event) {
         const allowedTypes = (() => {
             try {
                 const list = SelectionFilter.getAvailableTypes?.() || [];
@@ -1154,7 +1217,6 @@ export class Viewer {
             SelectionFilter.VERTEX,
             SelectionFilter.EDGE,
             SelectionFilter.FACE,
-            SelectionFilter.SKETCH,
             SelectionFilter.PLANE,
             SelectionFilter.SOLID,
             SelectionFilter.COMPONENT,
@@ -1243,16 +1305,23 @@ export class Viewer {
             if (pa !== pb) return pa - pb;
             return (a?.distance ?? Infinity) - (b?.distance ?? Infinity);
         });
+        const primary = ordered[0]?.target || target || null;
+        return { ordered, primary };
+    }
+
+    _selectAt(event) {
+        const { ordered, primary } = this._collectSelectionCandidates(event);
+        if (!primary) {
+            return;
+        }
 
         if (ordered.length > 1) {
             this._scheduleSelectionOverlay(event, ordered);
             return;
         }
 
-        const chosen = ordered[0]?.target || target;
-        if (!chosen) return;
         this._hideSelectionOverlay();
-        this._applySelectionTarget(chosen);
+        this._applySelectionTarget(primary);
     }
 
     _applySelectionTarget(target, options = {}) {
@@ -1261,11 +1330,6 @@ export class Viewer {
             triggerOnClick = true,
             allowDiagnostics = true,
         } = options;
-        try {
-            if (target.type && typeof SelectionFilter.matchesAllowedType === 'function' && SelectionFilter.matchesAllowedType(target.type)) {
-                SelectionFilter.setCurrentType?.(target.type);
-            }
-        } catch { }
         // One-shot diagnostic inspector
         if (allowDiagnostics && this._diagPickOnce) {
             this._diagPickOnce = false;
@@ -1699,7 +1763,9 @@ export class Viewer {
             try { this._hideSelectionOverlay(); } catch { }
             try {
                 const scene = this.partHistory?.scene || this.scene;
-                if (scene) SelectionFilter.unselectAll(scene);
+                if (scene) {SelectionFilter.unselectAll(scene);
+                    SelectionFilter.restoreAllowedSelectionTypes();
+                }
             } catch { }
         }
     }
