@@ -249,22 +249,29 @@ export class Viewer {
 
 
 
-        // Camera-anchored light rig: key + fill + rim + ambient to keep surfaces lit at any zoom
-        const keyLight = new THREE.PointLight(0xffffff, 8);
-        const fillLight = new THREE.PointLight(0xffffff, 5);
-        const rimLight = new THREE.PointLight(0xffffff, 6);
+        // Camera-anchored light rig: four evenly bright point lights + ambient to keep surfaces lit at any zoom
+        const lightIntensity = 5;
+        const baseLightRadius = Math.max(15, viewSize * 1.4);
         const ambientLight = new THREE.AmbientLight(0xffffff, 1);
         const hemiLight = new THREE.HemisphereLight(0xffffff, 0x333333, 0.25);
-        // No distance attenuation so brightness stays consistent with huge scenes
-        [keyLight, fillLight, rimLight].forEach((l) => { l.distance = 0; l.decay = 0; });
-        keyLight.position.set(4.5, 6.5, 9);
-        fillLight.position.set(-4.5, 4.5, 7.5);
-        rimLight.position.set(-4, 6, -8.5);
-        this.camera.add(keyLight);
-        this.camera.add(fillLight);
-        this.camera.add(rimLight);
+        const lightDirections = [
+            [1, 1, 1],
+            [-1, 1, -1],
+            [1, -1, -1],
+            [-1, -1, 1],
+        ];
+        const pointLights = lightDirections.map(([x, y, z]) => {
+            const light = new THREE.PointLight(0xffffff, lightIntensity);
+            // No distance attenuation so brightness stays consistent with huge scenes
+            light.distance = 0;
+            light.decay = 0;
+            return light;
+        });
+        pointLights.forEach((light) => this.camera.add(light));
         this.camera.add(ambientLight);
         this.camera.add(hemiLight);
+        this._cameraLightRig = { pointLights, lightDirections, baseLightRadius };
+        this._updateCameraLightRig();
 
 
 
@@ -339,6 +346,7 @@ export class Viewer {
         this._sketchMode = null;
         this._splineMode = null;
         this._lastPointerEvent = null;
+        this._lastDashWpp = null;
         this._selectionOverlay = null;
         this._cubeActive = false;
         // Inspector panel state
@@ -770,8 +778,29 @@ export class Viewer {
         if (this.camera && this.camera.parent !== this.scene) {
             try { this.scene.add(this.camera); } catch { /* ignore add errors */ }
         }
+        this._updateCameraLightRig();
         this.renderer.render(this.scene, this.camera);
         try { this.viewCube && this.viewCube.render(); } catch { }
+    }
+
+    _updateCameraLightRig() {
+        if (!this._cameraLightRig || !this.camera || !this.renderer) return;
+        const { pointLights, lightDirections, baseLightRadius } = this._cameraLightRig;
+        if (!pointLights?.length || !lightDirections?.length) return;
+        const sizeVec = this.renderer.getSize ? this.renderer.getSize(new THREE.Vector2()) : null;
+        const width = sizeVec?.width || this.renderer?.domElement?.clientWidth || 0;
+        const height = sizeVec?.height || this.renderer?.domElement?.clientHeight || 0;
+        if (!width || !height) return;
+
+        const wpp = this._worldPerPixel(this.camera, width, height);
+        const screenDiagonal = Math.sqrt(width * width + height * height);
+        // Scale radius with visible span so lights spread further when zoomed out and stay even when zoomed in
+        const radius = Math.max(baseLightRadius, wpp * screenDiagonal * 1.4);
+
+        pointLights.forEach((light, idx) => {
+            const dir = lightDirections[idx] || [0, 0, 0];
+            light.position.set(dir[0] * radius, dir[1] * radius, dir[2] * radius);
+        });
     }
 
     // Zoom-to-fit using only ArcballControls operations (pan + zoom).
@@ -2615,6 +2644,8 @@ export class Viewer {
                 setRes(CADmaterials.LOOP.SELECTED);
             }
         } catch { }
+        // Keep dashed overlays visually consistent in screen space
+        this._updateOverlayDashSpacing(width, height);
 
         // Update orthographic frustum for new aspect
         const aspect = width / height || 1;
@@ -2670,6 +2701,13 @@ export class Viewer {
         if (this._disposed) return;
         // Re-evaluate hover while camera moves (if we have a last pointer)
         if (this._lastPointerEvent) this._updateHover(this._lastPointerEvent);
+        // Keep dash lengths stable while zooming/panning/orbiting
+        try {
+            const size = this.renderer?.getSize?.(new THREE.Vector2()) || null;
+            const w = size?.width || this.renderer?.domElement?.clientWidth || 0;
+            const h = size?.height || this.renderer?.domElement?.clientHeight || 0;
+            if (w && h) this._updateOverlayDashSpacing(w, h);
+        } catch { }
         // While orbiting/panning/zooming, reposition dimension labels/leaders
         try { this._sketchMode?.onCameraChanged?.(); } catch { }
     }
@@ -2685,6 +2723,33 @@ export class Viewer {
         const dist = camera.position.length();
         const fovRad = (camera.fov * Math.PI) / 180;
         return (2 * Math.tan(fovRad / 2) * dist) / height;
+    }
+
+    _updateOverlayDashSpacing(width, height) {
+        if (!this.camera || !this.renderer) return;
+        const w = width || this.renderer.domElement?.clientWidth || 0;
+        const h = height || this.renderer.domElement?.clientHeight || 0;
+        if (!w || !h) return;
+        let wpp = null;
+        try { wpp = this._worldPerPixel(this.camera, w, h); } catch { wpp = null; }
+        if (!Number.isFinite(wpp) || wpp <= 0) return;
+        if (this._lastDashWpp && Math.abs(this._lastDashWpp - wpp) < (this._lastDashWpp * 0.0005)) return;
+        this._lastDashWpp = wpp;
+        const dashPx = 10; // desired dash length in pixels
+        const gapPx = 8;  // desired gap length in pixels
+        const setDash = (mat) => {
+            if (!mat) return;
+            try {
+                mat.dashSize = dashPx * wpp;
+                mat.gapSize = gapPx * wpp;
+                mat.needsUpdate = true;
+            } catch { }
+        };
+        try {
+            const edges = CADmaterials?.EDGE || {};
+            setDash(edges.OVERLAY);
+            setDash(edges.THREAD_SYMBOLIC_MAJOR);
+        } catch { }
     }
 }
 
