@@ -25,9 +25,28 @@ const inputParamsSchema = {
   },
   quantity: {
     type: 'number',
-    default_value: 1,
+    default_value: 0,
     label: 'Quantity',
-    hint: 'Number of identical holes this callout represents',
+    hint: 'Number of identical holes this callout represents (0 = auto from feature)',
+    min: 0,
+  },
+  showQuantity: {
+    type: 'boolean',
+    default_value: true,
+    label: 'Show Quantity',
+    hint: 'Include the hole count in the callout label',
+  },
+  beforeText: {
+    type: 'string',
+    default_value: '',
+    label: 'Text Before',
+    hint: 'Optional text to show before the callout',
+  },
+  afterText: {
+    type: 'string',
+    default_value: '',
+    label: 'Text After',
+    hint: 'Optional text to show after the callout',
   },
   anchorPosition: {
     type: 'options',
@@ -65,11 +84,17 @@ export class HoleCalloutAnnotation extends BaseAnnotation {
     const viewer = pmimode?.viewer;
     const scene = viewer?.partHistory?.scene;
     const targetObj = resolveTargetObject(viewer, ann.target);
-    const descriptor = findHoleDescriptor(viewer?.partHistory, targetObj, null, ann.target);
-    const targetPoint = descriptor?.center ? arrToVec(descriptor.center) : objectRepresentativePoint(scene, targetObj);
+    const objPoint = objectRepresentativePoint(scene, targetObj);
+    const descriptor = findHoleDescriptor(viewer?.partHistory, targetObj, objPoint, ann.target);
+    const targetPoint = descriptor?.center ? arrToVec(descriptor.center) : objPoint;
     if (!targetPoint) return [];
 
-    const labelText = descriptor ? formatHoleCallout(descriptor, Math.max(1, Math.round(ann.quantity || 1))) : '';
+    const qty = resolveHoleQuantity(ann, descriptor, viewer?.partHistory);
+    const labelText = descriptor ? formatHoleCallout(descriptor, qty, {
+      showQuantity: ann.showQuantity !== false,
+      beforeText: ann.beforeText,
+      afterText: ann.afterText,
+    }) : '';
     ann.value = labelText;
 
     const basis = computeViewBasis(viewer);
@@ -102,8 +127,11 @@ export class HoleCalloutAnnotation extends BaseAnnotation {
 
   static applyParams(pmimode, ann, params) {
     super.applyParams(pmimode, ann, params);
-    const qty = Number(params?.quantity);
-    ann.quantity = Number.isFinite(qty) && qty > 0 ? Math.round(qty) : 1;
+    const qty = Number(ann?.quantity);
+    ann.quantity = Number.isFinite(qty) ? Math.max(0, Math.round(qty)) : 1;
+    ann.showQuantity = ann.showQuantity !== false;
+    ann.beforeText = normalizeAddonText(ann.beforeText);
+    ann.afterText = normalizeAddonText(ann.afterText);
     ann.anchorPosition = normalizeAnchorPosition(ann.anchorPosition);
     return { paramsPatch: {} };
   }
@@ -136,8 +164,29 @@ function resolveTargetObject(viewer, target) {
   const scene = viewer.partHistory?.scene;
   if (!scene) return null;
   if (typeof target === 'string') {
-    const obj = scene.getObjectByName?.(target);
-    if (obj) return obj;
+    const direct = scene.getObjectByName?.(target);
+    if (direct) return direct;
+    const tokens = normalizeTargetTokens(target);
+    for (const t of tokens) {
+      const byToken = scene.getObjectByName?.(t);
+      if (byToken) return byToken;
+    }
+    let fuzzy = null;
+    try {
+      scene.traverse((child) => {
+        if (fuzzy) return;
+        const name = child?.name ? String(child.name) : '';
+        if (!name) return;
+        for (const t of tokens) {
+          if (!t) continue;
+          if (name === t || name.endsWith(t) || name.includes(t)) {
+            fuzzy = child;
+            return;
+          }
+        }
+      });
+    } catch { /* ignore */ }
+    if (fuzzy) return fuzzy;
   }
   if (typeof target === 'object') return target;
   return scene.getObjectByName?.(String(target)) || null;
@@ -154,36 +203,104 @@ function findHoleDescriptor(partHistory, targetObj, fallbackPoint, targetName = 
   }
   if (!descriptors.length) return null;
 
+  const metaHole = targetObj?.userData?.hole || targetObj?.userData?.metadata?.hole;
+  if (metaHole) return metaHole;
+  if (targetObj?.parent) {
+    const parentHole = targetObj.parent.userData?.hole || targetObj.parent.userData?.metadata?.hole;
+    if (parentHole) return parentHole;
+  }
+
   const targetId = targetObj?.uuid || targetObj?.id || targetObj?.name || null;
-  if (targetName) {
-    const direct = descriptors.find((d) => d?.sourceName && String(d.sourceName) === String(targetName));
-    if (direct) return direct;
+  const tokens = normalizeTargetTokens(targetName, targetId);
+  if (targetObj?.name) {
+    for (const t of normalizeTargetTokens(targetObj.name)) tokens.add(t);
   }
+
+  const directMatches = descriptors.filter((d) => {
+    const sn = d?.sourceName ? String(d.sourceName) : null;
+    const fid = d?.featureId ? String(d.featureId) : null;
+    const tid = d?.targetId ? String(d.targetId) : null;
+    return (sn && tokens.has(sn)) || (fid && tokens.has(fid)) || (tid && tokens.has(tid));
+  });
+  if (directMatches.length === 1) return directMatches[0];
+  if (directMatches.length > 1 && fallbackPoint) {
+    const best = nearestDescriptor(directMatches, fallbackPoint);
+    if (best) return best;
+  }
+
   if (targetId) {
-    const direct = descriptors.find((d) => d?.targetId && String(d.targetId) === String(targetId));
-    if (direct) return direct;
-  }
-  if (fallbackPoint) {
-    let best = null;
-    let bestD2 = Infinity;
-    for (const d of descriptors) {
-      const c = arrToVec(d?.center);
-      if (!c) continue;
-      const d2 = c.distanceToSquared(fallbackPoint);
-      if (d2 < bestD2) {
-        bestD2 = d2;
-        best = d;
-      }
+    const byTarget = descriptors.filter((d) => d?.targetId && String(d.targetId) === String(targetId));
+    if (byTarget.length === 1) return byTarget[0];
+    if (byTarget.length > 1 && fallbackPoint) {
+      const best = nearestDescriptor(byTarget, fallbackPoint);
+      if (best) return best;
     }
-    return best;
   }
+
+  if (targetName) {
+    const t = String(targetName);
+    const softList = descriptors.filter((d) => {
+      const fid = d?.featureId ? String(d.featureId) : '';
+      const source = d?.sourceName ? String(d.sourceName) : '';
+      return (fid && t.includes(fid)) || (source && t.includes(source));
+    });
+    if (softList.length === 1) return softList[0];
+    if (softList.length > 1 && fallbackPoint) {
+      const best = nearestDescriptor(softList, fallbackPoint);
+      if (best) return best;
+    }
+  }
+
+  if (tokens.size) {
+    const byTokenList = descriptors.filter((d) => {
+      const fid = d?.featureId ? String(d.featureId) : '';
+      const source = d?.sourceName ? String(d.sourceName) : '';
+      const tid = d?.targetId ? String(d.targetId) : '';
+      return tokens.has(fid) || tokens.has(source) || tokens.has(tid);
+    });
+    if (byTokenList.length === 1) return byTokenList[0];
+    if (byTokenList.length > 1 && fallbackPoint) {
+      const best = nearestDescriptor(byTokenList, fallbackPoint);
+      if (best) return best;
+    }
+  }
+
+  if (fallbackPoint) {
+    const best = nearestDescriptor(descriptors, fallbackPoint);
+    if (best) return best;
+  }
+
+  if (targetObj?.parent) {
+    const parentTokens = normalizeTargetTokens(targetObj.parent.name);
+    const byParentList = descriptors.filter((d) => {
+      const fid = d?.featureId ? String(d.featureId) : '';
+      const source = d?.sourceName ? String(d.sourceName) : '';
+      const tid = d?.targetId ? String(d.targetId) : '';
+      return parentTokens.has(fid) || parentTokens.has(source) || parentTokens.has(tid);
+    });
+    if (byParentList.length === 1) return byParentList[0];
+    if (byParentList.length > 1 && fallbackPoint) {
+      const best = nearestDescriptor(byParentList, fallbackPoint);
+      if (best) return best;
+    }
+  }
+
+  if (fallbackPoint) {
+    const best = nearestDescriptor(descriptors, fallbackPoint);
+    if (best) return best;
+  }
+
   return descriptors[0];
 }
 
-function formatHoleCallout(desc, quantity = 1) {
+
+function formatHoleCallout(desc, quantity = 1, options = {}) {
   if (!desc) return '';
   const lines = [];
-  const prefix = quantity > 1 ? `${quantity}× ` : '';
+  const before = normalizeAddonText(options.beforeText);
+  if (before) lines.push(before);
+  const includeQuantity = options.showQuantity !== false;
+  const prefix = (includeQuantity && quantity > 1) ? `${quantity}× ` : '';
   const depthValue = Number(desc.totalDepth ?? desc.straightDepth);
   const depthStr = (!desc.throughAll && depthValue > 0)
     ? ` ↧ ${fmt(depthValue)}`
@@ -198,6 +315,8 @@ function formatHoleCallout(desc, quantity = 1) {
   }
   const threadLine = formatThreadLine(desc?.thread);
   if (threadLine) lines.push(threadLine);
+  const after = normalizeAddonText(options.afterText);
+  if (after) lines.push(after);
   return lines.join('\n');
 }
 
@@ -269,4 +388,80 @@ function ensurePersistentData(ann) {
   if (!ann.persistentData || typeof ann.persistentData !== 'object') {
     ann.persistentData = {};
   }
+}
+
+function normalizeAddonText(value) {
+  if (value == null) return '';
+  const str = String(value).trim();
+  return str.length ? str : '';
+}
+
+function normalizeTargetTokens(rawName, fallbackName = null) {
+  const set = new Set();
+  const push = (v) => {
+    if (v == null) return;
+    const s = String(v);
+    if (!s) return;
+    set.add(s);
+    const bracket = s.match(/\[(.*?)\]/);
+    if (bracket && bracket[1]) {
+      const inner = bracket[1];
+      set.add(inner);
+      const axisStripped = inner.replace(/_AXIS_\d+$/, '');
+      if (axisStripped && axisStripped !== inner) set.add(axisStripped);
+    }
+    const axisStrip = s.replace(/_AXIS_\d+$/, '');
+    if (axisStrip && axisStrip !== s) set.add(axisStrip);
+  };
+  push(rawName);
+  push(fallbackName);
+  return set;
+}
+
+function nearestDescriptor(list, point) {
+  if (!Array.isArray(list) || !list.length || !point) return null;
+  let best = null;
+  let bestD2 = Infinity;
+  for (const d of list) {
+    const c = arrToVec(d?.center);
+    if (!c) continue;
+    const d2 = c.distanceToSquared(point);
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      best = d;
+    }
+  }
+  return best;
+}
+
+function resolveHoleQuantity(ann, descriptor, partHistory) {
+  const raw = Number(ann?.quantity);
+  const requested = Number.isFinite(raw) ? Math.round(raw) : 1;
+  if (requested > 0) return requested;
+  const metaQty = countFeatureHoles(partHistory, descriptor);
+  if (Number.isFinite(metaQty) && metaQty > 0) return metaQty;
+  return 1;
+}
+
+function countFeatureHoles(partHistory, descriptor) {
+  if (!partHistory || !descriptor) return null;
+  const features = Array.isArray(partHistory.features) ? partHistory.features : [];
+  const featureId = descriptor.featureId || null;
+  let fallbackCount = null;
+  for (const f of features) {
+    const holes = Array.isArray(f?.persistentData?.holes) ? f.persistentData.holes : [];
+    if (!holes.length) continue;
+    if (holes.includes(descriptor)) return holes.length;
+    const fid = resolveFeatureId(f);
+    if (featureId && fid && String(fid) === String(featureId)) {
+      fallbackCount = holes.length;
+    }
+  }
+  return fallbackCount;
+}
+
+function resolveFeatureId(feature) {
+  if (!feature || typeof feature !== 'object') return null;
+  const params = feature.inputParams || {};
+  return feature.id ?? params.id ?? params.featureID ?? null;
 }
