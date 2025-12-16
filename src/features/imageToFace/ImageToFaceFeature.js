@@ -2,6 +2,7 @@ import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 import { LineGeometry } from 'three/examples/jsm/Addons.js';
 import { ImageEditorUI } from './imageEditor.js';
+import { traceImageDataToPolylines, applyCurveFit, rdp } from './traceUtils.js';
 
 const inputParamsSchema = {
   id: {
@@ -47,6 +48,19 @@ const inputParamsSchema = {
           } catch (_) {}
         },
         onCancel: () => { /* no-op */ }
+      }, {
+        featureSchema: inputParamsSchema,
+        featureParams: ctx && ctx.feature && ctx.feature.inputParams ? ctx.feature.inputParams : (ctx?.params || {}),
+        partHistory: ctx && ctx.partHistory ? ctx.partHistory : null,
+        viewer: ctx && ctx.viewer ? ctx.viewer : (ctx && ctx.partHistory && ctx.partHistory.viewer ? ctx.partHistory.viewer : null),
+        onParamsChange: () => {
+          try {
+            if (ctx && ctx.partHistory) {
+              ctx.partHistory.currentHistoryStepId = ctx.feature?.inputParams?.featureID;
+              if (typeof ctx.partHistory.runHistory === 'function') ctx.partHistory.runHistory();
+            }
+          } catch (_) { /* ignore */ }
+        }
       });
       imageEditor.open();
     }
@@ -72,9 +86,25 @@ const inputParamsSchema = {
     default_value: true,
     hint: "Center the traced result around the origin",
   },
-  simplifyCollinear: {
+  smoothCurves: {
     type: "boolean",
     default_value: true,
+    hint: "Fit curved segments (Potrace-like) to smooth the traced outlines",
+  },
+  curveTolerance: {
+    type: "number",
+    default_value: 0.75,
+    step:0.1,
+    hint: "Max deviation (world units) for curve smoothing/flattening; larger = smoother",
+  },
+  speckleArea: {
+    type: "number",
+    default_value: 2,
+    hint: "Discard tiny traced loops below this pixel-area (turd size)",
+  },
+  simplifyCollinear: {
+    type: "boolean",
+    default_value: false,
     hint: "Remove intermediate points on straight segments",
   },
   rdpTolerance: {
@@ -102,7 +132,7 @@ export class ImageToFaceFeature {
   }
 
   async run(partHistory) {
-    const { fileToImport, threshold, invert, pixelScale, center, simplifyCollinear, rdpTolerance } = this.inputParams;
+    const { fileToImport, threshold, invert, pixelScale, center, smoothCurves, curveTolerance, speckleArea, simplifyCollinear, rdpTolerance } = this.inputParams;
 
     const imageData = await decodeToImageData(fileToImport);
     if (!imageData) {
@@ -110,19 +140,34 @@ export class ImageToFaceFeature {
       return { added: [], removed: [] };
     }
 
-    const mask = rasterToMask(imageData, Number(threshold) || 0, !!invert);
-    const loopsGrid = extractLoopsFromMask(mask.width, mask.height, mask.data);
+    const scale = Number(pixelScale) || 1;
+    const traceLoops = traceImageDataToPolylines(imageData, {
+      threshold: Number.isFinite(Number(threshold)) ? Number(threshold) : 128,
+      mode: "luma+alpha",
+      invert: !!invert,
+      mergeCollinear: !!simplifyCollinear,
+      simplify: (rdpTolerance && Number(rdpTolerance) > 0) ? (Number(rdpTolerance) / Math.max(Math.abs(scale) || 1, 1e-9)) : 0,
+      minArea: Number.isFinite(Number(speckleArea)) ? Math.max(0, Number(speckleArea)) : 0,
+    });
+    const loopsGrid = traceLoops.map((loop) => loop.map((p) => [p.x, p.y]));
     if (!loopsGrid.length) {
       console.warn('[IMAGE] No contours found in image');
       return { added: [], removed: [] };
     }
 
     // Convert grid loops (integer node coords in image space, y-down) to world 2D loops (x, y-up)
-    const scale = Number(pixelScale) || 1;
     const loops2D = loopsGrid.map((pts) => gridToWorld2D(pts, scale));
 
-    // Optional simplifications
-    let simpLoops = loops2D.map((l) => simplifyLoop(l, { simplifyCollinear, rdpTolerance }));
+    // Optional curve fitting (Potrace-like) then simplification/cleanup
+    let workingLoops = loops2D;
+    if (smoothCurves !== false) {
+      workingLoops = applyCurveFit(workingLoops, {
+        tolerance: Number.isFinite(Number(curveTolerance)) ? Math.max(0.01, Number(curveTolerance)) : Math.max(0.05, Math.abs(scale) * 0.75),
+        cornerThresholdDeg: 70,
+        iterations: 3,
+      });
+    }
+    let simpLoops = workingLoops.map((l) => simplifyLoop(l, { simplifyCollinear: false, rdpTolerance: 0 }));
 
     // Optionally center (only if there are any points)
     if (center) {
@@ -257,77 +302,6 @@ export class ImageToFaceFeature {
       e.userData = { polylineLocal: positionsToTriples(positions), polylineWorld: true, isHole: !!isHole };
       edges.push(e);
     };
-    const addEdgeSegment = (segPts, isHole) => {
-      if (!segPts || segPts.length < 2) return;
-      const positions = [];
-      for (let i = 0; i < segPts.length; i++) {
-        const p = segPts[i];
-        const w = toW(p[0], p[1]);
-        positions.push(w[0], w[1], w[2]);
-      }
-      const lg = new LineGeometry();
-      lg.setPositions(positions);
-      try { lg.computeBoundingSphere(); } catch { }
-      const e = new BREP.Edge(lg);
-      e.name = `${sceneGroup.name}:E${edgeIdx++}`;
-      e.closedLoop = false;
-      e.userData = { polylineLocal: positionsToTriples(positions), polylineWorld: true, isHole: !!isHole };
-      edges.push(e);
-    };
-
-    const makeSegments = (closedLoop) => {
-      const eps = 1e-12;
-      if (!Array.isArray(closedLoop) || closedLoop.length < 2) return [];
-      const ring = (closedLoop[0][0] === closedLoop[closedLoop.length - 1][0] && closedLoop[0][1] === closedLoop[closedLoop.length - 1][1])
-        ? closedLoop.slice()
-        : closedLoop.concat([closedLoop[0]]);
-      const n = ring.length - 1;
-      if (n < 2) return [];
-      const dir = (a, b) => [b[0] - a[0], b[1] - a[1]];
-      const collinear = (u, v) => Math.abs(u[0] * v[1] - u[1] * v[0]) <= eps;
-      const segs = [];
-      let cur = [ring[0]];
-      let prevDir = dir(ring[0], ring[1]);
-      for (let i = 1; i < n; i++) {
-        const b = ring[i];
-        const c = ring[i + 1];
-        const d = dir(b, c);
-        if (collinear(prevDir, d)) {
-          cur.push(b);
-          prevDir = d;
-        } else {
-          cur.push(b);
-          if (cur.length >= 2) segs.push(cur.slice());
-          cur = [b];
-          prevDir = d;
-        }
-      }
-      cur.push(ring[n]);
-      if (cur.length >= 2) segs.push(cur);
-      if (segs.length >= 2) {
-        const first = segs[0];
-        const last = segs[segs.length - 1];
-        const u = dir(last[last.length - 2], last[last.length - 1]);
-        const v = dir(first[0], first[1]);
-        if (collinear(u, v)) {
-          const merged = last.slice();
-          for (let i = 1; i < first.length; i++) merged.push(first[i]);
-          segs[0] = merged;
-          segs.pop();
-        }
-      }
-      const cleaned = [];
-      for (const s of segs) {
-        const out = [];
-        for (let i = 0; i < s.length; i++) {
-          const p = s[i];
-          if (!out.length || out[out.length - 1][0] !== p[0] || out[out.length - 1][1] !== p[1]) out.push(p);
-        }
-        if (out.length >= 2) cleaned.push(out);
-      }
-      return cleaned;
-    };
-
     // Emit one closed edge for outer, and one for each hole
     for (const grp of groups) {
       const outerClosed = grp.outer[0] && grp.outer[grp.outer.length - 1] && (grp.outer[0][0] === grp.outer[grp.outer.length - 1][0] && grp.outer[0][1] === grp.outer[grp.outer.length - 1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
@@ -335,15 +309,6 @@ export class ImageToFaceFeature {
       for (const h of grp.holes) {
         const hClosed = h[0] && h[h.length - 1] && (h[0][0] === h[h.length - 1][0] && h[0][1] === h[h.length - 1][1]) ? h : h.concat([h[0]]);
         addClosedLoopEdge(hClosed, true);
-      }
-    }
-
-    for (const grp of groups) {
-      const outerClosed = grp.outer[0] && grp.outer[grp.outer.length - 1] && (grp.outer[0][0] === grp.outer[grp.outer.length - 1][0] && grp.outer[0][1] === grp.outer[grp.outer.length - 1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
-      for (const seg of makeSegments(outerClosed)) addEdgeSegment(seg, false);
-      for (const h of grp.holes) {
-        const hClosed = h[0] && h[h.length - 1] && (h[0][0] === h[h.length - 1][0] && h[0][1] === h[h.length - 1][1]) ? h : h.concat([h[0]]);
-        for (const seg of makeSegments(hClosed)) addEdgeSegment(seg, true);
       }
     }
 
@@ -414,189 +379,6 @@ async function decodeToImageData(raw) {
   return null;
 }
 
-function rasterToMask(imageData, threshold = 128, invert = false) {
-  const width = imageData.width | 0;
-  const height = imageData.height | 0;
-  const src = imageData.data;
-  const out = new Uint8Array(width * height);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      const r = src[idx] | 0;
-      const g = src[idx + 1] | 0;
-      const b = src[idx + 2] | 0;
-      const a = src[idx + 3] | 0;
-      const gray = (r * 0.2126 + g * 0.7152 + b * 0.0722) | 0;
-      const fg = gray < threshold ? 1 : 0;
-      const alphaMask = (a >= 16) ? 1 : 0;
-      let v = fg;
-      if (invert) v = 1 - v;
-      out[y * width + x] = (v & alphaMask);
-    }
-  }
-  return { width, height, data: out };
-}
-
-// Extract closed loops using an oriented grid-edge tracer that keeps foreground on the left
-function extractLoopsFromMask(width, height, mask) {
-  // Build oriented half-edges: each boundary between 0/1 yields a directed edge with interior on the left
-  const dx = [1, 0, -1, 0];  // 0=R,1=D,2=L,3=U (clockwise)
-  const dy = [0, 1, 0, -1];
-  const edgeSet = new Set(); // keys: "x,y,dir"
-  const starts = new Map(); // node key -> array of dir ints
-  const skey = (x, y) => `${x},${y}`;
-  const ekey = (x, y, d) => `${x},${y},${d}`;
-
-  // Vertical transitions
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x <= width; x++) {
-      const L = (x > 0) ? mask[y * width + (x - 1)] : 0;
-      const R = (x < width) ? mask[y * width + x] : 0;
-      if ((L ^ R) === 1) {
-        if (L === 1) {
-          // interior on west; orient Up to keep interior on left
-          const sx = x, sy = y + 1, d = 3; // start at bottom node going up
-          edgeSet.add(ekey(sx, sy, d));
-          const k = skey(sx, sy);
-          if (!starts.has(k)) starts.set(k, []);
-          starts.get(k).push(d);
-        } else {
-          // interior on east; orient Down
-          const sx = x, sy = y, d = 1; // start at top node going down
-          edgeSet.add(ekey(sx, sy, d));
-          const k = skey(sx, sy);
-          if (!starts.has(k)) starts.set(k, []);
-          starts.get(k).push(d);
-        }
-      }
-    }
-  }
-
-  // Horizontal transitions
-  for (let y = 0; y <= height; y++) {
-    for (let x = 0; x < width; x++) {
-      const T = (y > 0) ? mask[(y - 1) * width + x] : 0;
-      const B = (y < height) ? mask[y * width + x] : 0;
-      if ((T ^ B) === 1) {
-        if (T === 1) {
-          // interior north; orient Right
-          const sx = x, sy = y, d = 0; // start at left node going right
-          edgeSet.add(ekey(sx, sy, d));
-          const k = skey(sx, sy);
-          if (!starts.has(k)) starts.set(k, []);
-          starts.get(k).push(d);
-        } else {
-          // interior south; orient Left
-          const sx = x + 1, sy = y, d = 2; // start at right node going left
-          edgeSet.add(ekey(sx, sy, d));
-          const k = skey(sx, sy);
-          if (!starts.has(k)) starts.set(k, []);
-          starts.get(k).push(d);
-        }
-      }
-    }
-  }
-
-  const loops = [];
-  const leftOf = (d) => (d + 3) & 3; // turn left
-  const rightOf = (d) => (d + 1) & 3;
-  const backOf = (d) => (d + 2) & 3;
-
-  // Helper: find a remaining edge to seed a loop
-  const nextSeed = () => {
-    for (const k of edgeSet.values()) return k;
-    return null;
-  };
-
-  while (edgeSet.size) {
-    const seed = nextSeed();
-    if (!seed) break;
-    const parts = seed.split(',');
-    let x = parseInt(parts[0], 10) | 0;
-    let y = parseInt(parts[1], 10) | 0;
-    let d = parseInt(parts[2], 10) | 0;
-
-    const sx = x, sy = y, sd = d;
-    const ring = [[x, y]];
-    edgeSet.delete(ekey(x, y, d));
-
-    while (true) {
-      // Step along current edge
-      const nx = x + dx[d];
-      const ny = y + dy[d];
-      // Append endpoint
-      ring.push([nx, ny]);
-
-      // Choose next edge with left/straight/right/back preference
-      const cand = [leftOf(d), d, rightOf(d), backOf(d)];
-      let nd = -1;
-      for (let i = 0; i < 4; i++) {
-        const cd = cand[i];
-        const key = ekey(nx, ny, cd);
-        if (edgeSet.has(key)) { nd = cd; edgeSet.delete(key); break; }
-      }
-
-      if (nd === -1) {
-        // No continuation; ring should be closed or a degenerate open chain; accept and break
-        break;
-      }
-
-      // If we returned to the seed state, close the loop
-      if (nx === sx && ny === sy && nd === sd) {
-        // Add seed start again to make a closed ring explicitly
-        // (ring already has [sx,sy] as first entry)
-        break;
-      }
-
-      // Advance
-      x = nx; y = ny; d = nd;
-    }
-
-    // Deduplicate consecutive duplicates
-    const cleaned = [];
-    for (let i = 0; i < ring.length; i++) {
-      const p = ring[i];
-      if (!cleaned.length || (cleaned[cleaned.length - 1][0] !== p[0] || cleaned[cleaned.length - 1][1] !== p[1])) {
-        cleaned.push(p);
-      }
-    }
-    // Ensure closed by removing redundant last if equal to first
-    if (cleaned.length >= 2) {
-      const a = cleaned[0];
-      const b = cleaned[cleaned.length - 1];
-      if (a[0] === b[0] && a[1] === b[1]) cleaned.pop();
-    }
-    // Remove collinear grid nodes to only keep corners
-    const simplified = removeCollinearGrid(cleaned);
-    if (simplified.length >= 3) loops.push(simplified);
-  }
-
-  return loops;
-}
-
-function removeCollinearGrid(pts) {
-  if (pts.length <= 3) return pts.slice();
-  const out = [];
-  const n = pts.length;
-  for (let i = 0; i < n; i++) {
-    const prev = pts[(i + n - 1) % n];
-    const cur = pts[i];
-    const next = pts[(i + 1) % n];
-    const v1x = cur[0] - prev[0];
-    const v1y = cur[1] - prev[1];
-    const v2x = next[0] - cur[0];
-    const v2y = next[1] - cur[1];
-    // Keep point if direction changes (corner)
-    const collinear = (v1x === v2x && v1y === v2y) || (v1x === -v2x && v1y === -v2y) || (v1x === 0 && v2x === 0) || (v1y === 0 && v2y === 0);
-    // The above condition is too permissive; prefer cross-product test for axis-aligned grid
-    const cross = v1x * v2y - v1y * v2x;
-    if (Math.abs(cross) > 1e-12) out.push(cur);
-  }
-  // Ensure closed ring (repeat first at end)
-  if (out.length) out.push([out[0][0], out[0][1]]);
-  return out;
-}
-
 function gridToWorld2D(gridLoop, scale = 1) {
   // gridLoop: list of [xNode, yNode], y grows down; map to world with y up, z=0
   const out = [];
@@ -639,48 +421,6 @@ function removeCollinear2D(loop) {
   }
   // If fully collinear or degenerate, keep original loop to avoid empty result
   return loop.slice();
-}
-
-function rdp(points, epsilon) {
-  // points closed (last equals first). Work on open then reclose.
-  if (points.length <= 3) return points.slice();
-  const open = points.slice(0, points.length - 1);
-  const simplified = rdpRecursive(open, epsilon);
-  if (!simplified.length) return points.slice();
-  simplified.push([simplified[0][0], simplified[0][1]]);
-  return simplified;
-}
-
-function rdpRecursive(points, epsilon) {
-  if (points.length < 3) return points.slice();
-  // Find point with max distance from line p0->pN
-  const p0 = points[0];
-  const pN = points[points.length - 1];
-  let index = -1; let dmax = 0;
-  for (let i = 1; i < points.length - 1; i++) {
-    const d = pointLineDist(points[i], p0, pN);
-    if (d > dmax) { index = i; dmax = d; }
-  }
-  if (dmax > epsilon) {
-    const left = rdpRecursive(points.slice(0, index + 1), epsilon);
-    const right = rdpRecursive(points.slice(index), epsilon);
-    return left.slice(0, left.length - 1).concat(right);
-  } else {
-    return [p0, pN];
-  }
-}
-
-function pointLineDist(p, a, b) {
-  const x = p[0], y = p[1];
-  const x1 = a[0], y1 = a[1];
-  const x2 = b[0], y2 = b[1];
-  const A = x - x1; const B = y - y1; const C = x2 - x1; const D = y2 - y1;
-  const dot = A * C + B * D;
-  const len2 = C * C + D * D;
-  const t = len2 > 0 ? Math.max(0, Math.min(1, dot / len2)) : 0;
-  const px = x1 + t * C; const py = y1 + t * D;
-  const dx = x - px; const dy = y - py;
-  return Math.hypot(dx, dy);
 }
 
 function signedArea(loop) {

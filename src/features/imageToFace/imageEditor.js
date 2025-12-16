@@ -1,11 +1,19 @@
 // Image editor that displays as a full screen paint-like editor
+import { SchemaForm } from '../../UI/featureDialogs.js';
+import { traceImageDataToPolylines, applyCurveFit, rdp } from './traceUtils.js';
 
 export class ImageEditorUI {
     // onSaveCallback can be a function (dataUrl)=>void, or an object { onSave, onCancel }
-    constructor(imageBase64, onSaveCallback) {
+    // options: { featureSchema, featureParams, onParamsChange, partHistory, viewer }
+    constructor(imageBase64, onSaveCallback, options = {}) {
         this.imageBase64 = imageBase64 || '';
         this.onSaveCallback = typeof onSaveCallback === 'function' ? onSaveCallback : (onSaveCallback && onSaveCallback.onSave) || null;
         this.onCancelCallback = (onSaveCallback && onSaveCallback.onCancel) || null;
+        this.featureSchema = options && options.featureSchema ? options.featureSchema : null;
+        this.featureParams = options && options.featureParams ? options.featureParams : null;
+        this.onParamsChange = options && typeof options.onParamsChange === 'function' ? options.onParamsChange : null;
+        this.featureViewer = options && options.viewer ? options.viewer : null;
+        this.featurePartHistory = options && options.partHistory ? options.partHistory : null;
 
         // Drawing state
         this.tool = 'brush'; // 'brush' | 'eraser' | 'pan' | 'bucket'
@@ -52,6 +60,10 @@ export class ImageEditorUI {
         this.toolbar = null;
         this.canvas = null; // display canvas
         this.ctx = null;
+        this.svgOverlay = null;
+        this.svgPathsGroup = null;
+        this.sidebar = null;
+        this.formHost = null;
         this.finishBtn = null;
         this.cancelBtn = null;
         this.colorInput = null;
@@ -60,8 +72,15 @@ export class ImageEditorUI {
         this.eraserBtn = null;
         this.undoBtn = null;
         this.redoBtn = null;
+        this.schemaForm = null;
 
         this._bound = {};
+
+        // Vector overlay state
+        this._vectorDirty = true;
+        this._vectorUpdateHandle = null;
+        this._traceCanvas = null;
+        this._traceCtx = null;
 
         this._initDOM();
         this._loadImage(this.imageBase64).then(() => {/* one-to-one set in _loadImage */ });
@@ -96,8 +115,13 @@ export class ImageEditorUI {
         .img-editor-btn.active{background:var(--ie-accent-bg);border-color:var(--ie-accent);color:var(--ie-accent-fg)}
         .img-editor-btn:disabled{opacity:.5;cursor:not-allowed;}
         .img-editor-right{margin-left:auto;display:flex;gap:8px;}
-        .img-editor-canvas-wrap{position:absolute;left:0;right:0;top:48px;bottom:0;overflow:hidden;background:var(--ie-bg-1);}
+        .img-editor-main{position:absolute;left:0;right:0;top:48px;bottom:0;display:flex;min-height:0;}
+        .img-editor-canvas-wrap{position:relative;flex:1;overflow:hidden;background:var(--ie-bg-1);}
         .img-editor-canvas{position:absolute;left:0;top:0;display:block;}
+        .img-editor-overlay-svg{position:absolute;left:0;top:0;display:block;pointer-events:none;mix-blend-mode:screen;}
+        .img-editor-sidebar{width:320px;max-width:360px;min-width:240px;background:var(--ie-bg-2);border-left:1px solid var(--ie-border);overflow:auto;padding:12px;box-sizing:border-box;}
+        .img-editor-sidebar h3{margin:0 0 8px;font-size:14px;font-weight:600;color:var(--ie-fg);}
+        .img-editor-form{background:var(--ie-bg-3);border:1px solid var(--ie-border);border-radius:8px;padding:8px;box-sizing:border-box;}
         .img-editor-group{display:flex;align-items:center;gap:6px;border-right:1px dashed var(--ie-border);padding-right:10px;margin-right:8px;}
         .img-editor-label{font-size:12px;color:var(--ie-muted);}
         .img-editor-color{width:32px;height:28px;border:1px solid var(--ie-border);border-radius:4px;padding:0;background:var(--ie-bg-3)}
@@ -139,8 +163,15 @@ export class ImageEditorUI {
             <button class="img-editor-btn js-cancel" title="Cancel (Esc)">Cancel</button>
         </div>
       </div>
-      <div class="img-editor-canvas-wrap">
-        <canvas class="img-editor-canvas"></canvas>
+      <div class="img-editor-main">
+        <div class="img-editor-canvas-wrap">
+          <canvas class="img-editor-canvas"></canvas>
+          <svg class="img-editor-overlay-svg" aria-hidden="true"><g class="js-vector-group" fill="none" stroke="lime" stroke-width="1" vector-effect="non-scaling-stroke"></g></svg>
+        </div>
+        <div class="img-editor-sidebar">
+          <h3>Image to Face</h3>
+          <div class="img-editor-form js-feature-form"></div>
+        </div>
       </div>
     `;
 
@@ -150,6 +181,10 @@ export class ImageEditorUI {
         this.toolbar = toolbar;
         this.canvas = canvas;
         this.ctx = this.canvas.getContext('2d');
+        this.svgOverlay = overlay.querySelector('.img-editor-overlay-svg');
+        this.svgPathsGroup = overlay.querySelector('.js-vector-group');
+        this.sidebar = overlay.querySelector('.img-editor-sidebar');
+        this.formHost = overlay.querySelector('.js-feature-form');
         this.colorInput = overlay.querySelector('.js-color');
         this.sizeInput = overlay.querySelector('.js-size');
         this.brushBtn = overlay.querySelector('.js-brush');
@@ -167,6 +202,31 @@ export class ImageEditorUI {
         // Offscreen draw layer (created after image loads to match resolution)
         this.drawCanvas = document.createElement('canvas');
         this.drawCtx = this.drawCanvas.getContext('2d');
+
+        this._renderFeatureForm();
+    }
+
+    _renderFeatureForm() {
+        if (!this.formHost || !this.featureSchema || !this.featureParams) return;
+        try { this.formHost.innerHTML = ''; } catch (_) { }
+        try {
+            this.schemaForm = new SchemaForm(this.featureSchema, this.featureParams, {
+                useShadowDOM: false,
+                viewer: this.featureViewer || null,
+                scene: (this.featureViewer && this.featureViewer.scene) ? this.featureViewer.scene : null,
+                partHistory: this.featurePartHistory || null,
+                onChange: () => {
+                    this._vectorDirty = true;
+                    this._scheduleVectorOverlayUpdate();
+                    if (typeof this.onParamsChange === 'function') {
+                        try { this.onParamsChange(); } catch (_) { }
+                    }
+                }
+            });
+            this.formHost.appendChild(this.schemaForm.uiElement);
+        } catch (e) {
+            console.warn('[ImageEditor] Failed to render feature form', e);
+        }
     }
 
     async _loadImage(src) {
@@ -185,6 +245,9 @@ export class ImageEditorUI {
         this._pushHistory(); // base state
         // Default view: 1:1 pixel mapping centered (if overlay sized)
         this._maybeResetInitialView(false);
+        this._vectorDirty = true;
+        this._scheduleVectorOverlayUpdate();
+        this._render();
     }
 
     _attachEvents() {
@@ -368,6 +431,8 @@ export class ImageEditorUI {
         }
         // draw brush cursor on top
         this._drawBrushPreview(ctx);
+        this._updateOverlayTransform();
+        if (this._vectorDirty) this._scheduleVectorOverlayUpdate();
         ctx.restore();
     }
 
@@ -397,6 +462,105 @@ export class ImageEditorUI {
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
+    }
+
+    _updateOverlayTransform() {
+        if (!this.svgOverlay) return;
+        const w = this.workWidth || 0;
+        const h = this.workHeight || 0;
+        if (w && h) {
+            this.svgOverlay.setAttribute('viewBox', `0 0 ${w} ${h}`);
+            this.svgOverlay.setAttribute('width', String(w));
+            this.svgOverlay.setAttribute('height', String(h));
+        }
+        const tx = this.offsetX || 0;
+        const ty = this.offsetY || 0;
+        const s = this.scale || 1;
+        this.svgOverlay.style.transformOrigin = '0 0';
+        this.svgOverlay.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+    }
+
+    _composeImageForVector() {
+        const w = this.workWidth | 0;
+        const h = this.workHeight | 0;
+        if (!w || !h) return null;
+        if (!this._traceCanvas) {
+            this._traceCanvas = document.createElement('canvas');
+            this._traceCtx = this._traceCanvas.getContext('2d', { willReadFrequently: true });
+        }
+        this._traceCanvas.width = w;
+        this._traceCanvas.height = h;
+        const ctx = this._traceCtx;
+        if (!ctx) return null;
+        ctx.clearRect(0, 0, w, h);
+        if (this.bgImage) ctx.drawImage(this.bgImage, 0, 0, w, h);
+        if (this.drawCanvas) ctx.drawImage(this.drawCanvas, 0, 0, w, h);
+        try {
+            return ctx.getImageData(0, 0, w, h);
+        } catch (_) {
+            return null;
+        }
+    }
+
+    _scheduleVectorOverlayUpdate() {
+        if (this._vectorUpdateHandle && typeof cancelAnimationFrame === 'function') {
+            cancelAnimationFrame(this._vectorUpdateHandle);
+        }
+        if (typeof requestAnimationFrame === 'function') {
+            this._vectorUpdateHandle = requestAnimationFrame(() => {
+                this._vectorUpdateHandle = null;
+                this._updateVectorOverlay();
+            });
+        } else {
+            this._vectorUpdateHandle = setTimeout(() => {
+                this._vectorUpdateHandle = null;
+                this._updateVectorOverlay();
+            }, 16);
+        }
+    }
+
+    _updateVectorOverlay() {
+        this._vectorDirty = false;
+        const group = this.svgPathsGroup;
+        if (!group || !this.svgOverlay) return;
+        const id = this._composeImageForVector();
+        if (!id) { group.innerHTML = ''; return; }
+        const params = this.featureParams || {};
+        const threshold = Number.isFinite(Number(params.threshold)) ? Number(params.threshold) : 128;
+        const invert = !!params.invert;
+        const smooth = params.smoothCurves !== false;
+        const curveTol = Number.isFinite(Number(params.curveTolerance)) ? Number(params.curveTolerance) : 0.75;
+        const speckleArea = Number.isFinite(Number(params.speckleArea)) ? Math.max(0, Number(params.speckleArea)) : 0;
+        const simplifyCollinear = params.simplifyCollinear !== false;
+        const rdpTol = Number.isFinite(Number(params.rdpTolerance)) ? Number(params.rdpTolerance) : 0;
+
+        const loops = traceImageDataToPolylines(id, {
+            threshold,
+            mode: "luma+alpha",
+            invert,
+            mergeCollinear: simplifyCollinear,
+            simplify: 0,
+            minArea: speckleArea,
+        });
+        let polyLoops = loops.map((l) => l.map((p) => [p.x, p.y]));
+        if (smooth) {
+            polyLoops = applyCurveFit(polyLoops, {
+                tolerance: Math.max(0.01, curveTol),
+                cornerThresholdDeg: 70,
+                iterations: 3,
+            });
+        } else if (rdpTol > 0) {
+            polyLoops = polyLoops.map((l) => rdp(l, rdpTol));
+        }
+        const pathStrings = [];
+        for (const loop of polyLoops) {
+            if (!loop || loop.length < 2) continue;
+            let d = `M${loop[0][0]} ${loop[0][1]}`;
+            for (let i = 1; i < loop.length; i++) d += ` L${loop[i][0]} ${loop[i][1]}`;
+            d += ' Z';
+            pathStrings.push(`<path d="${d}" />`);
+        }
+        group.innerHTML = pathStrings.join('');
     }
 
     // ------------------------------ Interaction ----------------------------
@@ -510,6 +674,8 @@ export class ImageEditorUI {
         this.workHeight = newH;
         // ensure draw canvas matches work area, preserving edits
         this._resizeDrawCanvas(newW, newH, /*preserve*/ true);
+        this._vectorDirty = true;
+        this._scheduleVectorOverlayUpdate();
     }
 
     _resizeDrawCanvas(newW, newH, preserve) {
@@ -569,6 +735,7 @@ export class ImageEditorUI {
                 drawDab(sx + dx * t, sy + dy * t);
             }
         }
+        this._vectorDirty = true;
         ctx.restore();
     }
 
@@ -621,6 +788,7 @@ export class ImageEditorUI {
             dd[k] = fr; dd[k + 1] = fg; dd[k + 2] = fb; dd[k + 3] = fa;
         }
         this.drawCtx.putImageData(di, 0, 0);
+        this._vectorDirty = true;
     }
 
     _hexToRgba(hex, alphaOverride) {
@@ -701,6 +869,7 @@ export class ImageEditorUI {
             this.drawCtx.putImageData(prev, 0, 0);
             this._render();
             this._updateButtons();
+            this._vectorDirty = true;
         }
     }
 
@@ -712,6 +881,7 @@ export class ImageEditorUI {
             this.drawCtx.putImageData(next, 0, 0);
             this._render();
             this._updateButtons();
+            this._vectorDirty = true;
         }
     }
 
