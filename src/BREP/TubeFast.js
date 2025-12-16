@@ -393,6 +393,25 @@ function addRingCap(solid, name, outerRing, innerRing, outwardDir) {
   }
 }
 
+// Copy manifold-backed geometry and metadata from `source` onto `target`
+function copySolidState(target, source, { auxEdges } = {}) {
+  target._numProp = source._numProp;
+  target._vertProperties = source._vertProperties;
+  target._triVerts = source._triVerts;
+  target._triIDs = source._triIDs;
+  target._vertKeyToIndex = new Map(source._vertKeyToIndex);
+
+  target._idToFaceName = new Map(source._idToFaceName);
+  target._faceNameToID = new Map(source._faceNameToID);
+  target._faceMetadata = new Map(source._faceMetadata);
+  target._edgeMetadata = new Map(source._edgeMetadata);
+
+  target._auxEdges = auxEdges !== undefined ? auxEdges : Array.isArray(source._auxEdges) ? source._auxEdges : [];
+  target._manifold = source._manifold;
+  target._dirty = false;
+  target._faceIndex = null;
+}
+
 export class TubeFast extends Solid {
   /**
    * Build a tube solid along a polyline.
@@ -430,7 +449,7 @@ export class TubeFast extends Solid {
       const hasPath = Array.isArray(points) && points.length >= 2;
       const validRadius = Number(radius) > 0;
       if (hasPath && validRadius) {
-        this.generate();
+        this.generate().visualize();
         this.visualize();
       }
     } catch {
@@ -441,15 +460,7 @@ export class TubeFast extends Solid {
   generate() {
 
     let { points, radius, innerRadius, resolution, closed, name } = this.params;
-    console.log('Generating tube with params:', this.params);
-
-    console.log('Tube closed loop detected:',closed, points[0], points[points.length - 1]);
-    // determine if we have a closed loop by checking first and last points and set closed accordingly
-    //closed = points[0].equals(points[points.length - 1]);
-    console.log('Tube closed loop detected:',closed, points[0], points[points.length - 1]);
-
-
-
+    let isClosed = !!closed;
     //console.log(points, radius, innerRadius, resolution, closed, name);
     if (!(radius > 0)) {
       throw new Error('Tube radius must be greater than zero.');
@@ -470,6 +481,16 @@ export class TubeFast extends Solid {
       throw new Error(`Tube requires at least two distinct path points. Got ${vecPoints.length} valid points from ${points.length} input points.`);
     }
 
+    // Use a scale-adaptive tolerance for closed-loop detection and endpoint snapping
+    const scaleEstimate = vecPoints.reduce((m, p) => Math.max(m, Math.abs(p.x), Math.abs(p.y), Math.abs(p.z)), Math.max(1e-6, radius));
+    const closureTol = Math.max(1e-7, radius * 1e-5, scaleEstimate * 1e-6);
+    const closureTolSq = closureTol * closureTol;
+
+    if (!isClosed && vecPoints.length >= 2) {
+      const rawDistSq = vecPoints[0].distanceToSquared(vecPoints[vecPoints.length - 1]);
+      if (rawDistSq <= closureTolSq) isClosed = true;
+    }
+
     // Apply path smoothing with proper intersection handling
     let smoothed;
     try {
@@ -485,20 +506,23 @@ export class TubeFast extends Solid {
     }
 
     // For closed loops, ensure we don't have duplicate points at the closure after smoothing
-    if (closed && smoothed.length > 2) {
+    if (smoothed.length > 1) {
       const first = smoothed[0];
       const last = smoothed[smoothed.length - 1];
       const closureDistSq = first.distanceToSquared(last);
-      const tolerance = 1e-6; // Small tolerance for floating point comparison
+      if (!isClosed && closureDistSq <= closureTolSq) isClosed = true;
 
-      if (closureDistSq < tolerance * tolerance) {
-        // Remove the duplicate last point
+      // Remove an explicit duplicate endpoint to avoid zero-length segments,
+      // but only when the loop is actually closed within tolerance.
+      if (isClosed && closureDistSq <= closureTolSq && smoothed.length > 2) {
         smoothed = smoothed.slice(0, -1);
         if (DEBUG_LOGS) console.log(`Tube generation: Removed duplicate closure point, now ${smoothed.length} points`);
       }
     }
 
-    const { tangents, normals, binormals } = computeFrames(smoothed, closed);
+    this.params.closed = isClosed;
+
+    const { tangents, normals, binormals } = computeFrames(smoothed, isClosed);
     if (tangents.length < 2) {
       throw new Error('Unable to compute frames for tube path.');
     }
@@ -507,7 +531,7 @@ export class TubeFast extends Solid {
     const faceTag = name || 'Tube';
 
     // Generate outer surface with consistent winding
-    const ringCount = closed ? outer.length : outer.length - 1;
+    const ringCount = isClosed ? outer.length : outer.length - 1;
     for (let i = 0; i < ringCount; i++) {
       const ringA = outer[i];
       const ringB = outer[(i + 1) % outer.length]; // For closed loops, wrap around to first ring
@@ -526,7 +550,7 @@ export class TubeFast extends Solid {
 
     // Generate inner surface with consistent winding (inward-facing)
     if (innerRings) {
-      const innerRingCount = closed ? innerRings.length : innerRings.length - 1;
+      const innerRingCount = isClosed ? innerRings.length : innerRings.length - 1;
       for (let i = 0; i < innerRingCount; i++) {
         const ringA = innerRings[i];
         const ringB = innerRings[(i + 1) % innerRings.length]; // For closed loops, wrap around to first ring
@@ -545,7 +569,7 @@ export class TubeFast extends Solid {
     }
 
     // Only add caps for open tubes (not closed loops)
-    if (!closed) {
+    if (!isClosed) {
       const startCenter = [smoothed[0].x, smoothed[0].y, smoothed[0].z];
       const endCenter = [smoothed[smoothed.length - 1].x, smoothed[smoothed.length - 1].y, smoothed[smoothed.length - 1].z];
       const startDir = tangents[0].clone().negate();
@@ -563,9 +587,51 @@ export class TubeFast extends Solid {
 
     try {
       const auxPath = smoothed.map(p => [p.x, p.y, p.z]);
-      this.addAuxEdge(`${faceTag}_PATH`, auxPath, { polylineWorld: true, materialKey: 'OVERLAY', closedLoop: !!closed });
+      if (isClosed && auxPath.length >= 2) {
+        const first = auxPath[0];
+        const last = auxPath[auxPath.length - 1];
+        const dx = first[0] - last[0];
+        const dy = first[1] - last[1];
+        const dz = first[2] - last[2];
+        const distSq = dx * dx + dy * dy + dz * dz;
+        // Explicitly close the helper polyline so endpoints coincide visually and in metadata
+        if (distSq > 0) {
+          auxPath.push([first[0], first[1], first[2]]);
+        }
+      }
+      this.addAuxEdge(`${faceTag}_PATH`, auxPath, { polylineWorld: true, materialKey: 'OVERLAY', closedLoop: !!isClosed });
     } catch (_) {
       // ignore auxiliary path errors
     }
+
+    // Boolean the tube with itself to let Manifold split any self-intersections,
+    // then copy the result back onto this instance so callers retain params/metadata.
+    const auxEdgesSnapshot = Array.isArray(this._auxEdges)
+      ? this._auxEdges.map(e => ({
+          name: e?.name,
+          closedLoop: !!e?.closedLoop,
+          polylineWorld: !!e?.polylineWorld,
+          materialKey: e?.materialKey,
+          points: Array.isArray(e?.points)
+            ? e.points.map(p => (Array.isArray(p) ? [p[0], p[1], p[2]] : p))
+            : [],
+        }))
+      : [];
+    let inputManifold = null;
+    try { inputManifold = this._manifoldize(); } catch { /* best-effort manifold build before boolean */ }
+    try {
+      const booleaned = this.union(this);
+      copySolidState(this, booleaned, { auxEdges: auxEdgesSnapshot });
+      if (inputManifold && inputManifold !== this._manifold) {
+        try { if (typeof inputManifold.delete === 'function') inputManifold.delete(); } catch { }
+      }
+    } catch (error) {
+      console.warn('Self-union failed; returning raw tube geometry.', error);
+    }
+
+    this.visualize();
+    alert('Tube generated with ' + this.triangleCount + ' triangles.');
+
+    return this;
   }
 }
