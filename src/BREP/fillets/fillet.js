@@ -18,7 +18,6 @@ import {
 } from './outset.js';
 import { offsetAndMovePoints } from "./offsetHelper.js";
 import { Tube } from "../Tube.js";
-import { TubeFast } from "../TubeFast.js";
 
 export { clearFilletCaches, trimFilletCaches } from './inset.js';
 export { fixTJunctionsAndPatchHoles } from './outset.js';
@@ -1055,13 +1054,13 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             }
 
             const inflatedTubeRadius = radius * 1.01;
-            const TubeBuilder = useTubeFast ? TubeFast : Tube;
-            filletTube = new TubeBuilder({
+            filletTube = new Tube({
                 points: tubePoints,
                 radius: inflatedTubeRadius,
                 innerRadius: 0,
                 resolution: 32,
-                name: `${name}_TUBE`
+                name: `${name}_TUBE`,
+                preferFast: useTubeFast !== false,
             });
 
             // Store PMI metadata on the outer pipe face so downstream annotations

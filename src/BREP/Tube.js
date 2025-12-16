@@ -3,6 +3,7 @@ import { Manifold, THREE } from './SolidShared.js';
 
 const DEFAULT_SEGMENTS = 32;
 const EPS = 1e-9;
+const EPS_SQ = EPS * EPS;
 
 function toVector3Array(points) {
   const out = [];
@@ -28,6 +29,274 @@ function dedupeVectors(vectors, eps = 1e-7) {
     if (v.distanceToSquared(out[out.length - 1]) > epsSq) out.push(v.clone());
   }
   return out;
+}
+
+function calculateTubeIntersectionTrimming(points, tubeRadius) {
+  if (!Array.isArray(points) || points.length < 2) {
+    return Array.isArray(points) ? points.map(p => p.clone()) : [];
+  }
+
+  if (points.length === 2) {
+    return points.map(p => p.clone());
+  }
+
+  const out = [];
+  out.push(points[0].clone());
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const next = points[i + 1];
+
+    if (!prev || !curr || !next) {
+      out.push(curr.clone());
+      continue;
+    }
+
+    const vPrev = curr.clone().sub(prev);
+    const vNext = next.clone().sub(curr);
+
+    if (vPrev.lengthSq() < EPS_SQ || vNext.lengthSq() < EPS_SQ) {
+      out.push(curr.clone());
+      continue;
+    }
+
+    vPrev.normalize();
+    vNext.normalize();
+
+    const dot = THREE.MathUtils.clamp(vPrev.dot(vNext), -1, 1);
+    const angle = Math.acos(Math.abs(dot));
+
+    if (angle > Math.PI / 3) {
+      const halfAngle = angle * 0.5;
+      const intersectionDist = tubeRadius / Math.tan(halfAngle);
+      const distPrev = prev.distanceTo(curr);
+      const distNext = curr.distanceTo(next);
+      const trimDistPrev = Math.min(intersectionDist * 0.8, distPrev * 0.6);
+      const trimDistNext = Math.min(intersectionDist * 0.8, distNext * 0.6);
+
+      if (trimDistPrev > tubeRadius * 0.1 && trimDistNext > tubeRadius * 0.1) {
+        const trimmedPrev = curr.clone().addScaledVector(vPrev, -trimDistPrev);
+        const trimmedNext = curr.clone().addScaledVector(vNext, trimDistNext);
+
+        if (out[out.length - 1].distanceTo(trimmedPrev) > 1e-6) {
+          out.push(trimmedPrev);
+        }
+
+        out.push(trimmedNext);
+      } else {
+        out.push(curr.clone());
+      }
+    } else {
+      out.push(curr.clone());
+    }
+  }
+
+  out.push(points[points.length - 1].clone());
+  return dedupeVectors(out, 1e-6);
+}
+
+function smoothPath(points, tubeRadius) {
+  try {
+    const trimmedPoints = calculateTubeIntersectionTrimming(points, tubeRadius);
+    if (!Array.isArray(trimmedPoints) || trimmedPoints.length < 2) {
+      return Array.isArray(points) ? points.map(p => p.clone()) : [];
+    }
+    return dedupeVectors(trimmedPoints, 1e-9);
+  } catch (error) {
+    console.error('Error in smoothPath:', error);
+    return points.map(p => p.clone());
+  }
+}
+
+const tmpVecA = new THREE.Vector3();
+const tmpVecB = new THREE.Vector3();
+const tmpVecC = new THREE.Vector3();
+const tmpNormal = new THREE.Vector3();
+
+function computeFrames(points, closed = false) {
+  const tangents = [];
+  const normals = [];
+  const binormals = [];
+  if (!Array.isArray(points) || points.length < 2) return { tangents, normals, binormals };
+
+  const vec = new THREE.Vector3();
+  const normalSeed = new THREE.Vector3();
+
+  for (let i = 0; i < points.length; i++) {
+    const tangent = new THREE.Vector3();
+
+    if (closed) {
+      const prevIdx = (i - 1 + points.length) % points.length;
+      const nextIdx = (i + 1) % points.length;
+      const forward = new THREE.Vector3().subVectors(points[nextIdx], points[i]);
+      const backward = new THREE.Vector3().subVectors(points[i], points[prevIdx]);
+
+      const forwardLen = forward.length();
+      const backwardLen = backward.length();
+
+      if (forwardLen > EPS && backwardLen > EPS) {
+        forward.normalize();
+        backward.normalize();
+        tangent.addVectors(forward, backward).normalize();
+      } else if (forwardLen > EPS) {
+        tangent.copy(forward).normalize();
+      } else if (backwardLen > EPS) {
+        tangent.copy(backward).normalize();
+      } else {
+        tangent.set(0, 0, 1);
+      }
+    } else {
+      if (i === 0) {
+        tangent.subVectors(points[1], points[0]);
+      } else if (i === points.length - 1) {
+        tangent.subVectors(points[i], points[i - 1]);
+      } else {
+        const forward = new THREE.Vector3().subVectors(points[i + 1], points[i]);
+        const backward = new THREE.Vector3().subVectors(points[i], points[i - 1]);
+        const forwardLen = forward.length();
+        const backwardLen = backward.length();
+
+        if (forwardLen > EPS && backwardLen > EPS) {
+          forward.normalize();
+          backward.normalize();
+          tangent.addVectors(forward, backward).normalize();
+        } else if (forwardLen > EPS) {
+          tangent.copy(forward).normalize();
+        } else if (backwardLen > EPS) {
+          tangent.copy(backward).normalize();
+        } else {
+          tangent.copy(i > 0 ? tangents[i - 1] : new THREE.Vector3(0, 0, 1));
+        }
+      }
+    }
+
+    tangents.push(tangent.normalize());
+  }
+
+  normalSeed.set(0, 0, 1);
+  if (Math.abs(tangents[0].dot(normalSeed)) > 0.99) {
+    normalSeed.set(1, 0, 0);
+  }
+
+  normals.push(new THREE.Vector3().crossVectors(tangents[0], normalSeed).cross(tangents[0]).normalize());
+  binormals.push(new THREE.Vector3().crossVectors(tangents[0], normals[0]).normalize());
+
+  for (let i = 1; i < points.length; i++) {
+    normals.push(normals[i - 1].clone());
+    binormals.push(binormals[i - 1].clone());
+
+    const deltaT = tangents[i - 1].dot(tangents[i]);
+    if (deltaT <= 1 - EPS) {
+      const axis = new THREE.Vector3().crossVectors(tangents[i - 1], tangents[i]).normalize();
+      const angle = Math.acos(THREE.MathUtils.clamp(deltaT, -1, 1));
+      const mat = new THREE.Matrix4().makeRotationAxis(axis, angle);
+      normals[i].applyMatrix4(mat).normalize();
+      binormals[i].crossVectors(tangents[i], normals[i]).normalize();
+    }
+  }
+
+  if (closed && points.length > 2) {
+    const avgNormal = normals.reduce((acc, n) => acc.add(n), new THREE.Vector3()).normalize();
+    for (let i = 0; i < normals.length; i++) {
+      const projection = normals[i].clone().sub(tangents[i].clone().multiplyScalar(tangents[i].dot(normals[i])));
+      if (projection.lengthSq() > EPS_SQ) {
+        normals[i].copy(projection.normalize());
+        binormals[i].crossVectors(tangents[i], projection).normalize();
+      } else {
+        normals[i].copy(avgNormal);
+        binormals[i].crossVectors(tangents[i], avgNormal).normalize();
+      }
+    }
+  }
+
+  return { tangents, normals, binormals };
+}
+
+function buildRings(points, normals, binormals, radius, innerRadius, segments) {
+  const outer = [];
+  const inner = innerRadius > 0 ? [] : null;
+
+  for (let i = 0; i < points.length; i++) {
+    const normal = normals[i];
+    const binormal = binormals[i];
+    const ringOuter = [];
+    const ringInner = inner ? [] : null;
+
+    for (let j = 0; j < segments; j++) {
+      const theta = (j / segments) * Math.PI * 2;
+      const cos = Math.cos(theta);
+      const sin = Math.sin(theta);
+      const offset = normal.clone().multiplyScalar(cos).add(binormal.clone().multiplyScalar(sin));
+
+      const outerPoint = points[i].clone().addScaledVector(offset, radius);
+      ringOuter.push([outerPoint.x, outerPoint.y, outerPoint.z]);
+
+      if (inner && innerRadius > 0) {
+        const innerPoint = points[i].clone().addScaledVector(offset, innerRadius);
+        ringInner.push([innerPoint.x, innerPoint.y, innerPoint.z]);
+      }
+    }
+
+    outer.push(ringOuter);
+    if (inner && innerRadius > 0) inner.push(ringInner);
+  }
+
+  return { outer, inner };
+}
+
+function addTriangleOriented(solid, name, a, b, c, outwardDir) {
+  if (!outwardDir || outwardDir.lengthSq() < 1e-10) {
+    solid.addTriangle(name, a, b, c);
+    return;
+  }
+  tmpVecA.set(a[0], a[1], a[2]);
+  tmpVecB.set(b[0], b[1], b[2]).sub(tmpVecA);
+  tmpVecC.set(c[0], c[1], c[2]).sub(tmpVecA);
+  tmpNormal.copy(tmpVecB).cross(tmpVecC);
+  if (tmpNormal.dot(outwardDir) < 0) {
+    solid.addTriangle(name, a, c, b);
+  } else {
+    solid.addTriangle(name, a, b, c);
+  }
+}
+
+function addQuadOriented(solid, name, a, b, c, d, outwardDir) {
+  addTriangleOriented(solid, name, a, b, c, outwardDir);
+  addTriangleOriented(solid, name, a, c, d, outwardDir);
+}
+
+function addDiskCap(solid, name, center, ring, outwardDir) {
+  for (let j = 0; j < ring.length; j++) {
+    const j1 = (j + 1) % ring.length;
+    addTriangleOriented(solid, name, center, ring[j], ring[j1], outwardDir);
+  }
+}
+
+function addRingCap(solid, name, outerRing, innerRing, outwardDir) {
+  const count = outerRing.length;
+  for (let j = 0; j < count; j++) {
+    const j1 = (j + 1) % count;
+    addQuadOriented(solid, name, outerRing[j], outerRing[j1], innerRing[j1], innerRing[j], outwardDir);
+  }
+}
+
+function copySolidState(target, source, { auxEdges } = {}) {
+  target._numProp = source._numProp;
+  target._vertProperties = source._vertProperties;
+  target._triVerts = source._triVerts;
+  target._triIDs = source._triIDs;
+  target._vertKeyToIndex = new Map(source._vertKeyToIndex);
+
+  target._idToFaceName = new Map(source._idToFaceName);
+  target._faceNameToID = new Map(source._faceNameToID);
+  target._faceMetadata = new Map(source._faceMetadata);
+  target._edgeMetadata = new Map(source._edgeMetadata);
+
+  target._auxEdges = auxEdges !== undefined ? auxEdges : Array.isArray(source._auxEdges) ? source._auxEdges : [];
+  target._manifold = source._manifold;
+  target._dirty = false;
+  target._faceIndex = null;
 }
 
 function normalizePath(points, requestedClosed, tol) {
@@ -288,8 +557,19 @@ export class Tube extends Solid {
    */
   constructor(opts = {}) {
     super();
-    const { points = [], radius = 1, innerRadius = 0, resolution = DEFAULT_SEGMENTS, closed = false, name = 'Tube', debugSpheres = false } = opts;
-    this.params = { points, radius, innerRadius, resolution, closed, name, debugSpheres };
+    const {
+      points = [],
+      radius = 1,
+      innerRadius = 0,
+      resolution = DEFAULT_SEGMENTS,
+      closed = false,
+      name = 'Tube',
+      debugSpheres = false,
+      useTubeFast = true,
+      preferFast,
+    } = opts;
+    const preferFastValue = preferFast !== undefined ? !!preferFast : useTubeFast !== false;
+    this.params = { points, radius, innerRadius, resolution, closed, name, debugSpheres, preferFast: preferFastValue };
     this.name = name;
 
     if (Array.isArray(points) && points.length >= 2) {
@@ -312,7 +592,187 @@ export class Tube extends Solid {
     }
   }
 
-  generate() {
+  generate(){
+    const preferFast = this.params?.preferFast !== false;
+    if (preferFast) {
+      try {
+        this.generateFast();
+        const stats = this._selfUnionStats;
+        if (stats?.selfIntersectionLikely) {
+          if (typeof this.free === 'function') { try { this.free(); } catch { } }
+          return this.generateSlow();
+        }
+        return this;
+      } catch (error) {
+        console.warn('Tube fast generation failed; falling back to slow.', error);
+        if (typeof this.free === 'function') { try { this.free(); } catch { } }
+      }
+    }
+    return this.generateSlow();
+  }
+
+  generateFast() {
+    let { points, radius, innerRadius, resolution, closed, name } = this.params;
+    let isClosed = !!closed;
+    if (!(radius > 0)) throw new Error('Tube radius must be greater than zero.');
+    const inner = Number(innerRadius) || 0;
+    if (inner < 0) throw new Error('Inside radius cannot be negative.');
+    if (inner > 0 && inner >= radius) throw new Error('Inside radius must be smaller than the outer radius.');
+    const segs = Math.max(8, Math.floor(Number(resolution) || DEFAULT_SEGMENTS));
+
+    const vecPoints = dedupeVectors(toVector3Array(points));
+    if (vecPoints.length < 2) throw new Error(`Tube requires at least two distinct path points. Got ${vecPoints.length} valid points from ${points.length} input points.`);
+
+    const scaleEstimate = vecPoints.reduce((m, p) => Math.max(m, Math.abs(p.x), Math.abs(p.y), Math.abs(p.z)), Math.max(1e-6, radius));
+    const closureTol = Math.max(1e-7, radius * 1e-5, scaleEstimate * 1e-6);
+    const closureTolSq = closureTol * closureTol;
+
+    if (!isClosed && vecPoints.length >= 2) {
+      const rawDistSq = vecPoints[0].distanceToSquared(vecPoints[vecPoints.length - 1]);
+      if (rawDistSq <= closureTolSq) isClosed = true;
+    }
+
+    let smoothed;
+    try {
+      smoothed = smoothPath(vecPoints, radius);
+    } catch (error) {
+      console.error('Error in smoothPath:', error);
+      throw new Error(`Path smoothing failed: ${error.message}`);
+    }
+
+    if (smoothed.length < 2) {
+      throw new Error(`Tube path collapsed after smoothing; check input. Original: ${vecPoints.length}, Smoothed: ${smoothed.length}`);
+    }
+
+    if (smoothed.length > 1) {
+      const first = smoothed[0];
+      const last = smoothed[smoothed.length - 1];
+      const closureDistSq = first.distanceToSquared(last);
+      if (!isClosed && closureDistSq <= closureTolSq) isClosed = true;
+      if (isClosed && closureDistSq <= closureTolSq && smoothed.length > 2) {
+        smoothed = smoothed.slice(0, -1);
+      }
+    }
+
+    this.params.closed = isClosed;
+
+    const { tangents, normals, binormals } = computeFrames(smoothed, isClosed);
+    if (tangents.length < 2) throw new Error('Unable to compute frames for tube path.');
+
+    // reset authoring buffers before building
+    this._numProp = 3;
+    this._vertProperties = [];
+    this._triVerts = [];
+    this._triIDs = [];
+    this._vertKeyToIndex = new Map();
+    this._idToFaceName = new Map();
+    this._faceNameToID = new Map();
+    this._faceMetadata = new Map();
+    this._edgeMetadata = new Map();
+    this._auxEdges = [];
+    this._dirty = true;
+
+    const { outer, inner: innerRings } = buildRings(smoothed, normals, binormals, radius, inner, segs);
+    const faceTag = name || 'Tube';
+
+    const ringCount = isClosed ? outer.length : outer.length - 1;
+    for (let i = 0; i < ringCount; i++) {
+      const ringA = outer[i];
+      const ringB = outer[(i + 1) % outer.length];
+      const nextIdx = (i + 1) % smoothed.length;
+      const pathDir = smoothed[nextIdx].clone().sub(smoothed[i]).normalize();
+
+      for (let j = 0; j < segs; j++) {
+        const j1 = (j + 1) % segs;
+        addQuadOriented(this, `${faceTag}_Outer`, ringA[j], ringA[j1], ringB[j1], ringB[j], pathDir);
+      }
+    }
+
+    if (innerRings) {
+      const innerRingCount = isClosed ? innerRings.length : innerRings.length - 1;
+      for (let i = 0; i < innerRingCount; i++) {
+        const ringA = innerRings[i];
+        const ringB = innerRings[(i + 1) % innerRings.length];
+        const nextIdx = (i + 1) % smoothed.length;
+        const pathDir = smoothed[nextIdx].clone().sub(smoothed[i]).normalize();
+        const inwardDir = pathDir.clone().negate();
+
+        for (let j = 0; j < segs; j++) {
+          const j1 = (j + 1) % segs;
+          addQuadOriented(this, `${faceTag}_Inner`, ringA[j], ringB[j], ringB[j1], ringA[j1], inwardDir);
+        }
+      }
+    }
+
+    if (!isClosed) {
+      const startCenter = [smoothed[0].x, smoothed[0].y, smoothed[0].z];
+      const endCenter = [smoothed[smoothed.length - 1].x, smoothed[smoothed.length - 1].y, smoothed[smoothed.length - 1].z];
+      const startDir = tangents[0].clone().negate();
+      const endDir = tangents[tangents.length - 1].clone();
+
+      if (innerRings) {
+        addRingCap(this, `${faceTag}_CapStart`, outer[0], innerRings[0], startDir);
+        addRingCap(this, `${faceTag}_CapEnd`, outer[outer.length - 1], innerRings[innerRings.length - 1], endDir);
+      } else {
+        addDiskCap(this, `${faceTag}_CapStart`, startCenter, outer[0], startDir);
+        addDiskCap(this, `${faceTag}_CapEnd`, endCenter, outer[outer.length - 1], endDir);
+      }
+    }
+
+    try {
+      const auxPath = smoothed.map(p => [p.x, p.y, p.z]);
+      if (isClosed && auxPath.length >= 2) {
+        const first = auxPath[0];
+        const last = auxPath[auxPath.length - 1];
+        const dx = first[0] - last[0];
+        const dy = first[1] - last[1];
+        const dz = first[2] - last[2];
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq > 0) {
+          auxPath.push([first[0], first[1], first[2]]);
+        }
+      }
+      this.addAuxEdge(`${faceTag}_PATH`, auxPath, { polylineWorld: true, materialKey: 'OVERLAY', closedLoop: !!isClosed });
+    } catch (_) { /* ignore auxiliary path errors */ }
+
+    const preTriCount = (this._triVerts?.length || 0) / 3 | 0;
+    let postTriCount = preTriCount;
+    let unionSucceeded = false;
+    const auxEdgesSnapshot = Array.isArray(this._auxEdges)
+      ? this._auxEdges.map(e => ({
+          name: e?.name,
+          closedLoop: !!e?.closedLoop,
+          polylineWorld: !!e?.polylineWorld,
+          materialKey: e?.materialKey,
+          points: Array.isArray(e?.points)
+            ? e.points.map(p => (Array.isArray(p) ? [p[0], p[1], p[2]] : p))
+            : [],
+        }))
+      : [];
+    let inputManifold = null;
+    try { inputManifold = this._manifoldize(); } catch { }
+    try {
+      const booleaned = this.union(this);
+      postTriCount = (booleaned?._triVerts?.length || 0) / 3 | 0;
+      copySolidState(this, booleaned, { auxEdges: auxEdgesSnapshot });
+      if (inputManifold && inputManifold !== this._manifold) {
+        try { if (typeof inputManifold.delete === 'function') inputManifold.delete(); } catch { }
+      }
+      unionSucceeded = true;
+    } catch (error) {
+      console.warn('Self-union failed; returning raw tube geometry.', error);
+    }
+    this._selfUnionStats = {
+      preTriangles: preTriCount,
+      postTriangles: postTriCount,
+      selfIntersectionLikely: postTriCount > preTriCount,
+      unionSucceeded,
+    };
+    this.name = name;
+    return this;
+  }
+
+  generateSlow() {
     const { points, radius, innerRadius, resolution, closed, name, debugSpheres } = this.params;
     if (!(radius > 0)) {
       throw new Error('Tube radius must be greater than zero.');
@@ -393,5 +853,7 @@ export class Tube extends Solid {
     } catch (_) {
       // ignore auxiliary path errors
     }
+    this._selfUnionStats = null;
+    return this;
   }
 }

@@ -225,7 +225,7 @@ function mergeTinyFacesIntoRoundFace(resultSolid, filletSolid, candidateNames, r
  * @param {number} [opts.inflate=0.1] Inflation for cutting tube
  * @param {boolean} [opts.debug=false] Enable debug visuals in fillet builder
  * @param {boolean} [opts.snapSeam=true] Snap boolean seams to tangent polylines (INSET only)
- * @param {boolean} [opts.useTubeFast=true] Use TubeFast for tube generation (fallbacks to Tube when false)
+ * @param {boolean} [opts.useTubeFast=true] Prefer fast tube generation (set false to force slow/robust)
  * @param {string} [opts.featureID='FILLET'] For naming of intermediates and result
  * @returns {import('../BetterSolid.js').Solid}
  */

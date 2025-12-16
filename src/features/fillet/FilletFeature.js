@@ -39,7 +39,7 @@ const inputParamsSchema = {
     useTubeFast: {
         type: "boolean",
         default_value: true,
-        hint: "Use TubeFast to build the fillet cutting solid",
+        hint: "Prefer the fast tube build (auto-fallback); disable to force the slower robust build",
     },
     debug: {
         type: "boolean",

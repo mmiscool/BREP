@@ -32,7 +32,7 @@ const inputParamsSchema = {
     type: 'options',
     options: ['Light (fast)', 'Heavy (slow)'],
     default_value: 'Light (fast)',
-    hint: 'Light uses TubeFast for speed; Heavy uses Tube for the most robust geometry'
+    hint: 'Light runs fast-first tube (auto fallback), Heavy forces the slower robust build'
   },
   debug: {
     type: 'boolean',
@@ -402,8 +402,8 @@ export class TubeFeature {
     const modeSelection = typeof mode === 'string'
       ? mode
       : (mode == null ? inputParamsSchema.mode.default_value : String(mode));
-    const useTubeFast = String(modeSelection || '').toLowerCase().startsWith('light');
-    const TubeBuilder = useTubeFast ? BREP.TubeFast : BREP.Tube;
+    const preferFast = String(modeSelection || '').toLowerCase().startsWith('light');
+    const TubeBuilder = BREP.Tube;
     const outerSolids = [];
     const innerSolids = [];
     const debugExtras = [];
@@ -450,7 +450,7 @@ export class TubeFeature {
           innerRadius: inner,
           resolution: baseResolution,
           mode: modeSelection,
-          builder: useTubeFast ? 'TubeFast' : 'Tube',
+          builder: preferFast ? 'Tube (fast-first)' : 'Tube (slow)',
           groupIndex: i,
           isClosedLoop,
           pathPointCount: finalPoints.length,
@@ -466,6 +466,7 @@ export class TubeFeature {
         closed: isClosedLoop,
         name: tubeName,
         debugSpheres: !!debug,
+        preferFast,
       });
       if (debug && Array.isArray(outerTube.debugSphereSolids)) {
         debugExtras.push(...outerTube.debugSphereSolids);
@@ -489,6 +490,7 @@ export class TubeFeature {
           closed: isClosedLoop,
           name: innerName,
           debugSpheres: !!debug,
+          preferFast,
         });
         if (debug && Array.isArray(innerTube.debugSphereSolids)) {
           debugExtras.push(...innerTube.debugSphereSolids);
