@@ -629,8 +629,6 @@ export class TubeFast extends Solid {
       console.warn('Self-union failed; returning raw tube geometry.', error);
     }
 
-    this.visualize();
-    alert('Tube generated with ' + this.triangleCount + ' triangles.');
 
     return this;
   }

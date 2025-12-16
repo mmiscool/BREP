@@ -1850,17 +1850,27 @@ export function removeDegenerateTriangles() {
 
 /**
  * Remove internal triangles by rebuilding from the Manifold surface.
- * - Uses `_manifoldize().getMesh()` which yields only the exterior faces of the
- *   solid. We then overwrite authoring arrays to match this mesh.
- * - Preserves face IDs and existing face name mappings.
+ * - Primary path: `_manifoldize().getMesh()` yields only the exterior faces.
+ * - Fallback: if manifoldization fails (e.g., self‑intersections), falls back
+ *   to a winding-based classifier (or raycast if requested) to cull interior tris.
  * - Returns the number of triangles removed.
+ * @param {object|string} [options] optional fallback settings; string -> fallback mode
+ * @param {'winding'|'raycast'|'ray'} [options.fallback='winding'] fallback classifier
+ * @param {object} [options.windingOptions] forwarded to removeInternalTrianglesByWinding
  */
-export function removeInternalTriangles() {
+export function removeInternalTriangles(options = {}) {
     const triCountBefore = (this._triVerts.length / 3) | 0;
     if (triCountBefore === 0) return 0;
-    const manifoldObj = this._manifoldize();
-    const mesh = manifoldObj.getMesh();
+
+    const opts = (options && typeof options === 'object')
+        ? options
+        : { fallback: options };
+    const fallback = (opts.fallback || 'winding').toString().toLowerCase();
+
+    let mesh = null;
     try {
+        const manifoldObj = this._manifoldize();
+        mesh = manifoldObj.getMesh();
         const triVerts = Array.from(mesh.triVerts || []);
         const vertProps = Array.from(mesh.vertProperties || []);
         const triCountAfter = (triVerts.length / 3) | 0;
@@ -1888,9 +1898,18 @@ export function removeInternalTriangles() {
         // Keep existing id/name maps; Manifold preserves triangle faceIDs.
         const removed = triCountBefore - triCountAfter;
         return removed > 0 ? removed : 0;
+    } catch (err) {
+        const mode = (fallback === 'ray' || fallback === 'raycast') ? 'raycast' : 'winding';
+        try { console.warn(`[removeInternalTriangles] Manifold rebuild failed (${err?.message || err}); falling back to ${mode} classifier.`); } catch { }
     } finally {
         try { if (mesh && typeof mesh.delete === 'function') mesh.delete(); } catch { }
     }
+
+    // Fallback path for non-manifold/self-intersecting meshes
+    if (fallback === 'ray' || fallback === 'raycast') {
+        return this.removeInternalTrianglesByRaycast();
+    }
+    return this.removeInternalTrianglesByWinding(opts.windingOptions || {});
 }
 
 /**
