@@ -115,11 +115,11 @@ export class ImageEditorUI {
         .img-editor-btn.active{background:var(--ie-accent-bg);border-color:var(--ie-accent);color:var(--ie-accent-fg)}
         .img-editor-btn:disabled{opacity:.5;cursor:not-allowed;}
         .img-editor-right{margin-left:auto;display:flex;gap:8px;}
-        .img-editor-main{position:absolute;left:0;right:0;top:48px;bottom:0;display:flex;min-height:0;}
+        .img-editor-main{position:absolute;left:0;right:0;top:48px;bottom:0;display:flex;flex-direction:row-reverse;min-height:0;}
         .img-editor-canvas-wrap{position:relative;flex:1;overflow:hidden;background:var(--ie-bg-1);}
         .img-editor-canvas{position:absolute;left:0;top:0;display:block;}
         .img-editor-overlay-svg{position:absolute;left:0;top:0;display:block;pointer-events:none;mix-blend-mode:screen;}
-        .img-editor-sidebar{width:320px;max-width:360px;min-width:240px;background:var(--ie-bg-2);border-left:1px solid var(--ie-border);overflow:auto;padding:12px;box-sizing:border-box;}
+        .img-editor-sidebar{width:320px;max-width:360px;min-width:240px;background:var(--ie-bg-2);border-right:1px solid var(--ie-border);overflow:auto;padding:12px;box-sizing:border-box;}
         .img-editor-sidebar h3{margin:0 0 8px;font-size:14px;font-weight:600;color:var(--ie-fg);}
         .img-editor-form{background:var(--ie-bg-3);border:1px solid var(--ie-border);border-radius:8px;padding:8px;box-sizing:border-box;}
         .img-editor-group{display:flex;align-items:center;gap:6px;border-right:1px dashed var(--ie-border);padding-right:10px;margin-right:8px;}
