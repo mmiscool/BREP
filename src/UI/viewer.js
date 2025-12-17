@@ -1549,6 +1549,13 @@ export class Viewer {
             btn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
                 ev.preventDefault?.();
+                try {
+                    console.log('Selection picker selected:', {
+                        type: entry.target?.type,
+                        label: entry.label,
+                        target: entry.target,
+                    });
+                } catch { /* ignore */ }
                 this._hideSelectionOverlay();
                 this._applySelectionTarget(entry.target);
             });

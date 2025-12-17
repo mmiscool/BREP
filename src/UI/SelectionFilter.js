@@ -402,7 +402,14 @@ export class SelectionFilter {
                     return null;
                 };
 
-                let targetObj = pickByTypeList(allowedPriority);
+                let targetObj = null;
+                // Prefer the exact object the user clicked if it is allowed.
+                if (allowAll || allowedHas(objectToToggleSelectionOn?.type)) {
+                    targetObj = objectToToggleSelectionOn;
+                }
+                if (!targetObj) {
+                    targetObj = pickByTypeList(allowedPriority);
+                }
                 if (!targetObj && !allowAll && allowed && typeof allowed[Symbol.iterator] === 'function') {
                     targetObj = pickByTypeList(Array.from(allowed));
                 }
