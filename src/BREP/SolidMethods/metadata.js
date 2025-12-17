@@ -21,6 +21,54 @@ export function getFaceNames() {
     return [...this._faceNameToID.keys()];
 }
 
+/** Rename a face; if newName exists, merge triangles/metadata into it. */
+export function renameFace(oldName, newName) {
+    if (!oldName || !newName || oldName === newName) return this;
+    const oldId = this._faceNameToID.get(oldName);
+    if (oldId === undefined) return this;
+
+    const newId = this._faceNameToID.get(newName);
+    const oldMeta = (this._faceMetadata && this._faceMetadata.get(oldName));
+    const newMeta = (this._faceMetadata && this._faceMetadata.get(newName));
+    const mergedMeta = (oldMeta || newMeta) ? { ...(oldMeta || {}), ...(newMeta || {}) } : null;
+
+    // Simple rename when the target name is unused (or maps to the same ID).
+    if (newId === undefined || newId === oldId) {
+        this._faceNameToID.delete(oldName);
+        this._faceNameToID.set(newName, oldId);
+        if (this._idToFaceName) this._idToFaceName.set(oldId, newName);
+        if (this._faceMetadata) {
+            if (mergedMeta) this._faceMetadata.set(newName, mergedMeta);
+            this._faceMetadata.delete(oldName);
+        }
+        return this;
+    }
+
+    // Merge: retarget all triangles using oldId to the existing newId.
+    let changed = false;
+    for (let i = 0; i < this._triIDs.length; i++) {
+        if (this._triIDs[i] === oldId) {
+            this._triIDs[i] = newId;
+            changed = true;
+        }
+    }
+
+    this._faceNameToID.delete(oldName);
+    if (this._idToFaceName) {
+        this._idToFaceName.delete(oldId);
+        this._idToFaceName.set(newId, newName);
+    }
+    if (this._faceMetadata) {
+        if (mergedMeta) this._faceMetadata.set(newName, mergedMeta);
+        this._faceMetadata.delete(oldName);
+    }
+    if (changed) {
+        this._dirty = true;
+        this._faceIndex = null;
+    }
+    return this;
+}
+
 /** Set metadata for an edge. */
 export function setEdgeMetadata(edgeName, metadata) {
     if (!metadata || typeof metadata !== 'object') return this;

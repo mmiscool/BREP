@@ -183,6 +183,16 @@ export class Solid extends THREE.Group {
     }
 
     /**
+     * Rename a face; if the new name already exists, merge triangles/metadata into it.
+     * @param {string} oldName
+     * @param {string} newName
+     * @returns {Solid}
+     */
+    renameFace(oldName, newName) {
+        return SolidMethods.renameFace.apply(this, arguments);
+    }
+
+    /**
      * Merge and set metadata for a boundary edge label.
      * @param {string} edgeName
      * @param {object} metadata

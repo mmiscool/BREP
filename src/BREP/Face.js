@@ -132,4 +132,8 @@ export class Face extends THREE.Mesh {
         }
         return null;
     }
+
+    renameFace(newName) {
+        this.parentSolid.renameFace(this.name, newName);
+    }
 }

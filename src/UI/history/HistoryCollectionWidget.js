@@ -1178,7 +1178,8 @@ export class HistoryCollectionWidget {
     const runTest = (owner, fn) => {
       if (typeof fn !== 'function') return null;
       try {
-        return fn.call(owner || entry || null, context);
+        // For backward compatibility, pass partHistory as first arg when available.
+        return fn.call(owner || entry || null, context?.history || null, context);
       } catch (error) {
         console.warn('[HistoryCollectionWidget] uiFieldsTest failed; falling back to full schema.', error);
         return null;
