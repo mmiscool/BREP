@@ -20,11 +20,12 @@ export class ExtrudeSolid extends Solid {
    * @param {import('three').Vector3|null} [opts.dir=null] Optional direction vector override
    * @param {number} [opts.distanceBack=0] Optional backward extrusion distance
    * @param {string} [opts.name='Extrude'] Name of the resulting solid
+   * @param {string|null} [opts.sideFaceName=null] Optional override for all side-wall face names
    */
-  constructor({ face, distance = 1, dir = null, distanceBack = 0, name = 'Extrude' } = {}) {
+  constructor({ face, distance = 1, dir = null, distanceBack = 0, name = 'Extrude', sideFaceName = null } = {}) {
     super();
     this.name = name;
-    this.params = { face, distance, dir, distanceBack };
+    this.params = { face, distance, dir, distanceBack, sideFaceName };
     this.generate();
   }
 
@@ -210,7 +211,8 @@ export class ExtrudeSolid extends Solid {
         const M = pts.length;
         if (M < 2) continue;
         const emitSeg = (A, B, segIdx) => {
-          const nm = findEdgeNameFor(A, B) || `${featureTag}${face.name || 'Face'}_${li}_SEG${segIdx}_SW`;
+          const nmRaw = findEdgeNameFor(A, B) || `${featureTag}${face.name || 'Face'}_${li}_SEG${segIdx}_SW`;
+          const nm = this.params.sideFaceName ? this.params.sideFaceName : nmRaw;
           sideSegments.push({ name: nm, poly: [A, B], isHole: !!l.isHole });
         };
         for (let i = 0; i < M - 1; i++) emitSeg(pts[i], pts[i + 1], i);
@@ -222,7 +224,9 @@ export class ExtrudeSolid extends Solid {
       for (const edge of edges) {
         const poly = extractPolylineWorld(edge);
         // Keep as a single ribbon for legacy faces
-        sideSegments.push({ name: `${featureTag}${edge?.name || 'EDGE'}_SW`, poly, isHole: !!(edge && edge.userData && edge.userData.isHole) });
+        const nmRaw = `${featureTag}${edge?.name || 'EDGE'}_SW`;
+        const nm = this.params.sideFaceName ? this.params.sideFaceName : nmRaw;
+        sideSegments.push({ name: nm, poly, isHole: !!(edge && edge.userData && edge.userData.isHole) });
       }
     }
 
