@@ -32,6 +32,7 @@
   "dependencies": {
     "jszip": "^3.10.1",
     "manifold-3d": "^3.3.2",
+    "monaco-editor": "^0.55.1",
     "tess2": "^1.0.0",
     "three": "^0.182.0",
     "three-mesh-bvh": "^0.9.3"
@@ -39,8 +40,8 @@
   "description": "",
   "devDependencies": {
     "nodemon": "^3.1.11",
+    "playwright": "^1.57.0",
     "vite": "^7.2.7",
-    "vite-plugin-wasm": "^3.5.0",
-    "playwright": "^1.57.0"
+    "vite-plugin-wasm": "^3.5.0"
   }
 }

@@ -10,6 +10,7 @@ import { createImportButton } from './importButton.js';
 import { createExportButton } from './exportButton.js';
 import { createAboutButton } from './aboutButton.js';
 import { createTestsButton } from './testsButton.js';
+import { createScriptRunnerButton } from './scriptRunnerButton.js';
 
 export function registerDefaultToolbarButtons(viewer) {
   if (!viewer || typeof viewer.addToolbarButton !== 'function') return;
@@ -24,6 +25,7 @@ export function registerDefaultToolbarButtons(viewer) {
     createExportButton,
     createAboutButton,
     createTestsButton,
+    createScriptRunnerButton,
   ];
 
   for (const make of creators) {
