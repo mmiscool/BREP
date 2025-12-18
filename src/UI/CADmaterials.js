@@ -8,20 +8,31 @@ import { localStorage as LS } from '../localStorageShim.js';
 
 export const CADmaterials = {
     PLANE: {
-        BASE: new THREE.MeshBasicMaterial({
+        BASE: new THREE.MeshStandardMaterial({
             color: "#2eff2e",
             side: THREE.DoubleSide,
             transparent: true,
             opacity: .5,
-            depthWrite: false
+            flatShading: true,
+            metalness: 0.05,
+            roughness: 0.85,
+            depthTest: true,
+            depthWrite: true,
+            polygonOffset: false,
+            emissiveIntensity: 0,
         }),
-        SELECTED: new THREE.MeshBasicMaterial({
+        SELECTED: new THREE.MeshStandardMaterial({
             color: "#2eff2e",
             side: THREE.DoubleSide,
             transparent: true,
             opacity: .5,
-            wireframe: true,
-            depthWrite: false
+            flatShading: true,
+            metalness: 0.05,
+            roughness: 0.85,
+            depthTest: true,
+            depthWrite: true,
+            polygonOffset: false,
+            emissiveIntensity: 0,
         }),
     },
     EDGE: {

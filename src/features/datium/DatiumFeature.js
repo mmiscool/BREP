@@ -37,7 +37,7 @@ export class DatiumFeature {
         group.onClick = () => {};
 
         const mkPlane = (orientation, suffix) => {
-            const mat = (CADmaterials?.PLANE?.BASE) || new THREE.MeshBasicMaterial({ color: 0x2eff2e, side: THREE.DoubleSide, transparent: true, opacity: 1, depthWrite: false });
+            const mat = (CADmaterials?.PLANE?.BASE) || new THREE.MeshBasicMaterial({ color: 0x2eff2e, side: THREE.DoubleSide, transparent: true, opacity: 0.5, depthWrite: false });
             const mesh = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), mat);
             mesh.name = `${baseName}:${suffix}`;
             mesh.type = 'PLANE';
@@ -53,6 +53,7 @@ export class DatiumFeature {
         const pXZ = mkPlane('XZ', 'XZ');
         const pYZ = mkPlane('YZ', 'YZ');
         group.add(pXY, pXZ, pYZ);
+        group.renderOrder = 1; // Render on top of most things
 
         // Apply TRS to the whole datum group (position/orient in 3D space)
         try {
