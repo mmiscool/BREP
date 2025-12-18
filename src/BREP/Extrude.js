@@ -181,52 +181,106 @@ export class ExtrudeSolid extends Solid {
     const loops = face?.userData?.boundaryLoopsWorld;
     const nearEq = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
     const samePt = (P, Q) => P && Q && nearEq(P[0], Q[0]) && nearEq(P[1], Q[1]) && nearEq(P[2], Q[2]);
-    const findEdgeNameFor = (A, B) => {
+    const edgeGroups = face?.userData?.boundaryEdgeGroups;
+    if (Array.isArray(edgeGroups) && edgeGroups.length) {
+      for (const g of edgeGroups) {
+        const pts = Array.isArray(g?.pts) ? g.pts : [];
+        if (pts.length < 2) continue;
+        const base = g?.name || 'EDGE';
+        const swBase = String(base).endsWith('_SW') ? String(base) : `${base}_SW`;
+        const nmRaw = `${featureTag}${swBase}`;
+        const nm = this.params.sideFaceName ? this.params.sideFaceName : nmRaw;
+        const poly = pts.map((p) => (Array.isArray(p) ? [p[0], p[1], p[2]] : [p.x, p.y, p.z]));
+        sideSegments.push({ name: nm, poly, isHole: !!g?.isHole });
+      }
+    } else {
+      // Precompute world polylines for edges to allow segment->edge matching
       const edges = Array.isArray(face?.edges) ? face.edges : [];
-      for (const e of edges) {
+      const edgePolys = edges.map((e) => {
         const poly = e?.userData?.polylineLocal;
         const isWorld = !!(e?.userData?.polylineWorld);
         if (Array.isArray(poly) && poly.length >= 2) {
-          const P = isWorld ? poly : poly.map(p => {
-            const v = new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(e.matrixWorld); return [v.x, v.y, v.z];
-          });
-          const p0 = P[0], p1 = P[P.length - 1];
-          if ((samePt(p0, A) && samePt(p1, B)) || (samePt(p0, B) && samePt(p1, A))) {
-            return `${featureTag}${e?.name || 'EDGE'}_SW`;
+          if (isWorld) return poly.map((p) => [p[0], p[1], p[2]]);
+          const v = new THREE.Vector3();
+          return poly.map((p) => { v.set(p[0], p[1], p[2]).applyMatrix4(e.matrixWorld); return [v.x, v.y, v.z]; });
+        }
+        return extractPolylineWorld(e);
+      });
+
+      // Find edge index whose polyline contains consecutive points A->B (or B->A)
+      const matchEdge = (A, B) => {
+        for (let i = 0; i < edgePolys.length; i++) {
+          const poly = edgePolys[i];
+          if (!Array.isArray(poly) || poly.length < 2) continue;
+          for (let k = 0; k < poly.length - 1; k++) {
+            const p0 = poly[k], p1 = poly[k + 1];
+            if ((samePt(p0, A) && samePt(p1, B)) || (samePt(p0, B) && samePt(p1, A))) {
+              const e = edges[i];
+              const nm = `${featureTag}${e?.name || 'EDGE'}_SW`;
+              return { name: nm, isHole: !!(e && e.userData && e.userData.isHole) };
+            }
           }
         }
-      }
-      return null;
-    };
+        return null;
+      };
 
-    if (Array.isArray(loops) && loops.length) {
-      for (let li = 0; li < loops.length; li++) {
-        const l = loops[li];
-        if (!l || !Array.isArray(l.pts) || l.pts.length < 2) continue;
-        // Build per-segment ribbons along the loop: [p[i] -> p[i+1]] and closing [last -> first]
-        const pts = [];
-        for (const p of l.pts) { if (p && p.length >= 3) pts.push([p[0], p[1], p[2]]); }
-        // Dedup consecutive duplicates
-        for (let i = pts.length - 2; i >= 0; i--) { const a = pts[i], b = pts[i + 1]; if (samePt(a, b)) pts.splice(i + 1, 1); }
-        const M = pts.length;
-        if (M < 2) continue;
-        const emitSeg = (A, B, segIdx) => {
-          const nmRaw = findEdgeNameFor(A, B) || `${featureTag}${face.name || 'Face'}_${li}_SEG${segIdx}_SW`;
+      if (Array.isArray(loops) && loops.length) {
+        for (let li = 0; li < loops.length; li++) {
+          const l = loops[li];
+          if (!l || !Array.isArray(l.pts) || l.pts.length < 2) continue;
+          const pts = [];
+          for (const p of l.pts) { if (p && p.length >= 3) pts.push([p[0], p[1], p[2]]); }
+          // Dedup consecutive duplicates
+          for (let i = pts.length - 2; i >= 0; i--) { const a = pts[i], b = pts[i + 1]; if (samePt(a, b)) pts.splice(i + 1, 1); }
+          const M = pts.length;
+          if (M < 2) continue;
+
+          // Walk segments and group consecutive ones that map to the same edge name.
+          let currentName = null;
+          let currentPoly = [];
+          const flush = () => {
+            if (currentPoly.length >= 2) {
+              const nm = currentName || `${featureTag}${face.name || 'Face'}_${li}_SEG${sideSegments.length}_SW`;
+              sideSegments.push({ name: this.params.sideFaceName || nm, poly: currentPoly.slice(), isHole: !!l.isHole });
+            }
+            currentPoly = [];
+          };
+
+          const processSegment = (A, B) => {
+            const match = matchEdge(A, B);
+            const nm = match ? match.name : null;
+            const edgeHole = match ? match.isHole : !!l.isHole;
+            if (!currentName) {
+              currentName = nm;
+              currentPoly = [A, B];
+            } else if (nm === currentName) {
+              currentPoly.push(B);
+            } else {
+              flush();
+              currentName = nm;
+              currentPoly = [A, B];
+            }
+            // propagate hole flag to current group
+            if (sideSegments.length && currentPoly.length && edgeHole) {
+              sideSegments[sideSegments.length - 1].isHole = edgeHole;
+            }
+          };
+
+          for (let i = 0; i < M; i++) {
+            const A = pts[i];
+            const B = pts[(i + 1) % M];
+            processSegment(A, B);
+          }
+          flush();
+        }
+      } else {
+        for (let i = 0; i < edges.length; i++) {
+          const edge = edges[i];
+          const poly = edgePolys[i];
+          const nmRaw = `${featureTag}${edge?.name || 'EDGE'}_SW`;
           const nm = this.params.sideFaceName ? this.params.sideFaceName : nmRaw;
-          sideSegments.push({ name: nm, poly: [A, B], isHole: !!l.isHole });
-        };
-        for (let i = 0; i < M - 1; i++) emitSeg(pts[i], pts[i + 1], i);
-        // Closing segment
-        emitSeg(pts[M - 1], pts[0], M - 1);
-      }
-    } else {
-      const edges = Array.isArray(face?.edges) ? face.edges : [];
-      for (const edge of edges) {
-        const poly = extractPolylineWorld(edge);
-        // Keep as a single ribbon for legacy faces
-        const nmRaw = `${featureTag}${edge?.name || 'EDGE'}_SW`;
-        const nm = this.params.sideFaceName ? this.params.sideFaceName : nmRaw;
-        sideSegments.push({ name: nm, poly, isHole: !!(edge && edge.userData && edge.userData.isHole) });
+          sideSegments.push({ name: nm, poly, isHole: !!(edge && edge.userData && edge.userData.isHole) });
+        }
       }
     }
 

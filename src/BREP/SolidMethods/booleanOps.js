@@ -12,6 +12,33 @@ export function _combineIdMaps(other) {
     return merged;
 }
 
+function _collapseFaceIdsByName(solid) {
+    if (!solid || !solid._faceNameToID || !solid._idToFaceName || !Array.isArray(solid._triIDs)) return;
+    const nameToId = solid._faceNameToID;
+    let changed = false;
+
+    for (let i = 0; i < solid._triIDs.length; i++) {
+        const id = solid._triIDs[i];
+        const name = solid._idToFaceName.get(id);
+        if (!name) continue;
+        const canonical = nameToId.get(name);
+        if (canonical !== undefined && canonical !== id) {
+            solid._triIDs[i] = canonical;
+            changed = true;
+        }
+    }
+
+    if (!changed) return;
+
+    solid._idToFaceName = new Map(
+        [...solid._faceNameToID.entries()].map(([name, id]) => [id, name]),
+    );
+    solid._faceIndex = null;
+    solid._dirty = true;
+    try { if (solid._manifold && typeof solid._manifold.delete === 'function') solid._manifold.delete(); } catch { }
+    solid._manifold = null;
+}
+
 export function union(other) {
     const Solid = this.constructor;
     const outManifold = Manifold.union(this._manifoldize(), other._manifoldize());
@@ -20,6 +47,7 @@ export function union(other) {
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
     try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
+    _collapseFaceIdsByName(out);
     return out;
 }
 
@@ -31,6 +59,7 @@ export function subtract(other) {
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
     try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
+    _collapseFaceIdsByName(out);
     return out;
 }
 
@@ -42,6 +71,7 @@ export function intersect(other) {
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
     try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
+    _collapseFaceIdsByName(out);
     return out;
 }
 
@@ -57,6 +87,7 @@ export function difference(other) {
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
     try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
+    _collapseFaceIdsByName(out);
     return out;
 }
 

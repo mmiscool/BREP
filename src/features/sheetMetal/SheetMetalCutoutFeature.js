@@ -5,6 +5,7 @@ import {
   propagateSheetMetalFaceTypesToEdges,
 } from "./sheetMetalFaceTypes.js";
 import { applySheetMetalMetadata } from "./sheetMetalMetadata.js";
+import { resolveProfileFace } from "./profileUtils.js";
 
 const inputParamsSchema = {
   id: {
@@ -19,10 +20,34 @@ const inputParamsSchema = {
     default_value: null,
     hint: "Target sheet metal solid to cut",
   },
-  boolean: {
-    type: "boolean_operation",
-    default_value: { targets: [], operation: "SUBTRACT" },
-    hint: "Solids to use as cutting tools (combined as a union).",
+  profile: {
+    type: "reference_selection",
+    selectionFilter: ["SOLID", "FACE", "SKETCH",],
+    multiple: false,
+    default_value: null,
+    hint: "Solid tool or sketch/face to extrude as a cutting tool.",
+  },
+  forwardDistance: {
+    type: "number",
+    default_value: 1,
+    min: 0,
+    hint: "Extrude distance forward from the profile (sketch/face only).",
+  },
+  backDistance: {
+    type: "number",
+    default_value: 0,
+    min: 0,
+    hint: "Extrude distance backward from the profile (sketch/face only).",
+  },
+  keepTool: {
+    type: "boolean",
+    default_value: false,
+    hint: "Keep the generated cutting tool in the scene (for debugging).",
+  },
+  debugCutter: {
+    type: "boolean",
+    default_value: false,
+    hint: "Keep the internal cleanup cutter used for the final subtract.",
   },
 };
 
@@ -34,102 +59,161 @@ export class SheetMetalCutoutFeature {
   constructor() {
     this.inputParams = {};
     this.persistentData = {};
+    this.debugTool = null;
+  }
+
+  uiFieldsTest(partHistory) {
+    const include = ["sheet", "profile", "keepTool", "debugCutter"];
+    const exclude = [];
+    const profileRef = firstSelection(this.inputParams?.profile);
+    const resolvedProfile = resolveProfileFace(profileRef, partHistory) || profileRef;
+    const profileType = resolvedProfile?.type;
+    const allowDistances = (profileType === "FACE" || profileType === "SKETCH");
+    if (allowDistances) {
+      include.push("forwardDistance", "backDistance");
+    } else {
+      exclude.push("forwardDistance", "backDistance");
+    }
+
+    return { include, exclude };
   }
 
   async run(partHistory) {
     const scene = partHistory?.scene;
     const metadataManager = partHistory?.metadataManager;
-    let sheetSolid = resolveSolidRef(this.inputParams?.sheet, scene);
+    const sheetRef = firstSelection(this.inputParams?.sheet);
+    let sheetSolid = resolveSolidRef(sheetRef, scene);
 
-    let { tools, op } = await resolveBooleanTools(this.inputParams?.boolean, scene);
-    if (op === "NONE") return { added: [], removed: [] };
+    const tools = [];
+    this.debugTool = null;
 
-    // Fallback: if sheet not explicitly provided, infer it from selected solids.
-    if (!sheetSolid) {
-      const inferred = tools.find((t) => resolveSheetThickness(t, metadataManager));
-      if (inferred) {
-        sheetSolid = inferred;
-        tools = tools.filter((t) => t !== inferred);
+    // Profile can be a solid (use directly) or a face/sketch (extrude).
+    const profileSelection = firstSelection(this.inputParams?.profile);
+    const profileSolid = (profileSelection && profileSelection.type === "SOLID")
+      ? profileSelection
+      : (typeof profileSelection === "string" ? partHistory?.getObjectByName?.(profileSelection) : null);
+    if (profileSolid && profileSolid.type === "SOLID") {
+      tools.push(profileSolid);
+    } else {
+      const profileFace = resolveProfileFace(profileSelection, partHistory);
+      if (profileFace && profileFace.type === "FACE") {
+        const profileTool = buildToolFromProfile(profileFace, this.inputParams, this.inputParams?.featureID || "SM_CUTOUT_PROFILE");
+        if (profileTool) {
+          tools.push(profileTool);
+          this.debugTool = profileTool;
+        }
       }
     }
 
+    // Require explicit sheet; if missing, try to infer from sheet metadata in scene as a last resort.
     if (!sheetSolid) {
       sheetSolid = findFirstSheetMetalSolid(scene, metadataManager);
     }
 
     if (!sheetSolid) throw new Error("Sheet Metal Cutout requires a valid sheet metal solid selection.");
-    if (!tools.length) return { added: [], removed: [] };
+    if (!tools.length) {
+      throw new Error("Sheet Metal Cutout needs a Profile selection (solid or face) to build the cutting tool.");
+    }
 
     const toolUnion = unionSolids(tools);
     if (!toolUnion) throw new Error("Failed to combine cutting tools for Sheet Metal Cutout.");
 
-    const intersection = safeIntersect(sheetSolid, toolUnion);
-    if (!intersection) throw new Error("Sheet Metal Cutout could not compute the sheet/tool intersection.");
-
     const sheetThickness = resolveSheetThickness(sheetSolid, partHistory?.metadataManager);
     if (!(sheetThickness > 0)) throw new Error("Sheet Metal Cutout could not resolve sheet metal thickness.");
 
-    const footprintFaces = collectSheetFaces(intersection);
-    const targetType = footprintFaces.A.length ? SHEET_METAL_FACE_TYPES.A
-      : (footprintFaces.B.length ? SHEET_METAL_FACE_TYPES.B : null);
-    if (!targetType) {
-      throw new Error("Sheet Metal Cutout could not find sheet metal A/B faces in the intersection. Ensure the target solid has sheet-metal metadata.");
-    }
+    let added = [];
+    let removed = [];
+    const keepCutter = this.inputParams?.debugCutter === true;
+    let working = sheetSolid;
 
-    const basisFaces = targetType === SHEET_METAL_FACE_TYPES.A ? footprintFaces.A : footprintFaces.B;
-    const prisms = [];
-    for (const faceInfo of basisFaces) {
-      const loops = buildBoundaryLoops(faceInfo.triangles, intersection?.matrixWorld || sheetSolid.matrixWorld);
-      if (!loops.length) continue;
-      const profiles = buildFaceProfiles(loops, faceInfo.normal, faceInfo.origin, this.inputParams?.featureID);
-      for (const profile of profiles) {
-        const dir = faceInfo.normal.clone().normalize().multiplyScalar(
-          targetType === SHEET_METAL_FACE_TYPES.B ? sheetThickness : -sheetThickness
+    // Step 1: remove the original tool volume to honor its shape.
+    if (toolUnion) {
+      try {
+        working = sheetSolid.subtract(toolUnion);
+        working.visualize?.();
+        removed.push(sheetSolid, toolUnion);
+      } catch (toolErr) {
+        console.warn("[SheetMetalCutout] Subtracting cutting tool failed, falling back to boolean", toolErr);
+        const effects = await BREP.applyBooleanOperation(
+          partHistory || {},
+          toolUnion,
+          { operation: "SUBTRACT", targets: [sheetSolid] },
+          this.inputParams?.featureID,
         );
-        const travel = Math.max(sheetThickness, 1e-6);
-        const prism = new BREP.ExtrudeSolid({
-          face: profile,
-          dir,
-          distance: travel,
-          distanceBack: travel,
-          name: this.inputParams?.featureID || "SM_CUTOUT_PRISM",
-          sideFaceName: `${this.inputParams?.featureID || "SM_CUTOUT_PRISM"}_SW`,
-        });
-        tagThicknessFaces(prism);
-        prisms.push(prism);
+        const candidate = Array.isArray(effects?.added) ? effects.added[0] : null;
+        if (!candidate) throw new Error("Sheet Metal Cutout could not subtract the cutting tool.");
+        candidate.visualize?.();
+        working = candidate;
+        removed.push(...(effects?.removed || []), sheetSolid, toolUnion);
       }
     }
 
-    if (!prisms.length) throw new Error("Sheet Metal Cutout could not derive a planar footprint from the intersection.");
-
-    let cutPrism = prisms[0];
-    for (let i = 1; i < prisms.length; i++) {
-      try { cutPrism = cutPrism.union(prisms[i]); } catch { cutPrism = prisms[i]; }
-    }
-    if (this.inputParams?.featureID && cutPrism) {
-      try { cutPrism.name = this.inputParams.featureID; } catch { /* best effort */ }
+    const sheetFaces = collectSheetFaces(working);
+    if (!sheetFaces.A.length && !sheetFaces.B.length) {
+      throw new Error("Sheet Metal Cutout could not find sheet metal A/B faces on the target. Ensure the target solid has sheet-metal metadata.");
     }
 
-    let added = [];
-    let removed = [];
-    try {
-      const cut = sheetSolid.subtract(cutPrism);
-      cut.visualize?.();
-      try { cut.name = this.inputParams?.featureID || sheetSolid.name || cut.name; } catch { /* ignore */ }
-      added = [cut];
-      removed = [sheetSolid, cutPrism, ...tools].filter(Boolean);
-    } catch (directErr) {
-      console.warn("[SheetMetalCutout] Direct subtract failed, falling back to applyBooleanOperation", directErr);
-      const effects = await BREP.applyBooleanOperation(
-        partHistory || {},
-        cutPrism,
-        { operation: "SUBTRACT", targets: [sheetSolid] },
-        this.inputParams?.featureID,
-      );
-      removed = [...(effects?.removed || []), ...tools, sheetSolid].filter(Boolean);
-      added = effects?.added || [];
+    const faceInfoMap = buildSheetFaceInfoMap(sheetFaces);
+    const faceTypeMap = buildFaceTypeMap(working);
+    let prisms = buildPrismsFromBoundaryLoops(working, faceInfoMap, faceTypeMap, sheetThickness, this.inputParams?.featureID);
+
+    if (!prisms.length) {
+      const intersection = safeIntersect(sheetSolid, toolUnion) || await safeIntersectFallbackBoolean(partHistory, sheetSolid, toolUnion, this.inputParams?.featureID);
+      if (intersection) {
+        prisms = buildPrismsFromIntersection(intersection, sheetSolid, sheetThickness, this.inputParams?.featureID);
+      }
     }
 
+    let cutPrism = null;
+    if (!prisms.length) {
+      console.warn("[SheetMetalCutout] Cleanup footprint not found; keeping direct subtract result.");
+      if (working) {
+        try { working.name = this.inputParams?.featureID || working.name || sheetSolid.name; } catch { /* ignore */ }
+        added = [working];
+      }
+      removed.push(...tools);
+    } else {
+      cutPrism = prisms[0];
+      for (let i = 1; i < prisms.length; i++) {
+        try { cutPrism = cutPrism.union(prisms[i]); } catch { cutPrism = prisms[i]; }
+      }
+      if (this.inputParams?.featureID && cutPrism) {
+        try { cutPrism.name = `${this.inputParams.featureID}_CUTOUT_CUTTER`; } catch { /* best effort */ }
+      }
+
+      // Step 2: cut perpendicular walls using the planar footprint prisms on the original sheet.
+      try {
+        const finalCut = sheetSolid.subtract(cutPrism);
+        finalCut.visualize?.();
+        try { finalCut.name = sheetSolid?.name || finalCut.name; } catch { /* ignore */ }
+        added = [finalCut];
+        removed.push(sheetSolid, working, cutPrism, ...tools);
+      } catch (directErr) {
+        console.warn("[SheetMetalCutout] Subtracting cleanup prisms failed, falling back to boolean", directErr);
+        const effects = await BREP.applyBooleanOperation(
+          partHistory || {},
+          cutPrism,
+          { operation: "SUBTRACT", targets: [sheetSolid] },
+          this.inputParams?.featureID,
+        );
+        const candidate = Array.isArray(effects?.added) ? effects.added[0] : null;
+        if (!candidate) throw new Error("Sheet Metal Cutout could not complete the cleanup cut.");
+        try { candidate.name = sheetSolid?.name || candidate.name; } catch { /* ignore */ }
+        removed.push(...(effects?.removed || []), sheetSolid, working, cutPrism, ...tools);
+        added = effects?.added || [];
+      }
+    }
+
+    if (keepCutter && cutPrism) {
+      added.push(cutPrism);
+      removed = removed.filter((o) => o !== cutPrism);
+      try { cutPrism.visualize?.(); } catch { /* ignore */ }
+    }
+
+    const keepTool = this.inputParams?.keepTool === true;
+    if (keepTool && tools?.length) {
+      removed = removed.filter((o) => !tools.includes(o) && o !== toolUnion);
+    }
     try { for (const obj of removed) { if (obj) obj.__removeFlag = true; } } catch { /* ignore */ }
 
     propagateSheetMetalFaceTypesToEdges(added);
@@ -142,27 +226,40 @@ export class SheetMetalCutoutFeature {
       forceBaseOverwrite: false,
     });
 
+    // Optionally keep the generated tool for debugging
+    if (this.inputParams?.keepTool && this.debugTool) {
+      added.push(this.debugTool);
+      try { this.debugTool.visualize?.(); } catch { /* ignore */ }
+    }
+
     this.persistentData = {
       sheetName: sheetSolid?.name || null,
       toolCount: tools.length,
       sheetThickness,
-      footprintFaceType: targetType,
+      footprintFaceTypes: {
+        A: sheetFaces.A.length,
+        B: sheetFaces.B.length,
+      },
     };
 
     return { added, removed };
   }
 }
 
+function firstSelection(sel) {
+  if (Array.isArray(sel)) return sel[0] || null;
+  return sel || null;
+}
+
 function resolveSolidRef(ref, scene) {
-  if (!ref) return null;
-  if (typeof ref === "object" && ref.type === "SOLID") return ref;
-  if (typeof ref === "object" && ref.type === "FACE") {
-    return findAncestorSolid(ref);
-  }
-  if (typeof ref === "string" && scene?.getObjectByName) {
-    const obj = scene.getObjectByName(ref);
-    if (obj && obj.type === "SOLID") return obj;
-    if (obj && obj.type === "FACE") return findAncestorSolid(obj);
+  const target = firstSelection(ref);
+  if (!target) return null;
+  if (target.type === "SOLID") return target;
+  if (target.type === "FACE") return findAncestorSolid(target);
+  if (typeof target === "string" && scene?.getObjectByName) {
+    const obj = scene.getObjectByName(target);
+    if (obj?.type === "SOLID") return obj;
+    if (obj?.type === "FACE") return findAncestorSolid(obj);
   }
   return null;
 }
@@ -186,25 +283,23 @@ function findFirstSheetMetalSolid(scene, metadataManager) {
   return null;
 }
 
-async function resolveBooleanTools(booleanParam, scene) {
-  const opRaw = booleanParam?.operation || "SUBTRACT";
-  const op = String(opRaw || "NONE").toUpperCase();
-  const refs = Array.isArray(booleanParam?.targets) ? booleanParam.targets : [];
-  const tools = [];
-  const seen = new Set();
-  for (const ref of refs) {
-    let obj = ref;
-    if (typeof obj === "string" && scene?.getObjectByName) {
-      obj = await scene.getObjectByName(obj);
-    }
-    if (!obj || obj.type !== "SOLID") continue;
-    const key = obj.uuid || obj.id || obj.name || `${tools.length}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    tools.push(obj);
-  }
-  return { tools, op };
+function buildToolFromProfile(face, params, name) {
+  if (!face) return null;
+  const fdRaw = Number(params?.forwardDistance ?? 0);
+  const bdRaw = Number(params?.backDistance ?? 0);
+  const fd = Number.isFinite(fdRaw) ? Math.max(0, fdRaw) : 0;
+  const bd = Number.isFinite(bdRaw) ? Math.max(0, bdRaw) : 0;
+  const minTravel = 1e-4;
+  const travelF = fd > 0 ? fd : minTravel;
+  const travelB = bd > 0 ? bd : 0;
+  return new BREP.ExtrudeSolid({
+    face,
+    distance: travelF,
+    distanceBack: travelB,
+    name: name || "SM_CUTOUT_PROFILE",
+  });
 }
+
 
 function unionSolids(solids) {
   if (!Array.isArray(solids) || !solids.length) return null;
@@ -223,8 +318,41 @@ function safeIntersect(a, b) {
     return out;
   } catch (err) {
     console.warn("[SheetMetalCutout] Intersection failed", err);
+    // Fallback: try a light weld/clean if possible
+    try {
+      const aa = typeof a.clone === "function" ? a.clone() : a;
+      const bb = typeof b.clone === "function" ? b.clone() : b;
+      const scale = 1;
+      const eps = Math.max(1e-9, 1e-6 * scale);
+      try { aa.setEpsilon?.(eps); bb.setEpsilon?.(eps); } catch { }
+      try { aa.fixTriangleWindingsByAdjacency?.(); bb.fixTriangleWindingsByAdjacency?.(); } catch { }
+      const out2 = aa.intersect(bb);
+      out2.visualize?.();
+      return out2;
+    } catch (fallbackErr) {
+      console.warn("[SheetMetalCutout] Intersection fallback failed", fallbackErr);
+    }
     return null;
   }
+}
+
+async function safeIntersectFallbackBoolean(partHistory, sheetSolid, toolUnion, featureID) {
+  try {
+    const effects = await BREP.applyBooleanOperation(
+      partHistory || {},
+      sheetSolid,
+      { operation: "INTERSECT", targets: [toolUnion] },
+      featureID,
+    );
+    if (effects?.added?.length) {
+      const pick = Array.isArray(effects.added) ? effects.added[0] : null;
+      pick?.visualize?.();
+      return pick;
+    }
+  } catch (err) {
+    console.warn("[SheetMetalCutout] Boolean fallback intersect failed", err);
+  }
+  return null;
 }
 
 function resolveSheetThickness(solid, metadataManager) {
@@ -265,6 +393,242 @@ function collectSheetFaces(solid) {
   faces.A.sort((a, b) => b.triangles.length - a.triangles.length);
   faces.B.sort((a, b) => b.triangles.length - a.triangles.length);
   return faces;
+}
+
+function buildSheetFaceInfoMap(sheetFaces) {
+  const map = new Map();
+  for (const entry of sheetFaces.A) {
+    map.set(entry.faceName, { ...entry, targetType: SHEET_METAL_FACE_TYPES.A });
+  }
+  for (const entry of sheetFaces.B) {
+    map.set(entry.faceName, { ...entry, targetType: SHEET_METAL_FACE_TYPES.B });
+  }
+  return map;
+}
+
+function buildFaceTypeMap(solid) {
+  const map = new Map();
+  if (!solid || typeof solid.getFaceNames !== "function") return map;
+  for (const name of solid.getFaceNames()) {
+    const meta = solid.getFaceMetadata(name) || {};
+    map.set(name, meta.sheetMetalFaceType || null);
+  }
+  return map;
+}
+
+function renameExtrudeCapFaces(solid, baseName) {
+  if (!solid || typeof solid.getFaceNames !== "function" || typeof solid.renameFace !== "function") return;
+  const safeBase = baseName || "SM_CUTOUT_PRISM";
+  const capName = `${safeBase}_ENDCAP`;
+  for (const name of solid.getFaceNames()) {
+    if (typeof name !== "string") continue;
+    if (name.endsWith("_START")) {
+      solid.renameFace(name, capName);
+    } else if (name.endsWith("_END")) {
+      solid.renameFace(name, capName);
+    }
+  }
+}
+
+function buildPrismsFromBoundaryLoops(solid, faceInfoMap, faceTypeMap, sheetThickness, featureID) {
+  const loopsByFace = collectCutoutLoopsFromBoundary(solid, faceTypeMap);
+  const prisms = [];
+  const THREE = BREP.THREE;
+  for (const [faceName, loops] of loopsByFace.entries()) {
+    const faceInfo = faceInfoMap.get(faceName);
+    if (!faceInfo || !Array.isArray(loops) || !loops.length) continue;
+    const loopPoints = loops.map((loop) => loop.points.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
+    const loopEdgeGroups = loops.map((loop) => loop.edgeGroups);
+    const profiles = buildFaceProfiles(loopPoints, faceInfo.normal, faceInfo.origin, featureID, loopEdgeGroups);
+    for (const profile of profiles) {
+      const dir = faceInfo.normal.clone().normalize().multiplyScalar(
+        faceInfo.targetType === SHEET_METAL_FACE_TYPES.B ? sheetThickness : -sheetThickness
+      );
+      const travel = sheetThickness;
+      const prism = new BREP.ExtrudeSolid({
+        face: profile,
+        distance: travel * 0.1,
+        distanceBack: travel * 1.1,
+        name: featureID,
+      });
+      renameExtrudeCapFaces(prism, featureID || "SM_CUTOUT_PRISM");
+      tagThicknessFaces(prism);
+      prisms.push(prism);
+    }
+  }
+  return prisms;
+}
+
+function buildPrismsFromIntersection(intersection, sheetSolid, sheetThickness, featureID) {
+  if (!intersection) return [];
+  const footprintFaces = collectSheetFaces(intersection);
+  const hasA = footprintFaces.A.length > 0;
+  const hasB = footprintFaces.B.length > 0;
+  if (!hasA && !hasB) return [];
+  const basisFaces = [
+    ...footprintFaces.A.map((f) => ({ ...f, targetType: SHEET_METAL_FACE_TYPES.A })),
+    ...footprintFaces.B.map((f) => ({ ...f, targetType: SHEET_METAL_FACE_TYPES.B })),
+  ];
+  const prisms = [];
+  for (const faceInfo of basisFaces) {
+    const loops = buildBoundaryLoops(faceInfo.triangles, intersection?.matrixWorld || sheetSolid.matrixWorld);
+    if (!loops.length) continue;
+    const profiles = buildFaceProfiles(loops, faceInfo.normal, faceInfo.origin, featureID);
+    for (const profile of profiles) {
+      const dir = faceInfo.normal.clone().normalize().multiplyScalar(
+        faceInfo.targetType === SHEET_METAL_FACE_TYPES.B ? sheetThickness : -sheetThickness
+      );
+      const travel = Math.max(sheetThickness, 1e-6);
+      const prism = new BREP.ExtrudeSolid({
+        face: profile,
+        dir,
+        distance: travel,
+        distanceBack: travel,
+        name: featureID || "SM_CUTOUT_PRISM",
+      });
+      renameExtrudeCapFaces(prism, featureID || "SM_CUTOUT_PRISM");
+      tagThicknessFaces(prism);
+      prisms.push(prism);
+    }
+  }
+  return prisms;
+}
+
+function collectCutoutLoopsFromBoundary(solid, faceTypeMap) {
+  const THREE = BREP.THREE;
+  const loopsByFace = new Map();
+  if (!solid || typeof solid.getBoundaryEdgePolylines !== "function") return loopsByFace;
+  const polylines = solid.getBoundaryEdgePolylines() || [];
+  const mat = solid.matrixWorld || new THREE.Matrix4();
+
+  for (const poly of polylines) {
+    const typeA = faceTypeMap.get(poly.faceA) || null;
+    const typeB = faceTypeMap.get(poly.faceB) || null;
+    const isSheetA = typeA === SHEET_METAL_FACE_TYPES.A || typeA === SHEET_METAL_FACE_TYPES.B;
+    const isSheetB = typeB === SHEET_METAL_FACE_TYPES.A || typeB === SHEET_METAL_FACE_TYPES.B;
+    if (isSheetA === isSheetB) continue;
+    const otherType = isSheetA ? typeB : typeA;
+    if (otherType === SHEET_METAL_FACE_TYPES.THICKNESS) continue;
+    const sheetFace = isSheetA ? poly.faceA : poly.faceB;
+    const toolFace = isSheetA ? poly.faceB : poly.faceA;
+    const pts = [];
+    const raw = Array.isArray(poly.positions) ? poly.positions : [];
+    for (const p of raw) {
+      const v = new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(mat);
+      pts.push([v.x, v.y, v.z]);
+    }
+    const clean = dedupPolylinePoints(pts);
+    if (clean.length < 2) continue;
+    const entry = loopsByFace.get(sheetFace) || [];
+    entry.push({ name: toolFace, pts: clean });
+    loopsByFace.set(sheetFace, entry);
+  }
+
+  const out = new Map();
+  for (const [faceName, segments] of loopsByFace.entries()) {
+    const loops = stitchCutoutLoops(segments);
+    if (loops.length) out.set(faceName, loops);
+  }
+  return out;
+}
+
+function stitchCutoutLoops(segments) {
+  const loops = [];
+  const used = new Set();
+  const clonePts = (pts) => pts.map((p) => [p[0], p[1], p[2]]);
+
+  const appendGroup = (groups, name, pts) => {
+    if (!pts.length) return;
+    if (groups.length && groups[groups.length - 1].name === name) {
+      groups[groups.length - 1].pts.push(...pts.slice(1));
+    } else {
+      groups.push({ name, pts: pts.slice() });
+    }
+  };
+
+  const prependGroup = (groups, name, pts) => {
+    if (!pts.length) return;
+    if (groups.length && groups[0].name === name) {
+      groups[0].pts = pts.slice(0, -1).concat(groups[0].pts);
+    } else {
+      groups.unshift({ name, pts: pts.slice() });
+    }
+  };
+
+  for (let i = 0; i < segments.length; i++) {
+    if (used.has(i)) continue;
+    const seg = segments[i];
+    if (!seg || !Array.isArray(seg.pts) || seg.pts.length < 2) continue;
+    let loopPts = clonePts(seg.pts);
+    let groups = [{ name: seg.name, pts: clonePts(seg.pts) }];
+    used.add(i);
+
+    let advanced = true;
+    while (advanced) {
+      advanced = false;
+      const start = loopPts[0];
+      const end = loopPts[loopPts.length - 1];
+      if (pointsEqual(start, end)) break;
+
+      for (let j = 0; j < segments.length; j++) {
+        if (used.has(j)) continue;
+        const s = segments[j];
+        if (!s || !Array.isArray(s.pts) || s.pts.length < 2) continue;
+        const sPts = clonePts(s.pts);
+        const sStart = sPts[0];
+        const sEnd = sPts[sPts.length - 1];
+
+        if (pointsEqual(end, sStart) || pointsEqual(end, sEnd)) {
+          const forward = pointsEqual(end, sStart);
+          const segPts = forward ? sPts : sPts.slice().reverse();
+          loopPts = loopPts.concat(segPts.slice(1));
+          appendGroup(groups, s.name, segPts);
+          used.add(j);
+          advanced = true;
+          break;
+        }
+
+        if (pointsEqual(start, sEnd) || pointsEqual(start, sStart)) {
+          const forward = pointsEqual(start, sEnd);
+          const segPts = forward ? sPts : sPts.slice().reverse();
+          loopPts = segPts.slice(0, -1).concat(loopPts);
+          prependGroup(groups, s.name, segPts);
+          used.add(j);
+          advanced = true;
+          break;
+        }
+      }
+    }
+
+    const closed = loopPts.length >= 3 && pointsEqual(loopPts[0], loopPts[loopPts.length - 1]);
+    if (!closed) continue;
+    loopPts = loopPts.slice(0, -1);
+
+    if (loopPts.length >= 3) {
+      loops.push({
+        points: loopPts,
+        edgeGroups: groups.map((g) => ({ name: g.name, pts: dedupPolylinePoints(g.pts) })),
+      });
+    }
+  }
+  return loops;
+}
+
+function dedupPolylinePoints(pts, eps = 1e-5) {
+  const out = [];
+  for (const p of pts || []) {
+    if (!out.length || !pointsEqual(out[out.length - 1], p, eps)) {
+      out.push([p[0], p[1], p[2]]);
+    }
+  }
+  return out;
+}
+
+function pointsEqual(a, b, eps = 1e-5) {
+  if (!a || !b) return false;
+  return Math.abs(a[0] - b[0]) <= eps
+    && Math.abs(a[1] - b[1]) <= eps
+    && Math.abs(a[2] - b[2]) <= eps;
 }
 
 function faceNormalAndOrigin(triangles, matrixWorld) {
@@ -369,7 +733,7 @@ function buildBoundaryLoops(triangles, matrixWorld) {
   return loopList;
 }
 
-function buildFaceProfiles(loopPoints, normal, originHint, featureID) {
+function buildFaceProfiles(loopPoints, normal, originHint, featureID, loopEdgeGroups = null) {
   const THREE = BREP.THREE;
   const origin = originHint ? originHint.clone() : loopPoints[0]?.[0]?.clone() || new THREE.Vector3();
   const { u, v: basisV } = buildBasis(normal);
@@ -439,6 +803,24 @@ function buildFaceProfiles(loopPoints, normal, originHint, featureID) {
       pts: loopPoints[idx].map((p) => [p.x, p.y, p.z]),
       isHole: idx !== outerMeta.idx,
     }));
+    if (Array.isArray(loopEdgeGroups)) {
+      const edgeGroups = [];
+      for (const idx of loopsForFace) {
+        const groups = loopEdgeGroups[idx];
+        if (!Array.isArray(groups)) continue;
+        for (const g of groups) {
+          if (!g || !Array.isArray(g.pts) || g.pts.length < 2) continue;
+          edgeGroups.push({
+            name: g.name,
+            pts: g.pts.map((p) => (Array.isArray(p) ? [p[0], p[1], p[2]] : [p.x, p.y, p.z])),
+            isHole: idx !== outerMeta.idx,
+          });
+        }
+      }
+      if (edgeGroups.length) {
+        face.userData.boundaryEdgeGroups = edgeGroups;
+      }
+    }
     face.updateMatrixWorld?.(true);
     faces.push(face);
   }
