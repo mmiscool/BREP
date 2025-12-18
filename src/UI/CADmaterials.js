@@ -30,7 +30,7 @@ export const CADmaterials = {
             metalness: 0.05,
             roughness: 0.85,
             depthTest: true,
-            depthWrite: true,
+            depthWrite: false,
             polygonOffset: false,
             emissiveIntensity: 0,
         }),
@@ -38,7 +38,7 @@ export const CADmaterials = {
     EDGE: {
         BASE: new LineMaterial({
             color: "#009dff",
-            linewidth: 5.1,
+            linewidth: 3,
             transparent: true,
             dashed: true,
             dashSize: 0.5,
@@ -46,7 +46,7 @@ export const CADmaterials = {
             worldUnits: false, // keep dash/line size constant in screen space
             // Pull slightly toward the camera so edges aren't buried by coplanar faces.
             polygonOffset: true,
-            polygonOffsetFactor: -1,
+            polygonOffsetFactor: -5,
             polygonOffsetUnits: -1,
         }),
         SELECTED: new LineMaterial({
@@ -163,6 +163,12 @@ export class CADmaterialWidget {
         this.uiElement.classList.add('cmw');
         this._storageKey = '__CAD_MATERIAL_SETTINGS__';
         this._settings = this._loadAllSettings();
+        this._defaultHoverColor = this._getDefaultHoverColor();
+        this._defaultSidebarWidth = this._getDefaultSidebarWidth();
+        this._materialEntries = this._collectMaterialEntries();
+        this._materialMap = new Map(this._materialEntries.map((entry) => [entry.label, entry.material]));
+        this._materialDefaults = this._captureMaterialDefaults(this._materialEntries);
+        this._controlRefs = new Map();
         this._ensureStyles();
         this.createUI();
     }
@@ -193,6 +199,7 @@ export class CADmaterialWidget {
         });
         hoverRow.appendChild(hoverInput);
         this.uiElement.appendChild(hoverRow);
+        this._hoverInput = hoverInput;
 
         // Sidebar width control (global persistent setting)
         const widthRow = makeRightSpan();
@@ -202,7 +209,7 @@ export class CADmaterialWidget {
         widthRow.appendChild(widthLabel);
 
         // Determine initial width
-        let initialWidth = 300;
+        let initialWidth = 500;
         try {
             const savedW = parseInt(this._settings['__SIDEBAR_WIDTH__']);
             if (Number.isFinite(savedW) && savedW > 0) initialWidth = savedW;
@@ -212,7 +219,7 @@ export class CADmaterialWidget {
                 const w = parseInt(cs);
                 if (Number.isFinite(w) && w > 0) initialWidth = w;
             }
-        } catch { /* keep default */ }
+        } catch { console.log("failed to determine initial sidebar width    ") }
 
         const widthInput = document.createElement('input');
         widthInput.type = 'number';
@@ -241,7 +248,7 @@ export class CADmaterialWidget {
             if (v < min) v = min; else if (v > max) v = max;
             widthInput.value = String(v);
             widthVal.textContent = `${v}px`;
-            applySidebarWidth(v);
+            this._applySidebarWidth(v);
             this._settings['__SIDEBAR_WIDTH__'] = v;
             this._saveAllSettings();
         };
@@ -249,6 +256,21 @@ export class CADmaterialWidget {
         widthRow.appendChild(widthInput);
         widthRow.appendChild(widthVal);
         this.uiElement.appendChild(widthRow);
+        this._widthInput = widthInput;
+        this._widthVal = widthVal;
+
+        const resetRow = makeRightSpan();
+        const resetLabel = document.createElement('label');
+        resetLabel.className = 'cmw-label';
+        resetLabel.textContent = 'Reset';
+        resetRow.appendChild(resetLabel);
+        const resetButton = document.createElement('button');
+        resetButton.type = 'button';
+        resetButton.className = 'cmw-button';
+        resetButton.textContent = 'Reset to Defaults';
+        resetButton.addEventListener('click', () => this._resetToDefaults());
+        resetRow.appendChild(resetButton);
+        this.uiElement.appendChild(resetRow);
 
         // For each top-level group (e.g., EDGE, LOOP, FACE), render variants (e.g., BASE, SELECTED)
         for (const [groupName, groupVal] of Object.entries(CADmaterials)) {
@@ -261,17 +283,15 @@ export class CADmaterialWidget {
             groupHeader.textContent = groupName;
             groupContainer.appendChild(groupHeader);
 
-            const isMaterial = (m) => m && (m.isMaterial === true || m instanceof THREE.Material);
-
             // Back-compat: allow either a direct THREE.Material or an object of variants
-            if (isMaterial(groupVal)) {
+            if (this._isMaterial(groupVal)) {
                 const matContainer = document.createElement("div");
                 matContainer.className = 'cmw-mat';
                 this._buildMaterialControls(matContainer, groupName, groupVal);
                 groupContainer.appendChild(matContainer);
             } else if (groupVal && typeof groupVal === 'object') {
                 for (const [variantName, mat] of Object.entries(groupVal)) {
-                    if (!isMaterial(mat)) continue;
+                    if (!this._isMaterial(mat)) continue;
                     const matContainer = document.createElement("div");
                     matContainer.className = 'cmw-mat';
                     this._buildMaterialControls(matContainer, `${groupName} - ${variantName}`, mat);
@@ -295,8 +315,164 @@ export class CADmaterialWidget {
     }
     _saveAllSettings() {
         try {
-            LS.setItem(this._storageKey, JSON.stringify(this._settings));
+            LS.setItem(this._storageKey, JSON.stringify(this._settings, null, 2));
+            console.log(JSON.stringify(this._settings, null, 2));
         } catch {/* ignore */ }
+    }
+    _isMaterial(m) {
+        return m && (m.isMaterial === true || m instanceof THREE.Material);
+    }
+    _collectMaterialEntries() {
+        const entries = [];
+        for (const [groupName, groupVal] of Object.entries(CADmaterials)) {
+            if (this._isMaterial(groupVal)) {
+                entries.push({ label: groupName, material: groupVal });
+            } else if (groupVal && typeof groupVal === 'object') {
+                for (const [variantName, mat] of Object.entries(groupVal)) {
+                    if (!this._isMaterial(mat)) continue;
+                    entries.push({ label: `${groupName} - ${variantName}`, material: mat });
+                }
+            }
+        }
+        return entries;
+    }
+    _captureMaterialDefaults(entries) {
+        const defaults = {};
+        for (const entry of entries) {
+            defaults[entry.label] = this._extractMaterialSettings(entry.material);
+        }
+        return defaults;
+    }
+    _extractMaterialSettings(material) {
+        const settings = {};
+        if (material?.color && typeof material.color.getHexString === 'function') {
+            settings.color = `#${material.color.getHexString()}`;
+        }
+        if (material instanceof THREE.LineBasicMaterial || material instanceof LineMaterial) {
+            if (material.linewidth != null) settings.linewidth = Number(material.linewidth);
+        }
+        if (material instanceof THREE.PointsMaterial) {
+            if (material.size != null) settings.pointSize = Number(material.size);
+        }
+        if (
+            material instanceof THREE.MeshBasicMaterial ||
+            material instanceof THREE.MeshMatcapMaterial ||
+            material instanceof THREE.MeshToonMaterial ||
+            material instanceof THREE.MeshStandardMaterial
+        ) {
+            if (material.opacity != null) settings.opacity = Number(material.opacity);
+            settings.transparent = !!material.transparent;
+            settings.wireframe = !!material.wireframe;
+            settings.side = material.side;
+        }
+        return settings;
+    }
+    _applyMaterialSettings(material, settings) {
+        if (!material || !settings) return;
+        if (settings.color && material.color && typeof material.color.set === 'function') {
+            material.color.set(this._sanitizeHexColor(settings.color));
+        }
+        if (material instanceof THREE.LineBasicMaterial || material instanceof LineMaterial) {
+            if (settings.linewidth != null) material.linewidth = Number(settings.linewidth);
+        }
+        if (material instanceof THREE.PointsMaterial) {
+            if (settings.pointSize != null) material.size = Number(settings.pointSize);
+        }
+        if (
+            material instanceof THREE.MeshBasicMaterial ||
+            material instanceof THREE.MeshMatcapMaterial ||
+            material instanceof THREE.MeshToonMaterial ||
+            material instanceof THREE.MeshStandardMaterial
+        ) {
+            if (settings.opacity != null) material.opacity = Number(settings.opacity);
+            if (settings.transparent != null) material.transparent = !!settings.transparent;
+            if (settings.wireframe != null) material.wireframe = !!settings.wireframe;
+            if (settings.side != null) material.side = settings.side;
+        }
+    }
+    _applySidebarWidth(px) {
+        try {
+            const sb = document.getElementById('sidebar');
+            if (sb && Number.isFinite(px) && px > 0) sb.style.width = `${px}px`;
+        } catch { /* ignore */ }
+    }
+    _setSidebarWidthUi(px) {
+        if (!this._widthInput || !this._widthVal) {
+            this._applySidebarWidth(px);
+            return;
+        }
+        let v = Number(px);
+        if (!Number.isFinite(v)) return;
+        const min = Number(this._widthInput.min) || 200;
+        const max = Number(this._widthInput.max) || 600;
+        if (v < min) v = min; else if (v > max) v = max;
+        this._widthInput.value = String(v);
+        this._widthVal.textContent = `${v}px`;
+        this._applySidebarWidth(v);
+    }
+    _normalizeHexColor(value) {
+        if (typeof value === 'string' && value.startsWith('#')) return this._sanitizeHexColor(value);
+        try { return `#${new THREE.Color(value).getHexString()}`; } catch { return '#ffd54a'; }
+    }
+    _getDefaultHoverColor() {
+        return this._normalizeHexColor(SelectionFilter.getHoverColor() || '#ffd54a');
+    }
+    _getDefaultSidebarWidth() {
+        const fallback = 500;
+        try {
+            const sb = document.getElementById('sidebar');
+            if (!sb) return fallback;
+            const prev = sb.style.width;
+            if (prev) sb.style.width = '';
+            const cs = getComputedStyle(sb).width;
+            if (prev) sb.style.width = prev;
+            const w = parseInt(cs);
+            if (Number.isFinite(w) && w > 0) return w;
+        } catch { /* keep fallback */ }
+        return fallback;
+    }
+    _syncMaterialControls(labelText, material) {
+        const controls = this._controlRefs.get(labelText);
+        if (!controls || !material) return;
+        if (controls.colorInput && material.color && typeof material.color.getHexString === 'function') {
+            controls.colorInput.value = `#${material.color.getHexString()}`;
+        }
+        if (controls.lineWidthInput) {
+            const v = material.linewidth ?? '';
+            controls.lineWidthInput.value = v;
+            if (controls.lineWidthVal) controls.lineWidthVal.textContent = String(v);
+        }
+        if (controls.pointSizeInput) {
+            const v = material.size ?? '';
+            controls.pointSizeInput.value = v;
+            if (controls.pointSizeVal) controls.pointSizeVal.textContent = String(v);
+        }
+        if (controls.opacityInput) {
+            controls.opacityInput.value = material.opacity ?? 1;
+        }
+        if (controls.wireframeInput) {
+            controls.wireframeInput.checked = !!material.wireframe;
+        }
+        if (controls.doubleSidedInput) {
+            controls.doubleSidedInput.checked = material.side === THREE.DoubleSide;
+        }
+    }
+    _resetToDefaults() {
+        this._settings = {};
+        try { LS.removeItem(this._storageKey); } catch { /* ignore */ }
+
+        const hoverColor = this._normalizeHexColor(this._defaultHoverColor);
+        SelectionFilter.setHoverColor(hoverColor);
+        if (this._hoverInput) this._hoverInput.value = hoverColor;
+
+        this._setSidebarWidthUi(this._defaultSidebarWidth);
+
+        for (const [labelText, defaults] of Object.entries(this._materialDefaults || {})) {
+            const material = this._materialMap.get(labelText);
+            if (!material) continue;
+            this._applyMaterialSettings(material, defaults);
+            this._syncMaterialControls(labelText, material);
+        }
     }
     _getMatKey(labelText) {
         return String(labelText);
@@ -349,6 +525,7 @@ export class CADmaterialWidget {
     _buildMaterialControls(container, labelText, material) {
         // Apply saved settings first
         this._applySavedToMaterial(labelText, material);
+        const controls = this._controlRefs.get(labelText) || {};
 
         // Color row
         if (material.color && typeof material.color.getHexString === 'function') {
@@ -370,6 +547,7 @@ export class CADmaterialWidget {
             });
             colorRow.appendChild(colorInput);
             container.appendChild(colorRow);
+            controls.colorInput = colorInput;
         }
 
         // Line-specific controls
@@ -398,6 +576,8 @@ export class CADmaterialWidget {
             lineWidthRow.appendChild(lwInput);
             lineWidthRow.appendChild(lwVal);
             container.appendChild(lineWidthRow);
+            controls.lineWidthInput = lwInput;
+            controls.lineWidthVal = lwVal;
         }
 
         // Points-specific controls
@@ -426,6 +606,8 @@ export class CADmaterialWidget {
             pointSizeRow.appendChild(psInput);
             pointSizeRow.appendChild(psVal);
             container.appendChild(pointSizeRow);
+            controls.pointSizeInput = psInput;
+            controls.pointSizeVal = psVal;
         }
 
         // Mesh material common controls
@@ -455,6 +637,7 @@ export class CADmaterialWidget {
             });
             opacityRow.appendChild(opInput);
             container.appendChild(opacityRow);
+            controls.opacityInput = opInput;
 
             // Wireframe
             const wfRow = makeRightSpan();
@@ -472,6 +655,7 @@ export class CADmaterialWidget {
             });
             wfRow.appendChild(wfInput);
             container.appendChild(wfRow);
+            controls.wireframeInput = wfInput;
 
             // Double sided
             const dsRow = makeRightSpan();
@@ -489,7 +673,10 @@ export class CADmaterialWidget {
             });
             dsRow.appendChild(dsInput);
             container.appendChild(dsRow);
+            controls.doubleSidedInput = dsInput;
         }
+
+        this._controlRefs.set(labelText, controls);
     }
 
     _ensureStyles() {
@@ -520,6 +707,15 @@ export class CADmaterialWidget {
             .cmw-range { width: 200px; accent-color: #60a5fa; }
             .cmw-check { accent-color: #60a5fa; }
             .cmw-val { width: 48px; text-align: right; color: #9aa4b2; }
+            .cmw-button {
+                background: #111827;
+                color: var(--cmw-text);
+                border: 1px solid #374151;
+                border-radius: 8px;
+                padding: 6px 10px;
+                cursor: pointer;
+            }
+            .cmw-button:hover { border-color: #60a5fa; }
         `;
         document.head.appendChild(style);
     }

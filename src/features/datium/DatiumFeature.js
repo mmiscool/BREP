@@ -1,7 +1,7 @@
 
 import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
-import { CADmaterials } from '../../UI/CADmaterials.js';
+import { createPlaneBaseMesh } from '../plane/PlaneFeature.js';
 
 const inputParamsSchema = {
     id: {
@@ -37,10 +37,8 @@ export class DatiumFeature {
         group.onClick = () => {};
 
         const mkPlane = (orientation, suffix) => {
-            const mat = (CADmaterials?.PLANE?.BASE) || new THREE.MeshBasicMaterial({ color: 0x2eff2e, side: THREE.DoubleSide, transparent: true, opacity: 0.5, depthWrite: false });
-            const mesh = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), mat);
+            const mesh = createPlaneBaseMesh();
             mesh.name = `${baseName}:${suffix}`;
-            mesh.type = 'PLANE';
             mesh.userData = mesh.userData || {};
             mesh.userData.orientation = orientation;
             // Orient like PlaneFeature for consistency

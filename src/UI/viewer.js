@@ -34,6 +34,7 @@ import { annotationRegistry } from './pmi/AnnotationRegistry.js';
 import { SchemaForm } from './featureDialogs.js';
 import './dialogs.js';
 import { cloneSplineData } from '../features/spline/splineUtils.js';
+import { BREP } from '../BREP/BREP.js';
 
 const ASSEMBLY_CONSTRAINTS_TITLE = 'Assembly Constraints';
 
@@ -188,9 +189,10 @@ export class Viewer {
         clearAlpha = 0,
         sidebar = null,
         partHistory = new PartHistory(),
+
     }) {
         if (!container) throw new Error('Viewer requires { container }');
-
+        this.BREP = BREP;
 
         this.partHistory = partHistory instanceof PartHistory ? partHistory : new PartHistory();
 
@@ -1799,7 +1801,8 @@ export class Viewer {
             try { this._hideSelectionOverlay(); } catch { }
             try {
                 const scene = this.partHistory?.scene || this.scene;
-                if (scene) {SelectionFilter.unselectAll(scene);
+                if (scene) {
+                    SelectionFilter.unselectAll(scene);
                     SelectionFilter.restoreAllowedSelectionTypes();
                 }
             } catch { }
