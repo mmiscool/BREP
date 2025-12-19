@@ -2145,7 +2145,15 @@ export class Viewer {
         if (this._inspectorEl) return;
         // Create a floating window anchored bottom-left, resizable and draggable
         const height = Math.max(260, Math.floor((window?.innerHeight || 800) * 0.7));
-        const fw = new FloatingWindow({ title: 'Inspector', width: 520, height, x: 12, bottom: 12, shaded: false });
+        const fw = new FloatingWindow({
+            title: 'Inspector',
+            width: 520,
+            height,
+            x: 12,
+            bottom: 12,
+            shaded: false,
+            onClose: () => this._closeInspectorPanel(),
+        });
         // Header actions
         const btnDownload = document.createElement('button');
         btnDownload.className = 'fw-btn';
@@ -2159,12 +2167,7 @@ export class Viewer {
                 setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
             } catch { }
         });
-        const btnClose = document.createElement('button');
-        btnClose.className = 'fw-btn';
-        btnClose.textContent = 'Hide';
-        btnClose.addEventListener('click', () => this._closeInspectorPanel());
         fw.addHeaderAction(btnDownload);
-        fw.addHeaderAction(btnClose);
 
         // Wire content area
         const content = document.createElement('div');

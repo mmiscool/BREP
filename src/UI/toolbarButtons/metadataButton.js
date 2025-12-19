@@ -82,20 +82,21 @@ class MetadataPanelController {
     _ensurePanel() {
         if (this.root) return;
         const height = Math.max(240, Math.floor((window?.innerHeight || 800) * 0.45));
-        const fw = new FloatingWindow({ title: 'Metadata', width: 500, height: 600, bottom: 12, shaded: false });
+        const fw = new FloatingWindow({
+            title: 'Metadata',
+            width: 500,
+            height: 600,
+            bottom: 12,
+            shaded: false,
+            onClose: () => this.close(),
+        });
 
         const btnClear = document.createElement('button');
         btnClear.className = 'fw-btn';
         btnClear.textContent = 'Clear';
         btnClear.addEventListener('click', () => this._clearMetadataForCurrentTarget());
 
-        const btnClose = document.createElement('button');
-        btnClose.className = 'fw-btn';
-        btnClose.textContent = 'Hide';
-        btnClose.addEventListener('click', () => this.close());
-
         fw.addHeaderAction(btnClear);
-        fw.addHeaderAction(btnClose);
 
         const content = document.createElement('div');
         content.style.display = 'flex';

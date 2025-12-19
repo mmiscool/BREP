@@ -35,6 +35,8 @@ export class BrowserTesting {
     this.errors = new Map(); // name -> { message, stack } captured on failure
     // Per-test canvas snapshot
     this.screenshots = new Map(); // name -> dataURL
+    this.logWindow = null;
+    this.logContent = null;
 
     // Popup container for screenshots between tests (kept from previous behavior)
     this.popupDiv = document.createElement("div");
@@ -126,7 +128,7 @@ export class BrowserTesting {
   // ====== UI: Build top-right widget ======
   _buildUI() {
     // Floating window container (draggable, shade-on-title, resizable)
-    const fw = new FloatingWindow({ title: 'Browser Testing', width: 420, height: 420, right: 16, top: 40, shaded: false });
+    const fw = new FloatingWindow({ title: 'Browser Testing', width: 500, height: 700, right: 16, top: 40, shaded: false });
 
     // Controls row
     const controls = document.createElement("div");
@@ -150,10 +152,10 @@ export class BrowserTesting {
 
     // Table container (content area already scrolls; this keeps structure)
     const tableWrap = document.createElement("div");
-    Object.assign(tableWrap.style, {
-      overflow: "auto",
-      maxHeight: "100%",
-    });
+    // Object.assign(tableWrap.style, {
+    //   overflow: "auto",
+    //   maxHeight: "100%",
+    // });
 
     // Table
     const table = document.createElement("table");
@@ -332,39 +334,14 @@ export class BrowserTesting {
 
   _showErrorLog(name) {
     const err = this.errors.get(name);
-    // Modal
-    const overlay = document.createElement("div");
-    Object.assign(overlay.style, {
-      position: "fixed", inset: "0",
-      background: "rgba(0,0,0,0.65)",
-      zIndex: "7",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-    });
-
-    const modal = document.createElement("div");
-    Object.assign(modal.style, {
-      width: "680px",
-      maxWidth: "95vw",
-      maxHeight: "80vh",
-      overflow: "auto",
-      background: "#0b0b0e",
-      color: "#e5e7eb",
-      border: "1px solid #2a2a33",
-      borderRadius: "12px",
-      boxShadow: "0 10px 28px rgba(0,0,0,0.55)",
-      padding: "3px",
-    });
-
-    const title = document.createElement("div");
-    title.textContent = `Log - ${name}`;
-    Object.assign(title.style, { fontWeight: "700", marginBottom: "8px" });
+    this._ensureLogWindow();
+    if (!this.logWindow || !this.logContent) return;
+    this.logWindow.setTitle(`Log - ${name}`);
+    this.logContent.innerHTML = "";
 
     const screenshot = this.screenshots.get(name);
-    let shotWrap = null;
     if (screenshot) {
-      shotWrap = document.createElement("div");
+      const shotWrap = document.createElement("div");
       Object.assign(shotWrap.style, {
         marginBottom: "8px",
         display: "flex",
@@ -378,6 +355,7 @@ export class BrowserTesting {
       img.style.border = "1px solid #1e2030";
       img.style.borderRadius = "8px";
       shotWrap.appendChild(img);
+      this.logContent.appendChild(shotWrap);
     }
 
     const pre = document.createElement("pre");
@@ -388,24 +366,40 @@ export class BrowserTesting {
     pre.style.padding = "3px";
     pre.style.borderRadius = "8px";
     pre.textContent = err ? `${err.message}\n\n${err.stack}` : "No error captured for this test.";
+    this.logContent.appendChild(pre);
+    this.logWindow.root.style.display = "flex";
+  }
 
-    const close = makeButton("Close");
-    close.style.marginTop = "12px";
-    close.addEventListener("click", () => {
-      overlay.remove();
+  _ensureLogWindow() {
+    if (this.logWindow) return;
+    const fw = new FloatingWindow({
+      title: "Log",
+      width: 720,
+      height: 520,
+      right: 24,
+      top: 80,
+      shaded: false,
+      onClose: () => this._hideLogWindow(),
     });
 
-    modal.appendChild(title);
-    if (shotWrap) modal.appendChild(shotWrap);
-    modal.appendChild(pre);
-    modal.appendChild(close);
+    const content = document.createElement("div");
+    content.style.display = "flex";
+    content.style.flexDirection = "column";
+    content.style.gap = "10px";
+    content.style.width = "100%";
+    content.style.height = "100%";
+    content.style.boxSizing = "border-box";
 
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) overlay.remove();
-    });
+    fw.content.appendChild(content);
 
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
+    this.logWindow = fw;
+    this.logContent = content;
+    try { fw.root.style.display = "none"; } catch {}
+  }
+
+  _hideLogWindow() {
+    if (!this.logWindow?.root) return;
+    try { this.logWindow.root.style.display = "none"; } catch {}
   }
 
   // ====== Execution helpers ======

@@ -53,6 +53,7 @@ class ScriptRunnerPanel {
       right: 16,
       top: 56,
       shaded: false,
+      onClose: () => this.close(),
     });
 
     const btnRun = document.createElement('button');
@@ -72,14 +73,8 @@ class ScriptRunnerPanel {
       }
     });
 
-    const btnClose = document.createElement('button');
-    btnClose.className = 'fw-btn';
-    btnClose.textContent = 'Hide';
-    btnClose.addEventListener('click', () => this.close());
-
     fw.addHeaderAction(btnRun);
     fw.addHeaderAction(btnRefresh);
-    fw.addHeaderAction(btnClose);
 
     const content = document.createElement('div');
     content.style.display = 'flex';

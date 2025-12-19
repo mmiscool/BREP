@@ -15,6 +15,8 @@ export class FloatingWindow {
     bottom = null, // if provided and y is null, compute from viewport height
     shaded = false,
     zIndex = 6,
+    closable = true,
+    onClose = null,
   } = {}) {
     this._minW = Math.max(160, Number(minWidth) || 260);
     this._minH = Math.max(100, Number(minHeight) || 140);
@@ -26,6 +28,9 @@ export class FloatingWindow {
     this._unshadedH = null; // cache last expanded height
     this._movedDuringPress = false;
     this._moveThreshold = 5; // px to distinguish click vs drag
+    this._wasTopmostOnPointerDown = false;
+    this._closable = closable !== false;
+    this.onClose = (typeof onClose === 'function') ? onClose : null;
 
     this._ensureStyles();
 
@@ -68,17 +73,26 @@ export class FloatingWindow {
     actions.className = 'floating-window__actions';
     header.appendChild(titleEl);
     header.appendChild(actions);
+    const closeBtn = this._closable ? this._buildCloseButton() : null;
+    if (closeBtn) actions.appendChild(closeBtn);
 
     // Content
     const content = document.createElement('div');
     content.className = 'floating-window__content';
 
-    // Resizer (bottom-right)
-    const resizer = document.createElement('div');
-    resizer.className = 'floating-window__resizer';
+    // Resizers (corners)
     root.appendChild(header);
     root.appendChild(content);
-    root.appendChild(resizer);
+    const resizers = [];
+    const resizerDirs = ['nw', 'ne', 'sw', 'se'];
+    for (const dir of resizerDirs) {
+      const handle = document.createElement('div');
+      handle.className = `floating-window__resizer floating-window__resizer--${dir}`;
+      handle.dataset.dir = dir;
+      handle.addEventListener('pointerdown', (ev) => this._onResizerPointerDown(ev, dir));
+      resizers.push(handle);
+      root.appendChild(handle);
+    }
     document.body.appendChild(root);
 
     // Persist refs
@@ -87,7 +101,8 @@ export class FloatingWindow {
     this.titleEl = titleEl;
     this.actionsEl = actions;
     this.content = content;
-    this.resizer = resizer;
+    this.resizers = resizers;
+    this.closeButton = closeBtn;
 
     // Initial shaded state
     this.setShaded(this._isShaded);
@@ -97,8 +112,10 @@ export class FloatingWindow {
     // Prevent text selection while dragging
     header.addEventListener('dragstart', (e) => { try { e.preventDefault(); } catch {} });
 
-    // Events: resize on resizer
-    resizer.addEventListener('pointerdown', (ev) => this._onResizerPointerDown(ev));
+    root.addEventListener('pointerdown', () => {
+      this._wasTopmostOnPointerDown = this._isTopmost();
+      this._bringToFront();
+    }, true);
 
     // Keyboard: toggle shade
     header.addEventListener('keydown', (ev) => {
@@ -115,11 +132,61 @@ export class FloatingWindow {
 
   destroy() {
     try { this.root && this.root.parentNode && this.root.parentNode.removeChild(this.root); } catch {}
-    this.root = null; this.header = null; this.actionsEl = null; this.titleEl = null; this.content = null; this.resizer = null;
+    this.root = null; this.header = null; this.actionsEl = null; this.titleEl = null; this.content = null; this.resizers = null; this.closeButton = null;
   }
 
   setTitle(text) { if (this.titleEl) this.titleEl.textContent = String(text || ''); }
-  addHeaderAction(el) { if (el && this.actionsEl) this.actionsEl.appendChild(el); }
+  addHeaderAction(el) {
+    if (!el || !this.actionsEl) return;
+    if (this.closeButton && this.closeButton.parentNode === this.actionsEl) {
+      this.actionsEl.insertBefore(el, this.closeButton);
+    } else {
+      this.actionsEl.appendChild(el);
+    }
+  }
+  close() {
+    if (typeof this.onClose === 'function') {
+      this.onClose();
+      return;
+    }
+    if (this.root) this.root.style.display = 'none';
+  }
+  _bringToFront() {
+    if (!this.root) return;
+    const windows = document.querySelectorAll('.floating-window');
+    let maxZ = 0;
+    let maxCount = 0;
+    for (const win of windows) {
+      const z = parseInt(win.style.zIndex || window.getComputedStyle(win).zIndex || '0', 10);
+      if (!Number.isFinite(z)) continue;
+      if (z > maxZ) {
+        maxZ = z;
+        maxCount = 1;
+      } else if (z === maxZ) {
+        maxCount += 1;
+      }
+    }
+    const current = parseInt(this.root.style.zIndex || window.getComputedStyle(this.root).zIndex || '0', 10);
+    if (!Number.isFinite(current)) return;
+    const hasPeerAtMax = current === maxZ && maxCount > 1;
+    if (current > maxZ || (current === maxZ && !hasPeerAtMax)) return;
+    this.root.style.zIndex = String(maxZ + 1);
+  }
+  _isTopmost() {
+    if (!this.root) return false;
+    const windows = document.querySelectorAll('.floating-window');
+    let maxZ = -Infinity;
+    let topmost = null;
+    for (const win of windows) {
+      const z = parseInt(win.style.zIndex || window.getComputedStyle(win).zIndex || '0', 10);
+      if (!Number.isFinite(z)) continue;
+      if (z > maxZ || z === maxZ) {
+        maxZ = z;
+        topmost = win;
+      }
+    }
+    return topmost === this.root;
+  }
   setShaded(shaded) {
     this._isShaded = Boolean(shaded);
     if (!this.root || !this.content) return;
@@ -140,6 +207,20 @@ export class FloatingWindow {
     } catch {}
   }
   toggleShaded() { this.setShaded(!this._isShaded); }
+
+  _buildCloseButton() {
+    const btn = document.createElement('button');
+    btn.className = 'fw-btn floating-window__close';
+    btn.type = 'button';
+    btn.textContent = '❌';
+    btn.setAttribute('aria-label', 'Close');
+    btn.setAttribute('title', 'Close');
+    btn.addEventListener('click', (ev) => {
+      try { ev.stopPropagation(); } catch {}
+      this.close();
+    });
+    return btn;
+  }
 
   _onHeaderPointerDown(ev) {
     if (ev.button !== 0) return;
@@ -176,7 +257,7 @@ export class FloatingWindow {
       window.removeEventListener('pointermove', onMove, true);
       window.removeEventListener('pointerup', onUp, true);
       const totalMove = Math.abs(e.clientX - this._dragStart.x) + Math.abs(e.clientY - this._dragStart.y);
-      if (totalMove <= this._moveThreshold) {
+      if (totalMove <= this._moveThreshold && this._wasTopmostOnPointerDown) {
         this.toggleShaded();
       }
     };
@@ -185,27 +266,40 @@ export class FloatingWindow {
     try { ev.preventDefault(); ev.stopPropagation(); } catch {}
   }
 
-  _onResizerPointerDown(ev) {
+  _onResizerPointerDown(ev, dir = 'se') {
     if (ev.button !== 0) return;
     this._resizing = true;
     this.root.classList.add('is-resizing');
-    this.resizer.setPointerCapture?.(ev.pointerId);
+    const resizerEl = ev.currentTarget;
+    resizerEl?.setPointerCapture?.(ev.pointerId);
     const rect = this.root.getBoundingClientRect();
-    this._resizeStart = { x: ev.clientX, y: ev.clientY, w: rect.width, h: rect.height };
+    this._resizeStart = { x: ev.clientX, y: ev.clientY, w: rect.width, h: rect.height, left: rect.left, top: rect.top };
     const onMove = (e) => {
       const dx = (e.clientX - this._resizeStart.x);
       const dy = (e.clientY - this._resizeStart.y);
       const vw = window.innerWidth || 0, vh = window.innerHeight || 0;
-      let nw = Math.max(this._minW, this._resizeStart.w + dx);
-      let nh = Math.max(this._minH, this._resizeStart.h + dy);
-      nw = Math.min(nw, vw - (this.root.getBoundingClientRect().left || 0) - 8);
-      nh = Math.min(nh, vh - (this.root.getBoundingClientRect().top || 0) - 8);
+      let left = this._resizeStart.left;
+      let top = this._resizeStart.top;
+      let nw = this._resizeStart.w;
+      let nh = this._resizeStart.h;
+      if (dir.includes('e')) nw += dx;
+      if (dir.includes('s')) nh += dy;
+      if (dir.includes('w')) { nw -= dx; left += dx; }
+      if (dir.includes('n')) { nh -= dy; top += dy; }
+      nw = Math.max(this._minW, nw);
+      nh = Math.max(this._minH, nh);
+      if (left < 0) { nw += left; left = 0; }
+      if (top < 0) { nh += top; top = 0; }
+      nw = Math.min(nw, vw - left - 8);
+      nh = Math.min(nh, vh - top - 8);
+      this.root.style.left = left + 'px';
+      this.root.style.top = top + 'px';
       this.root.style.width = nw + 'px';
       this.root.style.height = nh + 'px';
     };
     const onUp = (_e) => {
       this._resizing = false;
-      try { this.resizer.releasePointerCapture?.(ev.pointerId); } catch {}
+      try { resizerEl?.releasePointerCapture?.(ev.pointerId); } catch {}
       window.removeEventListener('pointermove', onMove, true);
       window.removeEventListener('pointerup', onUp, true);
       this.root.classList.remove('is-resizing');
@@ -227,11 +321,21 @@ export class FloatingWindow {
       .floating-window__actions { display:flex; align-items:center; gap:6px; }
       .floating-window__actions .fw-btn { background:#1f2937; color:#f9fafb; border:1px solid #374151; padding:6px 8px; border-radius:8px; cursor:pointer; font:700 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
       .floating-window__actions .fw-btn:hover { background:#2b3545; }
+      .floating-window__actions .floating-window__close { padding:4px 8px; border-radius:8px; color:#f1f5f9; }
+      .floating-window__actions .floating-window__close:hover { background:#3a1f24; border-color:#5b2a33; }
       .floating-window__content { flex:1; overflow:auto; padding:8px; }
       .floating-window.is-shaded .floating-window__content { display:none; }
-      .floating-window__resizer { position:absolute; width:16px; height:16px; right:2px; bottom:2px; cursor:se-resize; }
+      .floating-window__resizer { position:absolute; width:16px; height:16px; z-index:2; touch-action:none; }
+      .floating-window__resizer--se { right:2px; bottom:2px; cursor:se-resize; }
+      .floating-window__resizer--sw { left:2px; bottom:2px; cursor:sw-resize; }
+      .floating-window__resizer--ne { right:2px; top:2px; cursor:ne-resize; }
+      .floating-window__resizer--nw { left:2px; top:2px; cursor:nw-resize; }
       .floating-window.is-shaded .floating-window__resizer { display:none; }
-      .floating-window__resizer::after { content:""; position:absolute; right:3px; bottom:3px; width:10px; height:10px; border-right:2px solid #4b5563; border-bottom:2px solid #4b5563; opacity:.8; }
+      .floating-window__resizer::after { content:""; position:absolute; width:10px; height:10px; opacity:.8; }
+      .floating-window__resizer--se::after { right:3px; bottom:3px; border-right:2px solid #4b5563; border-bottom:2px solid #4b5563; }
+      .floating-window__resizer--sw::after { left:3px; bottom:3px; border-left:2px solid #4b5563; border-bottom:2px solid #4b5563; }
+      .floating-window__resizer--ne::after { right:3px; top:3px; border-right:2px solid #4b5563; border-top:2px solid #4b5563; }
+      .floating-window__resizer--nw::after { left:3px; top:3px; border-left:2px solid #4b5563; border-top:2px solid #4b5563; }
       .floating-window.is-resizing, .floating-window__header:active { cursor:grabbing; }
     `;
     document.head.appendChild(style);

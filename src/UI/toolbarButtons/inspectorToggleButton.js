@@ -5,7 +5,7 @@ export function createInspectorToggleButton(viewer) {
         } catch {}
     };
     return {
-        label: '🧪',
+        label: '🕵️',
         title: 'Toggle Inspector panel',
         onClick
     };

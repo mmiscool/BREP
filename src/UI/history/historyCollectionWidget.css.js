@@ -36,6 +36,9 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01));
     overflow: hidden;
   }
+  .hc-item:hover {
+    border-color: white;
+  }
   .hc-header-row {
     display: flex;
     align-items: stretch;
@@ -91,10 +94,10 @@ export const HISTORY_COLLECTION_WIDGET_CSS = `
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    right: 8px;
+    right: 3px;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     padding: 0;
     z-index: 2;
   }
