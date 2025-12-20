@@ -19,6 +19,12 @@ const inputParamsSchema = {
         default_value: 1,
         hint: "Fillet radius",
     },
+    resolution: {
+        type: "number",
+        step: 1,
+        default_value: 32,
+        hint: "Segments around the fillet tube circumference",
+    },
     inflate: {
         type: "number",
         step: 0.1,
@@ -31,15 +37,10 @@ const inputParamsSchema = {
         default_value: "INSET",
         hint: "Prefer fillet inside (INSET) or outside (OUTSET)",
     },
-    snapSeam: {
+    showTangentOverlays: {
         type: "boolean",
         default_value: false,
-        hint: "Experimental: snap boolean seam to computed tangents (INSET only)",
-    },
-    useTubeFast: {
-        type: "boolean",
-        default_value: true,
-        hint: "Prefer the fast tube build (auto-fallback); disable to force the slower robust build",
+        hint: "Show pre-inflate tangent overlays on the fillet tube",
     },
     debug: {
         type: "boolean",
@@ -63,9 +64,9 @@ export class FilletFeature {
             featureID: this.inputParams?.featureID,
             direction: this.inputParams?.direction,
             radius: this.inputParams?.radius,
+            resolution: this.inputParams?.resolution,
             inflate: this.inputParams?.inflate,
-            snapSeam: this.inputParams?.snapSeam,
-            useTubeFast: this.inputParams?.useTubeFast,
+            showTangentOverlays: this.inputParams?.showTangentOverlays,
             debug: this.inputParams?.debug,
         });
         try { clearFilletCaches(); } catch { }
@@ -111,13 +112,13 @@ export class FilletFeature {
         const fid = this.inputParams.featureID;
         const result = await targetSolid.fillet({
             radius: r,
+            resolution: this.inputParams?.resolution,
             edges: edgeObjs,
             featureID: fid,
             direction: dir,
             inflate: Number(this.inputParams.inflate) || 0,
             debug: !!this.inputParams.debug,
-            snapSeam: !!this.inputParams.snapSeam,
-            useTubeFast: this.inputParams.useTubeFast !== false,
+            showTangentOverlays: !!this.inputParams.showTangentOverlays,
         });
         const triCount = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
         const vertCount = Array.isArray(result?._vertProperties) ? (result._vertProperties.length / 3) : 0;

@@ -565,11 +565,9 @@ export class Tube extends Solid {
       closed = false,
       name = 'Tube',
       debugSpheres = false,
-      useTubeFast = true,
-      preferFast,
+      preferFast = true,
     } = opts;
-    const preferFastValue = preferFast !== undefined ? !!preferFast : useTubeFast !== false;
-    this.params = { points, radius, innerRadius, resolution, closed, name, debugSpheres, preferFast: preferFastValue };
+    this.params = { points, radius, innerRadius, resolution, closed, name, debugSpheres, preferFast };
     this.name = name;
 
     if (Array.isArray(points) && points.length >= 2) {

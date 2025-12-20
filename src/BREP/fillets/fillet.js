@@ -697,7 +697,7 @@ export function attachFilletCenterlineAuxEdge(solid, edgeObj, radius = 1, sideMo
 
 
 // Functional API: builds fillet tube and wedge and returns them.
-export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debug = false, name = 'fillet', inflate = 0.1, useTubeFast = true } = {}) {
+export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debug = false, name = 'fillet', inflate = 0.1, resolution = 32, showTangentOverlays = false } = {}) {
     try {
         // Validate inputs
         if (!edgeToFillet) {
@@ -708,6 +708,9 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         }
 
         const side = String(sideMode).toUpperCase();
+        const tubeResolution = (Number.isFinite(Number(resolution)) && Number(resolution) > 0)
+            ? Math.max(8, Math.floor(Number(resolution)))
+            : 32;
         const logDebug = (...args) => { if (debug) console.log(...args); };
         logDebug(`🔧 Starting fillet operation: edge=${edgeToFillet?.name || 'unnamed'}, radius=${radius}, side=${side}`);
 
@@ -732,6 +735,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         const centerlineCopy = centerline.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
         let tangentACopy = tangentA.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
         let tangentBCopy = tangentB.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
+        const tangentASnap = tangentACopy.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
+        const tangentBSnap = tangentBCopy.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
         let edgeCopy = edgePts.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
         // Working copy of the original edge points used for wedge construction.
         // Kept separate from `edgeCopy` so we can apply small insets/offsets without
@@ -951,6 +956,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 centerline: centerlineCopy || [],
                 tangentA: tangentACopy || [],
                 tangentB: tangentBCopy || [],
+                tangentASeam: tangentASnap || [],
+                tangentBSeam: tangentBSnap || [],
                 error: 'Insufficient centerline points for tube generation'
             };
         }
@@ -964,15 +971,17 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             if (!hasVariation) {
                 console.error('Degenerate centerline: all points are identical');
                 // Return debug information even on centerline failure
-                return {
-                    tube: null,
-                    wedge: null,
-                    finalSolid: null,
-                    centerline: centerlineCopy || [],
-                    tangentA: tangentACopy || [],
-                    tangentB: tangentBCopy || [],
-                    error: 'Degenerate centerline: all points are identical'
-                };
+            return {
+                tube: null,
+                wedge: null,
+                finalSolid: null,
+                centerline: centerlineCopy || [],
+                tangentA: tangentACopy || [],
+                tangentB: tangentBCopy || [],
+                tangentASeam: tangentASnap || [],
+                tangentBSeam: tangentBSnap || [],
+                error: 'Degenerate centerline: all points are identical'
+            };
             }
             const minSpacing = radius * 0.01;
             for (let i = 1; i < tubePathOriginal.length; i++) {
@@ -1053,14 +1062,13 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 }
             }
 
-            const inflatedTubeRadius = radius * 1.01;
+            const inflatedTubeRadius = radius ;
             filletTube = new Tube({
                 points: tubePoints,
                 radius: inflatedTubeRadius,
                 innerRadius: 0,
-                resolution: 32,
+                resolution: tubeResolution,
                 name: `${name}_TUBE`,
-                preferFast: useTubeFast !== false,
             });
 
             // Store PMI metadata on the outer pipe face so downstream annotations
@@ -1077,6 +1085,16 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 };
                 if (edgeToFillet?.name) overrideMeta.edgeReference = edgeToFillet.name;
                 filletTube.setFaceMetadata(faceTag, overrideMeta);
+
+                if (showTangentOverlays) {
+                    const auxOpts = { materialKey: 'OVERLAY', closedLoop: !!closedLoop };
+                    if (Array.isArray(tangentASnap) && tangentASnap.length >= 2) {
+                        filletTube.addAuxEdge(`${name}_TANGENT_A_PATH`, tangentASnap, auxOpts);
+                    }
+                    if (Array.isArray(tangentBSnap) && tangentBSnap.length >= 2) {
+                        filletTube.addAuxEdge(`${name}_TANGENT_B_PATH`, tangentBSnap, auxOpts);
+                    }
+                }
 
                 // Capture tube cap area + round face label for post-boolean retagging (non-closed only).
                 if (!closedLoop) {
@@ -1111,6 +1129,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 centerline: centerlineCopy,
                 tangentA: tangentACopy,
                 tangentB: tangentBCopy,
+                tangentASeam: tangentASnap || [],
+                tangentBSeam: tangentBSnap || [],
                 error: `Tube generation failed: ${tubeError?.message || tubeError}`
             };
         }
@@ -1184,6 +1204,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                         centerline: centerlineCopy,
                         tangentA: tangentACopy,
                         tangentB: tangentBCopy,
+                        tangentASeam: tangentASnap || [],
+                        tangentBSeam: tangentBSnap || [],
                         error: 'No valid triangles could be created for wedge solid - all were degenerate'
                     };
                 }
@@ -1197,6 +1219,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                     centerline: centerlineCopy,
                     tangentA: tangentACopy,
                     tangentB: tangentBCopy,
+                    tangentASeam: tangentASnap || [],
+                    tangentBSeam: tangentBSnap || [],
                     error: `Wedge triangle creation failed: ${wedgeError?.message || wedgeError}`
                 };
             }
@@ -1312,6 +1336,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                         centerline: centerlineCopy,
                         tangentA: tangentACopy,
                         tangentB: tangentBCopy,
+                        tangentASeam: tangentASnap || [],
+                        tangentBSeam: tangentBSnap || [],
                         error: 'No valid triangles could be created for non-closed wedge solid - all were degenerate'
                     };
                 }
@@ -1325,6 +1351,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                     centerline: centerlineCopy,
                     tangentA: tangentACopy,
                     tangentB: tangentBCopy,
+                    tangentASeam: tangentASnap || [],
+                    tangentBSeam: tangentBSnap || [],
                     error: `Non-closed wedge triangle creation failed: ${wedgeError?.message || wedgeError}`
                 };
             }
@@ -1388,7 +1416,16 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             try { finalSolid.visualize(); } catch { }
             logDebug('Final fillet solid created by subtracting tube from wedge', finalSolid);
 
-            return { tube: filletTube, wedge: wedgeSolid, finalSolid, centerline: centerlineCopy, tangentA: tangentACopy, tangentB: tangentBCopy };
+            return {
+                tube: filletTube,
+                wedge: wedgeSolid,
+                finalSolid,
+                centerline: centerlineCopy,
+                tangentA: tangentACopy,
+                tangentB: tangentBCopy,
+                tangentASeam: tangentASnap || [],
+                tangentBSeam: tangentBSnap || [],
+            };
         } catch (booleanError) {
             console.error('Boolean operation failed:', booleanError?.message || booleanError);
             // Return debug information even on boolean failure
@@ -1399,6 +1436,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
                 centerline: centerlineCopy,
                 tangentA: tangentACopy,
                 tangentB: tangentBCopy,
+                tangentASeam: tangentASnap || [],
+                tangentBSeam: tangentBSnap || [],
                 error: `Boolean operation failed: ${booleanError?.message || booleanError}`
             };
         }
@@ -1412,6 +1451,8 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             centerline: [],
             tangentA: [],
             tangentB: [],
+            tangentASeam: [],
+            tangentBSeam: [],
             error: `Fillet operation failed: ${globalError?.message || globalError}`
         };
     }

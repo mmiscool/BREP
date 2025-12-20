@@ -41,7 +41,6 @@
         "radius": "2",
         "inflate": 0,
         "direction": "INSET",
-        "snapSeam": false,
         "debug": true,
         "__open": false,
         "id": "F4"
