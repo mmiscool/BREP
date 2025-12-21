@@ -51,7 +51,7 @@ export const CADmaterials = {
         }),
         SELECTED: new LineMaterial({
             color: "#ff00ff",
-            linewidth: 6,
+            linewidth: 3,
             transparent: true,
             worldUnits: false,
             // Pull slightly toward the camera so edges aren't buried by coplanar faces.
@@ -65,7 +65,7 @@ export const CADmaterials = {
         // dashed line
         OVERLAY: new LineMaterial({
             color: "#ff0000",
-            linewidth: 5.0,
+            linewidth: 1.5,
             transparent: true,
             dashed: true,
             dashSize: 0.5,
@@ -77,7 +77,7 @@ export const CADmaterials = {
         // Dashed cyan overlay for symbolic thread major diameter rings
         THREAD_SYMBOLIC_MAJOR: new LineMaterial({
             color: "#00c8ff",
-            linewidth: 5.0,
+            linewidth: 1.5,
             transparent: true,
             dashed: true,
             dashSize: 0.6,
@@ -90,14 +90,14 @@ export const CADmaterials = {
     LOOP: {
         BASE: new LineMaterial({
             color: "#ff0000",
-            linewidth: 5.5,
+            linewidth: 1.5,
             linecap: "round",
             linejoin: "round",
             transparent: true,
         }),
         SELECTED: new LineMaterial({
             color: "#ff00ff",
-            linewidth: 6,
+            linewidth: 3,
             //linecap: "round",
             //linejoin: "round",
             transparent: true,
