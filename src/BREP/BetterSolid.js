@@ -632,6 +632,7 @@ export class Solid extends THREE.Group {
      * @param {'INSET'|'OUTSET'|string} [options.direction='INSET'] subtract vs union behavior
      * @param {number} [options.inflate=0.1] tube inflation for cutting/union
      * @param {number} [options.resolution=32] tube resolution (segments around circumference)
+     * @param {boolean} [options.combineEdges=false] combine connected edges that share face pairs into single paths
      * @param {boolean} [options.debug=false] enable builder debug aids
      * @param {string} [options.featureID='FILLET'] name prefix for generated solids
      * @returns {Promise<Solid>}

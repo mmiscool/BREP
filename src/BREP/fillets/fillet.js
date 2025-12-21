@@ -100,9 +100,13 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
         if (!edgeObj || !Number.isFinite(radius) || radius <= 0) return out;
         const solid = edgeObj.parentSolid || edgeObj.parent;
         if (!solid) return out;
-        const faceA = edgeObj.faces?.[0];
-        const faceB = edgeObj.faces?.[1];
-        if (!faceA || !faceB) return out;
+        const faceA = edgeObj.faces?.[0] || null;
+        const faceB = edgeObj.faces?.[1] || null;
+        const faceNameA = faceA?.name || edgeObj?.userData?.faceA || null;
+        const faceNameB = faceB?.name || edgeObj?.userData?.faceB || null;
+        const segmentFacePairs = Array.isArray(edgeObj?.userData?.segmentFacePairs) ? edgeObj.userData.segmentFacePairs : null;
+        const useSegmentPairs = Array.isArray(segmentFacePairs) && segmentFacePairs.length > 0;
+        if (!useSegmentPairs && (!faceNameA || !faceNameB)) return out;
 
         const polyLocal = edgeObj.userData?.polylineLocal;
         if (!Array.isArray(polyLocal) || polyLocal.length < 2) return out;
@@ -114,23 +118,34 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
         const vecLengthTol = getScaleAdaptiveTolerance(radius, 1e-14);
 
         // Average outward normals per face (object space)
-        const nAavg = averageFaceNormalObjectSpace(solid, faceA.name);
-        const nBavg = averageFaceNormalObjectSpace(solid, faceB.name);
-        if (!isFiniteVec3(nAavg) || !isFiniteVec3(nBavg)) return out;
-
-        // Fetch triangles and cached data for both faces once
-        const trisA = solid.getFace(faceA.name);
-        const trisB = solid.getFace(faceB.name);
-        if (!Array.isArray(trisA) || !trisA.length || !Array.isArray(trisB) || !trisB.length) return out;
+        let nAavg = null;
+        let nBavg = null;
+        let trisA = null;
+        let trisB = null;
+        let faceKeyA = null;
+        let faceKeyB = null;
+        let faceDataA = null;
+        let faceDataB = null;
 
         // Create unique cache keys that include solid identity and geometry hash to prevent cross-contamination
         const solidId = solid.uuid || solid.name || solid.constructor.name;
-        const geometryHashA = trisA.length > 0 ? `${trisA.length}_${trisA[0].p1?.[0]?.toFixed(3) || 0}` : '0';
-        const geometryHashB = trisB.length > 0 ? `${trisB.length}_${trisB[0].p1?.[0]?.toFixed(3) || 0}` : '0';
-        const faceKeyA = `${solidId}:${faceA.name}:${geometryHashA}`;
-        const faceKeyB = `${solidId}:${faceB.name}:${geometryHashB}`;
-        const faceDataA = getCachedFaceDataForTris(trisA, faceKeyA);
-        const faceDataB = getCachedFaceDataForTris(trisB, faceKeyB);
+        if (!useSegmentPairs) {
+            nAavg = averageFaceNormalObjectSpace(solid, faceNameA);
+            nBavg = averageFaceNormalObjectSpace(solid, faceNameB);
+            if (!isFiniteVec3(nAavg) || !isFiniteVec3(nBavg)) return out;
+
+            // Fetch triangles and cached data for both faces once
+            trisA = solid.getFace(faceNameA);
+            trisB = solid.getFace(faceNameB);
+            if (!Array.isArray(trisA) || !trisA.length || !Array.isArray(trisB) || !trisB.length) return out;
+
+            const geometryHashA = trisA.length > 0 ? `${trisA.length}_${trisA[0].p1?.[0]?.toFixed(3) || 0}` : '0';
+            const geometryHashB = trisB.length > 0 ? `${trisB.length}_${trisB[0].p1?.[0]?.toFixed(3) || 0}` : '0';
+            faceKeyA = `${solidId}:${faceNameA}:${geometryHashA}`;
+            faceKeyB = `${solidId}:${faceNameB}:${geometryHashB}`;
+            faceDataA = getCachedFaceDataForTris(trisA, faceKeyA);
+            faceDataB = getCachedFaceDataForTris(trisB, faceKeyB);
+        }
 
         // Robust closed-loop detection (prefer flags, else compare endpoints)
         let isClosed = !!(edgeObj.closedLoop || edgeObj.userData?.closedLoop);
@@ -148,6 +163,7 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
 
         // Build sampling points: original vertices + midpoints (wrap for closed)
         let samples;
+        let sampleSegmentIdx = null;
         {
             const src = polyLocal.slice();
             if (isClosed && src.length > 2) {
@@ -156,30 +172,65 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
             }
 
             const outPts = [];
+            const segIdxs = [];
+            const segCount = useSegmentPairs
+                ? Math.max(1, segmentFacePairs.length)
+                : Math.max(1, (isClosed ? src.length : (src.length - 1)));
             for (let i = 0; i < src.length; i++) {
                 const a = src[i];
+                const segIdxVertex = isClosed
+                    ? ((i - 1 + segCount) % segCount)
+                    : Math.max(0, Math.min(i - 1, segCount - 1));
+                const segIdxMid = isClosed ? (i % segCount) : Math.min(i, segCount - 1);
                 outPts.push(new THREE.Vector3(a[0], a[1], a[2]));
+                segIdxs.push(segIdxVertex);
                 const j = i + 1;
                 if (isClosed) {
                     const b = src[(i + 1) % src.length];
                     outPts.push(new THREE.Vector3(0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2])));
+                    segIdxs.push(segIdxMid);
                 } else if (j < src.length) {
                     const b = src[j];
                     outPts.push(new THREE.Vector3(0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2])));
+                    segIdxs.push(segIdxMid);
                 }
             }
             samples = outPts;
+            if (useSegmentPairs) sampleSegmentIdx = segIdxs;
         }
 
         // Project samples to both faces and compute local normals
         const sampleCount = samples.length;
-        const qAList = batchProjectPointsOntoFace(trisA, samples, faceDataA, faceKeyA);
-        const qBList = batchProjectPointsOntoFace(trisB, samples, faceDataB, faceKeyB);
-        const normalsA = new Array(sampleCount);
-        const normalsB = new Array(sampleCount);
-        for (let i = 0; i < sampleCount; i++) {
-            normalsA[i] = localFaceNormalAtPoint(solid, faceA.name, qAList[i], faceDataA, faceKeyA) || nAavg;
-            normalsB[i] = localFaceNormalAtPoint(solid, faceB.name, qBList[i], faceDataB, faceKeyB) || nBavg;
+        let qAList = null;
+        let qBList = null;
+        let normalsA = null;
+        let normalsB = null;
+        let getFaceEntry = null;
+        if (!useSegmentPairs) {
+            qAList = batchProjectPointsOntoFace(trisA, samples, faceDataA, faceKeyA);
+            qBList = batchProjectPointsOntoFace(trisB, samples, faceDataB, faceKeyB);
+            normalsA = new Array(sampleCount);
+            normalsB = new Array(sampleCount);
+            for (let i = 0; i < sampleCount; i++) {
+                normalsA[i] = localFaceNormalAtPoint(solid, faceNameA, qAList[i], faceDataA, faceKeyA) || nAavg;
+                normalsB[i] = localFaceNormalAtPoint(solid, faceNameB, qBList[i], faceDataB, faceKeyB) || nBavg;
+            }
+        } else {
+            const faceCache = new Map();
+            getFaceEntry = (faceName) => {
+                if (!faceName) return null;
+                if (faceCache.has(faceName)) return faceCache.get(faceName);
+                const tris = solid.getFace(faceName);
+                if (!Array.isArray(tris) || !tris.length) return null;
+                const geometryHash = tris.length > 0 ? `${tris.length}_${tris[0].p1?.[0]?.toFixed(3) || 0}` : '0';
+                const faceKey = `${solidId}:${faceName}:${geometryHash}`;
+                const data = getCachedFaceDataForTris(tris, faceKey);
+                const avg = averageFaceNormalObjectSpace(solid, faceName);
+                if (!isFiniteVec3(avg)) return null;
+                const entry = { tris, data, key: faceKey, avg };
+                faceCache.set(faceName, entry);
+                return entry;
+            };
         }
 
         // Scratch vectors
@@ -205,10 +256,84 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
             if (tangent.lengthSq() < vecLengthTol) continue;
             tangent.normalize();
 
-            const qA = qAList[i];
-            const qB = qBList[i];
-            let nA = normalsA[i] || nAavg;
-            let nB = normalsB[i] || nBavg;
+            let qA = null;
+            let qB = null;
+            let nA = null;
+            let nB = null;
+            let faceNameAUse = faceNameA;
+            let faceNameBUse = faceNameB;
+            let faceDataAUse = faceDataA;
+            let faceDataBUse = faceDataB;
+            let trisAUse = trisA;
+            let trisBUse = trisB;
+            let faceKeyAUse = faceKeyA;
+            let faceKeyBUse = faceKeyB;
+            let nAavgUse = nAavg;
+            let nBavgUse = nBavg;
+            let allowRefine = true;
+            if (useSegmentPairs && typeof getFaceEntry === 'function') {
+                const segIdx = Array.isArray(sampleSegmentIdx) ? sampleSegmentIdx[i] : 0;
+                const pair = segmentFacePairs[segIdx] || segmentFacePairs[segmentFacePairs.length - 1];
+                if (pair && typeof pair === 'object' && !Array.isArray(pair) && pair.base && pair.sideA && pair.sideB) {
+                    const baseName = pair.base;
+                    const sideAName = pair.sideA;
+                    const sideBName = pair.sideB;
+                    const tBlend = Number.isFinite(pair.t) ? Math.max(0, Math.min(1, Number(pair.t))) : 0.5;
+                    const entryBase = getFaceEntry(baseName);
+                    const entrySideA = getFaceEntry(sideAName);
+                    const entrySideB = getFaceEntry(sideBName);
+                    if (!entryBase || !entrySideA || !entrySideB) continue;
+                    faceNameAUse = baseName;
+                    faceDataAUse = entryBase.data;
+                    trisAUse = entryBase.tris;
+                    faceKeyAUse = entryBase.key;
+                    nAavgUse = entryBase.avg;
+
+                    const qBase = projectPointOntoFaceTriangles(trisAUse, p, faceDataAUse, faceKeyAUse);
+                    nA = localFaceNormalAtPoint(solid, baseName, qBase, faceDataAUse, faceKeyAUse) || nAavgUse;
+                    qA = qBase;
+
+                    const qSideA = projectPointOntoFaceTriangles(entrySideA.tris, p, entrySideA.data, entrySideA.key);
+                    const qSideB = projectPointOntoFaceTriangles(entrySideB.tris, p, entrySideB.data, entrySideB.key);
+                    const nSideA = localFaceNormalAtPoint(solid, sideAName, qSideA, entrySideA.data, entrySideA.key) || entrySideA.avg;
+                    const nSideB = localFaceNormalAtPoint(solid, sideBName, qSideB, entrySideB.data, entrySideB.key) || entrySideB.avg;
+                    const blend = nSideA.clone().multiplyScalar(1 - tBlend).addScaledVector(nSideB, tBlend);
+                    nB = (blend.lengthSq() > 0) ? blend.normalize() : nSideA.clone();
+                    qB = qSideA.clone().lerp(qSideB, tBlend);
+                    faceNameBUse = sideAName;
+                    faceDataBUse = entrySideA.data;
+                    trisBUse = entrySideA.tris;
+                    faceKeyBUse = entrySideA.key;
+                    nBavgUse = entrySideA.avg;
+                    allowRefine = false;
+                } else {
+                    const segA = Array.isArray(pair) ? pair[0] : (pair?.faceA || pair?.a || null);
+                    const segB = Array.isArray(pair) ? pair[1] : (pair?.faceB || pair?.b || null);
+                    if (!segA || !segB) continue;
+                    faceNameAUse = segA;
+                    faceNameBUse = segB;
+                    const entryA = getFaceEntry(faceNameAUse);
+                    const entryB = getFaceEntry(faceNameBUse);
+                    if (!entryA || !entryB) continue;
+                    faceDataAUse = entryA.data;
+                    faceDataBUse = entryB.data;
+                    trisAUse = entryA.tris;
+                    trisBUse = entryB.tris;
+                    faceKeyAUse = entryA.key;
+                    faceKeyBUse = entryB.key;
+                    nAavgUse = entryA.avg;
+                    nBavgUse = entryB.avg;
+                    qA = projectPointOntoFaceTriangles(trisAUse, p, faceDataAUse, faceKeyAUse);
+                    qB = projectPointOntoFaceTriangles(trisBUse, p, faceDataBUse, faceKeyBUse);
+                    nA = localFaceNormalAtPoint(solid, faceNameAUse, qA, faceDataAUse, faceKeyAUse) || nAavgUse;
+                    nB = localFaceNormalAtPoint(solid, faceNameBUse, qB, faceDataBUse, faceKeyBUse) || nBavgUse;
+                }
+            } else {
+                qA = qAList[i];
+                qB = qBList[i];
+                nA = normalsA[i] || nAavgUse;
+                nB = normalsB[i] || nBavgUse;
+            }
 
             const vA3 = tempU.copy(nA).cross(tangent);
             const vB3 = tempV.copy(nB).cross(tangent);
@@ -272,12 +397,12 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
             // Optional refinement: if initial p->center distance far from expected, recompute
             const initialDist = center.distanceTo(p);
             const needsRefinement = Math.abs(initialDist - expectDist) > 0.1 * rEff;
-            if (needsRefinement) {
+            if (needsRefinement && allowRefine) {
                 try {
-                    const qA1 = projectPointOntoFaceTriangles(trisA, tA, faceDataA);
-                    const qB1 = projectPointOntoFaceTriangles(trisB, tB, faceDataB);
-                    const nA1 = localFaceNormalAtPoint(solid, faceA.name, qA1, faceDataA, faceKeyA) || nAavg;
-                    const nB1 = localFaceNormalAtPoint(solid, faceB.name, qB1, faceDataB, faceKeyB) || nBavg;
+                    const qA1 = projectPointOntoFaceTriangles(trisAUse, tA, faceDataAUse);
+                    const qB1 = projectPointOntoFaceTriangles(trisBUse, tB, faceDataBUse);
+                    const nA1 = localFaceNormalAtPoint(solid, faceNameAUse, qA1, faceDataAUse, faceKeyAUse) || nAavgUse;
+                    const nB1 = localFaceNormalAtPoint(solid, faceNameBUse, qB1, faceDataBUse, faceKeyBUse) || nBavgUse;
                     const C_ref = solveCenterFromOffsetPlanesAnchored(p, tangent, nA1, qA1, sA, nB1, qB1, sB, rEff);
                     if (C_ref) {
                         center = C_ref;

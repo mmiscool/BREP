@@ -37,6 +37,11 @@ const inputParamsSchema = {
         default_value: "INSET",
         hint: "Prefer fillet inside (INSET) or outside (OUTSET)",
     },
+    combineEdges: {
+        type: "boolean",
+        default_value: false,
+        hint: "Combine connected edges into a single fillet path when possible",
+    },
     showTangentOverlays: {
         type: "boolean",
         default_value: false,
@@ -59,10 +64,19 @@ export class FilletFeature {
         this.persistentData = {};
     }
 
+    uiFieldsTest() {
+        const dir = String(this.inputParams?.direction || 'INSET').toUpperCase();
+        if (dir === 'INSET') {
+            return { exclude: ['combineEdges'] };
+        }
+        return { exclude: [] };
+    }
+
     async run(partHistory) {
         console.log('[FilletFeature] Starting fillet run...', {
             featureID: this.inputParams?.featureID,
             direction: this.inputParams?.direction,
+            combineEdges: this.inputParams?.combineEdges,
             radius: this.inputParams?.radius,
             resolution: this.inputParams?.resolution,
             inflate: this.inputParams?.inflate,
@@ -110,8 +124,10 @@ export class FilletFeature {
         }
 
         const fid = this.inputParams.featureID;
+        const combineEdges = dir === 'INSET' ? false : !!this.inputParams.combineEdges;
         const result = await targetSolid.fillet({
             radius: r,
+            combineEdges,
             resolution: this.inputParams?.resolution,
             edges: edgeObjs,
             featureID: fid,
