@@ -24,8 +24,8 @@ All extend `Solid` and immediately generate geometry.
 - **OffsetShellSolid.generate(sourceSolid, distance, { newSolidName, featureId='OffsetShell' })** – Static helper to build offset shells.
 
 ## Fillet utilities (`src/BREP/fillets/fillet.js`)
-- `filletSolid({ edgeToFillet, radius, sideMode='INSET'|'OUTSET', debug=false, name='fillet', inflate=0.1 })` – Returns tube/wedge/final fillet solid.
-- `computeFilletCenterline(edgeObj, radius, sideMode)` – Returns centerline/tangent data.
+- `filletSolid({ edgeToFillet, radius, sideMode='INSET'|'OUTSET', inflate=0.1, resolution=32, showTangentOverlays=false, debug=false, name='fillet' })` – Builds wedge/tube helpers and returns `{ finalSolid, tube, wedge }`; overlays add tangency polylines to the tube for debugging/PMI tagging.
+- `computeFilletCenterline(edgeObj, radius, sideMode)` – Returns centerline/tangents/edge polylines plus a `closedLoop` flag.
 - `attachFilletCenterlineAuxEdge(solid, edgeObj, radius, sideMode='INSET', name='FILLET_CENTERLINE', options)` – Adds centerline as an aux edge; `options` mirrors `Solid.addAuxEdge`.
 
 ## Boolean helper

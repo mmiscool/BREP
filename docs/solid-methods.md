@@ -396,15 +396,17 @@ const chamfered = await solid.chamfer({
 ```
 
 ### fillet(options)
-Asynchronously applies constant-radius fillets to named edges, returning a new Solid (union for OUTSET, subtract for INSET).
+Applies constant-radius fillets to edges on this Solid (union for OUTSET, subtract for INSET). Accepts edge names or resolved edge objects; OUTSET can optionally hull shared corners into a single tool to avoid gaps.
 ```js
 const filleted = await solid.fillet({
-  radius: 2,                // required
-  edgeNames: ['EDGE_0'],    // edges to fillet
-  direction: 'OUTSET',      // or 'INSET'
-  inflate: 0.1,             // tube inflation
+  radius: 2,                  // required
+  edgeNames: ['EDGE_0'],      // or edges: [edgeObj]
+  direction: 'OUTSET',        // or 'INSET'
+  resolution: 48,             // segments around the tube
+  inflate: 0.05,              // tangency/cap offset; closed loops skip the wedge inset
+  combineEdges: true,         // OUTSET only; hulls fillets that share endpoints
+  showTangentOverlays: false, // add tangency overlays on the helper tube (debug-friendly)
   debug: false,
-  snapSeam: true,           // snap boolean seams to tangents (INSET)
-  featureID: 'FILLET'       // name prefix
+  featureID: 'FILLET'         // name prefix
 });
 ```

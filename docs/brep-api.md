@@ -23,8 +23,8 @@ const { Solid, Cube, Sweep, filletSolid, applyBooleanOperation } = BREP;
 - `ChamferSolid` — Builds bevel geometry along an edge for inset/outset chamfers.
 
 ## Fillet helpers
-- `filletSolid(options)` — Builds fillet tool solids for an edge.
-- `computeFilletCenterline(edgeObj, radius, sideMode)` — Returns centerline and tangents for a fillet edge.
+- `filletSolid(options)` — Builds wedge/tube/final fillet solids for an edge; supports `inflate`, `resolution`, and `showTangentOverlays` for debugging.
+- `computeFilletCenterline(edgeObj, radius, sideMode)` — Returns centerline/tangent/edge polylines plus a `closedLoop` flag.
 - `attachFilletCenterlineAuxEdge(solid, edgeObj, radius, sideMode, name, options)` — Adds the centerline as an aux edge on a solid.
 
 ## Boolean and conversion utilities
