@@ -43,6 +43,7 @@ export {
     removeInternalTriangles,
     removeInternalTrianglesByRaycast,
     removeInternalTrianglesByWinding,
+    mergeTinyFaces,
 } from "./meshCleanup.js";
 export {
     getMesh,

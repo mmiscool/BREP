@@ -2362,7 +2362,32 @@ export class Viewer {
             } catch { }
 
             // Neighbor face names
-            try { out.neighbors = Array.from(new Set((out.edges || []).flatMap(e => e.faces || []).filter(Boolean))); } catch { }
+            try {
+                const faceName = target?.name || target?.userData?.faceName || null;
+                let neighbors = new Set();
+                const solid = target?.parentSolid || target?.userData?.parentSolid || null;
+                if (solid && typeof solid.getBoundaryEdgePolylines === 'function' && faceName) {
+                    const boundaries = solid.getBoundaryEdgePolylines() || [];
+                    for (const poly of boundaries) {
+                        const a = poly?.faceA;
+                        const b = poly?.faceB;
+                        if (a === faceName && b) neighbors.add(b);
+                        else if (b === faceName && a) neighbors.add(a);
+                    }
+                }
+                if (neighbors.size === 0 && solid && Array.isArray(solid.children)) {
+                    // Fallback: use the face's edges to gather neighbor faces in the current scene graph
+                    for (const edge of (target.edges || [])) {
+                        if (!edge || !Array.isArray(edge.faces)) continue;
+                        for (const f of edge.faces) {
+                            const n = f?.name || f?.userData?.faceName || null;
+                            if (n) neighbors.add(n);
+                        }
+                    }
+                }
+                if (faceName) neighbors.delete(faceName);
+                out.neighbors = Array.from(neighbors);
+            } catch { }
 
             // Boundary loops if available from metadata
             try {

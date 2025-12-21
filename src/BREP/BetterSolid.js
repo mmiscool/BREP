@@ -602,6 +602,15 @@ export class Solid extends THREE.Group {
     }
 
     /**
+     * Merge faces smaller than the given area into their largest neighbor.
+     * @param {number} [maxArea=0.001] area threshold
+     * @returns {this}
+     */
+    mergeTinyFaces(maxArea = 0.001) {
+        return SolidMethods.mergeTinyFaces.apply(this, arguments);
+    }
+
+    /**
      * Apply chamfers to named edges and return the booleaned result (async).
      * @param {object} [options]
      * @param {number} options.distance chamfer distance (required, > 0)

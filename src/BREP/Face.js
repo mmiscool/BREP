@@ -136,4 +136,56 @@ export class Face extends THREE.Mesh {
     renameFace(newName) {
         this.parentSolid.renameFace(this.name, newName);
     }
+
+    /**
+     * Return neighboring face objects that share an edge with this face.
+     * Prefers the face's edges (populated after visualize); if unavailable, falls back to
+     * boundary polylines on the parent solid and resolves to face objects.
+     * @returns {Face[]} array of neighbor face objects (deduped, excluding this face)
+     */
+    getNeighbors() {
+        const self = this;
+        const name = self?.name || self?.userData?.faceName || null;
+        if (!name) return [];
+        const solid = self.parentSolid || self.userData?.parentSolid || null;
+        const neighbors = new Set();
+
+        const addFace = (f) => {
+            if (!f) return;
+            if (f === self) return;
+            neighbors.add(f);
+        };
+
+        // Primary: use edges already attached to this face
+        if (Array.isArray(self.edges)) {
+            for (const e of self.edges) {
+                if (!e || !Array.isArray(e.faces)) continue;
+                for (const f of e.faces) addFace(f);
+            }
+        }
+
+        // Fallback: use boundary polylines from the parent solid to resolve neighbor faces
+        if (neighbors.size === 0 && solid && typeof solid.getBoundaryEdgePolylines === 'function') {
+            const faceMap = new Map();
+            if (Array.isArray(solid.children)) {
+                for (const ch of solid.children) {
+                    if (ch && ch.type === 'FACE') {
+                        const n = ch.name || ch.userData?.faceName || null;
+                        if (n) faceMap.set(n, ch);
+                    }
+                }
+            }
+            try {
+                const boundaries = solid.getBoundaryEdgePolylines() || [];
+                for (const poly of boundaries) {
+                    const a = poly?.faceA;
+                    const b = poly?.faceB;
+                    if (a === name && b) addFace(faceMap.get(b));
+                    else if (b === name && a) addFace(faceMap.get(a));
+                }
+            } catch { /* ignore */ }
+        }
+
+        return Array.from(neighbors);
+    }
 }

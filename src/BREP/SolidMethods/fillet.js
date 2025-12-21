@@ -353,6 +353,207 @@ function buildHullSolidFromPoints(points, name, SolidCtor, tol = 1e-5) {
   }
 }
 
+function averageFaceNormalSimple(solid, faceName) {
+  if (!solid || typeof solid.getFace !== 'function' || !faceName) return null;
+  const tris = solid.getFace(faceName);
+  if (!Array.isArray(tris) || tris.length === 0) return null;
+  let nx = 0, ny = 0, nz = 0;
+  for (const tri of tris) {
+    const p1 = tri?.p1;
+    const p2 = tri?.p2;
+    const p3 = tri?.p3;
+    if (!Array.isArray(p1) || !Array.isArray(p2) || !Array.isArray(p3)) continue;
+    const ax = Number(p1[0]) || 0, ay = Number(p1[1]) || 0, az = Number(p1[2]) || 0;
+    const bx = Number(p2[0]) || 0, by = Number(p2[1]) || 0, bz = Number(p2[2]) || 0;
+    const cx = Number(p3[0]) || 0, cy = Number(p3[1]) || 0, cz = Number(p3[2]) || 0;
+    const ux = bx - ax, uy = by - ay, uz = bz - az;
+    const vx = cx - ax, vy = cy - ay, vz = cz - az;
+    const cxn = uy * vz - uz * vy;
+    const cyn = uz * vx - ux * vz;
+    const czn = ux * vy - uy * vx;
+    nx += cxn;
+    ny += cyn;
+    nz += czn;
+  }
+  const len = Math.hypot(nx, ny, nz);
+  if (!(len > 1e-12)) return null;
+  return [nx / len, ny / len, nz / len];
+}
+
+function deriveSolidToleranceFromVerts(solid, baseTol = 1e-5) {
+  const vp = Array.isArray(solid?._vertProperties) ? solid._vertProperties : null;
+  if (!vp || vp.length < 6) return baseTol;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < vp.length; i += 3) {
+    const x = vp[i + 0];
+    const y = vp[i + 1];
+    const z = vp[i + 2];
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  const dx = maxX - minX;
+  const dy = maxY - minY;
+  const dz = maxZ - minZ;
+  const diag = Math.hypot(dx, dy, dz) || 1;
+  return Math.max(baseTol, diag * 1e-6);
+}
+
+function buildAdjacencyFromBoundaryPolylines(solid) {
+  const map = new Map();
+  if (!solid || typeof solid.getBoundaryEdgePolylines !== 'function') return map;
+  const boundaries = solid.getBoundaryEdgePolylines() || [];
+  for (const poly of boundaries) {
+    const a = poly?.faceA;
+    const b = poly?.faceB;
+    if (!a || !b) continue;
+    if (!map.has(a)) map.set(a, new Set());
+    if (!map.has(b)) map.set(b, new Set());
+    map.get(a).add(b);
+    map.get(b).add(a);
+  }
+  return map;
+}
+
+function buildAdjacencyFromFaceEdges(solid, faceNames, tol) {
+  const { q, k } = createQuantizer(tol);
+  const edgeKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const edgeToFaces = new Map();
+  const faceToEdges = new Map();
+  for (const faceName of faceNames) {
+    const tris = solid.getFace(faceName);
+    if (!Array.isArray(tris) || tris.length === 0) continue;
+    const counts = new Map();
+    for (const tri of tris) {
+      const p1 = tri?.p1;
+      const p2 = tri?.p2;
+      const p3 = tri?.p3;
+      if (!Array.isArray(p1) || !Array.isArray(p2) || !Array.isArray(p3)) continue;
+      const v1 = k(q(p1));
+      const v2 = k(q(p2));
+      const v3 = k(q(p3));
+      const e12 = edgeKey(v1, v2);
+      const e23 = edgeKey(v2, v3);
+      const e31 = edgeKey(v3, v1);
+      counts.set(e12, (counts.get(e12) || 0) + 1);
+      counts.set(e23, (counts.get(e23) || 0) + 1);
+      counts.set(e31, (counts.get(e31) || 0) + 1);
+    }
+    const boundary = new Set();
+    for (const [key, count] of counts.entries()) {
+      if (count === 1) boundary.add(key);
+    }
+    faceToEdges.set(faceName, boundary);
+    for (const key of boundary) {
+      let set = edgeToFaces.get(key);
+      if (!set) { set = new Set(); edgeToFaces.set(key, set); }
+      set.add(faceName);
+    }
+  }
+  const adj = new Map();
+  for (const [faceName, edges] of faceToEdges.entries()) {
+    const set = new Set();
+    for (const key of edges) {
+      const faces = edgeToFaces.get(key);
+      if (!faces) continue;
+      for (const f of faces) {
+        if (f !== faceName) set.add(f);
+      }
+    }
+    adj.set(faceName, set);
+  }
+  return adj;
+}
+
+function mergeInsetEndCapsByNormal(resultSolid, featureID, direction, dotThreshold = 0.999) {
+  if (!resultSolid || String(direction).toUpperCase() !== 'INSET') return;
+  if (typeof resultSolid.getFaceNames !== 'function') return;
+  const faceNames = resultSolid.getFaceNames() || [];
+  if (!Array.isArray(faceNames) || faceNames.length === 0) return;
+  const faceHasTris = (name) => {
+    if (!name || typeof resultSolid.getFace !== 'function') return false;
+    const tris = resultSolid.getFace(name);
+    return Array.isArray(tris) && tris.length > 0;
+  };
+  const activeFaceNames = faceNames.filter(faceHasTris);
+  const prefix = featureID ? `${featureID}_FILLET_` : '';
+  const endCapFaces = activeFaceNames.filter((name) => {
+    if (typeof name !== 'string') return false;
+    if (prefix && !name.startsWith(prefix)) return false;
+    return /_END_CAP_\d+$/.test(name);
+  });
+  console.log('[Solid.fillet] Inset end cap scan', {
+    featureID,
+    direction,
+    endCapFaces,
+  });
+
+  if (!endCapFaces.length) return;
+
+  const adjacentMap = buildAdjacencyFromBoundaryPolylines(resultSolid);
+  const tol = deriveSolidToleranceFromVerts(resultSolid, 1e-5);
+  const edgeAdjMap = buildAdjacencyFromFaceEdges(resultSolid, activeFaceNames, tol);
+
+  const normalCache = new Map();
+  const getNormal = (name) => {
+    if (normalCache.has(name)) return normalCache.get(name);
+    const n = averageFaceNormalSimple(resultSolid, name);
+    normalCache.set(name, n);
+    return n;
+  };
+  const fmtNormal = (n) => (Array.isArray(n) && n.length >= 3)
+    ? [Number(n[0].toFixed(6)), Number(n[1].toFixed(6)), Number(n[2].toFixed(6))]
+    : null;
+
+  const tryMergeWithAdj = (capName, adj) => {
+    if (!adj || adj.size === 0) return false;
+    const nCap = getNormal(capName);
+    if (!nCap) return false;
+    for (const neighbor of adj) {
+      if (neighbor === capName) continue;
+      const nAdj = getNormal(neighbor);
+      if (!nAdj) continue;
+      const dot = (nCap[0] * nAdj[0]) + (nCap[1] * nAdj[1]) + (nCap[2] * nAdj[2]);
+      if (dot >= dotThreshold) {
+        mergeFaceIntoTarget(resultSolid, capName, neighbor);
+        return true;
+      }
+    }
+    return false;
+  };
+
+  let mergedCount = 0;
+  for (const capName of endCapFaces) {
+    const adj = adjacentMap.get(capName);
+    const adjEdge = edgeAdjMap.get(capName);
+    const adjAll = new Set([
+      ...(adj ? Array.from(adj) : []),
+      ...(adjEdge ? Array.from(adjEdge) : []),
+    ]);
+    console.log('[Solid.fillet] Inset end cap normals', {
+      featureID,
+      capName,
+      capNormal: fmtNormal(getNormal(capName)),
+      adjacent: Array.from(adjAll).map((name) => ({
+        name,
+        normal: fmtNormal(getNormal(name)),
+      })),
+    });
+    if (tryMergeWithAdj(capName, adj)) {
+      console.log('[Solid.fillet] Inset end cap merged', { featureID, capName });
+      mergedCount++;
+      continue;
+    }
+    if (tryMergeWithAdj(capName, edgeAdjMap.get(capName))) {
+      console.log('[Solid.fillet] Inset end cap merged', { featureID, capName });
+      mergedCount++;
+      continue;
+    }
+  }
+  console.log('[Solid.fillet] Inset end cap merge summary', { featureID, mergedCount });
+}
+
 function combinePathPolylinesLocal(edges, tol = 1e-5) {
   const { polys } = collectEdgePolylinesLocal(edges);
   if (polys.length === 0) return [];
@@ -1022,6 +1223,13 @@ export async function fillet(opts = {}) {
   const filletEntries = [];
   let idx = 0;
   const debugAdded = [];
+  const attachDebugSolids = (target, reason = '') => {
+    if (!target || debugAdded.length === 0) return;
+    try { target.__debugAddedSolids = debugAdded; } catch { }
+    const prefix = debug ? '🐛 Debug' : '⚠️ Failure Debug';
+    const suffix = reason ? ` (${reason})` : '';
+    console.log(`${prefix}: Added ${debugAdded.length} debug solids to result${suffix}`);
+  };
   for (const e of filletEdges) {
     const name = `${featureID}_FILLET_${idx++}`;
     const res = filletSolid({ edgeToFillet: e, radius, sideMode: dir, inflate, resolution, debug, name, showTangentOverlays }) || {};
@@ -1068,6 +1276,7 @@ export async function fillet(opts = {}) {
     console.error('[Solid.fillet] All edge fillets failed; returning clone.', { featureID, edgeCount: unique.length });
     const c = this.clone();
     try { c.name = this.name; } catch { }
+    attachDebugSolids(c, 'all fillets failed');
     return c;
   }
   console.log('[Solid.fillet] Built fillet solids for edges', filletEntries.length);
@@ -1170,53 +1379,61 @@ export async function fillet(opts = {}) {
   // Apply to base solid (union for OUTSET, subtract for INSET)
   let result = this;
   const solidsToApply = combinedFilletSolid ? [combinedFilletSolid] : filletEntries.map(entry => entry.filletSolid);
-  for (const filletSolid of solidsToApply) {
-    const beforeTri = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
-    const operation = (dir === 'OUTSET') ? 'union' : 'subtract';
-    result = (operation === 'union') ? result.union(filletSolid) : result.subtract(filletSolid);
+  try {
+    for (const filletSolid of solidsToApply) {
+      const beforeTri = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
+      const operation = (dir === 'OUTSET') ? 'union' : 'subtract';
+      result = (operation === 'union') ? result.union(filletSolid) : result.subtract(filletSolid);
 
-    // const islandThreshold = estimateIslandThreshold(result, filletSolid);
-    // let removedIslands = 0;
-    // try {
-    //   removedIslands = await result.removeSmallIslands({
-    //     maxTriangles: islandThreshold,
-    //     removeInternal: true,
-    //     removeExternal: true,
-    //   });
+      // const islandThreshold = estimateIslandThreshold(result, filletSolid);
+      // let removedIslands = 0;
+      // try {
+      //   removedIslands = await result.removeSmallIslands({
+      //     maxTriangles: islandThreshold,
+      //     removeInternal: true,
+      //     removeExternal: true,
+      //   });
 
 
-    //   await result.removeZeroThicknessSections();
+      //   await result.removeZeroThicknessSections();
 
-    //   if (removedIslands > 0) {
-    //     console.log('[Solid.fillet] Removed small islands after fillet boolean', {
-    //       featureID,
-    //       removedTriangles: removedIslands,
-    //       threshold: islandThreshold,
-    //       operation,
-    //     });
-    //   }
-    // } catch (err) {
-    //   console.warn('[Solid.fillet] removeSmallIslands failed after fillet boolean', {
-    //     featureID,
-    //     error: err?.message || err,
-    //     threshold: islandThreshold,
-    //     operation,
-    //   });
-    // }
+      //   if (removedIslands > 0) {
+      //     console.log('[Solid.fillet] Removed small islands after fillet boolean', {
+      //       featureID,
+      //       removedTriangles: removedIslands,
+      //       threshold: islandThreshold,
+      //       operation,
+      //     });
+      //   }
+      // } catch (err) {
+      //   console.warn('[Solid.fillet] removeSmallIslands failed after fillet boolean', {
+      //     featureID,
+      //     error: err?.message || err,
+      //     threshold: islandThreshold,
+      //     operation,
+      //   });
+      // }
 
-    result.visualize();
+      result.visualize();
 
-    const afterTri = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
-    // console.log('[Solid.fillet] Applied fillet boolean', {
-    //   featureID,
-    //   operation,
-    //   beforeTriangles: beforeTri,
-    //   afterTriangles: afterTri,
-    //   removedIslands,
-    //   islandThreshold,
-    // });
-    // Name the result for scene grouping/debugging
-    try { result.name = this.name; } catch { }
+      const afterTri = Array.isArray(result?._triVerts) ? (result._triVerts.length / 3) : 0;
+      // console.log('[Solid.fillet] Applied fillet boolean', {
+      //   featureID,
+      //   operation,
+      //   beforeTriangles: beforeTri,
+      //   afterTriangles: afterTri,
+      //   removedIslands,
+      //   islandThreshold,
+      // });
+      // Name the result for scene grouping/debugging
+      try { result.name = this.name; } catch { }
+    }
+  } catch (err) {
+    console.error('[Solid.fillet] Fillet boolean failed; returning clone.', { featureID, error: err?.message || err });
+    const fallback = this.clone();
+    try { fallback.name = this.name; } catch { }
+    attachDebugSolids(fallback, 'boolean failure');
+    return fallback;
   }
 
   try {
@@ -1236,25 +1453,33 @@ export async function fillet(opts = {}) {
     console.warn('[Solid.fillet] Tiny fillet face merge failed', { featureID, error: err?.message || err });
   }
 
-  // Attach debug artifacts for callers that want to add them to the scene
-  if (debug && debugAdded.length) {
-    try { result.__debugAddedSolids = debugAdded; } catch { }
-    console.log(`🐛 Debug: Added ${debugAdded.length} debug solids to result`);
-  } else if (debugAdded.length) {
-    // Always attach debug solids if any were created (even on failure)
-    try { result.__debugAddedSolids = debugAdded; } catch { }
-    console.log(`⚠️ Failure Debug: Added ${debugAdded.length} debug solids to result`);
+  try {
+    if (dir === 'INSET' && typeof result.mergeTinyFaces === 'function') {
+      await result.mergeTinyFaces(0.001);
+    }
+  } catch (err) {
+    console.warn('[Solid.fillet] mergeTinyFaces failed', { featureID, error: err?.message || err });
   }
+
+  try {
+    await mergeInsetEndCapsByNormal(result, featureID, dir);
+  } catch (err) {
+    console.warn('[Solid.fillet] Inset end cap merge failed', { featureID, error: err?.message || err });
+  }
+
+  try {
+    await result.collapseTinyTriangles(0.0009);
+  } catch (err) {
+    console.warn('[Solid.fillet] collapseTinyTriangles failed', { featureID, error: err?.message || err });
+  }
+
+  // Attach debug artifacts for callers that want to add them to the scene
+  attachDebugSolids(result);
 
   // Simplify the final result in place to clean up artifacts from booleans.
   try {
-    //await result._weldVerticesByEpsilon(.1);
-    // await result.collapseTinyTriangles(.3);
-    // await result.simplify(1, true);
-    //await result._weldVerticesByEpsilon(.1);
     await result.removeSmallIslands();
-
-    //await result.removeDegenerateTriangles();
+    //await result.simplify(0.0005, true);
   } catch (err) {
     console.warn('[Solid.fillet] simplify failed; continuing without simplification', { featureID, error: err?.message || err });
   }

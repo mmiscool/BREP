@@ -2204,3 +2204,68 @@ export function removeInternalTrianglesByWinding({ offsetScale = 1e-5, crossingT
     this.fixTriangleWindingsByAdjacency();
     return removed;
 }
+
+// Merge faces whose area is below a threshold into their largest adjacent neighbor.
+export function mergeTinyFaces(maxArea = 0.001) {
+    if (!Number.isFinite(maxArea) || maxArea <= 0) return this;
+    if (typeof this.getFaceNames !== 'function' || typeof this.getBoundaryEdgePolylines !== 'function') return this;
+    const faceNames = this.getFaceNames() || [];
+    if (!Array.isArray(faceNames) || faceNames.length === 0) return this;
+
+    const areaCache = new Map();
+    const areaOf = (name) => {
+        if (areaCache.has(name)) return areaCache.get(name);
+        let area = 0;
+        try {
+            const tris = this.getFace(name);
+            if (Array.isArray(tris)) {
+                for (const tri of tris) {
+                    const p1 = tri?.p1, p2 = tri?.p2, p3 = tri?.p3;
+                    if (!p1 || !p2 || !p3) continue;
+                    const ax = p2[0] - p1[0], ay = p2[1] - p1[1], az = p2[2] - p1[2];
+                    const bx = p3[0] - p1[0], by = p3[1] - p1[1], bz = p3[2] - p1[2];
+                    const cx = ay * bz - az * by;
+                    const cy = az * bx - ax * bz;
+                    const cz = ax * by - ay * bx;
+                    area += 0.5 * Math.hypot(cx, cy, cz);
+                }
+            }
+        } catch { area = 0; }
+        areaCache.set(name, area);
+        return area;
+    };
+
+    const boundaries = this.getBoundaryEdgePolylines() || [];
+    const neighbors = new Map();
+    for (const poly of boundaries) {
+        const a = poly?.faceA;
+        const b = poly?.faceB;
+        if (!a || !b) continue;
+        if (!neighbors.has(a)) neighbors.set(a, new Set());
+        if (!neighbors.has(b)) neighbors.set(b, new Set());
+        neighbors.get(a).add(b);
+        neighbors.get(b).add(a);
+    }
+
+    let merged = 0;
+    for (const name of faceNames) {
+        const area = areaOf(name);
+        if (!(area < maxArea)) continue;
+        const adj = neighbors.get(name);
+        if (!adj || adj.size === 0) continue;
+        let best = null;
+        let bestArea = -Infinity;
+        for (const n of adj) {
+            const a = areaOf(n);
+            if (a > bestArea) { bestArea = a; best = n; }
+        }
+        if (best) {
+            this.renameFace(name, best);
+            merged++;
+        }
+    }
+    if (merged > 0) {
+        try { this._faceIndex = null; this._dirty = true; } catch { }
+    }
+    return this;
+}
