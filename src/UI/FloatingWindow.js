@@ -14,7 +14,7 @@ export class FloatingWindow {
     top = 40,      // default top if y not provided
     bottom = null, // if provided and y is null, compute from viewport height
     shaded = false,
-    zIndex = 6,
+    zIndex = 10,
     closable = true,
     onClose = null,
   } = {}) {

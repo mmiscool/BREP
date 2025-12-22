@@ -24,6 +24,7 @@ import './mobile.js';
 import { SketchMode3D } from './sketcher/SketchMode3D.js';
 import { ViewCube } from './ViewCube.js';
 import { FloatingWindow } from './FloatingWindow.js';
+import { TriangleDebuggerWindow } from './triangleDebuggerWindow.js';
 import { generateObjectUI } from './objectDump.js';
 import { PluginsWidget } from './PluginsWidget.js';
 import { localStorage as LS } from '../localStorageShim.js';
@@ -195,6 +196,9 @@ export class Viewer {
         this.BREP = BREP;
 
         this.partHistory = partHistory instanceof PartHistory ? partHistory : new PartHistory();
+        this._triangleDebugger = null;
+        this._lastInspectorTarget = null;
+        this._lastInspectorSolid = null;
 
 
 
@@ -1357,6 +1361,11 @@ export class Viewer {
 
     _applySelectionTarget(target, options = {}) {
         if (!target) return;
+        this._lastInspectorTarget = target;
+        this._lastInspectorSolid = this._findParentSolid(target);
+        if (this._triangleDebugger && this._triangleDebugger.isOpen && this._triangleDebugger.isOpen()) {
+            try { this._triangleDebugger.refreshTarget(target); } catch { }
+        }
         const {
             triggerOnClick = true,
             allowDiagnostics = true,
@@ -2155,6 +2164,16 @@ export class Viewer {
             onClose: () => this._closeInspectorPanel(),
         });
         // Header actions
+        const btnTriangles = document.createElement('button');
+        btnTriangles.className = 'fw-btn';
+        btnTriangles.textContent = 'Triangle Debugger';
+        btnTriangles.title = 'Open triangle debugger for the current selection';
+        btnTriangles.addEventListener('click', () => {
+            try { this._openTriangleDebugger(); }
+            catch (e) { try { console.warn('Triangle debugger failed:', e); } catch { } }
+        });
+        fw.addHeaderAction(btnTriangles);
+
         const btnDownload = document.createElement('button');
         btnDownload.className = 'fw-btn';
         btnDownload.textContent = 'Download JSON';
@@ -2196,6 +2215,11 @@ export class Viewer {
     }
     _updateInspectorFor(target) {
         this._ensureInspectorPanel();
+        this._lastInspectorTarget = target || null;
+        this._lastInspectorSolid = this._findParentSolid(target);
+        if (this._triangleDebugger && this._triangleDebugger.isOpen && this._triangleDebugger.isOpen()) {
+            try { this._triangleDebugger.refreshTarget(target); } catch { }
+        }
         if (!target) { this._setInspectorPlaceholder('Nothing selected.'); return; }
         try {
             const { out, downloadFactory } = this._buildDiagnostics(target);
@@ -2210,6 +2234,36 @@ export class Viewer {
             console.warn(e);
             this._setInspectorPlaceholder('Inspector failed. See console.');
         }
+    }
+
+    _getTriangleDebugger() {
+        if (!this._triangleDebugger) {
+            this._triangleDebugger = new TriangleDebuggerWindow({ viewer: this });
+        }
+        return this._triangleDebugger;
+    }
+
+    _openTriangleDebugger() {
+        try {
+            const dbg = this._getTriangleDebugger();
+            dbg.openFor(this._lastInspectorTarget || this._lastInspectorSolid || null);
+        } catch (e) {
+            try { console.warn('Triangle debugger open failed:', e); } catch { }
+        }
+    }
+
+    _findParentSolid(obj) {
+        const isSolid = (node) => node && (String(node.type || '').toUpperCase() === 'SOLID');
+        let cur = obj || null;
+        if (cur && cur.parentSolid && isSolid(cur.parentSolid)) return cur.parentSolid;
+        if (cur && cur.userData && cur.userData.parentSolid && isSolid(cur.userData.parentSolid)) return cur.userData.parentSolid;
+        while (cur) {
+            if (isSolid(cur)) return cur;
+            if (cur.parentSolid && isSolid(cur.parentSolid)) return cur.parentSolid;
+            if (cur.userData && cur.userData.parentSolid && isSolid(cur.userData.parentSolid)) return cur.userData.parentSolid;
+            cur = cur.parent || null;
+        }
+        return null;
     }
 
     _round(n) { return Math.abs(n) < 1e-12 ? 0 : Number(n.toFixed(6)); }
