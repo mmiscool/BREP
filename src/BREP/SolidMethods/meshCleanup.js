@@ -2265,7 +2265,15 @@ export function mergeTinyFaces(maxArea = 0.001) {
         }
     }
     if (merged > 0) {
-        try { this._faceIndex = null; this._dirty = true; } catch { }
+        try {
+            this._faceIndex = null;
+            this._dirty = true;
+            // Rebuild now so the caller gets a clean, chainable solid.
+            if (typeof this._manifoldize === 'function') {
+                this._manifoldize();
+                if (typeof this._ensureFaceIndex === 'function') this._ensureFaceIndex();
+            }
+        } catch { }
     }
     return this;
 }
