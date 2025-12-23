@@ -1981,6 +1981,7 @@ export class SketchMode3D {
       addConstraintButton({ label: "⟺", type: "⟺", tooltip: "Distance" });
     }
     if (pointCount === 3) {
+      addConstraintButton({ label: "⋯", type: "⋯", tooltip: "Midpoint" });
       addConstraintButton({ label: "⏛", type: "⏛", tooltip: "Point on line" });
       addConstraintButton({ label: "∠", type: "∠", tooltip: "Angle" });
     }
