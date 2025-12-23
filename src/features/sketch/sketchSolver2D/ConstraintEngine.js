@@ -477,18 +477,11 @@ export class ConstraintSolver {
         if (selected.length === 3) {
             if (type === "⏛") return this.createAndPushNewConstraint(newConstraint);
             if (type === "⋯") {
-                // If first selected is a point, reverse to match expected ordering
-                if (items[0]?.type === "point") {
+                // If selection is Point + Line (and Point was first), ensure Point is last (Midpoint)
+                const hasGeometry = items.some(i => i.type === "geometry");
+                if (hasGeometry && items[0]?.type === "point") {
                     newConstraint.points = selectedPointIds.slice().reverse();
                 }
-                // Auto set angle value as current acute/obtuse difference
-                let line1Angle = calculateAngle(selected[0], selected[1]);
-                let line2Angle = calculateAngle(selected[1], selected[2]);
-                line1Angle = (line1Angle + 180) % 360 - 180;
-                line2Angle = (line2Angle + 180) % 360 - 180;
-                let diff = line1Angle - line2Angle;
-                diff = (diff + 360) % 360;
-                newConstraint.value = diff;
                 return this.createAndPushNewConstraint(newConstraint);
             }
             if (type === "⇌") return this.createAndPushNewConstraint(newConstraint);
