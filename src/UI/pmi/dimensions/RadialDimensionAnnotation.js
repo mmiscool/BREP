@@ -82,6 +82,15 @@ export class RadialDimensionAnnotation extends BaseAnnotation {
     super(opts);
   }
 
+  uiFieldsTest() {
+    const planeRef = this.inputParams?.planeRef;
+    const hasPlane = Array.isArray(planeRef)
+      ? planeRef.length > 0
+      : Boolean(String(planeRef || '').trim());
+    if (hasPlane) return { exclude: ['alignment'] };
+    return null;
+  }
+
   async run(renderingContext) {
     const { pmimode, group, idx, ctx } = renderingContext;
     const ann = this.inputParams;

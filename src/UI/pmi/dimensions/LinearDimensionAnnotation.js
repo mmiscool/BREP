@@ -25,21 +25,13 @@ const inputParamsSchema = {
     max: 8,
     step: 1,
   },
-  aRefName: {
+  targets: {
     type: 'reference_selection',
-    selectionFilter: ['VERTEX'],
-    multiple: false,
-    default_value: '',
-    label: 'Point A',
-    hint: 'Select start anchor (vertex)',
-  },
-  bRefName: {
-    type: 'reference_selection',
-    selectionFilter: ['VERTEX'],
-    multiple: false,
-    default_value: '',
-    label: 'Point B',
-    hint: 'Select end anchor (vertex)',
+    selectionFilter: ['VERTEX', 'EDGE'],
+    multiple: true,
+    default_value: [],
+    label: 'Targets',
+    hint: 'Select two vertices, or a vertex and an edge, or a single edge',
   },
   planeRefName: {
     type: 'reference_selection',
@@ -87,6 +79,15 @@ export class LinearDimensionAnnotation extends BaseAnnotation {
 
   constructor(opts = {}) {
     super(opts);
+  }
+
+  uiFieldsTest() {
+    const planeRefName = this.inputParams?.planeRefName;
+    const hasPlane = Array.isArray(planeRefName)
+      ? planeRefName.length > 0
+      : Boolean(String(planeRefName || '').trim());
+    if (hasPlane) return { exclude: ['alignment'] };
+    return null;
   }
 
   async run(renderingContext) {
@@ -211,30 +212,180 @@ function formatLinearLabel(measured, ann, overrideDecimals) {
 }
 
 function computeDimPoints(pmimode, ann) {
+  const hasTargets = Array.isArray(ann?.targets);
   try {
     const scene = pmimode?.viewer?.partHistory?.scene;
-    const aName = ann?.aRefName || null;
-    const bName = ann?.bRefName || null;
-    if (scene && (aName || bName)) {
-      const objA = aName ? scene.getObjectByName(aName) : null;
-      const objB = bName ? scene.getObjectByName(bName) : null;
-      if (objA && objB) return closestPointsForObjects(objA, objB);
-      if (objA && !objB) {
-        const pA = objectRepresentativePoint(pmimode.viewer, objA);
-        const pB = vectorFromAnnotationPoint(ann.p1);
-        if (pA && pB) return { p0: pA, p1: pB };
-      }
-      if (!objA && objB) {
-        const pB = objectRepresentativePoint(pmimode.viewer, objB);
-        const pA = vectorFromAnnotationPoint(ann.p0);
-        if (pA && pB) return { p0: pA, p1: pB };
+    const targets = normalizeTargetList(hasTargets ? ann.targets : null);
+    if (scene && targets.length) {
+      const objects = resolveTargetObjects(scene, targets);
+      if (objects.length) {
+        const vertices = [];
+        const edges = [];
+        for (const obj of objects) {
+          const type = typeof obj?.type === 'string' ? obj.type.toUpperCase() : '';
+          if (type === 'VERTEX') vertices.push(obj);
+          else if (type === 'EDGE') edges.push(obj);
+        }
+        const viewer = pmimode?.viewer;
+        if (vertices.length >= 2) {
+          const p0 = resolveVertexPoint(viewer, vertices[0]);
+          const p1 = resolveVertexPoint(viewer, vertices[1]);
+          if (p0 && p1) return { p0, p1 };
+        }
+        if (vertices.length === 1 && edges.length) {
+          const p0 = resolveVertexPoint(viewer, vertices[0]);
+          const p1 = p0 ? closestEndpointToPoint(edges, p0) : null;
+          if (p0 && p1) return { p0, p1 };
+        }
+        if (!vertices.length && edges.length) {
+          if (edges.length === 1) {
+            const ends = edgeEndpointsWorld(edges[0]);
+            if (ends) return { p0: ends.a, p1: ends.b };
+          } else if (edges.length >= 2) {
+            return closestPointsBetweenEdges(edges[0], edges[1]);
+          }
+        }
       }
     }
   } catch { /* ignore */ }
+  if (!hasTargets) {
+    try {
+      const scene = pmimode?.viewer?.partHistory?.scene;
+      const aName = ann?.aRefName || null;
+      const bName = ann?.bRefName || null;
+      if (scene && (aName || bName)) {
+        const objA = aName ? scene.getObjectByName(aName) : null;
+        const objB = bName ? scene.getObjectByName(bName) : null;
+        if (objA && objB) return closestPointsForObjects(objA, objB);
+        if (objA && !objB) {
+          const pA = objectRepresentativePoint(pmimode.viewer, objA);
+          const pB = vectorFromAnnotationPoint(ann.p1);
+          if (pA && pB) return { p0: pA, p1: pB };
+        }
+        if (!objA && objB) {
+          const pB = objectRepresentativePoint(pmimode.viewer, objB);
+          const pA = vectorFromAnnotationPoint(ann.p0);
+          if (pA && pB) return { p0: pA, p1: pB };
+        }
+      }
+    } catch { /* ignore */ }
+  }
   return {
     p0: vectorFromAnnotationPoint(ann?.p0) || new THREE.Vector3(0, 0, 0),
     p1: vectorFromAnnotationPoint(ann?.p1) || new THREE.Vector3(0, 0, 0),
   };
+}
+
+function normalizeTargetList(value) {
+  if (Array.isArray(value)) return value;
+  if (value == null || value === '') return [];
+  return [value];
+}
+
+function resolveTargetObjects(scene, targets) {
+  if (!scene || !Array.isArray(targets)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const entry of targets) {
+    let obj = null;
+    if (entry && typeof entry === 'object') {
+      if (entry.isObject3D) obj = entry;
+      else if (entry.name) obj = scene.getObjectByName(entry.name);
+    } else if (entry != null) {
+      const key = String(entry).trim();
+      if (key) obj = scene.getObjectByName(key);
+    }
+    if (!obj) continue;
+    const key = obj.uuid || obj.id || obj.name;
+    if (key != null) {
+      const keyStr = String(key);
+      if (seen.has(keyStr)) continue;
+      seen.add(keyStr);
+    }
+    out.push(obj);
+  }
+  return out;
+}
+
+function resolveVertexPoint(viewer, vertex) {
+  const rep = objectRepresentativePoint(viewer, vertex);
+  if (rep && rep.clone) return rep.clone();
+  if (rep && rep.isVector3) return rep.clone();
+  if (vertex?.getWorldPosition) return vertex.getWorldPosition(new THREE.Vector3());
+  return null;
+}
+
+function closestEndpointToPoint(edges, point) {
+  if (!Array.isArray(edges) || !point) return null;
+  let best = null;
+  let bestD2 = Infinity;
+  for (const edge of edges) {
+    const ends = edgeEndpointsWorld(edge);
+    if (ends) {
+      const d2a = ends.a.distanceToSquared(point);
+      if (d2a < bestD2) { bestD2 = d2a; best = ends.a; }
+      const d2b = ends.b.distanceToSquared(point);
+      if (d2b < bestD2) { bestD2 = d2b; best = ends.b; }
+      continue;
+    }
+    const fallback = closestPointOnEdgeToPoint(edge, point);
+    if (fallback) {
+      const d2 = fallback.distanceToSquared(point);
+      if (d2 < bestD2) { bestD2 = d2; best = fallback; }
+    }
+  }
+  return best ? best.clone() : null;
+}
+
+function edgeEndpointsWorld(edge) {
+  if (!edge) return null;
+  try { edge.updateMatrixWorld?.(true); } catch { /* ignore */ }
+  try {
+    if (typeof edge.points === 'function') {
+      const pts = edge.points(true);
+      if (Array.isArray(pts) && pts.length >= 2) {
+        const a = arrayToVector(pts[0]);
+        const b = arrayToVector(pts[pts.length - 1]);
+        if (a && b) return { a, b };
+      }
+    }
+  } catch { /* ignore */ }
+  const poly = Array.isArray(edge?.userData?.polylineLocal)
+    ? edge.userData.polylineLocal
+    : null;
+  if (poly && poly.length >= 2) {
+    const a = arrayToVector(poly[0]);
+    const b = arrayToVector(poly[poly.length - 1]);
+    if (a && b) {
+      if (edge.matrixWorld) {
+        a.applyMatrix4(edge.matrixWorld);
+        b.applyMatrix4(edge.matrixWorld);
+      }
+      return { a, b };
+    }
+  }
+  const startAttr = edge?.geometry?.attributes?.instanceStart;
+  const endAttr = edge?.geometry?.attributes?.instanceEnd;
+  if (startAttr && endAttr && startAttr.count >= 1) {
+    const a = new THREE.Vector3(startAttr.getX(0), startAttr.getY(0), startAttr.getZ(0));
+    const b = new THREE.Vector3(endAttr.getX(0), endAttr.getY(0), endAttr.getZ(0));
+    if (edge.matrixWorld) {
+      a.applyMatrix4(edge.matrixWorld);
+      b.applyMatrix4(edge.matrixWorld);
+    }
+    return { a, b };
+  }
+  const pos = edge?.geometry?.getAttribute?.('position');
+  if (pos && pos.itemSize === 3 && pos.count >= 2) {
+    const a = new THREE.Vector3(pos.getX(0), pos.getY(0), pos.getZ(0));
+    const b = new THREE.Vector3(pos.getX(pos.count - 1), pos.getY(pos.count - 1), pos.getZ(pos.count - 1));
+    if (edge.matrixWorld) {
+      a.applyMatrix4(edge.matrixWorld);
+      b.applyMatrix4(edge.matrixWorld);
+    }
+    return { a, b };
+  }
+  return null;
 }
 
 function closestPointsForObjects(objA, objB) {

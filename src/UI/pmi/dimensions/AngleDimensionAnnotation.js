@@ -25,21 +25,15 @@ const inputParamsSchema = {
     max: 3,
     step: 1,
   },
-  elementARefName: {
+  targets: {
     type: 'reference_selection',
     selectionFilter: ['FACE', 'EDGE'],
-    multiple: false,
-    default_value: '',
-    label: 'Element A',
-    hint: 'Select first element (face or edge)',
-  },
-  elementBRefName: {
-    type: 'reference_selection',
-    selectionFilter: ['FACE', 'EDGE'],
-    multiple: false,
-    default_value: '',
-    label: 'Element B',
-    hint: 'Select second element (face or edge)',
+    multiple: true,
+    default_value: [],
+    label: 'Elements',
+    hint: 'Select two edges/faces to define the angle',
+    minSelections: 2,
+    maxSelections: 2,
   },
   planeRefName: {
     type: 'reference_selection',
@@ -209,9 +203,38 @@ function ensurePersistent(ann) {
   }
 }
 
+function normalizeTargetNames(value) {
+  const list = Array.isArray(value) ? value : (value == null || value === '' ? [] : [value]);
+  const out = [];
+  const seen = new Set();
+  for (const entry of list) {
+    let name = '';
+    if (entry && typeof entry === 'object') {
+      if (typeof entry.name === 'string') name = entry.name;
+      else if (entry.id != null) name = String(entry.id);
+    } else if (entry != null) {
+      name = String(entry);
+    }
+    name = name.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
 function resolveElementRefNames(ann) {
-  const elementARefName = ann?.elementARefName || '';
-  const elementBRefName = ann?.elementBRefName || '';
+  const hasTargets = Array.isArray(ann?.targets);
+  const targets = normalizeTargetNames(hasTargets ? ann.targets : null);
+  let elementARefName = '';
+  let elementBRefName = '';
+  if (targets.length) {
+    elementARefName = targets[0] || '';
+    elementBRefName = targets[1] || '';
+  } else if (!hasTargets) {
+    elementARefName = ann?.elementARefName || '';
+    elementBRefName = ann?.elementBRefName || '';
+  }
   if (ann?.reverseElementOrder) {
     return {
       elementARefName: elementBRefName,

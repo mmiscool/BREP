@@ -1365,6 +1365,14 @@ export class PMIMode {
           const near = this.#nearestEdgeAnchor(new THREE.Vector3(a.p1.x || 0, a.p1.y || 0, a.p1.z || 0));
           if (near) a.b = near;
         }
+      } else if (a.type === 'linear') {
+        if ((!Array.isArray(a.targets) || a.targets.length === 0) && (a.aRefName || a.bRefName)) {
+          a.targets = [a.aRefName, a.bRefName].filter(Boolean);
+        }
+      } else if (a.type === 'angle') {
+        if ((!Array.isArray(a.targets) || a.targets.length === 0) && (a.elementARefName || a.elementBRefName)) {
+          a.targets = [a.elementARefName, a.elementBRefName].filter(Boolean);
+        }
       }
     } catch { }
     return a;
