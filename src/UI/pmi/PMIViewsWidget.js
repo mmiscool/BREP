@@ -1056,17 +1056,22 @@ export class PMIViewsWidget {
   }
 
   // --- Helpers: view settings ---
+  _isFaceObject(obj) {
+    return !!obj && (obj.type === 'FACE' || (obj.isMesh && typeof obj.userData?.faceName === 'string'));
+  }
+
   _detectWireframe(scene) {
     try {
       if (!scene) return false;
       let wf = false;
       scene.traverse((obj) => {
         if (wf) return;
+        if (!this._isFaceObject(obj)) return;
         const m = obj?.material;
         if (!m) return;
         if (Array.isArray(m)) {
-          for (const mm of m) { if (mm?.wireframe) { wf = true; break; } }
-        } else if (m.wireframe) {
+          for (const mm of m) { if (mm && 'wireframe' in mm && mm.wireframe) { wf = true; break; } }
+        } else if ('wireframe' in m && m.wireframe) {
           wf = true;
         }
       });
@@ -1077,13 +1082,15 @@ export class PMIViewsWidget {
   _applyWireframe(scene, isWireframe) {
     try {
       if (!scene) return;
+      const apply = (mat) => { if (mat && 'wireframe' in mat) mat.wireframe = !!isWireframe; };
       scene.traverse((obj) => {
+        if (!this._isFaceObject(obj)) return;
         const m = obj?.material;
         if (!m) return;
         if (Array.isArray(m)) {
-          for (const mm of m) { if (mm) mm.wireframe = isWireframe; }
+          for (const mm of m) apply(mm);
         } else {
-          m.wireframe = isWireframe;
+          apply(m);
         }
       });
     } catch { /* ignore */ }

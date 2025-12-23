@@ -806,17 +806,14 @@ export class PMIMode {
       const scene = this.viewer?.scene;
       if (!scene) return;
 
-      // Toggle wireframe on all materials in the scene
+      const isFace = (obj) => !!obj && (obj.type === 'FACE' || typeof obj.userData?.faceName === 'string');
+      const apply = (mat) => { if (mat && 'wireframe' in mat) mat.wireframe = !!isWireframe; };
+      // Toggle wireframe only on face materials.
       scene.traverse((obj) => {
-        if (obj.material) {
-          if (Array.isArray(obj.material)) {
-            obj.material.forEach(mat => {
-              if (mat) mat.wireframe = isWireframe;
-            });
-          } else {
-            obj.material.wireframe = isWireframe;
-          }
-        }
+        if (!isFace(obj)) return;
+        const m = obj.material;
+        if (!m) return;
+        if (Array.isArray(m)) m.forEach(apply); else apply(m);
       });
 
       // Trigger a render update
