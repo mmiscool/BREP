@@ -610,6 +610,7 @@ export class SketchMode3D {
               a = this._arcSel.a,
               b = pid;
             this._solver.createGeometry("arc", [c, a, b]);
+            this._solver.solveSketch("full");
             this._arcSel = null;
             this._selection.clear();
             this.#rebuildSketchGraphics();
@@ -2062,7 +2063,7 @@ export class SketchMode3D {
     if (!Array.isArray(constraint.points) || constraint.points.length < 2) return;
 
     const pts = constraint.points.slice();
-    const swapped = [ pts[0], pts[1],pts[3], pts[2],];
+    const swapped = [pts[0], pts[1], pts[3], pts[2],];
     constraint.points = swapped;
     constraint.value = null;
     if ("valueExpr" in constraint) delete constraint.valueExpr;

@@ -276,7 +276,7 @@ const shortestAngleDelta = (target, current) => {
         let p1, p2, p3, p4;
 
         [p1, p2, p3, p4] = points;
-    
+
         let line1Angle = calculateAngle(p1, p2);
         let line2Angle = calculateAngle(p3, p4);
         let differenceBetweenAngles = line1Angle - line2Angle;
@@ -287,7 +287,7 @@ const shortestAngleDelta = (target, current) => {
 
         if (differenceBetweenAngles <= 180) {
             newTargetAngle = 90;
-        }else{
+        } else {
             newTargetAngle = 270;
         }
 
@@ -312,7 +312,7 @@ const shortestAngleDelta = (target, current) => {
     if (constraint.value == null) {
         // Seed with the current measured angle (normalize into [0, 360))
         constraint.value = roundToDecimals(normalizeAngle(differenceBetweenAngles), 4);
-        return;
+        // return; // Don't return, allow solving to happen immediately (e.g. if constraintValue provided)
     } else if (constraint.value < 0) {
         constraint.value = Math.abs(constraint.value);
         constraint.points = [constraint.points[2], constraint.points[3], constraint.points[1], constraint.points[0]];
@@ -334,11 +334,10 @@ const shortestAngleDelta = (target, current) => {
         return;
     }
 
-    if (Math.abs(deltaRaw) < 30 * tolerance) {
+    if (Math.abs(deltaRaw) > tolerance) {
         constraint.error = `Angle constraint not satisfied
             ${targetAngle} != ${currentAngle}
-            ${Math.abs(deltaRaw)} < 
-            ${tolerance * 30}
+            Diff: ${Math.abs(deltaRaw).toFixed(4)}
             `;
     } else {
         constraint.error = null;
@@ -377,7 +376,12 @@ const shortestAngleDelta = (target, current) => {
         } else if (p2.fixed) {
             rotatePoint(p2, p1, rotationLine1);
         } else {
-            coinToss() ? rotatePoint(p1, p2, rotationLine1) : rotatePoint(p2, p1, rotationLine1);
+            // Rotate around midpoint to decouple rotation from translation/length changes
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+            const center = { x: midX, y: midY };
+            rotatePoint(center, p1, rotationLine1);
+            rotatePoint(center, p2, rotationLine1);
         }
     }
 
@@ -387,7 +391,12 @@ const shortestAngleDelta = (target, current) => {
         } else if (p4.fixed) {
             rotatePoint(p4, p3, rotationLine2);
         } else {
-            coinToss() ? rotatePoint(p3, p4, rotationLine2) : rotatePoint(p4, p3, rotationLine2);
+            // Rotate around midpoint
+            const midX = (p3.x + p4.x) / 2;
+            const midY = (p3.y + p4.y) / 2;
+            const center = { x: midX, y: midY };
+            rotatePoint(center, p3, rotationLine2);
+            rotatePoint(center, p4, rotationLine2);
         }
     }
 
@@ -446,162 +455,220 @@ const shortestAngleDelta = (target, current) => {
 
 
 (constraintFunctions["⏛"] = function (solverObject, constraint, points, constraintValue) {
-    // Treat the first two points as the line definition and the third as the point to project.
-    const [pointA, pointB, pointC] = points;
+    const [pointA, pointB, pointC] = points; // Line AB, Point C
 
-    // simplify the constraint if possible for vertical and horizontal lines
-    if (participateInConstraint(solverObject, "━", [pointA, pointB])) return constraintFunctions["━"](solverObject, constraint, [pointA, pointC], 0);
-    if (participateInConstraint(solverObject, "━", [pointA, pointC])) return constraintFunctions["━"](solverObject, constraint, [pointA, pointB], 0);
-    if (participateInConstraint(solverObject, "━", [pointB, pointC])) return constraintFunctions["━"](solverObject, constraint, [pointB, pointA], 0);
+    // Vector AB
+    const dx = pointB.x - pointA.x;
+    const dy = pointB.y - pointA.y;
+    const lenSq = dx * dx + dy * dy;
 
-    if (participateInConstraint(solverObject, "│", [pointA, pointB])) return constraintFunctions["│"](solverObject, constraint, [pointA, pointC], 0);
-    if (participateInConstraint(solverObject, "│", [pointA, pointC])) return constraintFunctions["│"](solverObject, constraint, [pointA, pointB], 0);
-    if (participateInConstraint(solverObject, "│", [pointB, pointC])) return constraintFunctions["│"](solverObject, constraint, [pointB, pointA], 0);
-
-
-
-
-
-    // Check if all points are movable or if two points are movable
-    const allPointsMovable = !pointA.fixed && !pointB.fixed && !pointC.fixed;
-    const pointAFixed = pointA.fixed;
-    const pointBFixed = pointB.fixed;
-    const pointCFixed = pointC.fixed;
-
-    // If all points are movable, decide a strategy to minimize overall movement.
-    // This could be complex and depend on the specific requirements or desired behavior.
-    if (allPointsMovable) {
-        // One strategy is to adjust all points towards the line formed by their centroid and one of the points.
-        adjustAllPointsTowardsCentroidLine(pointA, pointB, pointC);
-    } else {
-        // If only one point is movable
-        if (!pointCFixed && pointAFixed && pointBFixed) {
-            projectPointToLine(pointC, pointA, pointB);
-        } else if (!pointBFixed && pointAFixed && pointCFixed) {
-            projectPointToLine(pointB, pointA, pointC);
-        } else if (!pointAFixed && pointBFixed && pointCFixed) {
-            projectPointToLine(pointA, pointB, pointC);
-        }
-        // If two points are movable
-        else {
-            // For two movable points, move each point half the distance to their projection on the line formed by all three points
-            if (!pointAFixed && !pointBFixed) {
-                adjustTwoPoints(pointA, pointB, pointC);
-            } else if (!pointAFixed && !pointCFixed) {
-                adjustTwoPoints(pointA, pointC, pointB);
-            } else if (!pointBFixed && !pointCFixed) {
-                adjustTwoPoints(pointB, pointC, pointA);
+    // Handle degenerate line case (A ~= B)
+    if (lenSq < tolerance) {
+        // Treat as coincident C to A
+        const dist = distance(pointA, pointC);
+        if (dist > tolerance) {
+            constraint.error = `Point on Line: Line is degenerate (points too close) and Point C is not coincident.`;
+            // Simple coincident push
+            if (!pointC.fixed) {
+                pointC.x = pointA.x;
+                pointC.y = pointA.y;
+            } else if (!pointA.fixed) {
+                pointA.x = pointC.x;
+                pointA.y = pointC.y;
+                // Sync B to A since they are "coincident" in this check
+                if (!pointB.fixed) {
+                    pointB.x = pointC.x;
+                    pointB.y = pointC.y
+                }
             }
+        } else {
+            constraint.error = null;
         }
+        return;
+    }
+
+    // Project C onto line AB
+    // t = Dot(AC, AB) / |AB|^2
+    const t = ((pointC.x - pointA.x) * dx + (pointC.y - pointA.y) * dy) / lenSq;
+
+    // Closest Point on Line
+    const projX = pointA.x + t * dx;
+    const projY = pointA.y + t * dy;
+
+    // Error Vector (C -> Proj)
+    // We want C to be at Proj. So Error = C - Proj.
+    const errX = pointC.x - projX;
+    const errY = pointC.y - projY;
+    const errDist = Math.sqrt(errX * errX + errY * errY);
+
+    if (errDist < tolerance) {
+        constraint.error = null;
+        return;
+    }
+
+    constraint.error = `Point on Line not satisfied. Dist: ${errDist.toFixed(4)}`;
+
+    // Gradients / Distribution
+    // To minimize Error^2 = (Cx - Ax - t*dx)^2 + ...
+    // Standard iterative geometric projection:
+    // Move C towards Proj.
+    // Move Line towards C.
+
+    // Weighting:
+    // If all movable, we distribute the move.
+    // C moves by -Error.
+    // A moves by +Error * (1-t).
+    // B moves by +Error * t.
+    // (This effectively rotates/moves the line based on the lever arm t)
+
+    let wA = !pointA.fixed ? 1 : 0;
+    let wB = !pointB.fixed ? 1 : 0;
+    let wC = !pointC.fixed ? 1 : 0;
+
+    // Normalize weights? 
+    // Actually, we can just apply the delta directly with a damping/learning rate or just full Newton step geometry.
+    // Geometric projection is usually stable with full steps if not conflicting.
+    // However, since we have 3 points sharing the error correction:
+    // If we move C full step, error is 0. If we move A/B full step, error is 0.
+    // We should split it.
+
+    const totalWeight = wA * ((1 - t) * (1 - t) + t * t) + wB * (t * t + (1 - t) * (1 - t)) + wC;
+    // Simplified: Just assume roughly equal contribution capability?
+    // Let's use specific "Position Based Dynamics" style constraints.
+    // Inverse Masses: wA, wB, wC.
+    // Jacobian J for C is N (normal). J for A is -(1-t)N. J for B is -tN.
+    // Lambda = -Constraint / sum(w * J^2).
+    // J^2 roughly 1 for C. (1-t)^2 for A. t^2 for B.
+
+    let denom = 0;
+    if (!pointC.fixed) denom += 1;
+    if (!pointA.fixed) denom += (1 - t) * (1 - t);
+    if (!pointB.fixed) denom += t * t;
+
+    if (denom === 0) return; // All fixed
+
+    // Relaxation factor (can use 1.0 for direct projection, but 0.8 helps stability)
+    const k = 1.0;
+
+    // Vector to correct error: (-errX, -errY)
+    // C contributes: 1 * deltaC = -err
+    // A contributes: -(1-t) * deltaA = -err
+    // B contributes: -t * deltaB = -err
+
+    // Common scalar lambda
+    // We want sum(changes) to cancel error.
+    // Actually, let's just use the direct formulas from PBD for Point-Segment distance.
+    // corrC = - (w_c / sum) * error
+    // corrA = + (w_a * (1-t) / sum) * error
+    // corrB = + (w_a * t / sum) * error
+
+    // In our case error vector E = (errX, errY) = C - Proj.
+    // We want to displace points so C' becomes Proj'.
+
+    const factor = k / denom;
+
+    // Parallel expansion force (from analytical gradient of distance metric)
+    // Helps avoid line collapse by encouraging length increase to reduce angular error.
+    // Magnitude ~ Error / Length.
+    // Only apply if we are moving the line points.
+    let expansionX = 0;
+    let expansionY = 0;
+    if ((!pointA.fixed || !pointB.fixed) && lenSq > tolerance) {
+        // Direction B-A
+        const len = Math.sqrt(lenSq);
+        const ux = dx / len;
+        const uy = dy / len;
+
+        // Force magnitude: errDist / len.
+        // We dampen it slightly to avoid over-expansion instabilities.
+        const expForce = (errDist / len) * 0.1 * factor;
+
+        expansionX = ux * expForce;
+        expansionY = uy * expForce;
+    }
+
+    if (!pointC.fixed) {
+        pointC.x -= errX * factor;
+        pointC.y -= errY * factor;
+    }
+
+    if (!pointA.fixed) {
+        pointA.x += errX * (1 - t) * factor;
+        pointA.y += errY * (1 - t) * factor;
+
+        // Push A away from B (negative dir)
+        pointA.x -= expansionX;
+        pointA.y -= expansionY;
+    }
+
+    if (!pointB.fixed) {
+        pointB.x += errX * t * factor;
+        pointB.y += errY * t * factor;
+
+        // Push B away from A (positive dir)
+        pointB.x += expansionX;
+        pointB.y += expansionY;
     }
 }).hints = {
     commandTooltip: "Point on Line Constraint",
     pointsRequired: 3,
 };
 
-function adjustAllPointsTowardsCentroidLine(pointA, pointB, pointC) {
-    // Calculate centroid of the three points
-    const centroidX = (pointA.x + pointB.x + pointC.x) / 3;
-    const centroidY = (pointA.y + pointB.y + pointC.y) / 3;
-
-    // Use one of the points (e.g., pointA) and centroid to define the line
-    projectPointToLine(pointB, { x: centroidX, y: centroidY }, pointA);
-    projectPointToLine(pointC, { x: centroidX, y: centroidY }, pointA);
-    // Since pointA is part of the line definition, it does not move
-}
-
-function adjustTwoPoints(movablePoint1, movablePoint2, fixedPoint) {
-    // Calculate the line direction using movablePoint1 and movablePoint2's midpoint and the fixedPoint
-    const midpointX = (movablePoint1.x + movablePoint2.x) / 2;
-    const midpointY = (movablePoint1.y + movablePoint2.y) / 2;
-
-    // Project both movable points onto the line defined by their midpoint and the fixed point
-    projectPointToLine(movablePoint1, { x: midpointX, y: midpointY }, fixedPoint);
-    projectPointToLine(movablePoint2, { x: midpointX, y: midpointY }, fixedPoint);
-}
-
-function projectPointToLine(movablePoint, fixedPoint1, fixedPoint2) {
-    // Function remains the same as previously defined
-    let dirX = fixedPoint2.x - fixedPoint1.x;
-    let dirY = fixedPoint2.y - fixedPoint1.y;
-    const mag = Math.sqrt(dirX * dirX + dirY * dirY);
-    dirX /= mag; // Normalize
-    dirY /= mag;
-
-    const vecX = movablePoint.x - fixedPoint1.x;
-    const vecY = movablePoint.y - fixedPoint1.y;
-    const dot = vecX * dirX + vecY * dirY;
-    const projX = fixedPoint1.x + dot * dirX;
-    const projY = fixedPoint1.y + dot * dirY;
-
-    movablePoint.x = projX;
-    movablePoint.y = projY;
-}
-
-// Midpoint constraint with distance maintenance
+// Midpoint constraint with bidirectional update
 (constraintFunctions["⋯"] = function (solverObject, constraint, points, constraintValue) {
-    // This constraint will center the third point (C) between the first two points (A and B),
-    // adjust the positions of A and B around C, and try to maintain the distance between A and B.
-
-    //gracefully change the name of the constraint to upgrade from old files.
+    // Gracefully change the name of the constraint to upgrade from old files if needed
     if (constraint.type === "⋱") constraint.type = "⋯";
 
-    const [pointA, pointB, pointC] = points; // Destructure the points for easier access
+    const [pointA, pointB, pointC] = points; // C is the midpoint of A and B
 
-    // Calculate the initial distances
-    const distanceAB = roundToDecimals(Math.sqrt(Math.pow(pointB.x - pointA.x, 2) + Math.pow(pointB.y - pointA.y, 2)), 4);
-    const distanceAC = roundToDecimals(Math.sqrt(Math.pow(pointC.x - pointA.x, 2) + Math.pow(pointC.y - pointA.y, 2)), 7);
-    const distanceBC = roundToDecimals(Math.sqrt(Math.pow(pointC.x - pointB.x, 2) + Math.pow(pointC.y - pointB.y, 2)), 7);
+    // Constraint equation: 2*C - A - B = 0
+    // We treat this as a vector equation and project the error.
 
+    // Calculate current residual (error)
+    const rx = 2 * pointC.x - pointA.x - pointB.x;
+    const ry = 2 * pointC.y - pointA.y - pointB.y;
 
-    const theoredicalMidpoint = {
-        x: (pointA.x + pointB.x) / 2,
-        y: (pointA.y + pointB.y) / 2,
-        //fixed: true,
+    // Check satisfaction
+    if (Math.abs(rx) < tolerance && Math.abs(ry) < tolerance) {
+        constraint.error = null;
+        return;
     }
 
-    const perfectMidPointDistance = (distance(theoredicalMidpoint, pointA) + distance(theoredicalMidpoint, pointB)) / 2;
+    constraint.error = `Midpoint constraint not satisfied. Error: ${Math.hypot(rx, ry).toFixed(4)}`;
 
+    // Gradients of internal function f = 2C - A - B
+    // grad(C) = 2, grad(A) = -1, grad(B) = -1
+    // We assume equal weights for "movability" but respect fixed status.
 
-    //tolerance = 0.00001;
-    const midpointToPerfectMidpoint = distance(pointC, theoredicalMidpoint);
-    //console.log(midpointToPerfectMidpoint , 5 * tolerance);
+    let denom = 0;
+    if (!pointA.fixed) denom += 1; // (-1)^2
+    if (!pointB.fixed) denom += 1; // (-1)^2
+    if (!pointC.fixed) denom += 4; // (2)^2
 
-    if (midpointToPerfectMidpoint < tolerance * 20) {
-        constraintFunctions["≡"](solverObject, {}, [pointC, theoredicalMidpoint], 0);
-
-        return constraint.error = null;
-    } else {
-        //constraintFunctions["≡"](solverObject, {}, [pointC, theoredicalMidpoint], 0);
-        constraintFunctions["⟺"](solverObject, {}, [pointC, theoredicalMidpoint], 0);
-        //constraintFunctions["⏛"](solverObject, {}, [pointA, pointB, pointC], 0);
-        constraintFunctions["⟺"](solverObject, {}, [pointA, pointC], perfectMidPointDistance);
-        constraintFunctions["⟺"](solverObject, {}, [pointB, pointC], perfectMidPointDistance);
-        constraintFunctions["⟺"](solverObject, {}, [pointA, pointB], distanceAB);
-
-        //constraintFunctions["⏛"](solverObject, {}, [pointA, pointB, pointC], 0);
-
-        // test if the constraint is currently satisfied
-        if (Math.abs(distanceAC - distanceBC) > tolerance) {
-            constraint.error = `Midpoint constraint not satisfied
-            X ${pointC.x} != ${theoredicalMidpoint.x} or
-            Y ${pointC.y} != ${theoredicalMidpoint.y}
-            ${Math.abs(distanceAC - distanceBC)} < ${tolerance}
-            Deviation from midpoint ${midpointToPerfectMidpoint}`;
-
-        } else {
-            constraint.error = `Midpoint constraint not satisfied
-        Distance of endpoints to midpoint do not match
-        ${distanceAC} != ${distanceBC}
-        Deviation from midpoint ${midpointToPerfectMidpoint}`;;
-        }
-
-
-        //constraintFunctions["⟺"](solverObject, {}, [pointA, pointC], perfectMidPointDistance);
-        //constraintFunctions["⟺"](solverObject, {}, [pointB, pointC], perfectMidPointDistance);
-
+    if (denom === 0) {
+        constraint.error = "All points fixed in Midpoint constraint";
+        return;
     }
 
+    // Lagrange multiplier step (Newton step for linear constraint)
+    // alpha = - Error / sum(grad^2)
+    const alphaX = -rx / denom;
+    const alphaY = -ry / denom;
+
+    // Update points
+    // New Pos = Old Pos + alpha * grad
+    if (!pointA.fixed) {
+        pointA.x += alphaX * (-1);
+        pointA.y += alphaY * (-1);
+    }
+    if (!pointB.fixed) {
+        pointB.x += alphaX * (-1);
+        pointB.y += alphaY * (-1);
+    }
+    if (!pointC.fixed) {
+        pointC.x += alphaX * (2);
+        pointC.y += alphaY * (2);
+    }
 
 }).hints = {
     commandTooltip: "Midpoint Constraint",

@@ -1,0 +1,630 @@
+{
+  "featureID": "S7",
+  "timestamp": "2025-12-23T18:37:23.569Z",
+  "sketchSignature": "{\"points\":[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true},{\"id\":1,\"x\":8.153513,\"y\":0.470387,\"fixed\":false},{\"id\":2,\"x\":7.379547,\"y\":2.430549,\"fixed\":false},{\"id\":3,\"x\":8.097552,\"y\":0.470421,\"fixed\":false},{\"id\":4,\"x\":7.089812,\"y\":0.473465,\"fixed\":false},{\"id\":5,\"x\":7.143257,\"y\":0.473492,\"fixed\":false},{\"id\":6,\"x\":7.342557,\"y\":2.430183,\"fixed\":false},{\"id\":7,\"x\":7.86711,\"y\":2.475554,\"fixed\":false},{\"id\":8,\"x\":7.906617,\"y\":2.475861,\"fixed\":false},{\"id\":9,\"x\":7.622362,\"y\":0.308984,\"fixed\":false},{\"id\":10,\"x\":7.089812,\"y\":0.473465,\"fixed\":false},{\"id\":11,\"x\":8.153513,\"y\":0.470387,\"fixed\":false},{\"id\":12,\"x\":7.62242,\"y\":2.461823,\"fixed\":false},{\"id\":13,\"x\":7.86711,\"y\":2.475554,\"fixed\":false},{\"id\":14,\"x\":7.379547,\"y\":2.430549,\"fixed\":false}],\"geometries\":[{\"id\":1,\"type\":\"line\",\"points\":[1,4],\"construction\":true},{\"id\":2,\"type\":\"line\",\"points\":[5,2],\"construction\":false},{\"id\":3,\"type\":\"line\",\"points\":[6,7],\"construction\":true},{\"id\":4,\"type\":\"line\",\"points\":[8,3],\"construction\":false},{\"id\":5,\"type\":\"arc\",\"points\":[9,10,11],\"construction\":false},{\"id\":6,\"type\":\"arc\",\"points\":[12,13,14],\"construction\":false}],\"constraints\":[{\"id\":0,\"type\":\"⏚\",\"points\":[0],\"status\":\"solved\",\"previousPointValues\":\"[{\\\"id\\\":0,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":true}]\",\"error\":null},{\"id\":1,\"type\":\"≡\",\"points\":[1,3],\"error\":null,\"status\":\"\",\"previousPointValues\":\"[{\\\"id\\\":1,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":3,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":false}]\"},{\"id\":2,\"type\":\"≡\",\"points\":[4,5],\"error\":null,\"status\":\"\",\"previousPointValues\":\"[{\\\"id\\\":4,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":5,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":false}]\"},{\"id\":3,\"type\":\"≡\",\"points\":[2,6],\"error\":null,\"status\":\"\",\"previousPointValues\":\"[{\\\"id\\\":2,\\\"x\\\":7.212528,\\\"y\\\":2.871731,\\\"fixed\\\":false},{\\\"id\\\":6,\\\"x\\\":7.212528,\\\"y\\\":2.871731,\\\"fixed\\\":false}]\"},{\"id\":4,\"type\":\"≡\",\"points\":[7,8],\"error\":null,\"status\":\"\",\"previousPointValues\":\"[{\\\"id\\\":7,\\\"x\\\":7.829444,\\\"y\\\":2.864342,\\\"fixed\\\":false},{\\\"id\\\":8,\\\"x\\\":7.829444,\\\"y\\\":2.864342,\\\"fixed\\\":false}]\"},{\"id\":5,\"type\":\"⟂\",\"points\":[1,4,5,2],\"error\":\"Horizontal constraint not satisfied\\n        0.469841 != 0.46825\",\"status\":\"\",\"value\":279.0204,\"previousPointValues\":\"[{\\\"id\\\":1,\\\"x\\\":8.152603,\\\"y\\\":0.347946,\\\"fixed\\\":false},{\\\"id\\\":4,\\\"x\\\":6.863418,\\\"y\\\":0.347946,\\\"fixed\\\":false},{\\\"id\\\":5,\\\"x\\\":6.855358,\\\"y\\\":0.347947,\\\"fixed\\\":false},{\\\"id\\\":2,\\\"x\\\":7.212371,\\\"y\\\":2.872166,\\\"fixed\\\":false}]\"},{\"id\":6,\"type\":\"⟂\",\"points\":[5,2,6,7],\"error\":\"Horizontal constraint not satisfied\\n        2.436528 != 2.475613\",\"status\":\"\",\"value\":247.9379,\"previousPointValues\":\"[{\\\"id\\\":5,\\\"x\\\":6.865354,\\\"y\\\":0.696224,\\\"fixed\\\":false},{\\\"id\\\":2,\\\"x\\\":7.216674,\\\"y\\\":2.636428,\\\"fixed\\\":false},{\\\"id\\\":6,\\\"x\\\":7.216562,\\\"y\\\":2.636656,\\\"fixed\\\":false},{\\\"id\\\":7,\\\"x\\\":7.802204,\\\"y\\\":2.636656,\\\"fixed\\\":false}]\"},{\"id\":7,\"type\":\"⟂\",\"points\":[6,7,8,3],\"error\":null,\"status\":\"solved\",\"value\":89.9996,\"previousPointValues\":\"[{\\\"id\\\":6,\\\"x\\\":7.325385,\\\"y\\\":2.4560705,\\\"fixed\\\":false},{\\\"id\\\":7,\\\"x\\\":7.920049,\\\"y\\\":2.4560705,\\\"fixed\\\":false},{\\\"id\\\":8,\\\"x\\\":7.920163,\\\"y\\\":2.475612,\\\"fixed\\\":false},{\\\"id\\\":3,\\\"x\\\":8.275304,\\\"y\\\":0.469815,\\\"fixed\\\":false}]\"},{\"id\":9,\"type\":\"≡\",\"points\":[11,1],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":11,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":1,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":false}]\"},{\"id\":10,\"type\":\"⏛\",\"points\":[9,1,4],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":9,\\\"x\\\":10.409878,\\\"y\\\":2.667181,\\\"fixed\\\":false},{\\\"id\\\":1,\\\"x\\\":9.488579,\\\"y\\\":2.667181,\\\"fixed\\\":false},{\\\"id\\\":4,\\\"x\\\":11.331174,\\\"y\\\":2.667181,\\\"fixed\\\":false}]\"},{\"id\":12,\"type\":\"≡\",\"points\":[10,4],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":10,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":false},{\\\"id\\\":4,\\\"x\\\":0,\\\"y\\\":0,\\\"fixed\\\":false}]\"},{\"id\":13,\"type\":\"≡\",\"points\":[14,2],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":14,\\\"x\\\":7.212528,\\\"y\\\":2.871731,\\\"fixed\\\":false},{\\\"id\\\":2,\\\"x\\\":7.212528,\\\"y\\\":2.871731,\\\"fixed\\\":false}]\"},{\"id\":14,\"type\":\"≡\",\"points\":[13,7],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":13,\\\"x\\\":7.829444,\\\"y\\\":2.864342,\\\"fixed\\\":false},{\\\"id\\\":7,\\\"x\\\":7.829444,\\\"y\\\":2.864342,\\\"fixed\\\":false}]\"},{\"id\":16,\"type\":\"⟺\",\"points\":[1,4],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":2,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":\"Distance constraint not satisfied\\n        2 != 1.5154410871680233\",\"previousPointValues\":\"[{\\\"id\\\":1,\\\"x\\\":9.411018,\\\"y\\\":2.667181,\\\"fixed\\\":false},{\\\"id\\\":4,\\\"x\\\":11.41097,\\\"y\\\":2.667181,\\\"fixed\\\":false}]\"},{\"id\":20,\"type\":\"│\",\"points\":[8,3],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":\"Vertical constraint not satisfied\\n        7.809114 != 8.162145\",\"previousPointValues\":\"[{\\\"id\\\":8,\\\"x\\\":8.184233,\\\"y\\\":2.267814,\\\"fixed\\\":false},{\\\"id\\\":3,\\\"x\\\":8.184233,\\\"y\\\":0.371442,\\\"fixed\\\":false}]\"},{\"id\":21,\"type\":\"│\",\"points\":[5,2],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":\"Vertical constraint not satisfied\\n        7.083754 != 7.416536\",\"previousPointValues\":\"[{\\\"id\\\":5,\\\"x\\\":11.120895,\\\"y\\\":2.667181,\\\"fixed\\\":false},{\\\"id\\\":2,\\\"x\\\":11.120895,\\\"y\\\":1.505048,\\\"fixed\\\":false}]\"},{\"id\":22,\"type\":\"⏛\",\"points\":[12,6,7],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":null,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":null,\"previousPointValues\":\"[{\\\"id\\\":12,\\\"x\\\":10.411035,\\\"y\\\":0.660237,\\\"fixed\\\":false},{\\\"id\\\":6,\\\"x\\\":11.410968,\\\"y\\\":0.660237,\\\"fixed\\\":false},{\\\"id\\\":7,\\\"x\\\":9.411018,\\\"y\\\":0.660237,\\\"fixed\\\":false}]\"},{\"id\":23,\"type\":\"⟺\",\"points\":[5,2],\"labelX\":0,\"labelY\":0,\"displayStyle\":\"\",\"value\":2,\"valueNeedsSetup\":true,\"status\":\"\",\"error\":\"Distance constraint not satisfied\\n        2 != 2.0309389702622775\",\"previousPointValues\":\"[{\\\"id\\\":5,\\\"x\\\":6.969436,\\\"y\\\":0.461849,\\\"fixed\\\":false},{\\\"id\\\":2,\\\"x\\\":7.312001,\\\"y\\\":2.432291,\\\"fixed\\\":false}]\"}]}",
+  "sketch": {
+    "points": [
+      {
+        "id": 0,
+        "x": 0,
+        "y": 0,
+        "fixed": true
+      },
+      {
+        "id": 1,
+        "x": 8.153513,
+        "y": 0.470387,
+        "fixed": false
+      },
+      {
+        "id": 2,
+        "x": 7.379547,
+        "y": 2.430549,
+        "fixed": false
+      },
+      {
+        "id": 3,
+        "x": 8.097552,
+        "y": 0.470421,
+        "fixed": false
+      },
+      {
+        "id": 4,
+        "x": 7.089812,
+        "y": 0.473465,
+        "fixed": false
+      },
+      {
+        "id": 5,
+        "x": 7.143257,
+        "y": 0.473492,
+        "fixed": false
+      },
+      {
+        "id": 6,
+        "x": 7.342557,
+        "y": 2.430183,
+        "fixed": false
+      },
+      {
+        "id": 7,
+        "x": 7.86711,
+        "y": 2.475554,
+        "fixed": false
+      },
+      {
+        "id": 8,
+        "x": 7.906617,
+        "y": 2.475861,
+        "fixed": false
+      },
+      {
+        "id": 9,
+        "x": 7.622362,
+        "y": 0.308984,
+        "fixed": false
+      },
+      {
+        "id": 10,
+        "x": 7.089812,
+        "y": 0.473465,
+        "fixed": false
+      },
+      {
+        "id": 11,
+        "x": 8.153513,
+        "y": 0.470387,
+        "fixed": false
+      },
+      {
+        "id": 12,
+        "x": 7.62242,
+        "y": 2.461823,
+        "fixed": false
+      },
+      {
+        "id": 13,
+        "x": 7.86711,
+        "y": 2.475554,
+        "fixed": false
+      },
+      {
+        "id": 14,
+        "x": 7.379547,
+        "y": 2.430549,
+        "fixed": false
+      }
+    ],
+    "geometries": [
+      {
+        "id": 1,
+        "type": "line",
+        "points": [
+          1,
+          4
+        ],
+        "construction": true
+      },
+      {
+        "id": 2,
+        "type": "line",
+        "points": [
+          5,
+          2
+        ],
+        "construction": false
+      },
+      {
+        "id": 3,
+        "type": "line",
+        "points": [
+          6,
+          7
+        ],
+        "construction": true
+      },
+      {
+        "id": 4,
+        "type": "line",
+        "points": [
+          8,
+          3
+        ],
+        "construction": false
+      },
+      {
+        "id": 5,
+        "type": "arc",
+        "points": [
+          9,
+          10,
+          11
+        ],
+        "construction": false
+      },
+      {
+        "id": 6,
+        "type": "arc",
+        "points": [
+          12,
+          13,
+          14
+        ],
+        "construction": false
+      }
+    ],
+    "constraints": [
+      {
+        "id": 0,
+        "type": "⏚",
+        "points": [
+          0
+        ],
+        "status": "solved",
+        "previousPointValues": "[{\"id\":0,\"x\":0,\"y\":0,\"fixed\":true}]",
+        "error": null
+      },
+      {
+        "id": 1,
+        "type": "≡",
+        "points": [
+          1,
+          3
+        ],
+        "error": null,
+        "status": "",
+        "previousPointValues": "[{\"id\":1,\"x\":0,\"y\":0,\"fixed\":false},{\"id\":3,\"x\":0,\"y\":0,\"fixed\":false}]"
+      },
+      {
+        "id": 2,
+        "type": "≡",
+        "points": [
+          4,
+          5
+        ],
+        "error": null,
+        "status": "",
+        "previousPointValues": "[{\"id\":4,\"x\":0,\"y\":0,\"fixed\":false},{\"id\":5,\"x\":0,\"y\":0,\"fixed\":false}]"
+      },
+      {
+        "id": 3,
+        "type": "≡",
+        "points": [
+          2,
+          6
+        ],
+        "error": null,
+        "status": "",
+        "previousPointValues": "[{\"id\":2,\"x\":7.212528,\"y\":2.871731,\"fixed\":false},{\"id\":6,\"x\":7.212528,\"y\":2.871731,\"fixed\":false}]"
+      },
+      {
+        "id": 4,
+        "type": "≡",
+        "points": [
+          7,
+          8
+        ],
+        "error": null,
+        "status": "",
+        "previousPointValues": "[{\"id\":7,\"x\":7.829444,\"y\":2.864342,\"fixed\":false},{\"id\":8,\"x\":7.829444,\"y\":2.864342,\"fixed\":false}]"
+      },
+      {
+        "id": 5,
+        "type": "⟂",
+        "points": [
+          1,
+          4,
+          5,
+          2
+        ],
+        "error": "Horizontal constraint not satisfied\n        0.469841 != 0.46825",
+        "status": "",
+        "value": 279.0204,
+        "previousPointValues": "[{\"id\":1,\"x\":8.152603,\"y\":0.347946,\"fixed\":false},{\"id\":4,\"x\":6.863418,\"y\":0.347946,\"fixed\":false},{\"id\":5,\"x\":6.855358,\"y\":0.347947,\"fixed\":false},{\"id\":2,\"x\":7.212371,\"y\":2.872166,\"fixed\":false}]"
+      },
+      {
+        "id": 6,
+        "type": "⟂",
+        "points": [
+          5,
+          2,
+          6,
+          7
+        ],
+        "error": "Horizontal constraint not satisfied\n        2.436528 != 2.475613",
+        "status": "",
+        "value": 247.9379,
+        "previousPointValues": "[{\"id\":5,\"x\":6.865354,\"y\":0.696224,\"fixed\":false},{\"id\":2,\"x\":7.216674,\"y\":2.636428,\"fixed\":false},{\"id\":6,\"x\":7.216562,\"y\":2.636656,\"fixed\":false},{\"id\":7,\"x\":7.802204,\"y\":2.636656,\"fixed\":false}]"
+      },
+      {
+        "id": 7,
+        "type": "⟂",
+        "points": [
+          6,
+          7,
+          8,
+          3
+        ],
+        "error": null,
+        "status": "solved",
+        "value": 89.9996,
+        "previousPointValues": "[{\"id\":6,\"x\":7.325385,\"y\":2.4560705,\"fixed\":false},{\"id\":7,\"x\":7.920049,\"y\":2.4560705,\"fixed\":false},{\"id\":8,\"x\":7.920163,\"y\":2.475612,\"fixed\":false},{\"id\":3,\"x\":8.275304,\"y\":0.469815,\"fixed\":false}]"
+      },
+      {
+        "id": 9,
+        "type": "≡",
+        "points": [
+          11,
+          1
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": null,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": null,
+        "previousPointValues": "[{\"id\":11,\"x\":0,\"y\":0,\"fixed\":false},{\"id\":1,\"x\":0,\"y\":0,\"fixed\":false}]"
+      },
+      {
+        "id": 10,
+        "type": "⏛",
+        "points": [
+          9,
+          1,
+          4
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": null,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": null,
+        "previousPointValues": "[{\"id\":9,\"x\":10.409878,\"y\":2.667181,\"fixed\":false},{\"id\":1,\"x\":9.488579,\"y\":2.667181,\"fixed\":false},{\"id\":4,\"x\":11.331174,\"y\":2.667181,\"fixed\":false}]"
+      },
+      {
+        "id": 12,
+        "type": "≡",
+        "points": [
+          10,
+          4
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": null,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": null,
+        "previousPointValues": "[{\"id\":10,\"x\":0,\"y\":0,\"fixed\":false},{\"id\":4,\"x\":0,\"y\":0,\"fixed\":false}]"
+      },
+      {
+        "id": 13,
+        "type": "≡",
+        "points": [
+          14,
+          2
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": null,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": null,
+        "previousPointValues": "[{\"id\":14,\"x\":7.212528,\"y\":2.871731,\"fixed\":false},{\"id\":2,\"x\":7.212528,\"y\":2.871731,\"fixed\":false}]"
+      },
+      {
+        "id": 14,
+        "type": "≡",
+        "points": [
+          13,
+          7
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": null,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": null,
+        "previousPointValues": "[{\"id\":13,\"x\":7.829444,\"y\":2.864342,\"fixed\":false},{\"id\":7,\"x\":7.829444,\"y\":2.864342,\"fixed\":false}]"
+      },
+      {
+        "id": 16,
+        "type": "⟺",
+        "points": [
+          1,
+          4
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": 2,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": "Distance constraint not satisfied\n        2 != 1.5154410871680233",
+        "previousPointValues": "[{\"id\":1,\"x\":9.411018,\"y\":2.667181,\"fixed\":false},{\"id\":4,\"x\":11.41097,\"y\":2.667181,\"fixed\":false}]"
+      },
+      {
+        "id": 20,
+        "type": "│",
+        "points": [
+          8,
+          3
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": null,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": "Vertical constraint not satisfied\n        7.809114 != 8.162145",
+        "previousPointValues": "[{\"id\":8,\"x\":8.184233,\"y\":2.267814,\"fixed\":false},{\"id\":3,\"x\":8.184233,\"y\":0.371442,\"fixed\":false}]"
+      },
+      {
+        "id": 21,
+        "type": "│",
+        "points": [
+          5,
+          2
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": null,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": "Vertical constraint not satisfied\n        7.083754 != 7.416536",
+        "previousPointValues": "[{\"id\":5,\"x\":11.120895,\"y\":2.667181,\"fixed\":false},{\"id\":2,\"x\":11.120895,\"y\":1.505048,\"fixed\":false}]"
+      },
+      {
+        "id": 22,
+        "type": "⏛",
+        "points": [
+          12,
+          6,
+          7
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": null,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": null,
+        "previousPointValues": "[{\"id\":12,\"x\":10.411035,\"y\":0.660237,\"fixed\":false},{\"id\":6,\"x\":11.410968,\"y\":0.660237,\"fixed\":false},{\"id\":7,\"x\":9.411018,\"y\":0.660237,\"fixed\":false}]"
+      },
+      {
+        "id": 23,
+        "type": "⟺",
+        "points": [
+          5,
+          2
+        ],
+        "labelX": 0,
+        "labelY": 0,
+        "displayStyle": "",
+        "value": 2,
+        "valueNeedsSetup": true,
+        "status": "",
+        "error": "Distance constraint not satisfied\n        2 != 2.0309389702622775",
+        "previousPointValues": "[{\"id\":5,\"x\":6.969436,\"y\":0.461849,\"fixed\":false},{\"id\":2,\"x\":7.312001,\"y\":2.432291,\"fixed\":false}]"
+      }
+    ]
+  },
+  "profile": {
+    "status": "no-profile",
+    "reason": "No closed sketch loops available for triangulation",
+    "loops2D": [],
+    "loopDepth": [],
+    "loopSegmentIds": [],
+    "groups": [],
+    "triangles2D": [],
+    "trianglesWorld": [],
+    "boundaryLoopsWorld": [],
+    "profileGroups": [],
+    "boundaryEdges": [],
+    "edges": [],
+    "openChains2D": [
+      [
+        [
+          7.143257,
+          0.473492
+        ],
+        [
+          7.379547,
+          2.430549
+        ],
+        [
+          7.3778004559152475,
+          2.4767566905273943
+        ],
+        [
+          7.3849643190120995,
+          2.522457445883283
+        ],
+        [
+          7.400588254803048,
+          2.5659979167692244
+        ],
+        [
+          7.424115613592413,
+          2.6058268429782707
+        ],
+        [
+          7.454708162473615,
+          2.640525199243668
+        ],
+        [
+          7.491275949897146,
+          2.6688567522811684
+        ],
+        [
+          7.532516138472135,
+          2.6898121053172903
+        ],
+        [
+          7.576959422466199,
+          2.702644660884758
+        ],
+        [
+          7.623022376240542,
+          2.706897220602382
+        ],
+        [
+          7.669063868549895,
+          2.7024182742422433
+        ],
+        [
+          7.713443532778217,
+          2.6893673977371733
+        ],
+        [
+          7.754580209932179,
+          2.668209567808282
+        ],
+        [
+          7.791008282185042,
+          2.6396985957710237
+        ],
+        [
+          7.821429889919035,
+          2.6048502707402807
+        ],
+        [
+          7.844761171877058,
+          2.564906169088542
+        ],
+        [
+          7.8601708809792745,
+          2.5212894195540545
+        ],
+        [
+          7.86711,
+          2.475554
+        ]
+      ],
+      [
+        [
+          7.906617,
+          2.475861
+        ],
+        [
+          8.097552,
+          0.470421
+        ]
+      ],
+      [
+        [
+          7.089812,
+          0.473465
+        ],
+        [
+          7.068529297697576,
+          0.3716963570071624
+        ],
+        [
+          7.066517691970359,
+          0.2677455823284928
+        ],
+        [
+          7.083847178411027,
+          0.1652297347067713
+        ],
+        [
+          7.119914762278731,
+          0.06771594333425124
+        ],
+        [
+          7.173465440232105,
+          -0.02140271354875717
+        ],
+        [
+          7.242635869275659,
+          -0.09902527379916337
+        ],
+        [
+          7.325019203420154,
+          -0.16245079207953633
+        ],
+        [
+          7.417748842008231,
+          -0.2094723216295417
+        ],
+        [
+          7.517598175608582,
+          -0.2384537069218779
+        ],
+        [
+          7.621092858732432,
+          -0.24838651513462978
+        ],
+        [
+          7.724631702744277,
+          -0.23892512545932004
+        ],
+        [
+          7.824611982391632,
+          -0.21039875528128965
+        ],
+        [
+          7.917554795802703,
+          -0.16380000477087164
+        ],
+        [
+          8.000226115940498,
+          -0.10075031848638932
+        ],
+        [
+          8.069749321421424,
+          -0.023443565782928
+        ],
+        [
+          8.123705291089454,
+          0.06543029680377418
+        ],
+        [
+          8.16021657946699,
+          0.16277882496372956
+        ],
+        [
+          8.178012744123526,
+          0.265214690935638
+        ],
+        [
+          8.17647455183874,
+          0.36917354855918216
+        ],
+        [
+          8.153513,
+          0.470387
+        ]
+      ]
+    ],
+    "triangleCount": 0
+  },
+  "basis": {
+    "origin": [
+      0,
+      0,
+      0
+    ],
+    "x": [
+      1,
+      0,
+      0
+    ],
+    "y": [
+      0,
+      1,
+      0
+    ],
+    "z": [
+      0,
+      0,
+      1
+    ]
+  }
+}

@@ -88,9 +88,9 @@ class ConstraintEngine {
         this.processConstraintsOfType("all");
 
         const order = [
-            "━", "│",  "⋯",
+            "⏛", "━", "│", "⋯",
             "⟺", "⇌", "∠", "⟂", "∥",
-            "⇌", "⟺", "⇌", "⟺","⏛", "━", "│", // repeated passes for convergence
+            "⇌", "⟺", "⇌", "⟺", "⏛", "━", "│", // repeated passes for convergence
         ];
 
         let prev = JSON.stringify(this.points);
@@ -498,7 +498,7 @@ export class ConstraintSolver {
             if (type === "⟂") {
                 // Check if this is a tangent constraint (line + arc/circle)
                 const isTangentConstraint = this.#detectTangentConstraint(items);
-                
+
                 if (isTangentConstraint) {
                     // Handle tangent constraint: choose closest line endpoint to circle center
                     const optimizedPoints = this.#optimizePointsForTangent(items, selected);
@@ -507,7 +507,7 @@ export class ConstraintSolver {
                         return this.createAndPushNewConstraint(newConstraint);
                     }
                 }
-                
+
                 // Only proceed with standard perpendicular if we have exactly 4 points (two lines)
                 if (selected.length !== 4) {
                     this.hooks.updateCanvas();
@@ -517,7 +517,7 @@ export class ConstraintSolver {
                     );
                     return;
                 }
-                
+
                 // Standard perpendicular constraint for two lines
                 let line1AngleA = calculateAngle(selected[0], selected[1]);
                 let line1AngleB = calculateAngle(selected[1], selected[0]);
@@ -629,20 +629,20 @@ export class ConstraintSolver {
     // Helper method to detect if this is a tangent constraint (line + arc/circle)
     #detectTangentConstraint(items) {
         if (items.length !== 2) return false;
-        
+
         const geometries = items.filter(item => item.type === "geometry");
         if (geometries.length !== 2) return false;
-        
+
         const lineGeo = geometries.find(item => {
             const g = this.sketchObject.geometries.find(gg => gg.id === parseInt(item.id));
             return g?.type === "line";
         });
-        
+
         const circularGeo = geometries.find(item => {
             const g = this.sketchObject.geometries.find(gg => gg.id === parseInt(item.id));
             return g?.type === "arc" || g?.type === "circle";
         });
-        
+
         return lineGeo && circularGeo;
     }
 
@@ -650,17 +650,17 @@ export class ConstraintSolver {
     #optimizePointsForTangent(items, selected) {
         const geometries = items.filter(item => item.type === "geometry");
         if (geometries.length !== 2) return null;
-        
+
         let lineGeo = null;
         let circularGeo = null;
         let linePoints = [];
         let circularPoints = [];
-        
+
         // Identify line and circular geometry
         for (const item of geometries) {
             const g = this.sketchObject.geometries.find(gg => gg.id === parseInt(item.id));
             if (!g) continue;
-            
+
             if (g.type === "line") {
                 lineGeo = g;
                 linePoints = g.points.map(pid => this.sketchObject.points.find(p => p.id === pid));
@@ -669,28 +669,28 @@ export class ConstraintSolver {
                 circularPoints = g.points.map(pid => this.sketchObject.points.find(p => p.id === pid));
             }
         }
-        
+
         if (!lineGeo || !circularGeo || linePoints.length < 2 || circularPoints.length < 1) {
             return null;
         }
-        
+
         // For circular geometry: [0] = center, [1] = start point, [2] = end point (for arc)
         const center = circularPoints[0];
         const lineStart = linePoints[0];
         const lineEnd = linePoints[1];
-        
+
         // Get arc/circle points (excluding center)
         const arcPoints = circularPoints.slice(1); // Remove center to get actual arc points
-        
+
         if (arcPoints.length === 0) {
             // Fallback for circles - use center only
             return [lineStart.id, lineEnd.id, center.id, center.id];
         }
-        
+
         // Calculate distance from each arc point to the line
         let closestArcPoint = arcPoints[0];
         let minDistance = this.#distancePointToLine(arcPoints[0], lineStart, lineEnd);
-        
+
         for (let i = 1; i < arcPoints.length; i++) {
             const dist = this.#distancePointToLine(arcPoints[i], lineStart, lineEnd);
             if (dist < minDistance) {
@@ -698,7 +698,7 @@ export class ConstraintSolver {
                 closestArcPoint = arcPoints[i];
             }
         }
-        
+
         // Create perpendicular constraint using the line and the radius to closest arc point
         // Points: [line_start, line_end, center, closest_arc_point]
         return [lineStart.id, lineEnd.id, center.id, closestArcPoint.id];
@@ -710,16 +710,16 @@ export class ConstraintSolver {
         let dirX = lineEnd.x - lineStart.x;
         let dirY = lineEnd.y - lineStart.y;
         const mag = Math.sqrt(dirX * dirX + dirY * dirY);
-        
+
         if (mag === 0) return distance(point, lineStart); // Degenerate line case
-        
+
         dirX /= mag; // Normalize
         dirY /= mag;
 
         // Vector from line start to point
         const vecX = point.x - lineStart.x;
         const vecY = point.y - lineStart.y;
-        
+
         // Project point onto line
         const dot = vecX * dirX + vecY * dirY;
         const projX = lineStart.x + dot * dirX;
