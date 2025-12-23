@@ -69,6 +69,9 @@ export { Edge, Vertex, Face } from "./SolidShared.js";
  * - Query triangles for a given face name after any CSG by reading runs back from MeshGL.
  */
 export class Solid extends THREE.Group {
+    // Always reconstruct booleans as this base Solid (not subclasses) to avoid
+    // re-running primitive generate() when rebuilding from Manifold.
+    static BaseSolid = Solid;
     /**
      * Construct an empty Solid with authoring buffers, face/edge metadata, and aux-edge storage initialized.
      */

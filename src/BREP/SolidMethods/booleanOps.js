@@ -39,11 +39,17 @@ function _collapseFaceIdsByName(solid) {
     solid._manifold = null;
 }
 
+function baseSolidCtor(obj) {
+    const ctor = obj && obj.constructor;
+    return (ctor && ctor.BaseSolid) ? ctor.BaseSolid : ctor;
+}
+
 export function union(other) {
-    const Solid = this.constructor;
+    const Solid = baseSolidCtor(this);
     const outManifold = Manifold.union(this._manifoldize(), other._manifoldize());
     const mergedMap = this._combineIdMaps(other);
     const out = Solid._fromManifold(outManifold, mergedMap);
+    try { out.owningFeatureID = this?.owningFeatureID || other?.owningFeatureID || out?.owningFeatureID || null; } catch { }
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
     try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
@@ -52,22 +58,26 @@ export function union(other) {
 }
 
 export function subtract(other) {
-    const Solid = this.constructor;
+    const Solid = baseSolidCtor(this);
     const outManifold = this._manifoldize().subtract(other._manifoldize());
+
     const mergedMap = this._combineIdMaps(other);
     const out = Solid._fromManifold(outManifold, mergedMap);
+    try { out.owningFeatureID = this?.owningFeatureID || other?.owningFeatureID || out?.owningFeatureID || null; } catch { }
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
     try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
     _collapseFaceIdsByName(out);
+
     return out;
 }
 
 export function intersect(other) {
-    const Solid = this.constructor;
+    const Solid = baseSolidCtor(this);
     const outManifold = Manifold.intersection(this._manifoldize(), other._manifoldize());
     const mergedMap = this._combineIdMaps(other);
     const out = Solid._fromManifold(outManifold, mergedMap);
+    try { out.owningFeatureID = this?.owningFeatureID || other?.owningFeatureID || out?.owningFeatureID || null; } catch { }
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
     try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
@@ -80,10 +90,11 @@ export function intersect(other) {
  * Equivalent to `subtract`, provided for semantic clarity.
  */
 export function difference(other) {
-    const Solid = this.constructor;
+    const Solid = baseSolidCtor(this);
     const outManifold = Manifold.difference(this._manifoldize(), other._manifoldize());
     const mergedMap = this._combineIdMaps(other);
     const out = Solid._fromManifold(outManifold, mergedMap);
+    try { out.owningFeatureID = this?.owningFeatureID || other?.owningFeatureID || out?.owningFeatureID || null; } catch { }
     try { out._auxEdges = [...(this._auxEdges || []), ...(other?._auxEdges || [])]; } catch { }
     try { out._faceMetadata = this._combineFaceMetadata(other); } catch { }
     try { out._edgeMetadata = this._combineEdgeMetadata(other); } catch { }
@@ -92,7 +103,7 @@ export function difference(other) {
 }
 
 export function setTolerance(tolerance) {
-    const Solid = this.constructor;
+    const Solid = baseSolidCtor(this);
     const m = this._manifoldize();
     const outM = m.setTolerance(tolerance);
     const mapCopy = new Map(this._idToFaceName);
@@ -102,22 +113,9 @@ export function setTolerance(tolerance) {
     try { out._edgeMetadata = new Map(this._edgeMetadata); } catch { }
     return out;
 }
-//3284
 export function simplify(tolerance = undefined, updateInPlace = false) {
     const Solid = this.constructor;
     const m = this._manifoldize();
-
-    // Log input manifold counts via MeshGL since Manifold does not expose numVerts/numFaces
-    try {
-        const meshIn = m.getMesh();
-        try {
-            const inVerts = (meshIn.vertProperties?.length || 0) / 3 | 0;
-            const inFaces = (meshIn.triVerts?.length || 0) / 3 | 0;
-            console.log(`Simplifying manifold with ${inVerts} vertices and ${inFaces} faces.`);
-        } finally {
-            try { if (meshIn && typeof meshIn.delete === 'function') meshIn.delete(); } catch { }
-        }
-    } catch { /* best-effort debug logging */ }
 
     // Run simplify on the manifold
     const outM = (tolerance === undefined) ? m.simplify() : m.simplify(tolerance);
@@ -126,9 +124,6 @@ export function simplify(tolerance = undefined, updateInPlace = false) {
     let meshOut = null;
     try {
         meshOut = outM.getMesh();
-        const outVerts = (meshOut.vertProperties?.length || 0) / 3 | 0;
-        const outFaces = (meshOut.triVerts?.length || 0) / 3 | 0;
-        console.log(`Simplified manifold now has ${outVerts} vertices and ${outFaces} faces.`);
 
         // Replace geometry arrays
         this._numProp = meshOut.numProp;
@@ -175,8 +170,6 @@ export function simplify(tolerance = undefined, updateInPlace = false) {
     } finally {
         try { if (meshOut && typeof meshOut.delete === 'function') meshOut.delete(); } catch { }
     }
-
-    console.log(`Simplification complete.`);
 
     const returnObject = updateInPlace ? this : Solid._fromManifold(outM, this._idToFaceName);
 

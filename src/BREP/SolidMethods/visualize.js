@@ -129,6 +129,8 @@ export function visualize(options = {}) {
             faceObj.name = faceName;
             faceObj.userData.faceName = faceName;
             faceObj.parentSolid = this;
+            // Tag with the owning feature for inspector/debug traceability.
+            try { faceObj.owningFeatureID = this?.owningFeatureID || null; } catch { }
             faceMap.set(faceName, faceObj);
             this.add(faceObj);
         }

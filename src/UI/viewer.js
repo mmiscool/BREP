@@ -2297,6 +2297,9 @@ export class Viewer {
             if (target.owningFeatureID) {
                 out.owningFeatureID = target.owningFeatureID;
                 out._owningFeatureFormatted = `Created by: ${target.owningFeatureID}`;
+            } else if (target.parentSolid && target.parentSolid.owningFeatureID) {
+                out.owningFeatureID = target.parentSolid.owningFeatureID;
+                out._owningFeatureFormatted = `Created by: ${target.parentSolid.owningFeatureID}`;
             }
         } catch { }
 
