@@ -134,6 +134,7 @@ export function visualize(options = {}) {
             const faceObj = new Face(geom);
             faceObj.name = faceName;
             faceObj.userData.faceName = faceName;
+            faceObj.userData.__defaultMaterial = faceObj.material;
             faceObj.parentSolid = this;
             // Tag with the owning feature for inspector/debug traceability.
             try { faceObj.owningFeatureID = this?.owningFeatureID || null; } catch { }
@@ -170,6 +171,7 @@ export function visualize(options = {}) {
                         polylineLocal: e.positions,
                         closedLoop: !!e.closedLoop,
                     };
+                    edgeObj.userData.__defaultMaterial = edgeObj.material;
                     annotateEdgeFromMetadata(edgeObj, this);
                     // For convenience in feature code, mirror THREE's parent with an explicit handle
                     edgeObj.parentSolid = this;
@@ -275,6 +277,7 @@ export function visualize(options = {}) {
                                     polylineLocal: poly,
                                     closedLoop: false,
                                 };
+                                edgeObj.userData.__defaultMaterial = edgeObj.material;
                                 annotateEdgeFromMetadata(edgeObj, this);
                                 edgeObj.parentSolid = this;
                                 const fa = faceMap.get(nameA); const fb = faceMap.get(nameB);
@@ -347,6 +350,8 @@ export function visualize(options = {}) {
                         try { edgeObj.computeLineDistances(); } catch { }
                         edgeObj.renderOrder = 10020;
                     } catch { }
+                    if (!edgeObj.userData) edgeObj.userData = {};
+                    edgeObj.userData.__defaultMaterial = edgeObj.material;
                     this.add(edgeObj);
                 }
             }

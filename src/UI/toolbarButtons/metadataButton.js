@@ -138,6 +138,7 @@ class MetadataPanelController {
         } catch { ok = true; }
         if (!ok) return;
         try { manager.clearMetadata(target.name); } catch {}
+        this._refreshMetadataColors();
         this.selectedKeys.clear();
         if (this.open) this._render();
     }
@@ -156,8 +157,17 @@ class MetadataPanelController {
         for (const key of Array.from(this.selectedKeys)) {
             manager.deleteMetadataKey(target.name, key);
         }
+        this._refreshMetadataColors();
         this.selectedKeys.clear();
         if (this.open) this._render();
+    }
+
+    _refreshMetadataColors() {
+        try {
+            if (this.viewer && typeof this.viewer.applyMetadataColors === 'function') {
+                this.viewer.applyMetadataColors();
+            }
+        } catch { }
     }
 
     _render() {
@@ -200,6 +210,11 @@ class MetadataPanelController {
             value,
             valueString: this._stringifyMetadataValue(value)
         }));
+
+        const requiredColorKey = this._getDefaultColorKey(target);
+        if (requiredColorKey && !entries.some((entry) => entry.key === requiredColorKey)) {
+            entries.push({ key: requiredColorKey, value: '', valueString: '' });
+        }
 
         const filter = (this.filterText || '').trim().toLowerCase();
         const filtered = filter
@@ -375,9 +390,16 @@ class MetadataPanelController {
         const addValueCell = document.createElement('td');
         addValueCell.style.padding = '4px';
         addValueCell.style.verticalAlign = 'top';
+        const addValueWrap = document.createElement('div');
+        addValueWrap.style.display = 'flex';
+        addValueWrap.style.alignItems = 'stretch';
+        addValueWrap.style.gap = '6px';
+        addValueWrap.style.width = '100%';
+
         const newValueTextarea = document.createElement('textarea');
         newValueTextarea.placeholder = 'Value (JSON or plain text)';
         newValueTextarea.style.width = '100%';
+        newValueTextarea.style.flex = '1 1 auto';
         newValueTextarea.style.font = '12px monospace';
         newValueTextarea.style.padding = '6px';
         newValueTextarea.style.border = '1px solid #1f2937';
@@ -386,8 +408,56 @@ class MetadataPanelController {
         newValueTextarea.style.resize = 'vertical';
         newValueTextarea.style.boxSizing = 'border-box';
         newValueTextarea.setAttribute('wrap', 'soft');
-        addValueCell.appendChild(newValueTextarea);
+        addValueWrap.appendChild(newValueTextarea);
         autoResizeTextarea(newValueTextarea, baseInputHeight);
+
+        const newColorInput = document.createElement('input');
+        newColorInput.type = 'color';
+        newColorInput.title = 'Pick a color';
+        newColorInput.style.width = '32px';
+        newColorInput.style.minWidth = '32px';
+        newColorInput.style.height = '28px';
+        newColorInput.style.padding = '0';
+        newColorInput.style.border = '1px solid #1f2937';
+        newColorInput.style.background = '#0f172a';
+        newColorInput.style.display = 'none';
+        newColorInput.addEventListener('input', () => {
+            newValueTextarea.value = newColorInput.value;
+            try { newValueTextarea.dispatchEvent(new Event('input')); } catch { }
+        });
+        addValueWrap.appendChild(newColorInput);
+
+        const newColorReset = document.createElement('button');
+        newColorReset.className = 'fw-btn';
+        newColorReset.textContent = 'Reset';
+        newColorReset.title = 'Clear color value';
+        newColorReset.style.height = '28px';
+        newColorReset.style.padding = '2px 6px';
+        newColorReset.style.display = 'none';
+        newColorReset.addEventListener('click', () => {
+            newValueTextarea.value = '';
+            newColorInput.value = '#000000';
+            try { newValueTextarea.dispatchEvent(new Event('input')); } catch { }
+        });
+        addValueWrap.appendChild(newColorReset);
+
+        const refreshNewColorInput = () => {
+            const show = this._isColorKey(newKeyInput.value);
+            newColorInput.style.display = show ? 'block' : 'none';
+            newColorReset.style.display = show ? 'block' : 'none';
+            if (!show) return;
+            const hex = this._resolveColorHex(newValueTextarea.value);
+            if (hex) newColorInput.value = hex;
+        };
+        newKeyInput.addEventListener('input', refreshNewColorInput);
+        newValueTextarea.addEventListener('input', () => {
+            if (newColorInput.style.display === 'none') return;
+            const hex = this._resolveColorHex(newValueTextarea.value);
+            if (hex) newColorInput.value = hex;
+        });
+        refreshNewColorInput();
+
+        addValueCell.appendChild(addValueWrap);
 
         const addSelectCell = document.createElement('td');
         addSelectCell.style.padding = '4px';
@@ -413,8 +483,8 @@ class MetadataPanelController {
                 try { alert('Metadata key already exists. Use a unique key.'); } catch {}
                 return;
             }
-            data[key] = this._parseMetadataValue(newValueTextarea.value);
-            manager.setMetadataObject(name, data);
+            this._commitMetadataValue(manager, name, key, newValueTextarea.value);
+            this._refreshMetadataColors();
             newKeyInput.value = '';
             newValueTextarea.value = '';
             this.selectedKeys.add(key);
@@ -478,6 +548,7 @@ class MetadataPanelController {
                 delete data[key];
                 data[newKey] = currentValue;
                 manager.setMetadataObject(name, data);
+                this._refreshMetadataColors();
                 if (this.selectedKeys.has(key)) {
                     this.selectedKeys.delete(key);
                     this.selectedKeys.add(newKey);
@@ -491,10 +562,16 @@ class MetadataPanelController {
             valueCell.style.padding = '4px';
             valueCell.style.verticalAlign = 'top';
             valueCell.style.width = 'auto';
+            const valueWrap = document.createElement('div');
+            valueWrap.style.display = 'flex';
+            valueWrap.style.alignItems = 'stretch';
+            valueWrap.style.gap = '6px';
+            valueWrap.style.width = '100%';
             const valueTextarea = document.createElement('textarea');
             valueTextarea.value = valueString;
             valueTextarea.title = 'Value (JSON accepted)';
             valueTextarea.style.width = '100%';
+            valueTextarea.style.flex = '1 1 auto';
             valueTextarea.style.font = '12px monospace';
             valueTextarea.style.padding = '6px';
             valueTextarea.style.border = '1px solid #1f2937';
@@ -505,14 +582,57 @@ class MetadataPanelController {
             valueTextarea.style.lineHeight = '1.4';
             valueTextarea.setAttribute('wrap', 'soft');
 
-            valueTextarea.addEventListener('blur', () => {
-                const data = manager.getOwnMetadata(name);
-                data[key] = this._parseMetadataValue(valueTextarea.value);
-                manager.setMetadataObject(name, data);
+            const commitValue = () => {
+                this._commitMetadataValue(manager, name, key, valueTextarea.value);
+                this._refreshMetadataColors();
                 this._render();
+            };
+
+            valueTextarea.addEventListener('blur', () => {
+                commitValue();
             });
 
-            valueCell.appendChild(valueTextarea);
+            valueWrap.appendChild(valueTextarea);
+            if (this._isColorKey(key)) {
+                const colorInput = document.createElement('input');
+                colorInput.type = 'color';
+                colorInput.title = 'Pick a color';
+                colorInput.style.width = '32px';
+                colorInput.style.minWidth = '32px';
+                colorInput.style.height = '28px';
+                colorInput.style.padding = '0';
+                colorInput.style.border = '1px solid #1f2937';
+                colorInput.style.background = '#0f172a';
+                const hex = this._resolveColorHex(valueTextarea.value);
+                if (hex) colorInput.value = hex;
+                valueTextarea.addEventListener('input', () => {
+                    const nextHex = this._resolveColorHex(valueTextarea.value);
+                    if (nextHex) colorInput.value = nextHex;
+                });
+                colorInput.addEventListener('input', () => {
+                    valueTextarea.value = colorInput.value;
+                    try { valueTextarea.dispatchEvent(new Event('input')); } catch { }
+                });
+                colorInput.addEventListener('change', () => {
+                    commitValue();
+                });
+                valueWrap.appendChild(colorInput);
+
+                const resetBtn = document.createElement('button');
+                resetBtn.className = 'fw-btn';
+                resetBtn.textContent = 'Reset';
+                resetBtn.title = 'Clear color value';
+                resetBtn.style.height = '28px';
+                resetBtn.style.padding = '2px 6px';
+                resetBtn.addEventListener('click', () => {
+                    valueTextarea.value = '';
+                    colorInput.value = '#000000';
+                    commitValue();
+                });
+                valueWrap.appendChild(resetBtn);
+            }
+
+            valueCell.appendChild(valueWrap);
             autoResizeTextarea(valueTextarea, baseInputHeight);
 
             const selectCell = document.createElement('td');
@@ -538,6 +658,7 @@ class MetadataPanelController {
             deleteBtn.title = 'Delete attribute';
             deleteBtn.addEventListener('click', () => {
                 manager.deleteMetadataKey(name, key);
+                this._refreshMetadataColors();
                 this.selectedKeys.delete(key);
                 this._render();
             });
@@ -628,6 +749,189 @@ class MetadataPanelController {
         if (!raw) return '';
         try { return JSON.parse(raw); }
         catch { return raw; }
+    }
+
+    _commitMetadataValue(manager, targetName, key, rawValue) {
+        if (!manager || !targetName || !key) return;
+        const rawString = String(rawValue ?? '');
+        const parsed = this._parseMetadataValue(rawValue);
+        const isColorKey = this._isColorKey(key);
+        const isBlank = rawString.trim() === '' || (isColorKey && parsed === '');
+        if (isColorKey && isBlank) {
+            manager.deleteMetadataKey(targetName, key);
+            return;
+        }
+        const data = manager.getOwnMetadata(targetName);
+        data[key] = parsed;
+        manager.setMetadataObject(targetName, data);
+    }
+
+    _getDefaultColorKey(target) {
+        if (!target) return null;
+        const type = target.type;
+        if (type === 'SOLID' || type === 'FACE' || type === 'EDGE') return 'color';
+        return null;
+    }
+
+    _isColorKey(key) {
+        const raw = String(key ?? '').trim();
+        if (!raw) return false;
+        return /color/i.test(raw);
+    }
+
+    _resolveColorHex(valueString) {
+        const parsed = this._parseMetadataValue(valueString);
+        return this._coerceColorToHex(parsed) || this._coerceColorToHex(valueString);
+    }
+
+    _coerceColorToHex(value) {
+        if (value == null) return null;
+        if (typeof value === 'string') return this._parseColorStringToHex(value);
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            const n = Math.max(0, Math.min(0xffffff, Math.round(value)));
+            return `#${n.toString(16).padStart(6, '0')}`;
+        }
+        if (Array.isArray(value) && value.length >= 3) {
+            const r = Number(value[0]);
+            const g = Number(value[1]);
+            const b = Number(value[2]);
+            if (![r, g, b].every(Number.isFinite)) return null;
+            const max = Math.max(r, g, b);
+            return max <= 1 ? this._rgbToHex(r * 255, g * 255, b * 255) : this._rgbToHex(r, g, b);
+        }
+        if (typeof value === 'object') {
+            const r = Number(value.r);
+            const g = Number(value.g);
+            const b = Number(value.b);
+            if ([r, g, b].every(Number.isFinite)) {
+                const max = Math.max(r, g, b);
+                return max <= 1 ? this._rgbToHex(r * 255, g * 255, b * 255) : this._rgbToHex(r, g, b);
+            }
+        }
+        return null;
+    }
+
+    _parseColorStringToHex(raw) {
+        const v = String(raw ?? '').trim();
+        if (!v) return null;
+        const hexMatch = v.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+        if (hexMatch) {
+            const h = hexMatch[1];
+            if (h.length === 3) {
+                return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`.toLowerCase();
+            }
+            return `#${h.toLowerCase()}`;
+        }
+        const hex0xMatch = v.match(/^0x([0-9a-f]{6})$/i);
+        if (hex0xMatch) return `#${hex0xMatch[1].toLowerCase()}`;
+
+        const rgbMatch = v.match(/^rgba?\((.+)\)$/i);
+        if (rgbMatch) {
+            const inner = rgbMatch[1].replace('/', ' ');
+            const parts = inner.split(/[, ]+/).map(p => p.trim()).filter(Boolean);
+            if (parts.length < 3) return null;
+            const r = this._parseRgbComponent(parts[0]);
+            const g = this._parseRgbComponent(parts[1]);
+            const b = this._parseRgbComponent(parts[2]);
+            if (![r, g, b].every(Number.isFinite)) return null;
+            return this._rgbToHex(r, g, b);
+        }
+
+        const hslMatch = v.match(/^hsla?\((.+)\)$/i);
+        if (hslMatch) {
+            const inner = hslMatch[1].replace('/', ' ');
+            const parts = inner.split(/[, ]+/).map(p => p.trim()).filter(Boolean);
+            if (parts.length < 3) return null;
+            const h = this._parseHue(parts[0]);
+            const s = this._parsePercent(parts[1]);
+            const l = this._parsePercent(parts[2]);
+            if (![h, s, l].every(Number.isFinite)) return null;
+            const rgb = this._hslToRgb(h, s, l);
+            return this._rgbToHex(rgb.r * 255, rgb.g * 255, rgb.b * 255);
+        }
+
+        return null;
+    }
+
+    _parseRgbComponent(text) {
+        const s = String(text ?? '').trim();
+        if (!s) return NaN;
+        if (s.endsWith('%')) {
+            const num = parseFloat(s.slice(0, -1));
+            if (!Number.isFinite(num)) return NaN;
+            return (num / 100) * 255;
+        }
+        const num = parseFloat(s);
+        if (!Number.isFinite(num)) return NaN;
+        return num;
+    }
+
+    _parseHue(text) {
+        const s = String(text ?? '').trim().toLowerCase();
+        if (!s) return NaN;
+        if (s.endsWith('turn')) {
+            const num = parseFloat(s.slice(0, -4));
+            if (!Number.isFinite(num)) return NaN;
+            return num * 360;
+        }
+        if (s.endsWith('rad')) {
+            const num = parseFloat(s.slice(0, -3));
+            if (!Number.isFinite(num)) return NaN;
+            return (num * 180) / Math.PI;
+        }
+        if (s.endsWith('deg')) {
+            const num = parseFloat(s.slice(0, -3));
+            if (!Number.isFinite(num)) return NaN;
+            return num;
+        }
+        const num = parseFloat(s);
+        if (!Number.isFinite(num)) return NaN;
+        return num;
+    }
+
+    _parsePercent(text) {
+        const s = String(text ?? '').trim();
+        if (!s) return NaN;
+        if (s.endsWith('%')) {
+            const num = parseFloat(s.slice(0, -1));
+            if (!Number.isFinite(num)) return NaN;
+            return num / 100;
+        }
+        const num = parseFloat(s);
+        if (!Number.isFinite(num)) return NaN;
+        return num > 1 ? num / 100 : num;
+    }
+
+    _hslToRgb(h, s, l) {
+        const hue = ((h % 360) + 360) % 360;
+        const c = (1 - Math.abs(2 * l - 1)) * s;
+        const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+        const m = l - c / 2;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        if (hue < 60) {
+            r = c; g = x; b = 0;
+        } else if (hue < 120) {
+            r = x; g = c; b = 0;
+        } else if (hue < 180) {
+            r = 0; g = c; b = x;
+        } else if (hue < 240) {
+            r = 0; g = x; b = c;
+        } else if (hue < 300) {
+            r = x; g = 0; b = c;
+        } else {
+            r = c; g = 0; b = x;
+        }
+        return { r: r + m, g: g + m, b: b + m };
+    }
+
+    _rgbToHex(r, g, b) {
+        const toHex = (v) => {
+            const n = Math.max(0, Math.min(255, Math.round(v)));
+            return n.toString(16).padStart(2, '0');
+        };
+        return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
     }
 
     _measureKeyWidth(text) {

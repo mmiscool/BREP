@@ -119,6 +119,17 @@ export class SelectionFilter {
         SelectionFilter.#logAllowedTypesChange(SelectionFilter.allowedSelectionTypes, 'Reset');
     }
 
+    static #getBaseMaterial(obj) {
+        if (!obj) return null;
+        const ud = obj.userData || {};
+        if (ud.__baseMaterial) return ud.__baseMaterial;
+        if (obj.type === SelectionFilter.FACE) return CADmaterials.FACE?.BASE ?? CADmaterials.FACE ?? obj.material;
+        if (obj.type === SelectionFilter.PLANE) return CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? obj.material;
+        if (obj.type === SelectionFilter.EDGE) return CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE ?? obj.material;
+        if (obj.type === SelectionFilter.SOLID || obj.type === SelectionFilter.COMPONENT) return obj.material;
+        return obj.material;
+    }
+
     // ---------------- Hover Highlighting ----------------
     static getHoverColor() { return SelectionFilter.hoverColor; }
     static setHoverColor(hex) {
@@ -249,9 +260,9 @@ export class SelectionFilter {
                 return ud.__hoverOrigMat ?? t.material;
             };
             const applyDeselectedMaterial = () => {
-                if (t.type === SelectionFilter.FACE) return ud.__hoverOrigMat ?? CADmaterials.FACE?.BASE ?? CADmaterials.FACE ?? t.material;
-                if (t.type === SelectionFilter.PLANE) return ud.__hoverOrigMat ?? CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? t.material;
-                if (t.type === SelectionFilter.EDGE) return ud.__hoverOrigMat ?? CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE ?? t.material;
+                if (t.type === SelectionFilter.FACE) return ud.__hoverOrigMat ?? SelectionFilter.#getBaseMaterial(t) ?? t.material;
+                if (t.type === SelectionFilter.PLANE) return ud.__hoverOrigMat ?? SelectionFilter.#getBaseMaterial(t) ?? t.material;
+                if (t.type === SelectionFilter.EDGE) return ud.__hoverOrigMat ?? SelectionFilter.#getBaseMaterial(t) ?? t.material;
                 if (t.type === SelectionFilter.SOLID || t.type === SelectionFilter.COMPONENT) return ud.__hoverOrigMat ?? t.material;
                 return ud.__hoverOrigMat ?? t.material;
             };
@@ -508,20 +519,20 @@ export class SelectionFilter {
 
             } else {
                 if (objectToToggleSelectionOn.type === SelectionFilter.FACE) {
-                    objectToToggleSelectionOn.material = CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED;
+                    objectToToggleSelectionOn.material = SelectionFilter.#getBaseMaterial(objectToToggleSelectionOn) ?? objectToToggleSelectionOn.material;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.PLANE) {
-                    objectToToggleSelectionOn.material = CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? objectToToggleSelectionOn.material;
+                    objectToToggleSelectionOn.material = SelectionFilter.#getBaseMaterial(objectToToggleSelectionOn) ?? objectToToggleSelectionOn.material;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.EDGE) {
-                    objectToToggleSelectionOn.material = CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
+                    objectToToggleSelectionOn.material = SelectionFilter.#getBaseMaterial(objectToToggleSelectionOn) ?? objectToToggleSelectionOn.material;
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.VERTEX) {
                     // Vertex accessor handles its own visual reset
                 } else if (objectToToggleSelectionOn.type === SelectionFilter.SOLID || objectToToggleSelectionOn.type === SelectionFilter.COMPONENT) {
                     parentSelectedAction = true;
                     objectToToggleSelectionOn.children.forEach(child => {
                         // apply selected material based on object type for faces and edges
-                        if (child.type === SelectionFilter.FACE) child.material = child.selected ? CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE : CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED;
-                        if (child.type === SelectionFilter.PLANE) child.material = child.selected ? (CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? child.material) : (CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? child.material);
-                        if (child.type === SelectionFilter.EDGE) child.material = child.selected ? CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE : CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
+                        if (child.type === SelectionFilter.FACE) child.material = child.selected ? CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE : (SelectionFilter.#getBaseMaterial(child) ?? child.material);
+                        if (child.type === SelectionFilter.PLANE) child.material = child.selected ? (CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? child.material) : (SelectionFilter.#getBaseMaterial(child) ?? child.material);
+                        if (child.type === SelectionFilter.EDGE) child.material = child.selected ? CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE : (SelectionFilter.#getBaseMaterial(child) ?? child.material);
                     });
                 }
             }
@@ -537,11 +548,11 @@ export class SelectionFilter {
             child.selected = false;
             // reset material to base
             if (child.type === SelectionFilter.FACE) {
-                child.material = CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED;
+                child.material = SelectionFilter.#getBaseMaterial(child) ?? child.material;
             } else if (child.type === SelectionFilter.PLANE) {
-                child.material = CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? child.material;
+                child.material = SelectionFilter.#getBaseMaterial(child) ?? child.material;
             } else if (child.type === SelectionFilter.EDGE) {
-                child.material = CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
+                child.material = SelectionFilter.#getBaseMaterial(child) ?? child.material;
             }
 
         });
@@ -573,22 +584,22 @@ export class SelectionFilter {
             if (child.name === itemName) {
                 child.selected = false;
                 if (child.type === SelectionFilter.FACE) {
-                    child.material = CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED;
+                    child.material = SelectionFilter.#getBaseMaterial(child) ?? child.material;
                 } else if (child.type === SelectionFilter.PLANE) {
-                    child.material = CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? child.material;
+                    child.material = SelectionFilter.#getBaseMaterial(child) ?? child.material;
                 } else if (child.type === SelectionFilter.EDGE) {
-                    child.material = CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED;
+                    child.material = SelectionFilter.#getBaseMaterial(child) ?? child.material;
                 } else if (child.type === SelectionFilter.SOLID || child.type === SelectionFilter.COMPONENT) {
                     // For solids, keep children materials consistent with their own selected flags
                     child.children.forEach(grandchild => {
                         if (grandchild.type === SelectionFilter.FACE) {
-                            grandchild.material = grandchild.selected ? (CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE) : (CADmaterials.FACE?.BASE ?? CADmaterials.FACE.SELECTED);
+                            grandchild.material = grandchild.selected ? (CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE) : (SelectionFilter.#getBaseMaterial(grandchild) ?? grandchild.material);
                         }
                         if (grandchild.type === SelectionFilter.PLANE) {
-                            grandchild.material = grandchild.selected ? (CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? grandchild.material) : (CADmaterials.PLANE?.BASE ?? CADmaterials.FACE?.BASE ?? grandchild.material);
+                            grandchild.material = grandchild.selected ? (CADmaterials.PLANE?.SELECTED ?? CADmaterials.FACE?.SELECTED ?? grandchild.material) : (SelectionFilter.#getBaseMaterial(grandchild) ?? grandchild.material);
                         }
                         if (grandchild.type === SelectionFilter.EDGE) {
-                            grandchild.material = grandchild.selected ? (CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE) : (CADmaterials.EDGE?.BASE ?? CADmaterials.EDGE.SELECTED);
+                            grandchild.material = grandchild.selected ? (CADmaterials.EDGE?.SELECTED ?? CADmaterials.EDGE) : (SelectionFilter.#getBaseMaterial(grandchild) ?? grandchild.material);
                         }
                     });
                 }

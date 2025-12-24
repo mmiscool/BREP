@@ -460,8 +460,14 @@ export class Viewer {
         this.partHistory.callbacks.reset = async () => {
             //await this.historyWidget.reset();
         };
-        this.partHistory.callbacks.afterRunHistory = () => this._refreshAssemblyConstraintsPanelVisibility();
-        this.partHistory.callbacks.afterReset = () => this._refreshAssemblyConstraintsPanelVisibility();
+        this.partHistory.callbacks.afterRunHistory = () => {
+            this._refreshAssemblyConstraintsPanelVisibility();
+            this.applyMetadataColors();
+        };
+        this.partHistory.callbacks.afterReset = () => {
+            this._refreshAssemblyConstraintsPanelVisibility();
+            this.applyMetadataColors();
+        };
         const historySection = await this.accordion.addSection("History");
         await historySection.uiElement.appendChild(await this.historyWidget.uiElement);
 
@@ -953,6 +959,224 @@ export class Viewer {
         this.render();
     }
     toggleWireframe() { this.setWireframe(!this._wireframeEnabled); }
+
+    applyMetadataColors(target = null) {
+        const metadataManager = this.partHistory?.metadataManager;
+        const scene = this.partHistory?.scene || this.scene;
+        if (!metadataManager || !scene) return;
+
+        const size = this.renderer?.getSize?.(new THREE.Vector2()) || null;
+        const width = Math.max(1, size?.width || this.renderer?.domElement?.clientWidth || 1);
+        const height = Math.max(1, size?.height || this.renderer?.domElement?.clientHeight || 1);
+
+        const solidKeys = ['solidColor', 'color'];
+        const faceKeys = ['faceColor', 'color'];
+        const edgeKeys = ['edgeColor', 'color'];
+        const solidEdgeKeys = ['edgeColor'];
+
+        const pickColorValue = (meta, keys) => {
+            if (!meta || typeof meta !== 'object') return null;
+            for (const key of keys) {
+                if (!Object.prototype.hasOwnProperty.call(meta, key)) continue;
+                const raw = meta[key];
+                if (raw == null) continue;
+                if (typeof raw === 'string' && raw.trim() === '') continue;
+                return raw;
+            }
+            return null;
+        };
+
+        const parseColor = (raw) => {
+            if (raw == null) return null;
+            if (raw?.isColor) {
+                try { return typeof raw.clone === 'function' ? raw.clone() : raw; } catch { return raw; }
+            }
+            if (typeof raw === 'number' && Number.isFinite(raw)) {
+                try { return new THREE.Color(raw); } catch { return null; }
+            }
+            if (typeof raw === 'string') {
+                const v = raw.trim();
+                if (!v) return null;
+                const lower = v.toLowerCase();
+                const isHex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/.test(lower);
+                const isHex0x = /^0x[0-9a-f]{6}$/.test(lower);
+                const isFunc = /^(rgb|rgba|hsl|hsla)\(/.test(lower);
+                if (!isHex && !isHex0x && !isFunc) return null;
+                if (isHex0x) {
+                    const num = Number(v);
+                    if (Number.isFinite(num)) {
+                        try { return new THREE.Color(num); } catch { return null; }
+                    }
+                }
+                try { return new THREE.Color(v); } catch { return null; }
+            }
+            if (Array.isArray(raw) && raw.length >= 3) {
+                const r = Number(raw[0]);
+                const g = Number(raw[1]);
+                const b = Number(raw[2]);
+                if (![r, g, b].every(Number.isFinite)) return null;
+                const max = Math.max(r, g, b);
+                try {
+                    if (max > 1) return new THREE.Color(r / 255, g / 255, b / 255);
+                    return new THREE.Color(r, g, b);
+                } catch { return null; }
+            }
+            if (typeof raw === 'object') {
+                const r = Number(raw.r);
+                const g = Number(raw.g);
+                const b = Number(raw.b);
+                if ([r, g, b].every(Number.isFinite)) {
+                    const max = Math.max(r, g, b);
+                    try {
+                        if (max > 1) return new THREE.Color(r / 255, g / 255, b / 255);
+                        return new THREE.Color(r, g, b);
+                    } catch { return null; }
+                }
+            }
+            return null;
+        };
+
+        const getMeta = (name) => {
+            if (!name || typeof metadataManager.getMetadata !== 'function') return null;
+            try { return metadataManager.getMetadata(name); } catch { return null; }
+        };
+
+        const applyMaterial = (obj, baseMaterial, color) => {
+            if (!obj || !baseMaterial) return;
+            if (!obj.userData) obj.userData = {};
+            const ud = obj.userData;
+            const defaultMaterial = ud.__defaultMaterial ?? baseMaterial;
+            if (!ud.__defaultMaterial) ud.__defaultMaterial = baseMaterial;
+            const isHovered = !!ud.__hoverMatApplied;
+            const isSelected = obj.selected === true;
+
+            const applyBase = (mat) => {
+                ud.__baseMaterial = mat;
+                if (isHovered) {
+                    ud.__hoverOrigMat = mat;
+                } else if (!isSelected && mat) {
+                    obj.material = mat;
+                }
+            };
+
+            if (!color) {
+                if (ud.__metadataMaterial && ud.__metadataMaterial !== defaultMaterial) {
+                    try { ud.__metadataMaterial.dispose?.(); } catch { }
+                }
+                try { delete ud.__metadataMaterial; } catch { }
+                try { delete ud.__metadataColor; } catch { }
+                applyBase(defaultMaterial);
+                return;
+            }
+
+            const colorHex = color.getHexString();
+            if (ud.__metadataColor === colorHex && ud.__metadataMaterial) {
+                applyBase(ud.__metadataMaterial);
+                return;
+            }
+
+            let nextMat = null;
+            try { nextMat = typeof baseMaterial.clone === 'function' ? baseMaterial.clone() : null; } catch { nextMat = null; }
+            if (!nextMat) return;
+            try {
+                if (nextMat.color && typeof nextMat.color.set === 'function') nextMat.color.set(color);
+            } catch { }
+            try {
+                if (nextMat.resolution && typeof nextMat.resolution.set === 'function') {
+                    nextMat.resolution.set(width, height);
+                }
+            } catch { }
+            try { nextMat.needsUpdate = true; } catch { }
+
+            if (ud.__metadataMaterial && ud.__metadataMaterial !== defaultMaterial) {
+                try { ud.__metadataMaterial.dispose?.(); } catch { }
+            }
+            ud.__metadataColor = colorHex;
+            ud.__metadataMaterial = nextMat;
+            applyBase(nextMat);
+        };
+
+        const applyToSolid = (solid) => {
+            if (!solid || solid.type !== 'SOLID') return;
+            const solidMeta = getMeta(solid.name);
+            const solidColor = parseColor(pickColorValue(solidMeta, solidKeys));
+            const solidEdgeColor = parseColor(pickColorValue(solidMeta, solidEdgeKeys));
+            const children = Array.isArray(solid.children) ? solid.children : [];
+
+            for (const child of children) {
+                if (!child) continue;
+                if (child.type === 'FACE') {
+                    const faceName = child.name || child.userData?.faceName || null;
+                    const managerMeta = faceName ? getMeta(faceName) : null;
+                    let faceMeta = null;
+                    if (faceName && typeof solid.getFaceMetadata === 'function') {
+                        try { faceMeta = solid.getFaceMetadata(faceName); } catch { faceMeta = null; }
+                    }
+                    const faceColor = parseColor(
+                        pickColorValue(managerMeta, faceKeys)
+                        ?? pickColorValue(faceMeta, faceKeys)
+                    ) || solidColor;
+                    const baseFace = CADmaterials.FACE?.BASE ?? child.material;
+                    applyMaterial(child, baseFace, faceColor);
+                } else if (child.type === 'EDGE') {
+                    const edgeName = child.name || null;
+                    const managerMeta = edgeName ? getMeta(edgeName) : null;
+                    let edgeMeta = null;
+                    if (edgeName && typeof solid.getEdgeMetadata === 'function') {
+                        try { edgeMeta = solid.getEdgeMetadata(edgeName); } catch { edgeMeta = null; }
+                    }
+                    let edgeColor = parseColor(
+                        pickColorValue(managerMeta, edgeKeys)
+                        ?? pickColorValue(edgeMeta, edgeKeys)
+                    );
+                    if (!edgeColor && solidEdgeColor) edgeColor = solidEdgeColor;
+
+                    const isBoundary = !!(child.userData?.faceA || child.userData?.faceB);
+                    const baseEdge = isBoundary ? (CADmaterials.EDGE?.BASE ?? child.material)
+                        : (child.userData?.__defaultMaterial ?? child.material);
+                    applyMaterial(child, baseEdge, edgeColor);
+                }
+            }
+        };
+
+        const resolveSolid = (obj) => {
+            if (!obj) return null;
+            if (obj.type === 'SOLID') return obj;
+            if (obj.parentSolid) return obj.parentSolid;
+            let current = obj.parent;
+            while (current) {
+                if (current.type === 'SOLID') return current;
+                current = current.parent;
+            }
+            return null;
+        };
+
+        if (target) {
+            let obj = target;
+            if (typeof obj === 'string') {
+                try { obj = scene.getObjectByName(obj); } catch { obj = null; }
+            }
+            const solid = resolveSolid(obj);
+            if (solid) {
+                applyToSolid(solid);
+            } else if (obj && (obj.type === 'FACE' || obj.type === 'EDGE')) {
+                const name = obj.name || null;
+                const managerMeta = name ? getMeta(name) : null;
+                const keys = obj.type === 'FACE' ? faceKeys : edgeKeys;
+                const color = parseColor(pickColorValue(managerMeta, keys));
+                const baseMat = obj.type === 'FACE'
+                    ? (CADmaterials.FACE?.BASE ?? obj.material)
+                    : (CADmaterials.EDGE?.BASE ?? obj.material);
+                applyMaterial(obj, baseMat, color);
+            }
+        } else {
+            scene.traverse((obj) => {
+                if (obj && obj.type === 'SOLID') applyToSolid(obj);
+            });
+        }
+
+        try { this.render(); } catch { }
+    }
 
     // ----------------------------------------
     // Internal: Animation Loop
@@ -2737,6 +2961,23 @@ export class Viewer {
             if (CADmaterials?.LOOP) {
                 setRes(CADmaterials.LOOP.BASE);
                 setRes(CADmaterials.LOOP.SELECTED);
+            }
+        } catch { }
+        // Ensure any per-object line materials stay in sync (metadata color clones, etc.)
+        try {
+            const scene = this.partHistory?.scene || this.scene;
+            if (scene) {
+                scene.traverse((obj) => {
+                    const mat = obj?.material;
+                    if (!mat) return;
+                    const apply = (m) => {
+                        if (m?.resolution && typeof m.resolution.set === 'function') {
+                            m.resolution.set(width, height);
+                        }
+                    };
+                    if (Array.isArray(mat)) mat.forEach(apply);
+                    else apply(mat);
+                });
             }
         } catch { }
         // Keep dashed overlays visually consistent in screen space
