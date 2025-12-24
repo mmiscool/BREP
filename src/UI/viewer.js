@@ -1099,8 +1099,15 @@ export class Viewer {
         const applyToSolid = (solid) => {
             if (!solid || solid.type !== 'SOLID') return;
             const solidMeta = getMeta(solid.name);
-            const solidColor = parseColor(pickColorValue(solidMeta, solidKeys));
-            const solidEdgeColor = parseColor(pickColorValue(solidMeta, solidEdgeKeys));
+            const solidUserMeta = solid?.userData?.metadata || null;
+            const solidColor = parseColor(
+                pickColorValue(solidMeta, solidKeys)
+                ?? pickColorValue(solidUserMeta, solidKeys)
+            );
+            const solidEdgeColor = parseColor(
+                pickColorValue(solidMeta, solidEdgeKeys)
+                ?? pickColorValue(solidUserMeta, solidEdgeKeys)
+            );
             const children = Array.isArray(solid.children) ? solid.children : [];
 
             for (const child of children) {

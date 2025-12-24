@@ -233,18 +233,38 @@ export class AssemblyComponentFeature {
       return await this._rebuildSolidsFromHistory(componentData, componentName);
     }
 
-    let index = 0;
+    const meshGroups = new Map();
     for (const mesh of meshes) {
-      const solidName = this._resolveSolidName(mesh.name, componentName, ++index);
-      const solid = this._buildSolidFromMesh(mesh, faceNameCounts) || this._fallbackSolidFromMesh(mesh);
+      const rawName = String(mesh?.name || '').trim();
+      const key = rawName.length ? rawName : `__mesh_${meshGroups.size + 1}`;
+      let entry = meshGroups.get(key);
+      if (!entry) {
+        entry = { sourceName: rawName, meshes: [] };
+        meshGroups.set(key, entry);
+      }
+      entry.meshes.push(mesh);
+    }
+
+    let index = 0;
+    for (const entry of meshGroups.values()) {
+      const groupName = entry.sourceName || '';
+      const groupMeshes = entry.meshes;
+      const solidName = this._resolveSolidName(groupName, componentName, ++index);
+      const built = this._buildSolidFromMeshes(groupMeshes, faceNameCounts, groupName);
+      const solid = built?.solid || null;
+      const colorHints = built?.colorHints || null;
       if (!solid || !solid._triVerts || solid._triVerts.length === 0) {
-        const meshName = mesh?.name ? `"${mesh.name}"` : '(unnamed mesh)';
+        const meshName = groupName ? `"${groupName}"` : '(unnamed mesh group)';
         console.warn(`[AssemblyComponentFeature] Failed to recover triangles for ${meshName}; skipping.`);
         index--; // keep numbering tight if conversion failed
         continue;
       }
 
       solid.name = solidName;
+
+      if (colorHints) {
+        this._applyColorHintsToSolid(solid, colorHints);
+      }
 
       const faceMeta = facetInfo && facetInfo[solidName];
       if (faceMeta && typeof solid.setFaceMetadata === 'function') {
@@ -254,9 +274,9 @@ export class AssemblyComponentFeature {
       }
 
       if (metadataMap && metadataMap[solidName]) {
-        solid.userData = solid.userData || {};
-        solid.userData.metadata = metadataMap[solidName];
+        this._mergeSolidMetadata(solid, metadataMap[solidName]);
       }
+      this._applyFaceMetadataFromMap(solid, metadataMap);
 
       solids.push(solid);
     }
@@ -294,9 +314,9 @@ export class AssemblyComponentFeature {
               }
 
               if (metadataMap && metadataMap[solidName]) {
-                fallbackSolid.userData = fallbackSolid.userData || {};
-                fallbackSolid.userData.metadata = metadataMap[solidName];
+                this._mergeSolidMetadata(fallbackSolid, metadataMap[solidName]);
               }
+              this._applyFaceMetadataFromMap(fallbackSolid, metadataMap);
 
               solids.push(fallbackSolid);
             } catch (err) {
@@ -324,51 +344,182 @@ export class AssemblyComponentFeature {
     return solids;
   }
 
+  _getMaterialName(material) {
+    if (Array.isArray(material)) {
+      for (const entry of material) {
+        if (entry && typeof entry.name === 'string' && entry.name.trim().length) return entry.name;
+      }
+      return '';
+    }
+    return material && typeof material.name === 'string' ? material.name : '';
+  }
+
+  _getMaterialColorHex(material) {
+    if (!material) return null;
+    const mat = Array.isArray(material)
+      ? (material.find((entry) => entry?.color?.isColor) || material[0])
+      : material;
+    const color = mat?.color;
+    if (!color || typeof color.getHexString !== 'function') return null;
+    try { return `#${color.getHexString()}`; } catch { return null; }
+  }
+
+  _hasColorEntry(metadata, keys) {
+    if (!metadata || typeof metadata !== 'object') return false;
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(metadata, key)) continue;
+      const raw = metadata[key];
+      if (raw == null) continue;
+      if (typeof raw === 'string' && raw.trim() === '') continue;
+      return true;
+    }
+    return false;
+  }
+
+  _appendMeshToSolid(solid, mesh, faceNameCounts) {
+    const geometry = mesh?.geometry;
+    const posAttr = geometry?.getAttribute?.('position');
+    if (!solid || !geometry || !posAttr || posAttr.count < 3) return null;
+
+    try { mesh.updateWorldMatrix(true, false); }
+    catch { /* matrix update best-effort */ }
+
+    const matrixWorld = mesh.matrixWorld;
+    const indexAttr = typeof geometry.getIndex === 'function' ? geometry.getIndex() : null;
+    const materialName = this._getMaterialName(mesh.material);
+    const baseFaceName = this._safeName(materialName || mesh.name || `FACE_${faceNameCounts.size + 1}`);
+    const faceName = this._uniqueName(faceNameCounts, baseFaceName);
+
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+
+    let added = 0;
+    const writeTriangle = (ia, ib, ic) => {
+      if (!Number.isFinite(ia) || !Number.isFinite(ib) || !Number.isFinite(ic)) return;
+      if (ia < 0 || ib < 0 || ic < 0) return;
+      if (ia >= posAttr.count || ib >= posAttr.count || ic >= posAttr.count) return;
+      a.fromBufferAttribute(posAttr, ia).applyMatrix4(matrixWorld);
+      b.fromBufferAttribute(posAttr, ib).applyMatrix4(matrixWorld);
+      c.fromBufferAttribute(posAttr, ic).applyMatrix4(matrixWorld);
+      solid.addTriangle(faceName, [a.x, a.y, a.z], [b.x, b.y, b.z], [c.x, c.y, c.z]);
+      added++;
+    };
+
+    if (indexAttr && indexAttr.count >= 3) {
+      const triCount = Math.floor(indexAttr.count / 3);
+      for (let i = 0; i < triCount; i++) {
+        const base = i * 3;
+        writeTriangle(indexAttr.getX(base + 0), indexAttr.getX(base + 1), indexAttr.getX(base + 2));
+      }
+    } else {
+      const triCount = Math.floor(posAttr.count / 3);
+      for (let i = 0; i < triCount; i++) {
+        const base = i * 3;
+        writeTriangle(base + 0, base + 1, base + 2);
+      }
+    }
+
+    if (added === 0) return null;
+    return {
+      faceName,
+      materialName,
+      colorHex: this._getMaterialColorHex(mesh.material),
+    };
+  }
+
+  _buildSolidFromMeshes(meshes, faceNameCounts, sourceName) {
+    if (!Array.isArray(meshes) || meshes.length === 0) return null;
+    const solid = new BREP.Solid();
+    const faceInfos = [];
+    for (const mesh of meshes) {
+      const info = this._appendMeshToSolid(solid, mesh, faceNameCounts);
+      if (info) faceInfos.push(info);
+    }
+    if (!solid._triVerts || solid._triVerts.length === 0) return null;
+    const colorHints = this._deriveColorHints(faceInfos, sourceName);
+    return { solid, colorHints };
+  }
+
+  _deriveColorHints(faceInfos, sourceName) {
+    const faceColors = new Map();
+    let solidColor = null;
+    const solidMaterialName = sourceName ? `${sourceName}_SOLID` : '';
+
+    if (Array.isArray(faceInfos)) {
+      for (const info of faceInfos) {
+        const hex = info?.colorHex;
+        if (!hex) continue;
+        if (solidMaterialName && info.materialName === solidMaterialName && !solidColor) {
+          solidColor = hex;
+          continue;
+        }
+        if (info.faceName) faceColors.set(info.faceName, hex);
+      }
+    }
+
+    if (!solidColor && Array.isArray(faceInfos)) {
+      const colored = faceInfos.filter((info) => info?.colorHex);
+      if (colored.length === 1) {
+        solidColor = colored[0].colorHex;
+        if (colored[0].faceName) faceColors.delete(colored[0].faceName);
+      }
+    }
+
+    return { solidColor, faceColors };
+  }
+
+  _applyColorHintsToSolid(solid, colorHints) {
+    if (!solid || !colorHints) return;
+    const solidKeys = ['solidColor', 'color'];
+    const faceKeys = ['faceColor', 'color'];
+
+    if (colorHints.solidColor) {
+      solid.userData = solid.userData || {};
+      const existing = solid.userData.metadata && typeof solid.userData.metadata === 'object'
+        ? solid.userData.metadata
+        : {};
+      if (!this._hasColorEntry(existing, solidKeys)) {
+        solid.userData.metadata = { ...existing, color: colorHints.solidColor };
+      }
+    }
+
+    if (colorHints.faceColors && typeof solid.setFaceMetadata === 'function') {
+      for (const [faceName, hex] of colorHints.faceColors.entries()) {
+        const existing = typeof solid.getFaceMetadata === 'function' ? solid.getFaceMetadata(faceName) : null;
+        if (this._hasColorEntry(existing, faceKeys)) continue;
+        solid.setFaceMetadata(faceName, { color: hex });
+      }
+    }
+  }
+
+  _mergeSolidMetadata(solid, metadata) {
+    if (!solid || !metadata || typeof metadata !== 'object') return;
+    solid.userData = solid.userData || {};
+    const existing = solid.userData.metadata && typeof solid.userData.metadata === 'object'
+      ? solid.userData.metadata
+      : {};
+    solid.userData.metadata = { ...existing, ...metadata };
+  }
+
+  _applyFaceMetadataFromMap(solid, metadataMap) {
+    if (!solid || !metadataMap || typeof metadataMap !== 'object' || typeof solid.setFaceMetadata !== 'function') return;
+    const faceNames = typeof solid.getFaceNames === 'function'
+      ? solid.getFaceNames()
+      : (solid._faceNameToID instanceof Map ? Array.from(solid._faceNameToID.keys()) : []);
+    if (!faceNames || !faceNames.length) return;
+    for (const faceName of faceNames) {
+      const meta = metadataMap[faceName];
+      if (!meta || typeof meta !== 'object') continue;
+      try { solid.setFaceMetadata(faceName, meta); } catch { /* ignore */ }
+    }
+  }
+
   _buildSolidFromMesh(mesh, faceNameCounts) {
     try {
-      const geometry = mesh?.geometry;
-      const posAttr = geometry?.getAttribute?.('position');
-      if (!geometry || !posAttr || posAttr.count < 3) return null;
-
-      try { mesh.updateWorldMatrix(true, false); }
-      catch { /* matrix update best-effort */ }
-
       const solid = new BREP.Solid();
-      const matrixWorld = mesh.matrixWorld;
-      const indexAttr = typeof geometry.getIndex === 'function' ? geometry.getIndex() : null;
-
-      const baseFaceName = this._safeName(mesh.material?.name || mesh.name || `FACE_${faceNameCounts.size + 1}`);
-      const faceName = this._uniqueName(faceNameCounts, baseFaceName);
-
-      const a = new THREE.Vector3();
-      const b = new THREE.Vector3();
-      const c = new THREE.Vector3();
-
-      const writeTriangle = (ia, ib, ic) => {
-        if (!Number.isFinite(ia) || !Number.isFinite(ib) || !Number.isFinite(ic)) return;
-        if (ia < 0 || ib < 0 || ic < 0) return;
-        if (ia >= posAttr.count || ib >= posAttr.count || ic >= posAttr.count) return;
-        a.fromBufferAttribute(posAttr, ia).applyMatrix4(matrixWorld);
-        b.fromBufferAttribute(posAttr, ib).applyMatrix4(matrixWorld);
-        c.fromBufferAttribute(posAttr, ic).applyMatrix4(matrixWorld);
-        solid.addTriangle(faceName, [a.x, a.y, a.z], [b.x, b.y, b.z], [c.x, c.y, c.z]);
-      };
-
-      if (indexAttr && indexAttr.count >= 3) {
-        const triCount = Math.floor(indexAttr.count / 3);
-        for (let i = 0; i < triCount; i++) {
-          const base = i * 3;
-          writeTriangle(indexAttr.getX(base + 0), indexAttr.getX(base + 1), indexAttr.getX(base + 2));
-        }
-      } else {
-        const triCount = Math.floor(posAttr.count / 3);
-        for (let i = 0; i < triCount; i++) {
-          const base = i * 3;
-          writeTriangle(base + 0, base + 1, base + 2);
-        }
-      }
-
-      if (!solid._triVerts || solid._triVerts.length === 0) return null;
+      const info = this._appendMeshToSolid(solid, mesh, faceNameCounts);
+      if (!info || !solid._triVerts || solid._triVerts.length === 0) return null;
       return solid;
     } catch (err) {
       console.warn('[AssemblyComponentFeature] Failed to construct solid from mesh:', err);
@@ -430,9 +581,9 @@ export class AssemblyComponentFeature {
           }
 
           if (metadataMap && metadataMap[finalName]) {
-            child.userData = child.userData || {};
-            child.userData.metadata = metadataMap[finalName];
+            this._mergeSolidMetadata(child, metadataMap[finalName]);
           }
+          this._applyFaceMetadataFromMap(child, metadataMap);
         }
 
         solids.push(child);
