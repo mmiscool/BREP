@@ -563,6 +563,7 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
         if (!Array.isArray(centerline) || !Array.isArray(tangentA) || !Array.isArray(tangentB)) {
             return { centerlineReversed: false, tangentAReversed: false, tangentBReversed: false };
         }
+        const isValidPoint = (p) => !!p && isFinite(p.x) && isFinite(p.y) && isFinite(p.z);
         const n = Math.min(centerline.length, tangentA.length, tangentB.length);
         if (n < 3) {
             return { centerlineReversed: false, tangentAReversed: false, tangentBReversed: false };
