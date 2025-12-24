@@ -91,8 +91,6 @@ export const CADmaterials = {
         BASE: new LineMaterial({
             color: "#ff0000",
             linewidth: 1.5,
-            linecap: "round",
-            linejoin: "round",
             transparent: true,
         }),
         SELECTED: new LineMaterial({

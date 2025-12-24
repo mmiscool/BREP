@@ -283,11 +283,13 @@ function _openExportDialog(viewer) {
 
         let data;
         try {
-          data = await generate3MF(solidsForExport, { unit, precision: 6, scale, additionalFiles, modelMetadata, thumbnail });
+          const metadataManager = viewer?.partHistory?.metadataManager || null;
+          data = await generate3MF(solidsForExport, { unit, precision: 6, scale, additionalFiles, modelMetadata, thumbnail, metadataManager });
         } catch (e) {
           // As a last resort, attempt exporting only the feature history (no solids)
           try {
-            data = await generate3MF([], { unit, precision: 6, scale, additionalFiles, modelMetadata, thumbnail });
+            const metadataManager = viewer?.partHistory?.metadataManager || null;
+            data = await generate3MF([], { unit, precision: 6, scale, additionalFiles, modelMetadata, thumbnail, metadataManager });
           } catch (e2) {
             throw e; // fall back to outer error handler
           }

@@ -50,10 +50,171 @@ function numStr(n, precision = 6) {
   return s.replace(/\.0+$/,'').replace(/(\.[0-9]*?)0+$/,'$1');
 }
 
+function _isIdentityMatrixElements(e) {
+  if (!e || e.length !== 16) return true;
+  return e[0] === 1 && e[4] === 0 && e[8] === 0 && e[12] === 0
+    && e[1] === 0 && e[5] === 1 && e[9] === 0 && e[13] === 0
+    && e[2] === 0 && e[6] === 0 && e[10] === 1 && e[14] === 0
+    && e[3] === 0 && e[7] === 0 && e[11] === 0 && e[15] === 1;
+}
+
+function _clampByte(n) {
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
+
+function _rgbToHex(r, g, b) {
+  return `#${_clampByte(r).toString(16).padStart(2, '0')}${_clampByte(g).toString(16).padStart(2, '0')}${_clampByte(b).toString(16).padStart(2, '0')}`;
+}
+
+function _parseRgbComponent(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return NaN;
+  if (s.endsWith('%')) {
+    const num = parseFloat(s.slice(0, -1));
+    if (!Number.isFinite(num)) return NaN;
+    return (num / 100) * 255;
+  }
+  const num = parseFloat(s);
+  if (!Number.isFinite(num)) return NaN;
+  return num;
+}
+
+function _parseHue(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (!s) return NaN;
+  if (s.endsWith('turn')) {
+    const num = parseFloat(s.slice(0, -4));
+    if (!Number.isFinite(num)) return NaN;
+    return num * 360;
+  }
+  if (s.endsWith('rad')) {
+    const num = parseFloat(s.slice(0, -3));
+    if (!Number.isFinite(num)) return NaN;
+    return (num * 180) / Math.PI;
+  }
+  if (s.endsWith('deg')) {
+    const num = parseFloat(s.slice(0, -3));
+    if (!Number.isFinite(num)) return NaN;
+    return num;
+  }
+  const num = parseFloat(s);
+  if (!Number.isFinite(num)) return NaN;
+  return num;
+}
+
+function _parsePercent(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return NaN;
+  if (s.endsWith('%')) {
+    const num = parseFloat(s.slice(0, -1));
+    if (!Number.isFinite(num)) return NaN;
+    return num / 100;
+  }
+  const num = parseFloat(s);
+  if (!Number.isFinite(num)) return NaN;
+  return num > 1 ? num / 100 : num;
+}
+
+function _hslToRgb(h, s, l) {
+  const hue = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+  const m = l - c / 2;
+  let r = 0; let g = 0; let b = 0;
+  if (hue < 60) { r = c; g = x; b = 0; }
+  else if (hue < 120) { r = x; g = c; b = 0; }
+  else if (hue < 180) { r = 0; g = c; b = x; }
+  else if (hue < 240) { r = 0; g = x; b = c; }
+  else if (hue < 300) { r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  return { r: r + m, g: g + m, b: b + m };
+}
+
+function _parseColorToHex(value) {
+  if (value == null) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const n = Math.max(0, Math.min(0xffffff, Math.round(value)));
+    return `#${n.toString(16).padStart(6, '0')}`;
+  }
+  if (typeof value === 'string') {
+    const v = value.trim();
+    if (!v) return null;
+    const hexMatch = v.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hexMatch) {
+      const h = hexMatch[1];
+      if (h.length === 3) {
+        return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`.toLowerCase();
+      }
+      return `#${h.toLowerCase()}`;
+    }
+    const hex0xMatch = v.match(/^0x([0-9a-f]{6})$/i);
+    if (hex0xMatch) return `#${hex0xMatch[1].toLowerCase()}`;
+    const rgbMatch = v.match(/^rgba?\((.+)\)$/i);
+    if (rgbMatch) {
+      const inner = rgbMatch[1].replace('/', ' ');
+      const parts = inner.split(/[, ]+/).map(p => p.trim()).filter(Boolean);
+      if (parts.length < 3) return null;
+      const r = _parseRgbComponent(parts[0]);
+      const g = _parseRgbComponent(parts[1]);
+      const b = _parseRgbComponent(parts[2]);
+      if (![r, g, b].every(Number.isFinite)) return null;
+      return _rgbToHex(r, g, b);
+    }
+    const hslMatch = v.match(/^hsla?\((.+)\)$/i);
+    if (hslMatch) {
+      const inner = hslMatch[1].replace('/', ' ');
+      const parts = inner.split(/[, ]+/).map(p => p.trim()).filter(Boolean);
+      if (parts.length < 3) return null;
+      const h = _parseHue(parts[0]);
+      const s = _parsePercent(parts[1]);
+      const l = _parsePercent(parts[2]);
+      if (![h, s, l].every(Number.isFinite)) return null;
+      const rgb = _hslToRgb(h, s, l);
+      return _rgbToHex(rgb.r * 255, rgb.g * 255, rgb.b * 255);
+    }
+    return null;
+  }
+  if (Array.isArray(value) && value.length >= 3) {
+    const r = Number(value[0]);
+    const g = Number(value[1]);
+    const b = Number(value[2]);
+    if (![r, g, b].every(Number.isFinite)) return null;
+    const max = Math.max(r, g, b);
+    return max <= 1 ? _rgbToHex(r * 255, g * 255, b * 255) : _rgbToHex(r, g, b);
+  }
+  if (typeof value === 'object') {
+    const r = Number(value.r);
+    const g = Number(value.g);
+    const b = Number(value.b);
+    if ([r, g, b].every(Number.isFinite)) {
+      const max = Math.max(r, g, b);
+      return max <= 1 ? _rgbToHex(r * 255, g * 255, b * 255) : _rgbToHex(r, g, b);
+    }
+  }
+  return null;
+}
+
+function _pickColorValue(meta, keys) {
+  if (!meta || typeof meta !== 'object') return null;
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(meta, key)) continue;
+    const raw = meta[key];
+    if (raw == null) continue;
+    if (typeof raw === 'string' && raw.trim() === '') continue;
+    return raw;
+  }
+  return null;
+}
+
+function _resolveColorHex(meta, keys) {
+  const raw = _pickColorValue(meta, keys);
+  return _parseColorToHex(raw);
+}
+
 /**
  * Build the core 3MF model XML for one or more solids.
  * @param {Array} solids Array of SOLID-like objects that expose getMesh() and name.
- * @param {{unit?: 'millimeter'|'inch'|'foot'|'meter'|'centimeter'|'micron', precision?: number}} opts
+ * @param {{unit?: 'millimeter'|'inch'|'foot'|'meter'|'centimeter'|'micron', precision?: number, scale?: number, metadataManager?: any, useMetadataColors?: boolean, includeFaceTags?: boolean, applyWorldTransform?: boolean}} opts
  * @returns {string}
  */
 export function build3MFModelXML(solids, opts = {}) {
@@ -62,6 +223,8 @@ export function build3MFModelXML(solids, opts = {}) {
   const scale = Number.isFinite(opts.scale) ? opts.scale : 1.0;
   const modelMetadata = opts.modelMetadata && typeof opts.modelMetadata === 'object' ? opts.modelMetadata : null;
   const includeFaceTags = opts.includeFaceTags !== false; // default on
+  const useMetadataColors = opts.useMetadataColors !== false;
+  const applyWorldTransform = opts.applyWorldTransform !== false;
 
   const lines = [];
   lines.push('<?xml version="1.0" encoding="UTF-8"?>');
@@ -84,17 +247,117 @@ export function build3MFModelXML(solids, opts = {}) {
     const mesh = s.getMesh();
     try {
     if (!mesh || !mesh.vertProperties || !mesh.triVerts) continue;
-    const name = xmlEsc(s.name || `solid_${solidIdx + 1}`);
+    const rawName = s.name || `solid_${solidIdx + 1}`;
+    const name = xmlEsc(rawName);
     const vp = mesh.vertProperties; // Float32Array
     const tv = mesh.triVerts;       // Uint32Array
+    const tCount = (tv.length / 3) | 0;
+    const metadataManager = opts.metadataManager && typeof opts.metadataManager.getMetadata === 'function' ? opts.metadataManager : null;
+    const idToFaceName = s && s._idToFaceName instanceof Map ? s._idToFaceName : null;
+    let worldMatrixElements = null;
+    if (applyWorldTransform) {
+      try {
+        if (typeof s.updateWorldMatrix === 'function') {
+          s.updateWorldMatrix(true, false);
+        } else if (typeof s.updateMatrixWorld === 'function') {
+          s.updateMatrixWorld(true);
+        }
+      } catch { /* best-effort only */ }
+      const wm = s && s.matrixWorld;
+      if (wm && wm.elements && wm.elements.length === 16 && !_isIdentityMatrixElements(wm.elements)) {
+        worldMatrixElements = wm.elements;
+      }
+    }
 
-    // Optional: build a per-object BaseMaterials resource to tag faces
-    // We rely on mesh.faceID (Uint32Array) and, if available, a mapping on the Solid instance.
+    // Optional: build per-object BaseMaterials for metadata colors or face tags.
     let matPid = null; // resource id for this object's material group
-    let faceIndexOf = null; // function: id -> material index
-    if (includeFaceTags && mesh.faceID && mesh.faceID.length === (tv.length / 3 | 0)) {
+    let objectPidAttr = '';
+    let objectPindexAttr = '';
+    let faceColorById = null;
+    let faceMatIndexById = null;
+    let solidMatIndex = null;
+    let useFaceTagsFallback = false;
+
+    const faceIDs = (mesh.faceID && mesh.faceID.length === tCount) ? mesh.faceID : null;
+    if (useMetadataColors) {
+      let solidColorHex = null;
+      try {
+        const solidMeta = (metadataManager && s?.name)
+          ? metadataManager.getMetadata(s.name)
+          : null;
+        solidColorHex = _resolveColorHex(solidMeta, ['solidColor', 'color'])
+          || _resolveColorHex(s?.userData?.metadata || null, ['solidColor', 'color']);
+      } catch { solidColorHex = null; }
+
+      if (faceIDs && idToFaceName) {
+        faceColorById = new Map();
+        const seenFace = new Set();
+        for (let t = 0; t < faceIDs.length; t++) {
+          const fid = faceIDs[t] >>> 0;
+          if (seenFace.has(fid)) continue;
+          seenFace.add(fid);
+          const faceName = idToFaceName.get(fid) || `FACE_${fid}`;
+          let faceMeta = null;
+          try { faceMeta = typeof s.getFaceMetadata === 'function' ? s.getFaceMetadata(faceName) : null; } catch { faceMeta = null; }
+          let faceHex = null;
+          if (metadataManager) {
+            try { faceHex = _resolveColorHex(metadataManager.getMetadata(faceName), ['faceColor', 'color']); } catch { faceHex = null; }
+          }
+          if (!faceHex) faceHex = _resolveColorHex(faceMeta, ['faceColor', 'color']);
+          if (faceHex) faceColorById.set(fid, faceHex);
+        }
+      }
+
+      const hasFaceColors = faceColorById && faceColorById.size > 0;
+      const hasSolidColor = !!solidColorHex;
+      const hasMetadataColors = hasSolidColor || hasFaceColors;
+
+      if (hasMetadataColors) {
+        const materials = [];
+        const colorToIndex = new Map();
+        const addMaterial = (hex, label) => {
+          if (!hex) return null;
+          if (!colorToIndex.has(hex)) {
+            colorToIndex.set(hex, materials.length);
+            materials.push({ color: hex, name: label || '' });
+          }
+          return colorToIndex.get(hex);
+        };
+
+        if (hasSolidColor) solidMatIndex = addMaterial(solidColorHex, `${rawName}_SOLID`);
+        if (hasFaceColors) {
+          faceMatIndexById = new Map();
+          for (const [fid, hex] of faceColorById.entries()) {
+            const faceName = idToFaceName ? (idToFaceName.get(fid) || `FACE_${fid}`) : `FACE_${fid}`;
+            const idx = addMaterial(hex, faceName);
+            faceMatIndexById.set(fid, idx);
+          }
+        }
+
+        if (materials.length > 0) {
+          matPid = nextId++;
+          lines.push(`    <basematerials id="${matPid}">`);
+          for (const entry of materials) {
+            const nm = entry.name ? xmlEsc(entry.name) : '';
+            const nameAttr = nm ? ` name="${nm}"` : '';
+            lines.push(`      <base${nameAttr} displaycolor="${entry.color}"/>`);
+          }
+          lines.push('    </basematerials>');
+          if (solidMatIndex != null) {
+            objectPidAttr = ` pid="${matPid}"`;
+            objectPindexAttr = ` pindex="${solidMatIndex}"`;
+          }
+        }
+      } else if (includeFaceTags && faceIDs) {
+        useFaceTagsFallback = true;
+      }
+    } else if (includeFaceTags && faceIDs) {
+      useFaceTagsFallback = true;
+    }
+
+    let faceIndexOf = null;
+    if (useFaceTagsFallback && faceIDs) {
       // Gather unique face IDs present on this mesh
-      const faceIDs = mesh.faceID;
       const uniqueIds = [];
       const seen = new Set();
       for (let t = 0; t < faceIDs.length; t++) {
@@ -104,10 +367,9 @@ export function build3MFModelXML(solids, opts = {}) {
       if (uniqueIds.length > 0) {
         // Map each ID to a readable name if available on the Solid, else fallback
         const idToName = new Map();
-        const map = s && s._idToFaceName instanceof Map ? s._idToFaceName : null;
         for (let i = 0; i < uniqueIds.length; i++) {
           const fid = uniqueIds[i];
-          const nm = (map && map.get(fid)) || `FACE_${fid}`;
+          const nm = (idToFaceName && idToFaceName.get(fid)) || `FACE_${fid}`;
           idToName.set(fid, String(nm));
         }
 
@@ -122,7 +384,7 @@ export function build3MFModelXML(solids, opts = {}) {
         for (let i = 0; i < uniqueIds.length; i++) {
           const fid = uniqueIds[i];
           const nm = idToName.get(fid);
-          // Optional: deterministic color derived from name hash for readability
+          // Deterministic color derived from name hash for readability
           let color = '#808080';
           try {
             let h = 2166136261 >>> 0;
@@ -140,25 +402,46 @@ export function build3MFModelXML(solids, opts = {}) {
     }
 
     const objId = nextId++;
-    lines.push(`    <object id="${objId}" type="model" name="${name}">`);
+    lines.push(`    <object id="${objId}" type="model" name="${name}"${objectPidAttr}${objectPindexAttr}>`);
     lines.push('      <mesh>');
 
     // Vertices
     lines.push('        <vertices>');
     const vCount = (vp.length / 3) | 0;
     for (let i = 0; i < vCount; i++) {
-      const x = numStr(vp[i * 3 + 0] * scale, precision);
-      const y = numStr(vp[i * 3 + 1] * scale, precision);
-      const z = numStr(vp[i * 3 + 2] * scale, precision);
-      lines.push(`          <vertex x="${x}" y="${y}" z="${z}"/>`);
+      let x = vp[i * 3 + 0];
+      let y = vp[i * 3 + 1];
+      let z = vp[i * 3 + 2];
+      if (worldMatrixElements) {
+        const e = worldMatrixElements;
+        const nx = e[0] * x + e[4] * y + e[8] * z + e[12];
+        const ny = e[1] * x + e[5] * y + e[9] * z + e[13];
+        const nz = e[2] * x + e[6] * y + e[10] * z + e[14];
+        x = nx; y = ny; z = nz;
+      }
+      const xs = numStr(x * scale, precision);
+      const ys = numStr(y * scale, precision);
+      const zs = numStr(z * scale, precision);
+      lines.push(`          <vertex x="${xs}" y="${ys}" z="${zs}"/>`);
     }
     lines.push('        </vertices>');
 
     // Triangles
     lines.push('        <triangles>');
-    const tCount = (tv.length / 3) | 0;
-    if (matPid != null && mesh.faceID && mesh.faceID.length === tCount && faceIndexOf) {
-      const faceIDs = mesh.faceID;
+    if (faceIDs && faceMatIndexById && matPid != null && faceMatIndexById.size > 0) {
+      for (let t = 0; t < tCount; t++) {
+        const v1 = tv[t * 3 + 0] >>> 0;
+        const v2 = tv[t * 3 + 1] >>> 0;
+        const v3 = tv[t * 3 + 2] >>> 0;
+        const fid = faceIDs[t] >>> 0;
+        const idx = faceMatIndexById.get(fid);
+        if (idx != null) {
+          lines.push(`          <triangle v1="${v1}" v2="${v2}" v3="${v3}" pid="${matPid}" p1="${idx}" p2="${idx}" p3="${idx}"/>`);
+        } else {
+          lines.push(`          <triangle v1="${v1}" v2="${v2}" v3="${v3}"/>`);
+        }
+      }
+    } else if (matPid != null && faceIndexOf && faceIDs) {
       for (let t = 0; t < tCount; t++) {
         const v1 = tv[t * 3 + 0] >>> 0;
         const v2 = tv[t * 3 + 1] >>> 0;
@@ -241,7 +524,7 @@ function modelPartRelsXML({ thumbnailPath } = {}) {
 /**
  * Generate a 3MF zip archive as Uint8Array.
  * @param {Array} solids Array of SOLID-like objects that expose getMesh() and name.
- * @param {{unit?: string, precision?: number}} opts
+ * @param {{unit?: string, precision?: number, scale?: number, metadataManager?: any, useMetadataColors?: boolean, includeFaceTags?: boolean, applyWorldTransform?: boolean}} opts
  * @returns {Promise<Uint8Array>}
  */
 export async function generate3MF(solids, opts = {}) {
