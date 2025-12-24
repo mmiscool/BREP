@@ -261,7 +261,7 @@ export class Viewer {
         const ambientLight = new THREE.AmbientLight(0xffffff, 1);
         const hemiLight = new THREE.HemisphereLight(0xffffff, 0x333333, 0.25);
         const lightDirections = [
-            [1, 1, 1],
+            [-20, -20, -20],
             [-1, 1, -1],
             [1, -1, -1],
             [-1, -1, 1],
