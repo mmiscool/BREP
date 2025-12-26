@@ -343,6 +343,8 @@ export class SketchMode3D {
 
   close() {
     const v = this.viewer;
+    try { this._acc?.clear?.(); } catch { }
+    this._acc = null;
     if (this._ui && v?.container) {
       try {
         v.container.removeChild(this._ui);
@@ -1083,7 +1085,7 @@ export class SketchMode3D {
     wrap.style.maxHeight = "calc(100% - 2 * 8px)";
     wrap.style.overflow = "auto";
     wrap.style.zIndex = "6";
-    const acc = new AccordionWidget();
+    const acc = new AccordionWidget({ dockLayout: v?._dockLayout || null, dock: "left" });
     wrap.appendChild(acc.uiElement);
     host.appendChild(wrap);
     this._left = wrap;

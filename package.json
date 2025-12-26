@@ -39,9 +39,11 @@
   },
   "description": "",
   "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.1.0",
     "nodemon": "^3.1.11",
     "playwright": "^1.57.0",
     "vite": "^7.2.7",
+    "vite-plugin-mkcert": "^1.17.9",
     "vite-plugin-wasm": "^3.5.0"
   }
 }

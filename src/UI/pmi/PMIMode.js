@@ -356,8 +356,11 @@ export class PMIMode {
       // Find all accordion sections and hide them
       const titles = accordion.querySelectorAll('.accordion-title');
       const contents = accordion.querySelectorAll('.accordion-content');
+      const containers = new Set();
 
       titles.forEach(title => {
+        const container = title.closest('.accordion-section');
+        if (container) containers.add(container);
         this._originalSections.push({
           element: title,
           display: title.style.display || '',
@@ -367,12 +370,23 @@ export class PMIMode {
       });
 
       contents.forEach(content => {
+        const container = content.closest('.accordion-section');
+        if (container) containers.add(container);
         this._originalSections.push({
           element: content,
           display: content.style.display || '',
           visibility: content.style.visibility || ''
         });
         content.style.display = 'none';
+      });
+
+      containers.forEach(container => {
+        this._originalSections.push({
+          element: container,
+          display: container.style.display || '',
+          visibility: container.style.visibility || ''
+        });
+        container.style.display = 'none';
       });
     } catch (e) {
       console.warn('Failed to hide original sidebar sections:', e);
@@ -445,21 +459,30 @@ export class PMIMode {
 
       // First, try to use the stored section references for direct removal
       const storedSections = [this._pmiModeViewsSection, this._pmiAnnotationsSection, this._pmiToolOptionsSection];
-      storedSections.forEach((section, index) => {
-        if (section && section.uiElement) {
+      const removeTarget = async (target) => {
+        if (v.accordion && typeof v.accordion.removeSection === 'function') {
           try {
-            // Remove the title element
-            const titleEl = section.uiElement.previousElementSibling;
-            if (titleEl && titleEl.classList.contains('accordion-title')) {
-              titleEl.remove();
-            }
-            // Remove the content element
-            section.uiElement.remove();
+            const removed = await v.accordion.removeSection(target);
+            if (removed) return true;
           } catch (e) {
-            console.warn(`Failed to remove stored section ${index}:`, e);
+            console.warn('Failed to remove section via API:', e);
           }
         }
-      });
+        if (target && target.parentNode) {
+          try { target.parentNode.removeChild(target); } catch { /* ignore */ }
+          return true;
+        }
+        return false;
+      };
+      for (let index = 0; index < storedSections.length; index++) {
+        const section = storedSections[index];
+        if (!section || !section.uiElement) continue;
+        try {
+          await removeTarget(section);
+        } catch (e) {
+          console.warn(`Failed to remove stored section ${index}:`, e);
+        }
+      }
 
       // Aggressively search and remove any PMI-related elements
       try {
@@ -471,47 +494,38 @@ export class PMIMode {
 
 
         // Remove elements that match PMI section patterns
-        allTitles.forEach(titleEl => {
+        for (const titleEl of allTitles) {
           const text = titleEl.textContent || '';
           if (text.includes('Annotations') || text === 'View Settings' || text === 'PMI Settings') {
-            // Find and remove the associated content element as well
-            const nextEl = titleEl.nextElementSibling;
-            if (nextEl && nextEl.classList.contains('accordion-content')) {
-              nextEl.remove();
-            }
-            titleEl.remove();
+            await removeTarget(titleEl);
           }
-        });
+        }
 
         // Remove any remaining content elements that might have been missed
-        allContents.forEach(contentEl => {
-          if (!contentEl.parentNode) return; // Already removed
+        for (const contentEl of allContents) {
+          if (!contentEl.parentNode) continue; // Already removed
           const id = contentEl.id || '';
           const name = contentEl.getAttribute('name') || '';
           if (name.includes('Annotations') || name === 'accordion-content-View Settings' || name === 'accordion-content-PMI Settings' ||
             id.includes('Annotations') || id === 'accordion-content-View Settings' || id === 'accordion-content-PMI Settings') {
-            contentEl.remove();
+            await removeTarget(contentEl);
           }
-        });
+        }
 
         // Additional cleanup: remove any elements that contain PMI-specific classes or content
         const pmiElements = accordion.querySelectorAll('.pmi-ann-list, .pmi-scrollable-content, .pmi-inline-menu, .pmi-ann-footer, .pmi-vfield');
-        pmiElements.forEach(el => {
+        for (const el of pmiElements) {
           // Remove the entire parent accordion section if this is PMI content
           let parent = el.parentNode;
           while (parent && !parent.classList.contains('accordion-content')) {
             parent = parent.parentNode;
           }
           if (parent && parent.classList.contains('accordion-content')) {
-            const titleEl = parent.previousElementSibling;
-            if (titleEl && titleEl.classList.contains('accordion-title')) {
-              titleEl.remove();
-            }
-            parent.remove();
+            await removeTarget(parent);
           } else {
-            el.remove();
+            await removeTarget(el);
           }
-        });
+        }
 
         // Final nuclear option: remove any sections that weren't there originally
         // This is a bit aggressive but ensures complete cleanup
@@ -632,13 +646,19 @@ export class PMIMode {
 
   #applyPMIPanelLayout() {
     try {
-      const accordion = this.viewer?.accordion?.uiElement;
-      if (!accordion) return;
+      const acc = this.viewer?.accordion;
+      if (!acc) return;
       const sections = [
         this._pmiModeViewsSection,
         this._pmiAnnotationsSection,
         this._pmiToolOptionsSection,
       ];
+      if (typeof acc.prependSections === 'function') {
+        const moved = acc.prependSections(sections);
+        if (moved) return;
+      }
+      const accordion = acc.uiElement;
+      if (!accordion) return;
       const fragment = document.createDocumentFragment();
       let hasAny = false;
       for (const section of sections) {

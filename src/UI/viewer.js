@@ -10,6 +10,7 @@ import { CombinedTransformControls } from './controls/CombinedTransformControls.
 import { SceneListing } from './SceneListing.js';
 import { CADmaterials, CADmaterialWidget } from './CADmaterials.js';
 import { AccordionWidget } from './AccordionWidget.js';
+import { DockableLayout } from './dockingLayout.js';
 import { OrthoCameraIdle } from './OrthoCameraIdle.js';
 import { HistoryWidget } from './HistoryWidget.js';
 import { AssemblyConstraintsWidget } from './assembly/AssemblyConstraintsWidget.js';
@@ -435,9 +436,38 @@ export class Viewer {
 
 
     async setupAccordion() {
-        // Setup accordion
-        this.accordion = await new AccordionWidget();
-        await this.sidebar.appendChild(this.accordion.uiElement);
+        // Setup accordion + docking layout for sidebar panels
+        const sidebarWidth = this._getSidebarWidth();
+        if (Number.isFinite(sidebarWidth)) this._setDockThickness(sidebarWidth);
+        if (this.sidebar) {
+            this._dockLayout = new DockableLayout({
+                initialDockSize: sidebarWidth || 280,
+                minPanelSize: 64,
+                zIndexBase: 7,
+                allowTopDock: false,
+                onLayout: () => {
+                    try { this.mainToolbar?._positionWithSidebar?.(); } catch { /* ignore */ }
+                },
+                onZoneResize: (zone, size) => {
+                    if (!Number.isFinite(size) || size <= 0) return;
+                    if (zone === 'left') {
+                        if (this.sidebar) this.sidebar.style.width = `${Math.round(size)}px`;
+                        this._setDockThickness(size);
+                    }
+                    try { this.mainToolbar?._positionWithSidebar?.(); } catch { /* ignore */ }
+                },
+            });
+            if (window.ResizeObserver) {
+                this._sidebarDockObserver = new ResizeObserver(() => {
+                    const w = this._getSidebarWidth();
+                    if (Number.isFinite(w)) this._setDockThickness(w);
+                    try { this._dockLayout?.layout(); } catch { /* ignore */ }
+                });
+                try { this._sidebarDockObserver.observe(this.sidebar); } catch { /* ignore */ }
+            }
+        }
+        this.accordion = await new AccordionWidget({ dockLayout: this._dockLayout, dock: 'left' });
+        if (this.sidebar) await this.sidebar.appendChild(this.accordion.uiElement);
 
 
         // Load saved plugins early (before File Manager autoloads last model)
@@ -545,6 +575,22 @@ export class Viewer {
         try { this.renderer.domElement.style.marginTop = '0px'; } catch { }
     }
 
+    _getSidebarWidth() {
+        try {
+            if (!this.sidebar) return null;
+            const rect = this.sidebar.getBoundingClientRect?.();
+            const w = Math.round(rect?.width || this.sidebar.offsetWidth || 0);
+            return w > 0 ? w : null;
+        } catch { return null; }
+    }
+
+    _setDockThickness(px) {
+        try {
+            if (!Number.isFinite(px) || px <= 0) return;
+            document.documentElement.style.setProperty('--dock-thickness', `${px}px`);
+        } catch { /* ignore */ }
+    }
+
     // Public: allow plugins to add toolbar buttons even before MainToolbar is constructed
     addToolbarButton(label, title, onClick) {
         const item = { label, title, onClick };
@@ -575,13 +621,17 @@ export class Viewer {
             }
             // Reposition this plugin section to immediately before the Display Settings panel, if present
             try {
-                const root = this.accordion.uiElement;
-                const targetTitle = root.querySelector('.accordion-title[name="accordion-title-Display Settings"]');
-                if (targetTitle) {
-                    const secTitle = root.querySelector(`.accordion-title[name="accordion-title-${t}"]`);
-                    if (secTitle && sec.uiElement && secTitle !== targetTitle) {
-                        root.insertBefore(secTitle, targetTitle);
-                        root.insertBefore(sec.uiElement, targetTitle);
+                if (this.accordion?.moveSectionBefore) {
+                    this.accordion.moveSectionBefore(sec, 'Display Settings');
+                } else {
+                    const root = this.accordion.uiElement;
+                    const targetTitle = root.querySelector('.accordion-title[name="accordion-title-Display Settings"]');
+                    if (targetTitle) {
+                        const secTitle = root.querySelector(`.accordion-title[name="accordion-title-${t}"]`);
+                        if (secTitle && sec.uiElement && secTitle !== targetTitle) {
+                            root.insertBefore(secTitle, targetTitle);
+                            root.insertBefore(sec.uiElement, targetTitle);
+                        }
                     }
                 }
             } catch { }
@@ -645,6 +695,10 @@ export class Viewer {
         window.removeEventListener('keydown', this._onKeyDown, { passive: true });
         this.controls.dispose();
         this.renderer.dispose();
+        try { this._sidebarDockObserver?.disconnect(); } catch { }
+        this._sidebarDockObserver = null;
+        try { this._dockLayout?.destroy(); } catch { }
+        this._dockLayout = null;
         try { if (this._sketchMode) this._sketchMode.dispose(); } catch { }
         try { if (this._splineMode) this._splineMode.dispose(); } catch { }
         if (el.parentNode) el.parentNode.removeChild(el);

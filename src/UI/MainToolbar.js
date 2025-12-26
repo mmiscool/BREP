@@ -105,6 +105,12 @@ export class MainToolbar {
       const sb = this.viewer?.sidebar;
       const w = Math.ceil(sb?.getBoundingClientRect?.().width || sb?.offsetWidth || 0);
       this.root.style.left = `${w}px`;
-    } catch { this.root.style.left = '0px'; }
+      const rightDock = this.viewer?._dockLayout?.getZoneSize?.('right') || 0;
+      const right = Number.isFinite(rightDock) && rightDock > 0 ? Math.ceil(rightDock) : 0;
+      this.root.style.right = `${right}px`;
+    } catch {
+      this.root.style.left = '0px';
+      this.root.style.right = '0px';
+    }
   }
 }

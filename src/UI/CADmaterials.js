@@ -231,10 +231,7 @@ export class CADmaterialWidget {
         widthVal.className = 'cmw-val';
         widthVal.textContent = `${initialWidth}px`;
         const applySidebarWidth = (px) => {
-            try {
-                const sb = document.getElementById('sidebar');
-                if (sb && Number.isFinite(px) && px > 0) sb.style.width = `${px}px`;
-            } catch { /* ignore */ }
+            try { this._applySidebarWidth(px); } catch { /* ignore */ }
         };
         // Apply saved width immediately
         applySidebarWidth(initialWidth);
@@ -390,8 +387,11 @@ export class CADmaterialWidget {
     }
     _applySidebarWidth(px) {
         try {
+            if (!Number.isFinite(px) || px <= 0) return;
             const sb = document.getElementById('sidebar');
-            if (sb && Number.isFinite(px) && px > 0) sb.style.width = `${px}px`;
+            if (sb) sb.style.width = `${px}px`;
+            document.documentElement.style.setProperty('--dock-thickness', `${px}px`);
+            try { window.dispatchEvent(new Event('resize')); } catch { /* ignore */ }
         } catch { /* ignore */ }
     }
     _setSidebarWidthUi(px) {
