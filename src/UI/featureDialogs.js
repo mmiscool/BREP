@@ -1137,11 +1137,13 @@ export class SchemaForm {
                 break;
             case 'number': {
                 // Accept formulas or plain numbers. If the value is not purely numeric,
-                // render the input as text so the expression is visible.
+                // render the input as text so the expression is visible. Some inputs
+                // force text rendering to avoid type switching.
                 const rawStr = value == null ? '' : String(value);
                 const numericLike = /^\s*[-+]?((\d+(?:\.\d*)?)|(\.\d+))(?:[eE][-+]?\d+)?\s*$/.test(rawStr);
+                const forceText = el && el.dataset && el.dataset.forceText === 'true';
                 try {
-                    if (numericLike) {
+                    if (!forceText && numericLike) {
                         if (el.type !== 'number') el.type = 'number';
                         // Re-apply numeric attributes if we previously toggled away
                         if (el.dataset && el.dataset.step) el.step = el.dataset.step;
@@ -1262,6 +1264,51 @@ export class SchemaForm {
         width: 100%;
         box-sizing: border-box;
       }
+      .number-input-wrap {
+        position: relative;
+        width: 100%;
+      }
+      .number-input {
+        padding-right: 36px;
+      }
+      .number-stepper {
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        right: 4px;
+        width: 26px;
+        display: flex;
+        flex-direction: column;
+        border-left: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        background: rgba(255,255,255,.02);
+      }
+      .number-stepper-btn {
+        appearance: none;
+        border: 0;
+        padding: 0;
+        margin: 0;
+        background: transparent;
+        cursor: pointer;
+        flex: 1 1 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .number-stepper-btn::before {
+        content: '';
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+      }
+      .number-stepper-up { border-bottom: 1px solid var(--border); }
+      .number-stepper-up::before { border-bottom: 6px solid var(--muted); }
+      .number-stepper-down::before { border-top: 6px solid var(--muted); }
+      .number-stepper-up:hover::before { border-bottom-color: var(--text); }
+      .number-stepper-down:hover::before { border-top-color: var(--text); }
+      .number-stepper-btn:active { background: rgba(255,255,255,.06); }
       textarea.input {
         resize: vertical;
         line-height: 1.4;
