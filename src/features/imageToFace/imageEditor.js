@@ -1,6 +1,6 @@
 // Image editor that displays as a full screen paint-like editor
 import { SchemaForm } from '../../UI/featureDialogs.js';
-import { traceImageDataToPolylines, applyCurveFit, rdp } from './traceUtils.js';
+import { traceImageDataToPolylines, applyCurveFit, assignBreaksToLoops, splitLoopIntoEdges } from './traceUtils.js';
 
 export class ImageEditorUI {
     // onSaveCallback can be a function (dataUrl)=>void, or an object { onSave, onCancel }
@@ -16,7 +16,7 @@ export class ImageEditorUI {
         this.featurePartHistory = options && options.partHistory ? options.partHistory : null;
 
         // Drawing state
-        this.tool = 'brush'; // 'brush' | 'eraser' | 'pan' | 'bucket'
+        this.tool = 'brush'; // 'brush' | 'eraser' | 'pan' | 'bucket' | 'break'
         this.brushColor = '#000000';
         this.brushSize = 8;
         this.brushShape = 'round'; // 'round' | 'square' | 'diamond'
@@ -62,6 +62,9 @@ export class ImageEditorUI {
         this.ctx = null;
         this.svgOverlay = null;
         this.svgPathsGroup = null;
+        this.svgBreakpointsGroup = null;
+        this.svgManualBreaksGroup = null;
+        this.svgSuppressedBreaksGroup = null;
         this.sidebar = null;
         this.formHost = null;
         this.finishBtn = null;
@@ -70,6 +73,7 @@ export class ImageEditorUI {
         this.sizeInput = null;
         this.brushBtn = null;
         this.eraserBtn = null;
+        this.breakBtn = null;
         this.undoBtn = null;
         this.redoBtn = null;
         this.schemaForm = null;
@@ -82,6 +86,13 @@ export class ImageEditorUI {
         this._traceCanvas = null;
         this._traceCtx = null;
         this._baseImageOnDrawCanvas = false;
+        this._vectorLoops = [];
+        this._autoBreakPoints = [];
+        this._breakAutoPx = 2.2;
+        this._breakManualPx = 3;
+        this._breakSnapPx = 6;
+        this._breakDedupePx = 4;
+        this._breakRemovePx = 6;
 
         this._initDOM();
         this._loadImage(this.imageBase64).then(() => {/* one-to-one set in _loadImage */ });
@@ -147,6 +158,7 @@ export class ImageEditorUI {
             <input type="range" min="1" max="64" value="8" class="img-editor-range js-size"/>
             <button class="img-editor-btn js-eraser" title="Eraser (E)">Eraser</button>
             <button class="img-editor-btn js-pan" title="Pan (Hold Space)">Pan</button>
+            <button class="img-editor-btn js-break" title="Insert edge break">Break</button>
         </div>
         <div class="img-editor-group">
             <button class="img-editor-btn js-bucket" title="Paint Bucket (G)">Bucket</button>
@@ -167,7 +179,12 @@ export class ImageEditorUI {
       <div class="img-editor-main">
         <div class="img-editor-canvas-wrap">
           <canvas class="img-editor-canvas"></canvas>
-          <svg class="img-editor-overlay-svg" preserveAspectRatio="none" aria-hidden="true"><g class="js-vector-group" fill="none" stroke="lime" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" shape-rendering="geometricPrecision"></g></svg>
+          <svg class="img-editor-overlay-svg" preserveAspectRatio="none" aria-hidden="true">
+            <g class="js-vector-group" fill="none" stroke="lime" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" shape-rendering="geometricPrecision"></g>
+            <g class="js-breakpoints-group" fill="#ffd400" stroke="#111" stroke-width="0.5" vector-effect="non-scaling-stroke" shape-rendering="geometricPrecision"></g>
+            <g class="js-breakpoints-manual" fill="#ff4bd8" stroke="#111" stroke-width="0.5" vector-effect="non-scaling-stroke" shape-rendering="geometricPrecision"></g>
+            <g class="js-breakpoints-suppressed" fill="none" stroke="#888" stroke-width="0.5" vector-effect="non-scaling-stroke" shape-rendering="geometricPrecision"></g>
+          </svg>
         </div>
         <div class="img-editor-sidebar">
           <h3>Image to Face</h3>
@@ -184,6 +201,9 @@ export class ImageEditorUI {
         this.ctx = this.canvas.getContext('2d');
         this.svgOverlay = overlay.querySelector('.img-editor-overlay-svg');
         this.svgPathsGroup = overlay.querySelector('.js-vector-group');
+        this.svgBreakpointsGroup = overlay.querySelector('.js-breakpoints-group');
+        this.svgManualBreaksGroup = overlay.querySelector('.js-breakpoints-manual');
+        this.svgSuppressedBreaksGroup = overlay.querySelector('.js-breakpoints-suppressed');
         this.sidebar = overlay.querySelector('.img-editor-sidebar');
         this.formHost = overlay.querySelector('.js-feature-form');
         this.colorInput = overlay.querySelector('.js-color');
@@ -191,6 +211,7 @@ export class ImageEditorUI {
         this.brushBtn = overlay.querySelector('.js-brush');
         this.eraserBtn = overlay.querySelector('.js-eraser');
         this.panBtn = overlay.querySelector('.js-pan');
+        this.breakBtn = overlay.querySelector('.js-break');
         this.bucketBtn = overlay.querySelector('.js-bucket');
         this.undoBtn = overlay.querySelector('.js-undo');
         this.redoBtn = overlay.querySelector('.js-redo');
@@ -267,6 +288,7 @@ export class ImageEditorUI {
         bound.onBrush = () => { this.tool = 'brush'; this._updateButtons(); };
         bound.onEraser = () => { this.tool = 'eraser'; this._updateButtons(); };
         bound.onPan = () => { this.tool = 'pan'; this._updateButtons(); };
+        bound.onBreak = () => { this.tool = 'break'; this._updateButtons(); };
         bound.onBucket = () => { this.tool = 'bucket'; this._updateButtons(); };
         bound.onUndo = () => this._undo();
         bound.onRedo = () => this._redo();
@@ -295,6 +317,7 @@ export class ImageEditorUI {
         this.brushBtn.addEventListener('click', bound.onBrush);
         this.eraserBtn.addEventListener('click', bound.onEraser);
         this.panBtn.addEventListener('click', bound.onPan);
+        this.breakBtn.addEventListener('click', bound.onBreak);
         this.bucketBtn.addEventListener('click', bound.onBucket);
         this.undoBtn.addEventListener('click', bound.onUndo);
         this.redoBtn.addEventListener('click', bound.onRedo);
@@ -327,6 +350,7 @@ export class ImageEditorUI {
         if (this.brushBtn) this.brushBtn.removeEventListener('click', b.onBrush);
         if (this.eraserBtn) this.eraserBtn.removeEventListener('click', b.onEraser);
         if (this.panBtn) this.panBtn.removeEventListener('click', b.onPan);
+        if (this.breakBtn) this.breakBtn.removeEventListener('click', b.onBreak);
         if (this.bucketBtn) this.bucketBtn.removeEventListener('click', b.onBucket);
         if (this.undoBtn) this.undoBtn.removeEventListener('click', b.onUndo);
         if (this.redoBtn) this.redoBtn.removeEventListener('click', b.onRedo);
@@ -490,6 +514,7 @@ export class ImageEditorUI {
         this.svgOverlay.setAttribute('viewBox', `${minX} ${minY} ${vbW} ${vbH}`);
         this.svgOverlay.style.transform = '';
         this.svgOverlay.style.transformOrigin = '';
+        this._updateBreakPointSizes();
     }
 
     _composeImageForVector() {
@@ -536,7 +561,15 @@ export class ImageEditorUI {
         const group = this.svgPathsGroup;
         if (!group || !this.svgOverlay) return;
         const id = this._composeImageForVector();
-        if (!id) { group.innerHTML = ''; return; }
+        if (!id) {
+            group.innerHTML = '';
+            if (this.svgBreakpointsGroup) this.svgBreakpointsGroup.innerHTML = '';
+            if (this.svgManualBreaksGroup) this.svgManualBreaksGroup.innerHTML = '';
+            if (this.svgSuppressedBreaksGroup) this.svgSuppressedBreaksGroup.innerHTML = '';
+            this._vectorLoops = [];
+            this._autoBreakPoints = [];
+            return;
+        }
         const params = this.featureParams || {};
         const threshold = Number.isFinite(Number(params.threshold)) ? Number(params.threshold) : 128;
         const invert = !!params.invert;
@@ -545,6 +578,12 @@ export class ImageEditorUI {
         const speckleArea = Number.isFinite(Number(params.speckleArea)) ? Math.max(0, Number(params.speckleArea)) : 0;
         const simplifyCollinear = !!params.simplifyCollinear;
         const rdpTol = Number.isFinite(Number(params.rdpTolerance)) ? Number(params.rdpTolerance) : 0;
+        const edgeSplitAngle = Number.isFinite(Number(params.edgeSplitAngle))
+            ? Math.max(1, Math.min(179, Number(params.edgeSplitAngle)))
+            : 70;
+        const edgeMinSpacing = Number.isFinite(Number(params.edgeMinSpacing))
+            ? Math.max(0, Number(params.edgeMinSpacing))
+            : 0;
         const pixelScale = Number.isFinite(Number(params.pixelScale)) ? Number(params.pixelScale) : 1;
         const scaleAbs = Math.max(Math.abs(pixelScale) || 1, 1e-9);
         const traceSimplify = (rdpTol && Number(rdpTol) > 0) ? (Number(rdpTol) / scaleAbs) : 0;
@@ -566,6 +605,7 @@ export class ImageEditorUI {
                 iterations: 3,
             });
         }
+        this._vectorLoops = polyLoops.slice();
         const pathStrings = [];
         for (const loop of polyLoops) {
             if (!loop || loop.length < 2) continue;
@@ -575,6 +615,60 @@ export class ImageEditorUI {
             pathStrings.push(`<path d="${d}" />`);
         }
         group.innerHTML = pathStrings.join('');
+
+        const breaksByLoop = assignBreaksToLoops(polyLoops, this._getManualBreaks());
+        const suppressedByLoop = assignBreaksToLoops(polyLoops, this._getSuppressedBreaks());
+        const autoPoints = [];
+        const manualPoints = [];
+        const autoKeys = new Set();
+        const manualKeys = new Set();
+        const minSegLen = Math.max(0.5, 1e-6 / scaleAbs);
+        const cornerSpacing = edgeMinSpacing / scaleAbs;
+        for (let li = 0; li < polyLoops.length; li++) {
+            const loop = polyLoops[li];
+            if (!loop || loop.length < 2) continue;
+            const info = splitLoopIntoEdges(loop, {
+                angleDeg: edgeSplitAngle,
+                minSegLen,
+                cornerSpacing,
+                manualBreaks: breaksByLoop[li] || [],
+                suppressedBreaks: suppressedByLoop[li] || [],
+                returnDebug: true,
+            });
+            const ring = Array.isArray(info?.ring) ? info.ring : [];
+            if (!ring.length) continue;
+            const pushPoint = (arr, set, pt) => {
+                const key = `${Math.round(pt[0] * 1000)},${Math.round(pt[1] * 1000)}`;
+                if (set.has(key)) return;
+                set.add(key);
+                arr.push(pt);
+            };
+            const autoIdx = Array.isArray(info?.corners) ? info.corners : [];
+            for (const idx of autoIdx) {
+                const pt = ring[idx];
+                if (pt) pushPoint(autoPoints, autoKeys, pt);
+            }
+            const manualIdx = Array.isArray(info?.manualCorners) ? info.manualCorners : [];
+            for (const idx of manualIdx) {
+                const pt = ring[idx];
+                if (pt) pushPoint(manualPoints, manualKeys, pt);
+            }
+        }
+
+        const autoR = 1;
+        const manualR = 1;
+        if (this.svgBreakpointsGroup) {
+            this.svgBreakpointsGroup.innerHTML = autoPoints.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="${autoR}" />`).join('');
+        }
+        if (this.svgManualBreaksGroup) {
+            this.svgManualBreaksGroup.innerHTML = manualPoints.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="${manualR}" />`).join('');
+        }
+        if (this.svgSuppressedBreaksGroup) {
+            const suppressedPoints = this._getSuppressedBreaks();
+            this.svgSuppressedBreaksGroup.innerHTML = suppressedPoints.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="${autoR}" />`).join('');
+        }
+        this._autoBreakPoints = autoPoints.slice();
+        this._updateBreakPointSizes();
     }
 
     // ------------------------------ Interaction ----------------------------
@@ -583,6 +677,203 @@ export class ImageEditorUI {
         const ix = (x - this.offsetX) / (this.scale || 1);
         const iy = (y - this.offsetY) / (this.scale || 1);
         return [ix, iy];
+    }
+
+    _updateBreakPointSizes() {
+        const viewScale = Math.max(1e-6, this.scale || 1);
+        const autoR = Math.max(1e-6, this._breakAutoPx / viewScale);
+        const manualR = Math.max(1e-6, this._breakManualPx / viewScale);
+        if (this.svgBreakpointsGroup) {
+            const circles = this.svgBreakpointsGroup.querySelectorAll('circle');
+            circles.forEach((c) => c.setAttribute('r', autoR));
+        }
+        if (this.svgManualBreaksGroup) {
+            const circles = this.svgManualBreaksGroup.querySelectorAll('circle');
+            circles.forEach((c) => c.setAttribute('r', manualR));
+        }
+        if (this.svgSuppressedBreaksGroup) {
+            const circles = this.svgSuppressedBreaksGroup.querySelectorAll('circle');
+            circles.forEach((c) => c.setAttribute('r', autoR));
+        }
+    }
+
+    _getManualBreaks() {
+        const raw = this.featureParams?.edgeBreakPoints;
+        if (!Array.isArray(raw)) return [];
+        const out = [];
+        for (const bp of raw) {
+            let x;
+            let y;
+            if (Array.isArray(bp)) {
+                x = Number(bp[0]);
+                y = Number(bp[1]);
+            } else if (bp && typeof bp === 'object') {
+                x = Number(bp.x ?? bp[0]);
+                y = Number(bp.y ?? bp[1]);
+            }
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            out.push([x, y]);
+        }
+        return out;
+    }
+
+    _getSuppressedBreaks() {
+        const raw = this.featureParams?.edgeSuppressedBreaks;
+        if (!Array.isArray(raw)) return [];
+        const out = [];
+        for (const bp of raw) {
+            let x;
+            let y;
+            if (Array.isArray(bp)) {
+                x = Number(bp[0]);
+                y = Number(bp[1]);
+            } else if (bp && typeof bp === 'object') {
+                x = Number(bp.x ?? bp[0]);
+                y = Number(bp.y ?? bp[1]);
+            }
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            out.push([x, y]);
+        }
+        return out;
+    }
+
+    _setManualBreaks(breaks) {
+        if (!this.featureParams) return;
+        this.featureParams.edgeBreakPoints = Array.isArray(breaks) ? breaks.map((p) => [p[0], p[1]]) : [];
+        this._vectorDirty = true;
+        this._scheduleVectorOverlayUpdate();
+        if (typeof this.onParamsChange === 'function') {
+            try { this.onParamsChange(); } catch (_) { }
+        }
+    }
+
+    _setSuppressedBreaks(breaks) {
+        if (!this.featureParams) return;
+        this.featureParams.edgeSuppressedBreaks = Array.isArray(breaks) ? breaks.map((p) => [p[0], p[1]]) : [];
+        this._vectorDirty = true;
+        this._scheduleVectorOverlayUpdate();
+        if (typeof this.onParamsChange === 'function') {
+            try { this.onParamsChange(); } catch (_) { }
+        }
+    }
+
+    _findNearestPointOnLoops(px, py, loops) {
+        const out = { dist2: Infinity, point: null };
+        if (!Array.isArray(loops) || !loops.length) return out;
+        for (const loop of loops) {
+            if (!Array.isArray(loop) || loop.length < 2) continue;
+            const ring = (loop.length > 1 && loop[0][0] === loop[loop.length - 1][0] && loop[0][1] === loop[loop.length - 1][1])
+                ? loop.slice(0, -1)
+                : loop;
+            const n = ring.length;
+            if (n < 2) continue;
+            for (let i = 0; i < n; i++) {
+                const a = ring[i];
+                const b = ring[(i + 1) % n];
+                const abx = b[0] - a[0];
+                const aby = b[1] - a[1];
+                const abLen2 = abx * abx + aby * aby;
+                if (abLen2 <= 0) continue;
+                let t = ((px - a[0]) * abx + (py - a[1]) * aby) / abLen2;
+                t = Math.max(0, Math.min(1, t));
+                const cx = a[0] + t * abx;
+                const cy = a[1] + t * aby;
+                const dx = px - cx;
+                const dy = py - cy;
+                const d2 = dx * dx + dy * dy;
+                if (d2 < out.dist2) {
+                    out.dist2 = d2;
+                    out.point = [cx, cy];
+                }
+            }
+        }
+        return out;
+    }
+
+    _toggleManualBreak(ix, iy) {
+        if (this._vectorDirty) this._updateVectorOverlay();
+        const breaks = this._getManualBreaks();
+        const suppressed = this._getSuppressedBreaks();
+        const viewScale = Math.max(1e-6, this.scale || 1);
+        const removeDist = Math.max(1e-6, this._breakRemovePx / viewScale);
+        let removeIdx = -1;
+        let best = removeDist * removeDist;
+        for (let i = 0; i < breaks.length; i++) {
+            const bp = breaks[i];
+            const dx = bp[0] - ix;
+            const dy = bp[1] - iy;
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= best) {
+                best = d2;
+                removeIdx = i;
+            }
+        }
+        if (removeIdx >= 0) {
+            breaks.splice(removeIdx, 1);
+            this._setManualBreaks(breaks);
+            this._render();
+            return;
+        }
+
+        let suppressIdx = -1;
+        best = removeDist * removeDist;
+        for (let i = 0; i < suppressed.length; i++) {
+            const bp = suppressed[i];
+            const dx = bp[0] - ix;
+            const dy = bp[1] - iy;
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= best) {
+                best = d2;
+                suppressIdx = i;
+            }
+        }
+        if (suppressIdx >= 0) {
+            suppressed.splice(suppressIdx, 1);
+            this._setSuppressedBreaks(suppressed);
+            this._render();
+            return;
+        }
+
+        const loops = this._vectorLoops;
+        if (!loops || !loops.length) return;
+        const snapDist = Math.max(1e-6, this._breakSnapPx / viewScale);
+        const nearest = this._findNearestPointOnLoops(ix, iy, loops);
+        if (!nearest.point || nearest.dist2 > snapDist * snapDist) return;
+        const dedupeDist = Math.max(1e-6, this._breakDedupePx / viewScale);
+        for (const bp of breaks) {
+            const dx = bp[0] - nearest.point[0];
+            const dy = bp[1] - nearest.point[1];
+            if ((dx * dx + dy * dy) <= dedupeDist * dedupeDist) return;
+        }
+        for (const bp of suppressed) {
+            const dx = bp[0] - nearest.point[0];
+            const dy = bp[1] - nearest.point[1];
+            if ((dx * dx + dy * dy) <= dedupeDist * dedupeDist) return;
+        }
+
+        const autoPoints = Array.isArray(this._autoBreakPoints) ? this._autoBreakPoints : [];
+        let autoIdx = -1;
+        let autoBest = removeDist * removeDist;
+        for (let i = 0; i < autoPoints.length; i++) {
+            const ap = autoPoints[i];
+            const dx = ap[0] - nearest.point[0];
+            const dy = ap[1] - nearest.point[1];
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= autoBest) {
+                autoBest = d2;
+                autoIdx = i;
+            }
+        }
+        if (autoIdx >= 0) {
+            suppressed.push([autoPoints[autoIdx][0], autoPoints[autoIdx][1]]);
+            this._setSuppressedBreaks(suppressed);
+            this._render();
+            return;
+        }
+
+        breaks.push([nearest.point[0], nearest.point[1]]);
+        this._setManualBreaks(breaks);
+        this._render();
     }
 
     _pointerDown(e) {
@@ -613,6 +904,10 @@ export class ImageEditorUI {
         const [ix, iy] = this._canvasToImage(x, y);
         // update hover
         this.hoverX = ix; this.hoverY = iy; this.isHovering = true;
+        if (this.tool === 'break') {
+            this._toggleManualBreak(ix, iy);
+            return;
+        }
         if (this.tool === 'bucket') {
             this._applyBucket(Math.floor(ix), Math.floor(iy));
             this._pushHistory();
@@ -632,7 +927,9 @@ export class ImageEditorUI {
 
         // Cursor feedback for resize handle
         if (!this.isPanning && !this.isDrawing && !this.isResizingCanvas) {
-            this.canvas.style.cursor = this._hitResizeHandle(x, y) ? 'nwse-resize' : '';
+            if (this._hitResizeHandle(x, y)) this.canvas.style.cursor = 'nwse-resize';
+            else if (this.tool === 'break') this.canvas.style.cursor = 'crosshair';
+            else this.canvas.style.cursor = '';
         }
 
         if (this.isResizingCanvas) {
@@ -855,6 +1152,7 @@ export class ImageEditorUI {
         setActive(this.brushBtn, this.tool === 'brush');
         setActive(this.eraserBtn, this.tool === 'eraser');
         setActive(this.panBtn, this.tool === 'pan');
+        setActive(this.breakBtn, this.tool === 'break');
         setActive(this.bucketBtn, this.tool === 'bucket');
         if (this.colorInput && this.brushColor) this.colorInput.value = this.brushColor;
         if (this.sizeInput) this.sizeInput.value = String(this.brushSize);

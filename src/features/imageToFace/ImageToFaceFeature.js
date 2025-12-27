@@ -2,7 +2,15 @@ import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 import { LineGeometry } from 'three/examples/jsm/Addons.js';
 import { ImageEditorUI } from './imageEditor.js';
-import { traceImageDataToPolylines, applyCurveFit, rdp } from './traceUtils.js';
+import { traceImageDataToPolylines, applyCurveFit, rdp, assignBreaksToLoops, splitLoopIntoEdges } from './traceUtils.js';
+
+const renderHiddenField = ({ id, row }) => {
+  if (row && row.style) row.style.display = 'none';
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.id = id;
+  return { inputEl: input, inputRegistered: false, skipDefaultRefresh: true };
+};
 
 const inputParamsSchema = {
   id: {
@@ -118,6 +126,26 @@ const inputParamsSchema = {
     step: 1,
     hint: "Corner angle (deg) for splitting traced loops into edge segments",
   },
+  edgeMinSpacing: {
+    type: "number",
+    default_value: 0,
+    step: 0.5,
+    hint: "Minimum edge length between corner splits (world units)",
+  },
+  edgeBreakPoints: {
+    type: "string",
+    default_value: [],
+    label: "Edge Break Points",
+    hint: "Internal use: manual edge breaks from the image editor",
+    renderWidget: renderHiddenField,
+  },
+  edgeSuppressedBreaks: {
+    type: "string",
+    default_value: [],
+    label: "Edge Suppressed Breaks",
+    hint: "Internal use: suppressed auto breaks from the image editor",
+    renderWidget: renderHiddenField,
+  },
   placementPlane: {
     type: "reference_selection",
     selectionFilter: ["PLANE", "FACE"],
@@ -138,7 +166,7 @@ export class ImageToFaceFeature {
   }
 
   async run(partHistory) {
-    const { fileToImport, threshold, invert, pixelScale, center, smoothCurves, curveTolerance, speckleArea, simplifyCollinear, rdpTolerance, edgeSplitAngle } = this.inputParams;
+    const { fileToImport, threshold, invert, pixelScale, center, smoothCurves, curveTolerance, speckleArea, simplifyCollinear, rdpTolerance, edgeSplitAngle, edgeMinSpacing, edgeBreakPoints, edgeSuppressedBreaks } = this.inputParams;
 
     const imageData = await decodeToImageData(fileToImport);
     if (!imageData) {
@@ -176,18 +204,62 @@ export class ImageToFaceFeature {
     let simpLoops = workingLoops.map((l) => simplifyLoop(l, { simplifyCollinear: false, rdpTolerance: 0 }));
 
     // Optionally center (only if there are any points)
+    let centerOffset = { x: 0, y: 0 };
     if (center) {
       const allPts = simpLoops.flat();
       if (allPts.length) {
         const bb = bounds2D(allPts);
         const cx = 0.5 * (bb.minX + bb.maxX);
         const cy = 0.5 * (bb.minY + bb.maxY);
+        centerOffset = { x: cx, y: cy };
         simpLoops = simpLoops.map((loop) => loop.map(([x, y]) => [x - cx, y - cy]));
       }
     }
 
+    const cornerThresholdDeg = Number.isFinite(Number(edgeSplitAngle))
+      ? Math.max(1, Math.min(179, Number(edgeSplitAngle)))
+      : 70;
+    const cornerSpacing = Number.isFinite(Number(edgeMinSpacing))
+      ? Math.max(0, Number(edgeMinSpacing))
+      : 0;
+    const minSegLen = Math.max(0.5 * Math.abs(scale || 1), 1e-6);
+
+    const manualBreaksWorld = normalizeBreakPoints(edgeBreakPoints, {
+      scale,
+      offsetX: centerOffset.x,
+      offsetY: centerOffset.y,
+    });
+    const suppressedBreaksWorld = normalizeBreakPoints(edgeSuppressedBreaks, {
+      scale,
+      offsetX: centerOffset.x,
+      offsetY: centerOffset.y,
+    });
+    const initialBreaksByLoop = manualBreaksWorld.length
+      ? assignBreaksToLoops(simpLoops, manualBreaksWorld)
+      : simpLoops.map(() => []);
+    const loopsWithBreaks = initialBreaksByLoop.some((arr) => arr.length)
+      ? simpLoops.map((loop, idx) => {
+        const breaks = initialBreaksByLoop[idx] || [];
+        if (!breaks.length) return loop;
+        const info = splitLoopIntoEdges(loop, {
+          angleDeg: cornerThresholdDeg,
+          minSegLen,
+          cornerSpacing,
+          manualBreaks: breaks,
+          returnDebug: true,
+        });
+        return Array.isArray(info?.ring) && info.ring.length ? info.ring : loop;
+      })
+      : simpLoops;
+    const breaksByLoop = manualBreaksWorld.length
+      ? assignBreaksToLoops(loopsWithBreaks, manualBreaksWorld)
+      : loopsWithBreaks.map(() => []);
+    const suppressedByLoop = suppressedBreaksWorld.length
+      ? assignBreaksToLoops(loopsWithBreaks, suppressedBreaksWorld)
+      : loopsWithBreaks.map(() => []);
+
     // Group into outer + holes by nesting parity
-    const groups = groupLoopsOuterHoles(simpLoops);
+    const groups = groupLoopsOuterHoles(loopsWithBreaks);
 
     // Determine placement transform from selected plane/face
     const basis = getPlacementBasis(this.inputParams?.placementPlane, partHistory);
@@ -297,16 +369,14 @@ export class ImageToFaceFeature {
     const edges = [];
     let edgeIdx = 0;
     let loopIdx = 0;
-    const cornerThresholdDeg = Number.isFinite(Number(edgeSplitAngle))
-      ? Math.max(1, Math.min(179, Number(edgeSplitAngle)))
-      : 70;
-    const minSegLen = Math.max(0.5 * Math.abs(scale || 1), 1e-6);
-
-    const addEdgeSegmentsFromLoop = (loop2D, isHole) => {
+    const addEdgeSegmentsFromLoop = (loop2D, isHole, manualBreaks, suppressedBreaks) => {
       if (!loop2D || loop2D.length < 2) return;
       const segments = splitLoopIntoEdges(loop2D, {
         angleDeg: cornerThresholdDeg,
-        minSegLen
+        minSegLen,
+        cornerSpacing,
+        manualBreaks,
+        suppressedBreaks
       });
       let segIdx = 0;
       for (const seg of segments) {
@@ -341,10 +411,16 @@ export class ImageToFaceFeature {
     // Emit edge segments for outer and hole loops
     for (const grp of groups) {
       const outerClosed = grp.outer[0] && grp.outer[grp.outer.length - 1] && (grp.outer[0][0] === grp.outer[grp.outer.length - 1][0] && grp.outer[0][1] === grp.outer[grp.outer.length - 1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
-      addEdgeSegmentsFromLoop(outerClosed, false);
-      for (const h of grp.holes) {
+      const outerBreaks = breaksByLoop[grp.outerIndex] || [];
+      const outerSuppressed = suppressedByLoop[grp.outerIndex] || [];
+      addEdgeSegmentsFromLoop(outerClosed, false, outerBreaks, outerSuppressed);
+      for (let hi = 0; hi < grp.holes.length; hi++) {
+        const h = grp.holes[hi];
         const hClosed = h[0] && h[h.length - 1] && (h[0][0] === h[h.length - 1][0] && h[0][1] === h[h.length - 1][1]) ? h : h.concat([h[0]]);
-        addEdgeSegmentsFromLoop(hClosed, true);
+        const holeIndex = grp.holeIndices[hi];
+        const holeBreaks = breaksByLoop[holeIndex] || [];
+        const holeSuppressed = suppressedByLoop[holeIndex] || [];
+        addEdgeSegmentsFromLoop(hClosed, true, holeBreaks, holeSuppressed);
       }
     }
 
@@ -536,121 +612,29 @@ function groupLoopsOuterHoles(loops) {
 
   return groups.map((g) => ({
     outer: norm[g.outer].slice(),
+    outerIndex: g.outer,
     holes: g.holes.map((h) => norm[h].slice()),
+    holeIndices: g.holes.slice(),
   }));
 }
 
-function splitLoopIntoEdges(loop2D, { angleDeg = 70, minSegLen = 1e-6 } = {}) {
-  if (!Array.isArray(loop2D) || loop2D.length < 2) return [];
-  const ring = loop2D.slice();
-  if (ring.length >= 2 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]) {
-    ring.pop();
-  }
-  const n = ring.length;
-  if (n < 2) return [];
-  const angThresh = Math.max(0, Math.min(180, angleDeg)) * (Math.PI / 180);
-  let totalLen = 0;
-  const cum = new Array(n).fill(0);
-  for (let i = 0; i < n; i++) {
-    const a = ring[i];
-    const b = ring[(i + 1) % n];
-    totalLen += Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (i + 1 < n) cum[i + 1] = totalLen;
-  }
-  const avgLen = totalLen > 1e-9 ? (totalLen / n) : minSegLen;
-  const spanLen = Math.max(minSegLen, avgLen * 4);
-  const minSpan = spanLen * 0.75;
-  const straightnessThresh = 0.97;
-  const minCornerSpacing = Math.max(spanLen * 1.5, totalLen * 0.015, minSegLen * 2);
-
-  const sampleDir = (startIdx, step) => {
-    let sx = 0;
-    let sy = 0;
-    let acc = 0;
-    let idx = startIdx;
-    for (let guard = 0; guard < n; guard++) {
-      const next = (idx + step + n) % n;
-      const dx = ring[next][0] - ring[idx][0];
-      const dy = ring[next][1] - ring[idx][1];
-      const len = Math.hypot(dx, dy);
-      if (len > 0) {
-        sx += dx;
-        sy += dy;
-        acc += len;
-      }
-      idx = next;
-      if (acc >= spanLen) break;
+function normalizeBreakPoints(raw, { scale = 1, offsetX = 0, offsetY = 0 } = {}) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const bp of raw) {
+    let x;
+    let y;
+    if (Array.isArray(bp)) {
+      x = Number(bp[0]);
+      y = Number(bp[1]);
+    } else if (bp && typeof bp === 'object') {
+      x = Number(bp.x ?? bp[0]);
+      y = Number(bp.y ?? bp[1]);
     }
-    const mag = Math.hypot(sx, sy);
-    const straightness = acc > 0 ? (mag / acc) : 0;
-    return {
-      dir: mag > 1e-9 ? [sx / mag, sy / mag] : [0, 0],
-      span: acc,
-      straightness
-    };
-  };
-
-  const candidates = [];
-  for (let i = 0; i < n; i++) {
-    const prev = sampleDir(i, -1);
-    const next = sampleDir(i, 1);
-    if (prev.span < minSpan || next.span < minSpan) continue;
-    if (prev.straightness < straightnessThresh || next.straightness < straightnessThresh) continue;
-    const inDir = [-prev.dir[0], -prev.dir[1]];
-    const dot = inDir[0] * next.dir[0] + inDir[1] * next.dir[1];
-    const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
-    if (ang >= angThresh) candidates.push({ idx: i, ang });
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    out.push([x * scale - offsetX, -y * scale - offsetY]);
   }
-
-  const arcDist = (a, b) => {
-    const da = Math.abs(cum[a] - cum[b]);
-    return Math.min(da, totalLen - da);
-  };
-  const corners = [];
-  candidates.sort((a, b) => b.ang - a.ang);
-  for (const cand of candidates) {
-    let tooClose = false;
-    for (const sel of corners) {
-      if (arcDist(cand.idx, sel.idx) < minCornerSpacing) { tooClose = true; break; }
-    }
-    if (!tooClose) corners.push(cand);
-  }
-  corners.sort((a, b) => a.idx - b.idx);
-  const cornerIdx = corners.map(c => c.idx);
-  if (cornerIdx.length < 2) {
-    return [ring.concat([ring[0]])];
-  }
-  const uniq = [];
-  for (const idx of cornerIdx) {
-    if (!uniq.length || uniq[uniq.length - 1] !== idx) uniq.push(idx);
-  }
-  if (uniq.length < 2) {
-    return [ring.concat([ring[0]])];
-  }
-  const segments = [];
-  const dedupeSeg = (seg) => {
-    const out = [];
-    let prev = null;
-    for (const p of seg) {
-      if (!prev || p[0] !== prev[0] || p[1] !== prev[1]) out.push(p);
-      prev = p;
-    }
-    return out;
-  };
-  for (let i = 0; i < uniq.length; i++) {
-    const start = uniq[i];
-    const end = uniq[(i + 1) % uniq.length];
-    const seg = [];
-    let k = start;
-    for (let guard = 0; guard <= n; guard++) {
-      seg.push(ring[k]);
-      if (k === end) break;
-      k = (k + 1) % n;
-    }
-    const cleaned = dedupeSeg(seg);
-    if (cleaned.length >= 2) segments.push(cleaned);
-  }
-  return segments.length ? segments : [ring.concat([ring[0]])];
+  return out;
 }
 
 function positionsToTriples(arr) {

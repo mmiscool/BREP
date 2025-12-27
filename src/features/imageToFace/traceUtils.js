@@ -305,6 +305,26 @@ function pointToSegmentDist2(p, a, b) {
   return dx * dx + dy * dy;
 }
 
+function pointToSegmentDist2XY(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+
+  const abLen2 = abx * abx + aby * aby;
+  if (abLen2 === 0) return apx * apx + apy * apy;
+
+  let t = (apx * abx + apy * aby) / abLen2;
+  t = Math.max(0, Math.min(1, t));
+
+  const cx = ax + t * abx;
+  const cy = ay + t * aby;
+
+  const dx = px - cx;
+  const dy = py - cy;
+  return dx * dx + dy * dy;
+}
+
 export function rdp(points, epsilon) {
   if (points.length <= 3) return points.slice();
   const open = points.slice(0, points.length - 1);
@@ -374,6 +394,48 @@ export function applyCurveFit(loops, { tolerance = 0.75, cornerThresholdDeg = 70
   };
 
   return loops.map((l) => fitLoop(l));
+}
+
+export function assignBreaksToLoops(loops, breaks, { snapDist = Infinity } = {}) {
+  const out = Array.isArray(loops) ? loops.map(() => []) : [];
+  if (!Array.isArray(loops) || !Array.isArray(breaks) || !breaks.length) return out;
+  const snap2 = Number.isFinite(snapDist) ? snapDist * snapDist : Infinity;
+
+  for (const bp of breaks) {
+    const px = Array.isArray(bp) ? Number(bp[0]) : NaN;
+    const py = Array.isArray(bp) ? Number(bp[1]) : NaN;
+    if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+
+    let bestLoop = -1;
+    let bestDist2 = Infinity;
+
+    for (let li = 0; li < loops.length; li++) {
+      const loop = loops[li];
+      if (!Array.isArray(loop) || loop.length < 2) continue;
+      const ring = loop.length > 1
+        && loop[0][0] === loop[loop.length - 1][0]
+        && loop[0][1] === loop[loop.length - 1][1]
+        ? loop.slice(0, -1)
+        : loop;
+      const n = ring.length;
+      if (n < 2) continue;
+      for (let i = 0; i < n; i++) {
+        const a = ring[i];
+        const b = ring[(i + 1) % n];
+        const d2 = pointToSegmentDist2XY(px, py, a[0], a[1], b[0], b[1]);
+        if (d2 < bestDist2) {
+          bestDist2 = d2;
+          bestLoop = li;
+        }
+      }
+    }
+
+    if (bestLoop >= 0 && bestDist2 <= snap2) {
+      out[bestLoop].push([px, py]);
+    }
+  }
+
+  return out;
 }
 
 function findCorners(ring, angThresh) {
@@ -490,4 +552,273 @@ function smoothWithAnchors(ring, corners, iterations) {
     out.push([out[0][0], out[0][1]]);
   }
   return out;
+}
+
+export function splitLoopIntoEdges(loop2D, {
+  angleDeg = 70,
+  minSegLen = 1e-6,
+  cornerSpacing = 0,
+  manualBreaks = [],
+  suppressedBreaks = [],
+  returnDebug = false,
+} = {}) {
+  if (!Array.isArray(loop2D) || loop2D.length < 2) return returnDebug ? { segments: [] } : [];
+  let ring = loop2D.slice();
+  if (ring.length >= 2 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]) {
+    ring.pop();
+  }
+  let n = ring.length;
+  if (n < 2) return returnDebug ? { segments: [] } : [];
+
+  const manualPts = Array.isArray(manualBreaks) ? manualBreaks : [];
+  const manualCornerIndices = [];
+  if (manualPts.length) {
+    const perSeg = new Map();
+    const vertexBreaks = new Set();
+    const endpointEps = Math.max(minSegLen * 0.25, 1e-6);
+    const closestOnRing = (pt) => {
+      const px = pt[0];
+      const py = pt[1];
+      let best = { dist2: Infinity, segIndex: -1, t: 0, point: null };
+      for (let i = 0; i < n; i++) {
+        const a = ring[i];
+        const b = ring[(i + 1) % n];
+        const abx = b[0] - a[0];
+        const aby = b[1] - a[1];
+        const abLen2 = abx * abx + aby * aby;
+        if (abLen2 <= 0) continue;
+        let t = ((px - a[0]) * abx + (py - a[1]) * aby) / abLen2;
+        t = Math.max(0, Math.min(1, t));
+        const cx = a[0] + t * abx;
+        const cy = a[1] + t * aby;
+        const dx = px - cx;
+        const dy = py - cy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < best.dist2) {
+          best = { dist2: d2, segIndex: i, t, point: [cx, cy] };
+        }
+      }
+      return best;
+    };
+
+    for (const pt of manualPts) {
+      if (!Array.isArray(pt) || pt.length < 2) continue;
+      const px = Number(pt[0]);
+      const py = Number(pt[1]);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+      const res = closestOnRing([px, py]);
+      if (res.segIndex < 0 || !res.point) continue;
+      const a = ring[res.segIndex];
+      const b = ring[(res.segIndex + 1) % n];
+      const da = Math.hypot(res.point[0] - a[0], res.point[1] - a[1]);
+      const db = Math.hypot(res.point[0] - b[0], res.point[1] - b[1]);
+      if (da <= endpointEps) {
+        vertexBreaks.add(res.segIndex);
+        continue;
+      }
+      if (db <= endpointEps) {
+        vertexBreaks.add((res.segIndex + 1) % n);
+        continue;
+      }
+      let arr = perSeg.get(res.segIndex);
+      if (!arr) { arr = []; perSeg.set(res.segIndex, arr); }
+      arr.push({ t: res.t, point: res.point });
+    }
+
+    if (vertexBreaks.size || perSeg.size) {
+      const expanded = [];
+      const markManualIndex = (idx) => {
+        if (!manualCornerIndices.length || manualCornerIndices[manualCornerIndices.length - 1] !== idx) {
+          manualCornerIndices.push(idx);
+        }
+      };
+      for (let i = 0; i < n; i++) {
+        const a = ring[i];
+        const startIndex = expanded.length;
+        expanded.push(a);
+        if (vertexBreaks.has(i)) markManualIndex(startIndex);
+        const inserts = perSeg.get(i);
+        if (inserts && inserts.length) {
+          inserts.sort((u, v) => u.t - v.t);
+          for (const ins of inserts) {
+            const p = ins.point;
+            const last = expanded[expanded.length - 1];
+            if (!last || last[0] !== p[0] || last[1] !== p[1]) {
+              expanded.push(p);
+              markManualIndex(expanded.length - 1);
+            }
+          }
+        }
+      }
+      ring = expanded;
+      n = ring.length;
+    }
+  }
+
+  const angThresh = Math.max(0, Math.min(180, angleDeg)) * (Math.PI / 180);
+  let totalLen = 0;
+  const cum = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % n];
+    totalLen += Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (i + 1 < n) cum[i + 1] = totalLen;
+  }
+  const avgLen = totalLen > 1e-9 ? (totalLen / n) : minSegLen;
+  const spanLen = Math.max(minSegLen, avgLen * 4);
+  const minSpan = spanLen * 0.75;
+  const straightnessThresh = 0.97;
+  const minCornerSpacing = Math.max(spanLen * 1.5, totalLen * 0.015, minSegLen * 2, cornerSpacing || 0);
+
+  const sampleDir = (startIdx, step) => {
+    let sx = 0;
+    let sy = 0;
+    let acc = 0;
+    let idx = startIdx;
+    for (let guard = 0; guard < n; guard++) {
+      const next = (idx + step + n) % n;
+      const dx = ring[next][0] - ring[idx][0];
+      const dy = ring[next][1] - ring[idx][1];
+      const len = Math.hypot(dx, dy);
+      if (len > 0) {
+        sx += dx;
+        sy += dy;
+        acc += len;
+      }
+      idx = next;
+      if (acc >= spanLen) break;
+    }
+    const mag = Math.hypot(sx, sy);
+    const straightness = acc > 0 ? (mag / acc) : 0;
+    return {
+      dir: mag > 1e-9 ? [sx / mag, sy / mag] : [0, 0],
+      span: acc,
+      straightness
+    };
+  };
+
+  const candidates = [];
+  for (let i = 0; i < n; i++) {
+    const prev = sampleDir(i, -1);
+    const next = sampleDir(i, 1);
+    if (prev.span < minSpan || next.span < minSpan) continue;
+    if (prev.straightness < straightnessThresh || next.straightness < straightnessThresh) continue;
+    const inDir = [-prev.dir[0], -prev.dir[1]];
+    const dot = inDir[0] * next.dir[0] + inDir[1] * next.dir[1];
+    const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+    if (ang >= angThresh) candidates.push({ idx: i, ang });
+  }
+
+  const arcDist = (a, b) => {
+    const da = Math.abs(cum[a] - cum[b]);
+    return Math.min(da, totalLen - da);
+  };
+  const corners = [];
+  candidates.sort((a, b) => b.ang - a.ang);
+  for (const cand of candidates) {
+    let tooClose = false;
+    for (const sel of corners) {
+      if (arcDist(cand.idx, sel.idx) < minCornerSpacing) { tooClose = true; break; }
+    }
+    if (!tooClose) corners.push(cand);
+  }
+  if (corners.length < 2 && candidates.length) {
+    corners.length = 0;
+    corners.push(...candidates.sort((a, b) => a.idx - b.idx));
+  }
+
+  const suppressedIdx = new Set();
+  const suppressedPts = Array.isArray(suppressedBreaks) ? suppressedBreaks : [];
+  if (suppressedPts.length) {
+    const snapDist = Math.max(minSegLen * 0.5, 1e-6);
+    const snapDist2 = snapDist * snapDist;
+    for (const pt of suppressedPts) {
+      if (!Array.isArray(pt) || pt.length < 2) continue;
+      const px = Number(pt[0]);
+      const py = Number(pt[1]);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+      let bestIdx = -1;
+      let bestD2 = Infinity;
+      for (let i = 0; i < n; i++) {
+        const p = ring[i];
+        const dx = p[0] - px;
+        const dy = p[1] - py;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx >= 0 && bestD2 <= snapDist2) {
+        suppressedIdx.add(bestIdx);
+      }
+    }
+  }
+
+  if (suppressedIdx.size) {
+    for (let i = corners.length - 1; i >= 0; i--) {
+      if (suppressedIdx.has(corners[i].idx)) corners.splice(i, 1);
+    }
+  }
+
+  const cornerIdx = [];
+  for (const c of corners) cornerIdx.push(c.idx);
+  for (const idx of manualCornerIndices) cornerIdx.push(idx);
+  if (cornerIdx.length < 2) {
+    const loopOut = ring.concat([ring[0]]);
+    return returnDebug
+      ? { segments: [loopOut], corners: [], manualCorners: manualCornerIndices.slice(), ring: ring.slice() }
+      : [loopOut];
+  }
+  cornerIdx.sort((a, b) => a - b);
+  const uniq = [];
+  for (const idx of cornerIdx) {
+    if (!uniq.length || uniq[uniq.length - 1] !== idx) uniq.push(idx);
+  }
+  if (uniq.length < 2) {
+    const loopOut = ring.concat([ring[0]]);
+    return returnDebug
+      ? { segments: [loopOut], corners: [], manualCorners: manualCornerIndices.slice(), ring: ring.slice() }
+      : [loopOut];
+  }
+
+  const segments = [];
+  const dedupeSeg = (seg) => {
+    const out = [];
+    let prev = null;
+    for (const p of seg) {
+      if (!prev || p[0] !== prev[0] || p[1] !== prev[1]) out.push(p);
+      prev = p;
+    }
+    return out;
+  };
+  for (let i = 0; i < uniq.length; i++) {
+    const start = uniq[i];
+    const end = uniq[(i + 1) % uniq.length];
+    const seg = [];
+    let k = start;
+    for (let guard = 0; guard <= n; guard++) {
+      seg.push(ring[k]);
+      if (k === end) break;
+      k = (k + 1) % n;
+    }
+    const cleaned = dedupeSeg(seg);
+    if (cleaned.length >= 2) segments.push(cleaned);
+  }
+  if (!segments.length) {
+    const loopOut = ring.concat([ring[0]]);
+    return returnDebug
+      ? { segments: [loopOut], corners: [], manualCorners: manualCornerIndices.slice(), ring: ring.slice() }
+      : [loopOut];
+  }
+
+  if (!returnDebug) return segments;
+  const manualSet = new Set(manualCornerIndices);
+  const autoCorners = uniq.filter((idx) => !manualSet.has(idx));
+  return {
+    segments,
+    corners: autoCorners,
+    manualCorners: Array.from(new Set(manualCornerIndices)).sort((a, b) => a - b),
+    ring: ring.slice(),
+  };
 }
