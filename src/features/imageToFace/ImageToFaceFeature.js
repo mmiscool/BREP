@@ -112,6 +112,12 @@ const inputParamsSchema = {
     default_value: 1,
     hint: "Optional Ramer–Douglas–Peucker tolerance in world units (0 to disable)",
   },
+  edgeSplitAngle: {
+    type: "number",
+    default_value: 70,
+    step: 1,
+    hint: "Corner angle (deg) for splitting traced loops into edge segments",
+  },
   placementPlane: {
     type: "reference_selection",
     selectionFilter: ["PLANE", "FACE"],
@@ -132,7 +138,7 @@ export class ImageToFaceFeature {
   }
 
   async run(partHistory) {
-    const { fileToImport, threshold, invert, pixelScale, center, smoothCurves, curveTolerance, speckleArea, simplifyCollinear, rdpTolerance } = this.inputParams;
+    const { fileToImport, threshold, invert, pixelScale, center, smoothCurves, curveTolerance, speckleArea, simplifyCollinear, rdpTolerance, edgeSplitAngle } = this.inputParams;
 
     const imageData = await decodeToImageData(fileToImport);
     if (!imageData) {
@@ -201,9 +207,20 @@ export class ImageToFaceFeature {
 
     // Build triangulated Face and boundary Edges
     const sceneGroup = new THREE.Group();
-    sceneGroup.name = this.inputParams.featureID || 'IMAGE_Sketch';
+    const featureId = (this.inputParams?.featureID != null && String(this.inputParams.featureID).length)
+      ? String(this.inputParams.featureID)
+      : 'IMAGE_Sketch';
+    const edgeNamePrefix = featureId ? `${featureId}:` : '';
+    sceneGroup.name = featureId;
     sceneGroup.type = 'SKETCH';
     sceneGroup.onClick = () => { };
+    sceneGroup.userData = sceneGroup.userData || {};
+    sceneGroup.userData.sketchBasis = {
+      origin: Array.isArray(basis.origin) ? basis.origin.slice() : [0, 0, 0],
+      x: Array.isArray(basis.x) ? basis.x.slice() : [1, 0, 0],
+      y: Array.isArray(basis.y) ? basis.y.slice() : [0, 1, 0],
+      z: Array.isArray(basis.z) ? basis.z.slice() : [0, 0, 1],
+    };
 
     // Build triangulation using THREE.ShapeUtils
     const triPositions = [];
@@ -270,45 +287,64 @@ export class ImageToFaceFeature {
     geom.computeBoundingSphere();
 
     const face = new BREP.Face(geom);
-    face.name = `${sceneGroup.name}:PROFILE`;
+    face.type = 'FACE';
+    face.name = `${edgeNamePrefix}PROFILE`;
     face.userData.faceName = face.name;
     face.userData.boundaryLoopsWorld = boundaryLoopsWorld;
     face.userData.profileGroups = profileGroups;
 
-    // Edges from loops
+    // Edges from loops, split at corners to enable per-edge sidewalls
     const edges = [];
     let edgeIdx = 0;
+    let loopIdx = 0;
+    const cornerThresholdDeg = Number.isFinite(Number(edgeSplitAngle))
+      ? Math.max(1, Math.min(179, Number(edgeSplitAngle)))
+      : 70;
+    const minSegLen = Math.max(0.5 * Math.abs(scale || 1), 1e-6);
 
-    // 1) Closed-loop edges per boundary (outer + holes) to guarantee closed connectivity
-    const addClosedLoopEdge = (closedLoop, isHole) => {
-      if (!closedLoop || closedLoop.length < 2) return;
-      // Ensure closed by duplicating the first if needed
-      let ring = closedLoop;
-      const f = ring[0], l = ring[ring.length - 1];
-      if (!(f[0] === l[0] && f[1] === l[1])) ring = ring.concat([f]);
-      // Build world positions
-      const positions = [];
-      for (let i = 0; i < ring.length; i++) {
-        const p = ring[i];
-        const w = toW(p[0], p[1]);
-        positions.push(w[0], w[1], w[2]);
+    const addEdgeSegmentsFromLoop = (loop2D, isHole) => {
+      if (!loop2D || loop2D.length < 2) return;
+      const segments = splitLoopIntoEdges(loop2D, {
+        angleDeg: cornerThresholdDeg,
+        minSegLen
+      });
+      let segIdx = 0;
+      for (const seg of segments) {
+        if (!seg || seg.length < 2) continue;
+        const positions = [];
+        const worldPts = [];
+        for (let i = 0; i < seg.length; i++) {
+          const p = seg[i];
+          const w = toW(p[0], p[1]);
+          positions.push(w[0], w[1], w[2]);
+          worldPts.push([w[0], w[1], w[2]]);
+        }
+        if (positions.length < 6) continue;
+        const lg = new LineGeometry();
+        lg.setPositions(positions);
+        try { lg.computeBoundingSphere(); } catch { }
+        const e = new BREP.Edge(lg);
+        e.type = 'EDGE';
+        e.name = `${edgeNamePrefix}L${edgeIdx++}`;
+        e.closedLoop = false;
+        e.userData = {
+          polylineLocal: worldPts,
+          polylineWorld: true,
+          isHole: !!isHole,
+          loopIndex: loopIdx,
+          segmentIndex: segIdx++
+        };
+        edges.push(e);
       }
-      const lg = new LineGeometry();
-      lg.setPositions(positions);
-      try { lg.computeBoundingSphere(); } catch { }
-      const e = new BREP.Edge(lg);
-      e.name = `${sceneGroup.name}:L${edgeIdx++}`;
-      e.closedLoop = true;
-      e.userData = { polylineLocal: positionsToTriples(positions), polylineWorld: true, isHole: !!isHole };
-      edges.push(e);
+      loopIdx++;
     };
-    // Emit one closed edge for outer, and one for each hole
+    // Emit edge segments for outer and hole loops
     for (const grp of groups) {
       const outerClosed = grp.outer[0] && grp.outer[grp.outer.length - 1] && (grp.outer[0][0] === grp.outer[grp.outer.length - 1][0] && grp.outer[0][1] === grp.outer[grp.outer.length - 1][1]) ? grp.outer : grp.outer.concat([grp.outer[0]]);
-      addClosedLoopEdge(outerClosed, false);
+      addEdgeSegmentsFromLoop(outerClosed, false);
       for (const h of grp.holes) {
         const hClosed = h[0] && h[h.length - 1] && (h[0][0] === h[h.length - 1][0] && h[0][1] === h[h.length - 1][1]) ? h : h.concat([h[0]]);
-        addClosedLoopEdge(hClosed, true);
+        addEdgeSegmentsFromLoop(hClosed, true);
       }
     }
 
@@ -502,6 +538,119 @@ function groupLoopsOuterHoles(loops) {
     outer: norm[g.outer].slice(),
     holes: g.holes.map((h) => norm[h].slice()),
   }));
+}
+
+function splitLoopIntoEdges(loop2D, { angleDeg = 70, minSegLen = 1e-6 } = {}) {
+  if (!Array.isArray(loop2D) || loop2D.length < 2) return [];
+  const ring = loop2D.slice();
+  if (ring.length >= 2 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]) {
+    ring.pop();
+  }
+  const n = ring.length;
+  if (n < 2) return [];
+  const angThresh = Math.max(0, Math.min(180, angleDeg)) * (Math.PI / 180);
+  let totalLen = 0;
+  const cum = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % n];
+    totalLen += Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (i + 1 < n) cum[i + 1] = totalLen;
+  }
+  const avgLen = totalLen > 1e-9 ? (totalLen / n) : minSegLen;
+  const spanLen = Math.max(minSegLen, avgLen * 4);
+  const minSpan = spanLen * 0.75;
+  const straightnessThresh = 0.97;
+  const minCornerSpacing = Math.max(spanLen * 1.5, totalLen * 0.015, minSegLen * 2);
+
+  const sampleDir = (startIdx, step) => {
+    let sx = 0;
+    let sy = 0;
+    let acc = 0;
+    let idx = startIdx;
+    for (let guard = 0; guard < n; guard++) {
+      const next = (idx + step + n) % n;
+      const dx = ring[next][0] - ring[idx][0];
+      const dy = ring[next][1] - ring[idx][1];
+      const len = Math.hypot(dx, dy);
+      if (len > 0) {
+        sx += dx;
+        sy += dy;
+        acc += len;
+      }
+      idx = next;
+      if (acc >= spanLen) break;
+    }
+    const mag = Math.hypot(sx, sy);
+    const straightness = acc > 0 ? (mag / acc) : 0;
+    return {
+      dir: mag > 1e-9 ? [sx / mag, sy / mag] : [0, 0],
+      span: acc,
+      straightness
+    };
+  };
+
+  const candidates = [];
+  for (let i = 0; i < n; i++) {
+    const prev = sampleDir(i, -1);
+    const next = sampleDir(i, 1);
+    if (prev.span < minSpan || next.span < minSpan) continue;
+    if (prev.straightness < straightnessThresh || next.straightness < straightnessThresh) continue;
+    const inDir = [-prev.dir[0], -prev.dir[1]];
+    const dot = inDir[0] * next.dir[0] + inDir[1] * next.dir[1];
+    const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+    if (ang >= angThresh) candidates.push({ idx: i, ang });
+  }
+
+  const arcDist = (a, b) => {
+    const da = Math.abs(cum[a] - cum[b]);
+    return Math.min(da, totalLen - da);
+  };
+  const corners = [];
+  candidates.sort((a, b) => b.ang - a.ang);
+  for (const cand of candidates) {
+    let tooClose = false;
+    for (const sel of corners) {
+      if (arcDist(cand.idx, sel.idx) < minCornerSpacing) { tooClose = true; break; }
+    }
+    if (!tooClose) corners.push(cand);
+  }
+  corners.sort((a, b) => a.idx - b.idx);
+  const cornerIdx = corners.map(c => c.idx);
+  if (cornerIdx.length < 2) {
+    return [ring.concat([ring[0]])];
+  }
+  const uniq = [];
+  for (const idx of cornerIdx) {
+    if (!uniq.length || uniq[uniq.length - 1] !== idx) uniq.push(idx);
+  }
+  if (uniq.length < 2) {
+    return [ring.concat([ring[0]])];
+  }
+  const segments = [];
+  const dedupeSeg = (seg) => {
+    const out = [];
+    let prev = null;
+    for (const p of seg) {
+      if (!prev || p[0] !== prev[0] || p[1] !== prev[1]) out.push(p);
+      prev = p;
+    }
+    return out;
+  };
+  for (let i = 0; i < uniq.length; i++) {
+    const start = uniq[i];
+    const end = uniq[(i + 1) % uniq.length];
+    const seg = [];
+    let k = start;
+    for (let guard = 0; guard <= n; guard++) {
+      seg.push(ring[k]);
+      if (k === end) break;
+      k = (k + 1) % n;
+    }
+    const cleaned = dedupeSeg(seg);
+    if (cleaned.length >= 2) segments.push(cleaned);
+  }
+  return segments.length ? segments : [ring.concat([ring[0]])];
 }
 
 function positionsToTriples(arr) {
