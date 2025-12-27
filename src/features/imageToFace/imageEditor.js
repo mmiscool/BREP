@@ -81,6 +81,7 @@ export class ImageEditorUI {
         this._vectorUpdateHandle = null;
         this._traceCanvas = null;
         this._traceCtx = null;
+        this._baseImageOnDrawCanvas = false;
 
         this._initDOM();
         this._loadImage(this.imageBase64).then(() => {/* one-to-one set in _loadImage */ });
@@ -116,9 +117,9 @@ export class ImageEditorUI {
         .img-editor-btn:disabled{opacity:.5;cursor:not-allowed;}
         .img-editor-right{margin-left:auto;display:flex;gap:8px;}
         .img-editor-main{position:absolute;left:0;right:0;top:48px;bottom:0;display:flex;flex-direction:row-reverse;min-height:0;}
-        .img-editor-canvas-wrap{position:relative;flex:1;overflow:hidden;background:var(--ie-bg-1);}
+        .img-editor-canvas-wrap{position:relative;flex:1;overflow:hidden;background-color:var(--ie-bg-1);background-image:linear-gradient(45deg,var(--ie-bg-2) 25%,transparent 25%,transparent 75%,var(--ie-bg-2) 75%,var(--ie-bg-2)),linear-gradient(45deg,var(--ie-bg-2) 25%,transparent 25%,transparent 75%,var(--ie-bg-2) 75%,var(--ie-bg-2));background-size:16px 16px;background-position:0 0,8px 8px;}
         .img-editor-canvas{position:absolute;left:0;top:0;display:block;}
-        .img-editor-overlay-svg{position:absolute;left:0;top:0;display:block;pointer-events:none;mix-blend-mode:screen;}
+        .img-editor-overlay-svg{position:absolute;left:0;top:0;display:block;pointer-events:none;shape-rendering:geometricPrecision;}
         .img-editor-sidebar{width:320px;max-width:360px;min-width:240px;background:var(--ie-bg-2);border-right:1px solid var(--ie-border);overflow:auto;padding:12px;box-sizing:border-box;}
         .img-editor-sidebar h3{margin:0 0 8px;font-size:14px;font-weight:600;color:var(--ie-fg);}
         .img-editor-form{background:var(--ie-bg-3);border:1px solid var(--ie-border);border-radius:8px;padding:8px;box-sizing:border-box;}
@@ -166,7 +167,7 @@ export class ImageEditorUI {
       <div class="img-editor-main">
         <div class="img-editor-canvas-wrap">
           <canvas class="img-editor-canvas"></canvas>
-          <svg class="img-editor-overlay-svg" aria-hidden="true"><g class="js-vector-group" fill="none" stroke="lime" stroke-width="1" vector-effect="non-scaling-stroke"></g></svg>
+          <svg class="img-editor-overlay-svg" preserveAspectRatio="none" aria-hidden="true"><g class="js-vector-group" fill="none" stroke="lime" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" shape-rendering="geometricPrecision"></g></svg>
         </div>
         <div class="img-editor-sidebar">
           <h3>Image to Face</h3>
@@ -242,6 +243,9 @@ export class ImageEditorUI {
         this.workHeight = this.bgImage.height;
         this._resizeDrawCanvas(this.workWidth, this.workHeight, /*preserve*/ false);
         this.drawCtx.clearRect(0, 0, this.drawCanvas.width, this.drawCanvas.height);
+        // Treat the loaded image as the editable bitmap so eraser makes pixels transparent.
+        this.drawCtx.drawImage(this.bgImage, 0, 0, this.workWidth, this.workHeight);
+        this._baseImageOnDrawCanvas = true;
         this._pushHistory(); // base state
         // Default view: 1:1 pixel mapping centered (if overlay sized)
         this._maybeResetInitialView(false);
@@ -273,12 +277,14 @@ export class ImageEditorUI {
         bound.onBucketTol = (e) => { this.bucketTolerance = Math.max(0, Math.min(255, Number(e.target.value) || 0)); };
         bound.onEnter = () => { this.isHovering = true; };
         bound.onLeave = () => { this.isHovering = false; this._render(); };
+        bound.onContextMenu = (e) => { e.preventDefault(); };
 
         window.addEventListener('resize', bound.onResize);
         this.canvas.addEventListener('mousedown', bound.onMouseDown);
         window.addEventListener('mousemove', bound.onMouseMove);
         window.addEventListener('mouseup', bound.onMouseUp);
         this.canvas.addEventListener('wheel', bound.onWheel, { passive: false });
+        this.canvas.addEventListener('contextmenu', bound.onContextMenu);
         window.addEventListener('keydown', bound.onKey);
         window.addEventListener('keyup', bound.onKey);
         this.canvas.addEventListener('mouseenter', bound.onEnter);
@@ -310,6 +316,7 @@ export class ImageEditorUI {
             this.canvas.removeEventListener('wheel', b.onWheel);
             this.canvas.removeEventListener('mouseenter', b.onEnter);
             this.canvas.removeEventListener('mouseleave', b.onLeave);
+            this.canvas.removeEventListener('contextmenu', b.onContextMenu);
         }
         window.removeEventListener('mousemove', b.onMouseMove);
         window.removeEventListener('mouseup', b.onMouseUp);
@@ -399,7 +406,7 @@ export class ImageEditorUI {
         ctx.imageSmoothingQuality = isOneToOne ? 'low' : 'high';
 
         // draw background image in view space (anchored at 0,0 of work area)
-        if (this.bgImage) {
+        if (this.bgImage && !this._baseImageOnDrawCanvas) {
             ctx.drawImage(this.bgImage, this.offsetX, this.offsetY, this.bgImage.width * this.scale, this.bgImage.height * this.scale);
         }
 
@@ -466,18 +473,23 @@ export class ImageEditorUI {
 
     _updateOverlayTransform() {
         if (!this.svgOverlay) return;
-        const w = this.workWidth || 0;
-        const h = this.workHeight || 0;
-        if (w && h) {
-            this.svgOverlay.setAttribute('viewBox', `0 0 ${w} ${h}`);
-            this.svgOverlay.setAttribute('width', String(w));
-            this.svgOverlay.setAttribute('height', String(h));
-        }
-        const tx = this.offsetX || 0;
-        const ty = this.offsetY || 0;
+        const wrap = this.overlay?.querySelector('.img-editor-canvas-wrap');
+        const vw = wrap?.clientWidth || 0;
+        const vh = wrap?.clientHeight || 0;
         const s = this.scale || 1;
-        this.svgOverlay.style.transformOrigin = '0 0';
-        this.svgOverlay.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+        if (vw && vh) {
+            this.svgOverlay.setAttribute('width', String(vw));
+            this.svgOverlay.setAttribute('height', String(vh));
+            this.svgOverlay.style.width = vw + 'px';
+            this.svgOverlay.style.height = vh + 'px';
+        }
+        const minX = -((this.offsetX || 0) / s);
+        const minY = -((this.offsetY || 0) / s);
+        const vbW = (vw || 1) / s;
+        const vbH = (vh || 1) / s;
+        this.svgOverlay.setAttribute('viewBox', `${minX} ${minY} ${vbW} ${vbH}`);
+        this.svgOverlay.style.transform = '';
+        this.svgOverlay.style.transformOrigin = '';
     }
 
     _composeImageForVector() {
@@ -493,7 +505,7 @@ export class ImageEditorUI {
         const ctx = this._traceCtx;
         if (!ctx) return null;
         ctx.clearRect(0, 0, w, h);
-        if (this.bgImage) ctx.drawImage(this.bgImage, 0, 0, w, h);
+        if (this.bgImage && !this._baseImageOnDrawCanvas) ctx.drawImage(this.bgImage, 0, 0, w, h);
         if (this.drawCanvas) ctx.drawImage(this.drawCanvas, 0, 0, w, h);
         try {
             return ctx.getImageData(0, 0, w, h);
@@ -531,26 +543,28 @@ export class ImageEditorUI {
         const smooth = params.smoothCurves !== false;
         const curveTol = Number.isFinite(Number(params.curveTolerance)) ? Number(params.curveTolerance) : 0.75;
         const speckleArea = Number.isFinite(Number(params.speckleArea)) ? Math.max(0, Number(params.speckleArea)) : 0;
-        const simplifyCollinear = params.simplifyCollinear !== false;
+        const simplifyCollinear = !!params.simplifyCollinear;
         const rdpTol = Number.isFinite(Number(params.rdpTolerance)) ? Number(params.rdpTolerance) : 0;
+        const pixelScale = Number.isFinite(Number(params.pixelScale)) ? Number(params.pixelScale) : 1;
+        const scaleAbs = Math.max(Math.abs(pixelScale) || 1, 1e-9);
+        const traceSimplify = (rdpTol && Number(rdpTol) > 0) ? (Number(rdpTol) / scaleAbs) : 0;
+        const curveTolImage = Math.max(0.01, curveTol) / scaleAbs;
 
         const loops = traceImageDataToPolylines(id, {
             threshold,
             mode: "luma+alpha",
             invert,
             mergeCollinear: simplifyCollinear,
-            simplify: 0,
+            simplify: traceSimplify,
             minArea: speckleArea,
         });
         let polyLoops = loops.map((l) => l.map((p) => [p.x, p.y]));
         if (smooth) {
             polyLoops = applyCurveFit(polyLoops, {
-                tolerance: Math.max(0.01, curveTol),
+                tolerance: curveTolImage,
                 cornerThresholdDeg: 70,
                 iterations: 3,
             });
-        } else if (rdpTol > 0) {
-            polyLoops = polyLoops.map((l) => rdp(l, rdpTol));
         }
         const pathStrings = [];
         for (const loop of polyLoops) {
@@ -579,7 +593,8 @@ export class ImageEditorUI {
 
         const spacePan = e.buttons === 1 && this._spaceHeld;
         const middlePan = e.buttons === 4; // middle mouse
-        const activePan = (this.tool === 'pan') || spacePan || middlePan;
+        const rightPan = e.button === 2 || e.buttons === 2; // right mouse
+        const activePan = (this.tool === 'pan') || spacePan || middlePan || rightPan;
 
         // Check resize handle first
         if (this._hitResizeHandle(x, y)) {
@@ -749,7 +764,7 @@ export class ImageEditorUI {
         const comp = document.createElement('canvas');
         comp.width = w; comp.height = h;
         const cctx = comp.getContext('2d');
-        if (this.bgImage) cctx.drawImage(this.bgImage, 0, 0);
+        if (this.bgImage && !this._baseImageOnDrawCanvas) cctx.drawImage(this.bgImage, 0, 0);
         if (this.drawCanvas) cctx.drawImage(this.drawCanvas, 0, 0);
         const id = cctx.getImageData(0, 0, w, h);
         const data = id.data;
@@ -894,7 +909,7 @@ export class ImageEditorUI {
         const out = document.createElement('canvas');
         out.width = w; out.height = h;
         const octx = out.getContext('2d');
-        if (this.bgImage) octx.drawImage(this.bgImage, 0, 0);
+        if (this.bgImage && !this._baseImageOnDrawCanvas) octx.drawImage(this.bgImage, 0, 0);
         if (this.drawCanvas) octx.drawImage(this.drawCanvas, 0, 0);
         const dataUrl = out.toDataURL('image/png');
         if (typeof this.onSaveCallback === 'function') {

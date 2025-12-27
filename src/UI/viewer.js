@@ -169,6 +169,40 @@ function ensureSelectionPickerStyles() {
     document.head.appendChild(style);
 }
 
+function ensureSidebarResizerStyles() {
+    if (typeof document === 'undefined') return;
+    if (document.getElementById('sidebar-resizer-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'sidebar-resizer-styles';
+    style.textContent = `
+        #sidebar-resizer {
+            position: fixed;
+            top: 0;
+            width: 10px;
+            height: 100%;
+            cursor: ew-resize;
+            z-index: 8;
+            touch-action: none;
+        }
+        #sidebar-resizer::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 2px;
+            height: 100%;
+            transform: translateX(-50%);
+            background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.3), rgba(255,255,255,0.05));
+            opacity: 0.5;
+        }
+        #sidebar-resizer.is-active::after,
+        #sidebar-resizer:hover::after {
+            opacity: 0.9;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
 export class Viewer {
     /**
      * @param {Object} opts
@@ -206,6 +240,8 @@ export class Viewer {
         // Core
         this.container = container;
         this.sidebar = sidebar;
+        this._sidebarResizer = null;
+        this._sidebarResizerCleanup = null;
         this.scene = partHistory instanceof PartHistory ? partHistory.scene : new THREE.Scene();
         ensureSelectionPickerStyles();
 
@@ -222,6 +258,8 @@ export class Viewer {
                 }
             }
         } catch { /* ignore */ }
+
+        this._setupSidebarResizer();
 
         // Renderer
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, });
@@ -433,6 +471,163 @@ export class Viewer {
         this.setupAccordion();
     }
 
+    _setupSidebarResizer() {
+        if (!this.sidebar || this._sidebarResizer) return;
+        if (typeof document === 'undefined' || !document.body) return;
+        ensureSidebarResizerStyles();
+        try {
+            const existing = document.getElementById('sidebar-resizer');
+            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+        } catch { /* ignore */ }
+
+        const resizer = document.createElement('div');
+        resizer.id = 'sidebar-resizer';
+        resizer.title = 'Drag to resize sidebar';
+        resizer.setAttribute('aria-hidden', 'true');
+        document.body.appendChild(resizer);
+        this._sidebarResizer = resizer;
+
+        const handleWidth = 10;
+        resizer.style.width = `${handleWidth}px`;
+
+        const updatePosition = () => {
+            if (!this.sidebar) return;
+            const rect = this.sidebar.getBoundingClientRect();
+            const hidden = this.sidebar.hidden
+                || this.sidebar.style.display === 'none'
+                || this.sidebar.style.visibility === 'hidden';
+            if (hidden || rect.width <= 0 || rect.height <= 0) {
+                resizer.style.display = 'none';
+                return;
+            }
+            resizer.style.display = '';
+            resizer.style.left = `${Math.round(rect.right - handleWidth / 2)}px`;
+            resizer.style.top = `${Math.round(rect.top)}px`;
+            resizer.style.height = `${Math.round(rect.height)}px`;
+        };
+
+        const clampWidth = (value) => {
+            let v = Number(value);
+            if (!Number.isFinite(v)) return 200;
+            const input = this.cadMaterialsUi?._widthInput;
+            const min = Number(input?.min) || 200;
+            const max = Number(input?.max) || 600;
+            if (v < min) v = min; else if (v > max) v = max;
+            return Math.round(v);
+        };
+
+        const persistWidthFallback = (value) => {
+            try {
+                const raw = LS.getItem('__CAD_MATERIAL_SETTINGS__');
+                const settings = raw ? JSON.parse(raw) : {};
+                settings['__SIDEBAR_WIDTH__'] = value;
+                LS.setItem('__CAD_MATERIAL_SETTINGS__', JSON.stringify(settings, null, 2));
+            } catch { /* ignore */ }
+        };
+
+        const applyWidth = (value, { persist = false } = {}) => {
+            const next = clampWidth(value);
+            if (this.cadMaterialsUi && typeof this.cadMaterialsUi.setSidebarWidth === 'function') {
+                this.cadMaterialsUi.setSidebarWidth(next, { persist });
+            } else if (this.sidebar) {
+                this.sidebar.style.width = `${next}px`;
+                if (persist) persistWidthFallback(next);
+            }
+            updatePosition();
+            return next;
+        };
+
+        const dragState = {
+            active: false,
+            startX: 0,
+            startWidth: 0,
+            lastWidth: 0,
+            pointerId: null,
+            prevCursor: '',
+            prevUserSelect: '',
+        };
+
+        const startDrag = (ev) => {
+            if (ev.button !== 0 || !this.sidebar) return;
+            ev.preventDefault();
+            dragState.active = true;
+            dragState.startX = ev.clientX;
+            dragState.startWidth = this.sidebar.getBoundingClientRect().width;
+            dragState.lastWidth = dragState.startWidth;
+            dragState.pointerId = ev.pointerId;
+            dragState.prevCursor = document.body.style.cursor;
+            dragState.prevUserSelect = document.body.style.userSelect;
+            document.body.style.cursor = 'ew-resize';
+            document.body.style.userSelect = 'none';
+            resizer.classList.add('is-active');
+            try { resizer.setPointerCapture(ev.pointerId); } catch { /* ignore */ }
+        };
+
+        const onDragMove = (ev) => {
+            if (!dragState.active) return;
+            const delta = ev.clientX - dragState.startX;
+            dragState.lastWidth = applyWidth(dragState.startWidth + delta);
+        };
+
+        const stopDrag = (persist = true) => {
+            if (!dragState.active) return;
+            dragState.active = false;
+            resizer.classList.remove('is-active');
+            document.body.style.cursor = dragState.prevCursor || '';
+            document.body.style.userSelect = dragState.prevUserSelect || '';
+            const finalWidth = Number.isFinite(dragState.lastWidth) ? dragState.lastWidth : dragState.startWidth;
+            applyWidth(finalWidth, { persist });
+            if (dragState.pointerId != null) {
+                try { resizer.releasePointerCapture(dragState.pointerId); } catch { /* ignore */ }
+            }
+            dragState.pointerId = null;
+        };
+
+        const onPointerUp = () => stopDrag(true);
+        const onPointerCancel = () => stopDrag(false);
+        const onWindowPointerUp = () => stopDrag(true);
+        const onWindowResize = () => updatePosition();
+
+        resizer.addEventListener('pointerdown', startDrag);
+        resizer.addEventListener('pointermove', onDragMove);
+        resizer.addEventListener('pointerup', onPointerUp);
+        resizer.addEventListener('pointercancel', onPointerCancel);
+        window.addEventListener('pointerup', onWindowPointerUp, { capture: true });
+        window.addEventListener('resize', onWindowResize);
+
+        let ro = null;
+        try {
+            if (window.ResizeObserver) {
+                ro = new ResizeObserver(() => updatePosition());
+                ro.observe(this.sidebar);
+            }
+        } catch { /* ignore */ }
+
+        let mo = null;
+        try {
+            if (window.MutationObserver) {
+                mo = new MutationObserver(() => updatePosition());
+                mo.observe(this.sidebar, { attributes: true, attributeFilter: ['style', 'hidden', 'class'] });
+            }
+        } catch { /* ignore */ }
+
+        updatePosition();
+
+        this._sidebarResizerCleanup = () => {
+            try { stopDrag(false); } catch { /* ignore */ }
+            resizer.removeEventListener('pointerdown', startDrag);
+            resizer.removeEventListener('pointermove', onDragMove);
+            resizer.removeEventListener('pointerup', onPointerUp);
+            resizer.removeEventListener('pointercancel', onPointerCancel);
+            window.removeEventListener('pointerup', onWindowPointerUp, { capture: true });
+            window.removeEventListener('resize', onWindowResize);
+            try { ro && ro.disconnect(); } catch { /* ignore */ }
+            try { mo && mo.disconnect(); } catch { /* ignore */ }
+            if (resizer.parentNode) resizer.parentNode.removeChild(resizer);
+            if (this._sidebarResizer === resizer) this._sidebarResizer = null;
+        };
+    }
+
 
     async setupAccordion() {
         // Setup accordion
@@ -634,6 +829,7 @@ export class Viewer {
         this._disposed = true;
         cancelAnimationFrame(this._raf);
         try { this._stopComponentTransformSession(); } catch { }
+        try { this._sidebarResizerCleanup?.(); } catch { }
         const el = this.renderer.domElement;
         el.removeEventListener('pointermove', this._onPointerMove);
         el.removeEventListener('pointerdown', this._onPointerDown);

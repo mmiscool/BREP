@@ -34,35 +34,41 @@ export class MainToolbar {
       #main-toolbar {
         position: fixed;
         top: 0; left: 0; right: 0;
-        height: 40px;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 4px 10px;
-        background: rgba(11,13,16,0.92);
-        border-bottom: 1px solid #1e2430;
-        backdrop-filter: blur(6px);
+        padding: 6px;
+        background: rgba(20,24,30,.85);
+        border: 1px solid #262b36;
+        border-radius: 8px;
         z-index: 10;
         pointer-events: auto;
+        user-select: none;
       }
-      .mtb-left, .mtb-right { display: flex; align-items: center; gap: 8px; }
+      .mtb-left, .mtb-right { display: flex; align-items: center; gap: 6px; }
       .mtb-spacer { flex: 1; }
 
       .mtb-btn {
-        background: rgba(255,255,255,0.03);
-        color: #e5e7eb;
-        border: 1px solid #2a3442;
-        padding: 6px 10px;
-        border-radius: 8px;
+        background: transparent;
+        color: #ddd;
+        border: 1px solid #364053;
+        padding: 4px 8px;
+        border-radius: 6px;
         cursor: pointer;
-        font-weight: 700;
-        font-size: 12px;
-        line-height: 1;
-        transition: background .15s ease, border-color .15s ease, transform .05s ease;
+        font-size: 13px;
+        line-height: 18px;
         user-select: none;
       }
-      .mtb-btn:hover { background: #1b2433; border-color: #334155; }
-      .mtb-btn:active { transform: translateY(1px); }
+      .mtb-btn.mtb-icon {
+        min-width: 36px;
+        font-size: 16px;
+      }
+      .mtb-btn.is-active {
+        background: linear-gradient(180deg, rgba(110,168,254,.25), rgba(110,168,254,.15));
+        border-color: #6ea8fe;
+        color: #e9f0ff;
+        box-shadow: 0 0 0 1px rgba(110,168,254,.2) inset;
+      }
     `;
     document.head.appendChild(style);
   }

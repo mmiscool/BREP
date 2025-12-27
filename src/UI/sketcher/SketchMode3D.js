@@ -154,18 +154,7 @@ export class SketchMode3D {
     // Keep other sketch groups visible so they can be referenced while editing
     this._hiddenSketches = [];
 
-    // Attach lightweight UI and hide the app sidebar + main toolbar during sketch mode
-    try {
-      if (v.sidebar) {
-        v.sidebar.hidden = true;
-        v.sidebar.style.display = "none";
-        v.sidebar.style.visibility = "hidden";
-      }
-    } catch { }
-    try {
-      if (v.mainToolbar?.root) v.mainToolbar.root.style.display = "none";
-    } catch { }
-    // UI overlay
+    // Attach lightweight UI while reusing the app sidebar + toolbar layout.
     this.#mountOverlayUI();
     this.#mountSketchSidebar();
     this.#mountTopToolbar();
@@ -349,18 +338,32 @@ export class SketchMode3D {
       } catch { }
       this._ui = null;
     }
-    if (this._left && v?.container) {
+    if (this._left && this._sidebarHost) {
       try {
-        v.container.removeChild(this._left);
+        this._sidebarHost.removeChild(this._left);
       } catch { }
       this._left = null;
     }
-    if (this._topbar && v?.container) {
-      try {
-        v.container.removeChild(this._topbar);
-      } catch { }
-      this._topbar = null;
+    if (Array.isArray(this._sidebarPrevChildren)) {
+      for (const entry of this._sidebarPrevChildren) {
+        try {
+          if (entry?.el) entry.el.style.display = entry.display || "";
+        } catch { }
+      }
+      this._sidebarPrevChildren = null;
     }
+    if (this._sidebarPrevState && this._sidebarHost) {
+      try {
+        this._sidebarHost.hidden = !!this._sidebarPrevState.hidden;
+        this._sidebarHost.style.display = this._sidebarPrevState.display || "";
+        this._sidebarHost.style.visibility = this._sidebarPrevState.visibility || "";
+        if (this._sidebarPrevState.opacity != null) {
+          this._sidebarHost.style.opacity = this._sidebarPrevState.opacity;
+        }
+      } catch { }
+      this._sidebarPrevState = null;
+    }
+    this._sidebarHost = null;
     if (this._ctxBar && v?.container) {
       try {
         v.container.removeChild(this._ctxBar);
@@ -419,18 +422,24 @@ export class SketchMode3D {
     } catch { }
     this._hiddenSketches = [];
 
-    // Restore sidebar and main toolbar
+    // Restore toolbar buttons
     try {
-      if (v.sidebar) {
-        v.sidebar.hidden = false;
-        v.sidebar.style.display = "";
-        v.sidebar.style.visibility = "visible";
-        v.sidebar.style.opacity = 0.9;
+      if (Array.isArray(this._toolbarButtons)) {
+        for (const btn of this._toolbarButtons) {
+          try { btn.remove(); } catch { }
+        }
+      }
+      if (Array.isArray(this._toolbarPrevButtons)) {
+        for (const entry of this._toolbarPrevButtons) {
+          try {
+            if (entry?.el) entry.el.style.display = entry.display || "";
+          } catch { }
+        }
       }
     } catch { }
-    try {
-      if (v.mainToolbar?.root) v.mainToolbar.root.style.display = "";
-    } catch { }
+    this._toolbarButtons = null;
+    this._toolbarPrevButtons = null;
+    this._toolButtons = null;
   }
 
   dispose() {
@@ -1072,21 +1081,30 @@ export class SketchMode3D {
   // ---------- UI + Drawing ----------
   #mountSketchSidebar() {
     const v = this.viewer;
-    const host = v?.container;
+    const host = v?.sidebar;
     if (!host) return;
-    const wrap = document.createElement("div");
-    wrap.style.position = "absolute";
-    wrap.style.left = "0px";
-    wrap.style.top = "0px";
-    wrap.style.width = "300px";
-    wrap.style.margin = "8px";
-    wrap.style.maxHeight = "calc(100% - 2 * 8px)";
-    wrap.style.overflow = "auto";
-    wrap.style.zIndex = "6";
     const acc = new AccordionWidget();
-    wrap.appendChild(acc.uiElement);
-    host.appendChild(wrap);
-    this._left = wrap;
+    this._sidebarHost = host;
+    try {
+      this._sidebarPrevState = {
+        hidden: host.hidden,
+        display: host.style.display,
+        visibility: host.style.visibility,
+        opacity: host.style.opacity,
+      };
+      host.hidden = false;
+      if (host.style.display === "none") host.style.display = "";
+      if (host.style.visibility === "hidden") host.style.visibility = "visible";
+    } catch { }
+    this._sidebarPrevChildren = Array.from(host.children || []).map((el) => ({
+      el,
+      display: el.style.display,
+    }));
+    for (const entry of this._sidebarPrevChildren) {
+      try { if (entry?.el) entry.el.style.display = "none"; } catch { }
+    }
+    host.appendChild(acc.uiElement);
+    this._left = acc.uiElement;
     this._acc = acc;
     (async () => {
       this._secConstraints = await acc.addSection("Constraints");
@@ -1617,43 +1635,32 @@ export class SketchMode3D {
 
   #mountTopToolbar() {
     const v = this.viewer;
-    const host = v?.container;
-    if (!host) return;
-    const bar = document.createElement("div");
-    bar.style.position = "absolute";
-    bar.style.top = "8px";
-    bar.style.left = "50%";
-    bar.style.transform = "translateX(-50%)";
-    bar.style.display = "flex";
-    bar.style.gap = "6px";
-    bar.style.background = "rgba(20,24,30,.85)";
-    bar.style.border = "1px solid #262b36";
-    bar.style.borderRadius = "8px";
-    bar.style.padding = "6px";
-    bar.style.zIndex = "5";
-    bar.style.userSelect = "none";
+    const toolbar = v?.mainToolbar;
+    const container = toolbar?._left;
+    if (!toolbar || !container) return;
     // Track buttons to reflect active tool
     this._toolButtons = this._toolButtons || new Map();
+    this._toolbarButtons = [];
+    this._toolbarPrevButtons = [];
+    for (const child of Array.from(container.children)) {
+      this._toolbarPrevButtons.push({ el: child, display: child.style.display });
+      try { child.style.display = "none"; } catch { }
+    }
 
     const mk = ({ label, tool, tooltip }) => {
-      const b = document.createElement("button");
-      b.textContent = label;
-      if (tooltip) {
-        b.title = tooltip;
-        b.setAttribute("aria-label", tooltip);
-      }
-      b.style.color = "#ddd";
-      b.style.background = "transparent";
-      b.style.border = "1px solid #364053";
-      b.style.borderRadius = "6px";
-      b.style.padding = "4px 8px";
-      b.style.minWidth = label && label.length === 1 ? "36px" : "auto";
-      b.style.fontSize = label && label.length === 1 ? "16px" : "13px";
-      b.style.lineHeight = "18px";
-      b.setAttribute("data-tool", tool);
-      b.onclick = () => { this.#setTool(tool); };
-      this._toolButtons.set(tool, b);
-      return b;
+      const btn = toolbar.addCustomButton({
+        label,
+        title: tooltip,
+        onClick: () => { this.#setTool(tool); },
+      });
+      if (!btn) return null;
+      btn.setAttribute("data-tool", tool);
+      if (tooltip) btn.setAttribute("aria-label", tooltip);
+      btn.setAttribute("aria-pressed", "false");
+      if (label && label.length <= 2) btn.classList.add("mtb-icon");
+      this._toolButtons.set(tool, btn);
+      this._toolbarButtons.push(btn);
+      return btn;
     };
     const buttons = [
       { label: "👆", tool: "select", tooltip: "Select and edit sketch items" },
@@ -1665,10 +1672,7 @@ export class SketchMode3D {
       { label: "∿", tool: "bezier", tooltip: "Create Bezier curve" },
       { label: "🔗", tool: "pickEdges", tooltip: "Link external edge" },
     ];
-    buttons.forEach((btn) => bar.appendChild(mk(btn)));
-    this._topbar = bar;
-    host.appendChild(bar);
-
+    buttons.forEach((btn) => mk(btn));
     this.#refreshTopToolbarActive();
   }
 
@@ -1684,10 +1688,10 @@ export class SketchMode3D {
     if (!this._toolButtons) return;
     for (const [tool, btn] of this._toolButtons.entries()) {
       const active = (tool === this._tool);
-      btn.style.background = active ? "linear-gradient(180deg, rgba(110,168,254,.25), rgba(110,168,254,.15))" : "transparent";
-      btn.style.borderColor = active ? "#6ea8fe" : "#364053";
-      btn.style.color = active ? "#e9f0ff" : "#ddd";
-      btn.style.boxShadow = active ? "0 0 0 1px rgba(110,168,254,.2) inset" : "none";
+      try {
+        btn.classList.toggle("is-active", active);
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
+      } catch { }
     }
   }
 

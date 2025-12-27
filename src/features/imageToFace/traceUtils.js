@@ -378,18 +378,43 @@ export function applyCurveFit(loops, { tolerance = 0.75, cornerThresholdDeg = 70
 
 function findCorners(ring, angThresh) {
   const n = ring.length;
+  if (n < 3) return [];
+  const window = Math.max(2, Math.min(8, Math.floor(n / 40) || 2));
+  const straightThresh = 0.85;
+  const minSpan = window * 0.75;
   const corners = [];
+
+  const sampleDir = (startIdx, step) => {
+    let sx = 0;
+    let sy = 0;
+    let total = 0;
+    for (let k = 0; k < window; k++) {
+      const i0 = (startIdx + k * step + n) % n;
+      const i1 = (i0 + step + n) % n;
+      const dx = ring[i1][0] - ring[i0][0];
+      const dy = ring[i1][1] - ring[i0][1];
+      const len = Math.hypot(dx, dy);
+      if (!len) continue;
+      sx += dx;
+      sy += dy;
+      total += len;
+    }
+    const mag = Math.hypot(sx, sy);
+    return {
+      dir: mag > 1e-9 ? [sx / mag, sy / mag] : [0, 0],
+      straightness: total > 0 ? mag / total : 0,
+      span: total
+    };
+  };
+
   for (let i = 0; i < n; i++) {
-    const a = ring[(i - 1 + n) % n];
-    const b = ring[i];
-    const c = ring[(i + 1) % n];
-    const v1x = b[0] - a[0], v1y = b[1] - a[1];
-    const v2x = c[0] - b[0], v2y = c[1] - b[1];
-    const l1 = Math.hypot(v1x, v1y) || 1e-9;
-    const l2 = Math.hypot(v2x, v2y) || 1e-9;
-    const dot = (v1x * v2x + v1y * v2y) / (l1 * l2);
+    const prev = sampleDir(i - window, 1);
+    const next = sampleDir(i, 1);
+    if (prev.span < minSpan || next.span < minSpan) continue;
+    if (prev.straightness < straightThresh || next.straightness < straightThresh) continue;
+    const dot = prev.dir[0] * next.dir[0] + prev.dir[1] * next.dir[1];
     const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
-    if (ang < angThresh) corners.push(i);
+    if (ang > angThresh) corners.push(i);
   }
   return corners;
 }
@@ -466,4 +491,3 @@ function smoothWithAnchors(ring, corners, iterations) {
   }
   return out;
 }
-

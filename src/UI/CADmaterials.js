@@ -394,6 +394,17 @@ export class CADmaterialWidget {
             if (sb && Number.isFinite(px) && px > 0) sb.style.width = `${px}px`;
         } catch { /* ignore */ }
     }
+    setSidebarWidth(px, { persist = true } = {}) {
+        let v = Number(px);
+        if (!Number.isFinite(v)) return null;
+        const min = Number(this._widthInput?.min) || 200;
+        const max = Number(this._widthInput?.max) || 600;
+        if (v < min) v = min; else if (v > max) v = max;
+        this._setSidebarWidthUi(v);
+        this._settings['__SIDEBAR_WIDTH__'] = v;
+        if (persist) this._saveAllSettings();
+        return v;
+    }
     _setSidebarWidthUi(px) {
         if (!this._widthInput || !this._widthVal) {
             this._applySidebarWidth(px);
