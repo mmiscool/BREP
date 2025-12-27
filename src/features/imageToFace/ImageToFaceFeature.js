@@ -2,7 +2,7 @@ import { BREP } from "../../BREP/BREP.js";
 const THREE = BREP.THREE;
 import { LineGeometry } from 'three/examples/jsm/Addons.js';
 import { ImageEditorUI } from './imageEditor.js';
-import { traceImageDataToPolylines, applyCurveFit, rdp, assignBreaksToLoops, splitLoopIntoEdges } from './traceUtils.js';
+import { traceImageDataToPolylines, applyCurveFit, rdp, assignBreaksToLoops, splitLoopIntoEdges, sanitizeLoopsForExtrude, dropIntersectingLoops } from './traceUtils.js';
 
 const renderHiddenField = ({ id, row }) => {
   if (row && row.style) row.style.display = 'none';
@@ -194,6 +194,7 @@ export class ImageToFaceFeature {
 
     // Optional curve fitting (Potrace-like) then simplification/cleanup
     let workingLoops = loops2D;
+    const fallbackLoops = loops2D.map((l) => simplifyLoop(l, { simplifyCollinear: true, rdpTolerance: 0 }));
     if (smoothCurves !== false) {
       workingLoops = applyCurveFit(workingLoops, {
         tolerance: Number.isFinite(Number(curveTolerance)) ? Math.max(0.01, Number(curveTolerance)) : Math.max(0.05, Math.abs(scale) * 0.75),
@@ -201,7 +202,21 @@ export class ImageToFaceFeature {
         iterations: 3,
       });
     }
-    let simpLoops = workingLoops.map((l) => simplifyLoop(l, { simplifyCollinear: false, rdpTolerance: 0 }));
+    const cleanCollinear = smoothCurves === false;
+    let simpLoops = workingLoops.map((l) => simplifyLoop(l, { simplifyCollinear: cleanCollinear, rdpTolerance: 0 }));
+    const sanitizeEps = Math.max(1e-6, 1e-6 * Math.max(Math.abs(scale) || 1, 1));
+    simpLoops = sanitizeLoopsForExtrude(simpLoops, fallbackLoops, { eps: sanitizeEps });
+    const invalidCount = simpLoops.filter((l) => !Array.isArray(l) || l.length < 3).length;
+    if (invalidCount) console.warn(`[IMAGE] Dropped ${invalidCount} degenerate or self-intersecting loop(s)`);
+    const beforeIntersect = simpLoops.length;
+    simpLoops = dropIntersectingLoops(simpLoops, { eps: sanitizeEps });
+    const droppedIntersect = beforeIntersect - simpLoops.length;
+    if (droppedIntersect) console.warn(`[IMAGE] Dropped ${droppedIntersect} intersecting loop(s) to keep output manifold`);
+    simpLoops = simpLoops.filter((l) => Array.isArray(l) && l.length >= 3);
+    if (!simpLoops.length) {
+      console.warn('[IMAGE] All loops invalid after cleanup; aborting');
+      return { added: [], removed: [] };
+    }
 
     // Optionally center (only if there are any points)
     let centerOffset = { x: 0, y: 0 };
@@ -246,6 +261,7 @@ export class ImageToFaceFeature {
           minSegLen,
           cornerSpacing,
           manualBreaks: breaks,
+          autoBreaks: false,
           returnDebug: true,
         });
         return Array.isArray(info?.ring) && info.ring.length ? info.ring : loop;
@@ -355,6 +371,19 @@ export class ImageToFaceFeature {
     geom.setAttribute('position', new THREE.Float32BufferAttribute(triPositions, 3));
     // Transform triangles from local plane to world placement
     geom.applyMatrix4(m);
+    // Quantize geometry to the same grid as boundary loops/edges.
+    const posAttr = geom.getAttribute('position');
+    if (posAttr && posAttr.itemSize === 3) {
+      for (let i = 0; i < posAttr.count; i++) {
+        posAttr.setXYZ(
+          i,
+          q(posAttr.getX(i)),
+          q(posAttr.getY(i)),
+          q(posAttr.getZ(i))
+        );
+      }
+      posAttr.needsUpdate = true;
+    }
     geom.computeVertexNormals();
     geom.computeBoundingSphere();
 
@@ -376,7 +405,8 @@ export class ImageToFaceFeature {
         minSegLen,
         cornerSpacing,
         manualBreaks,
-        suppressedBreaks
+        suppressedBreaks,
+        autoBreaks: false
       });
       let segIdx = 0;
       for (const seg of segments) {

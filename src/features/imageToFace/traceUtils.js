@@ -396,6 +396,150 @@ export function applyCurveFit(loops, { tolerance = 0.75, cornerThresholdDeg = 70
   return loops.map((l) => fitLoop(l));
 }
 
+function cleanLoop2D(loop, eps) {
+  if (!Array.isArray(loop)) return [];
+  const out = [];
+  const n = loop.length;
+  for (let i = 0; i < n; i++) {
+    const p = loop[i];
+    if (!Array.isArray(p) || p.length < 2) continue;
+    const x = Number(p[0]);
+    const y = Number(p[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (!out.length) {
+      out.push([x, y]);
+      continue;
+    }
+    const prev = out[out.length - 1];
+    const dx = x - prev[0];
+    const dy = y - prev[1];
+    if ((dx * dx + dy * dy) <= eps * eps) continue;
+    out.push([x, y]);
+  }
+  if (out.length >= 2) {
+    const first = out[0];
+    const last = out[out.length - 1];
+    const dx = first[0] - last[0];
+    const dy = first[1] - last[1];
+    if ((dx * dx + dy * dy) <= eps * eps) out.pop();
+  }
+  return out;
+}
+
+function loopSelfIntersects(loop, eps) {
+  const ring = cleanLoop2D(loop, eps);
+  const n = ring.length;
+  if (n < 4) return false;
+  const orient = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const onSeg = (ax, ay, bx, by, cx, cy) =>
+    cx >= Math.min(ax, bx) - eps && cx <= Math.max(ax, bx) + eps
+    && cy >= Math.min(ay, by) - eps && cy <= Math.max(ay, by) + eps;
+  const segsIntersect = (a, b, c, d) => {
+    const o1 = orient(a[0], a[1], b[0], b[1], c[0], c[1]);
+    const o2 = orient(a[0], a[1], b[0], b[1], d[0], d[1]);
+    const o3 = orient(c[0], c[1], d[0], d[1], a[0], a[1]);
+    const o4 = orient(c[0], c[1], d[0], d[1], b[0], b[1]);
+    if (Math.abs(o1) <= eps && onSeg(a[0], a[1], b[0], b[1], c[0], c[1])) return true;
+    if (Math.abs(o2) <= eps && onSeg(a[0], a[1], b[0], b[1], d[0], d[1])) return true;
+    if (Math.abs(o3) <= eps && onSeg(c[0], c[1], d[0], d[1], a[0], a[1])) return true;
+    if (Math.abs(o4) <= eps && onSeg(c[0], c[1], d[0], d[1], b[0], b[1])) return true;
+    return (o1 * o2 < -eps) && (o3 * o4 < -eps);
+  };
+  for (let i = 0; i < n; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      const isAdjacent = (j === i) || (j === i + 1) || (i === 0 && j === n - 1);
+      if (isAdjacent) continue;
+      const c = ring[j];
+      const d = ring[(j + 1) % n];
+      if (segsIntersect(a, b, c, d)) return true;
+    }
+  }
+  return false;
+}
+
+function loopAreaAbs(loop) {
+  const ring = cleanLoop2D(loop, 1e-12);
+  const n = ring.length;
+  if (n < 3) return 0;
+  let a = 0;
+  for (let i = 0; i < n; i++) {
+    const p = ring[i];
+    const q = ring[(i + 1) % n];
+    a += p[0] * q[1] - q[0] * p[1];
+  }
+  return Math.abs(a * 0.5);
+}
+
+function loopsIntersect2D(loopA, loopB, eps) {
+  const a = cleanLoop2D(loopA, eps);
+  const b = cleanLoop2D(loopB, eps);
+  if (a.length < 2 || b.length < 2) return false;
+  const orient = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const onSeg = (ax, ay, bx, by, cx, cy) =>
+    cx >= Math.min(ax, bx) - eps && cx <= Math.max(ax, bx) + eps
+    && cy >= Math.min(ay, by) - eps && cy <= Math.max(ay, by) + eps;
+  const segsIntersect = (p1, p2, p3, p4) => {
+    const o1 = orient(p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]);
+    const o2 = orient(p1[0], p1[1], p2[0], p2[1], p4[0], p4[1]);
+    const o3 = orient(p3[0], p3[1], p4[0], p4[1], p1[0], p1[1]);
+    const o4 = orient(p3[0], p3[1], p4[0], p4[1], p2[0], p2[1]);
+    if (Math.abs(o1) <= eps && onSeg(p1[0], p1[1], p2[0], p2[1], p3[0], p3[1])) return true;
+    if (Math.abs(o2) <= eps && onSeg(p1[0], p1[1], p2[0], p2[1], p4[0], p4[1])) return true;
+    if (Math.abs(o3) <= eps && onSeg(p3[0], p3[1], p4[0], p4[1], p1[0], p1[1])) return true;
+    if (Math.abs(o4) <= eps && onSeg(p3[0], p3[1], p4[0], p4[1], p2[0], p2[1])) return true;
+    return (o1 * o2 < -eps) && (o3 * o4 < -eps);
+  };
+  const na = a.length;
+  const nb = b.length;
+  for (let i = 0; i < na; i++) {
+    const a0 = a[i];
+    const a1 = a[(i + 1) % na];
+    for (let j = 0; j < nb; j++) {
+      const b0 = b[j];
+      const b1 = b[(j + 1) % nb];
+      if (segsIntersect(a0, a1, b0, b1)) return true;
+    }
+  }
+  return false;
+}
+
+export function sanitizeLoopsForExtrude(loops, fallbackLoops, { eps = 1e-6 } = {}) {
+  const base = Array.isArray(loops) ? loops : [];
+  const fallback = Array.isArray(fallbackLoops) ? fallbackLoops : [];
+  const out = [];
+  for (let i = 0; i < base.length; i++) {
+    let loop = cleanLoop2D(base[i], eps);
+    if (loop.length < 3) { out.push(loop); continue; }
+    if (loopSelfIntersects(loop, eps)) {
+      const fb = cleanLoop2D(fallback[i] || loop, eps);
+      if (fb.length >= 3 && !loopSelfIntersects(fb, eps)) loop = fb;
+      else loop = [];
+    }
+    out.push(loop);
+  }
+  return out;
+}
+
+export function dropIntersectingLoops(loops, { eps = 1e-6 } = {}) {
+  const list = Array.isArray(loops) ? loops : [];
+  const n = list.length;
+  if (n < 2) return list.slice();
+  const areas = list.map((l) => loopAreaAbs(l));
+  const drop = new Set();
+  for (let i = 0; i < n; i++) {
+    if (drop.has(i)) continue;
+    for (let j = i + 1; j < n; j++) {
+      if (drop.has(j)) continue;
+      if (!loopsIntersect2D(list[i], list[j], eps)) continue;
+      if (areas[i] <= areas[j]) drop.add(i);
+      else drop.add(j);
+    }
+  }
+  return list.filter((_, idx) => !drop.has(idx));
+}
+
 export function assignBreaksToLoops(loops, breaks, { snapDist = Infinity } = {}) {
   const out = Array.isArray(loops) ? loops.map(() => []) : [];
   if (!Array.isArray(loops) || !Array.isArray(breaks) || !breaks.length) return out;
@@ -560,6 +704,7 @@ export function splitLoopIntoEdges(loop2D, {
   cornerSpacing = 0,
   manualBreaks = [],
   suppressedBreaks = [],
+  autoBreaks = true,
   returnDebug = false,
 } = {}) {
   if (!Array.isArray(loop2D) || loop2D.length < 2) return returnDebug ? { segments: [] } : [];
@@ -698,15 +843,17 @@ export function splitLoopIntoEdges(loop2D, {
   };
 
   const candidates = [];
-  for (let i = 0; i < n; i++) {
-    const prev = sampleDir(i, -1);
-    const next = sampleDir(i, 1);
-    if (prev.span < minSpan || next.span < minSpan) continue;
-    if (prev.straightness < straightnessThresh || next.straightness < straightnessThresh) continue;
-    const inDir = [-prev.dir[0], -prev.dir[1]];
-    const dot = inDir[0] * next.dir[0] + inDir[1] * next.dir[1];
-    const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
-    if (ang >= angThresh) candidates.push({ idx: i, ang });
+  if (autoBreaks !== false) {
+    for (let i = 0; i < n; i++) {
+      const prev = sampleDir(i, -1);
+      const next = sampleDir(i, 1);
+      if (prev.span < minSpan || next.span < minSpan) continue;
+      if (prev.straightness < straightnessThresh || next.straightness < straightnessThresh) continue;
+      const inDir = [-prev.dir[0], -prev.dir[1]];
+      const dot = inDir[0] * next.dir[0] + inDir[1] * next.dir[1];
+      const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (ang >= angThresh) candidates.push({ idx: i, ang });
+    }
   }
 
   const arcDist = (a, b) => {
@@ -729,7 +876,7 @@ export function splitLoopIntoEdges(loop2D, {
 
   const suppressedIdx = new Set();
   const suppressedPts = Array.isArray(suppressedBreaks) ? suppressedBreaks : [];
-  if (suppressedPts.length) {
+  if (autoBreaks !== false && suppressedPts.length) {
     const snapDist = Math.max(minSegLen * 0.5, 1e-6);
     const snapDist2 = snapDist * snapDist;
     for (const pt of suppressedPts) {

@@ -1,6 +1,6 @@
 // Image editor that displays as a full screen paint-like editor
 import { SchemaForm } from '../../UI/featureDialogs.js';
-import { traceImageDataToPolylines, applyCurveFit, assignBreaksToLoops, splitLoopIntoEdges } from './traceUtils.js';
+import { traceImageDataToPolylines, applyCurveFit, assignBreaksToLoops, splitLoopIntoEdges, sanitizeLoopsForExtrude, dropIntersectingLoops } from './traceUtils.js';
 
 export class ImageEditorUI {
     // onSaveCallback can be a function (dataUrl)=>void, or an object { onSave, onCancel }
@@ -88,6 +88,7 @@ export class ImageEditorUI {
         this._baseImageOnDrawCanvas = false;
         this._vectorLoops = [];
         this._autoBreakPoints = [];
+        this._autoBreaksEnabled = false;
         this._breakAutoPx = 2.2;
         this._breakManualPx = 3;
         this._breakSnapPx = 6;
@@ -588,6 +589,32 @@ export class ImageEditorUI {
         const scaleAbs = Math.max(Math.abs(pixelScale) || 1, 1e-9);
         const traceSimplify = (rdpTol && Number(rdpTol) > 0) ? (Number(rdpTol) / scaleAbs) : 0;
         const curveTolImage = Math.max(0.01, curveTol) / scaleAbs;
+        const simplifyCollinearLoop = (loop) => {
+            let pts = Array.isArray(loop) ? loop.slice() : [];
+            if (!pts.length) return pts;
+            if (pts[0][0] !== pts[pts.length - 1][0] || pts[0][1] !== pts[pts.length - 1][1]) {
+                pts.push([pts[0][0], pts[0][1]]);
+            }
+            if (pts.length < 4) return pts;
+            const out = [];
+            const n = pts.length - 1;
+            for (let i = 0; i < n; i++) {
+                const a = pts[(i + n - 2) % n];
+                const b = pts[(i + n - 1) % n];
+                const c = pts[i];
+                const abx = b[0] - a[0];
+                const aby = b[1] - a[1];
+                const bcx = c[0] - b[0];
+                const bcy = c[1] - b[1];
+                const cross = abx * bcy - aby * bcx;
+                if (Math.abs(cross) > 1e-12) out.push(b);
+            }
+            if (out.length) {
+                out.push([out[0][0], out[0][1]]);
+                return out;
+            }
+            return pts;
+        };
 
         const loops = traceImageDataToPolylines(id, {
             threshold,
@@ -598,13 +625,20 @@ export class ImageEditorUI {
             minArea: speckleArea,
         });
         let polyLoops = loops.map((l) => l.map((p) => [p.x, p.y]));
+        const fallbackLoops = polyLoops.map((l) => simplifyCollinearLoop(l));
         if (smooth) {
             polyLoops = applyCurveFit(polyLoops, {
                 tolerance: curveTolImage,
                 cornerThresholdDeg: 70,
                 iterations: 3,
             });
+        } else {
+            polyLoops = polyLoops.map((l) => simplifyCollinearLoop(l));
         }
+        const sanitizeEps = Math.max(1e-6, 1e-6 * scaleAbs);
+        polyLoops = sanitizeLoopsForExtrude(polyLoops, fallbackLoops, { eps: sanitizeEps });
+        polyLoops = dropIntersectingLoops(polyLoops, { eps: sanitizeEps })
+            .filter((l) => Array.isArray(l) && l.length >= 3);
         this._vectorLoops = polyLoops.slice();
         const pathStrings = [];
         for (const loop of polyLoops) {
@@ -617,7 +651,8 @@ export class ImageEditorUI {
         group.innerHTML = pathStrings.join('');
 
         const breaksByLoop = assignBreaksToLoops(polyLoops, this._getManualBreaks());
-        const suppressedByLoop = assignBreaksToLoops(polyLoops, this._getSuppressedBreaks());
+        const autoBreaksEnabled = this._autoBreaksEnabled === true;
+        const suppressedByLoop = autoBreaksEnabled ? assignBreaksToLoops(polyLoops, this._getSuppressedBreaks()) : polyLoops.map(() => []);
         const autoPoints = [];
         const manualPoints = [];
         const autoKeys = new Set();
@@ -633,6 +668,7 @@ export class ImageEditorUI {
                 cornerSpacing,
                 manualBreaks: breaksByLoop[li] || [],
                 suppressedBreaks: suppressedByLoop[li] || [],
+                autoBreaks: autoBreaksEnabled,
                 returnDebug: true,
             });
             const ring = Array.isArray(info?.ring) ? info.ring : [];
@@ -658,16 +694,18 @@ export class ImageEditorUI {
         const autoR = 1;
         const manualR = 1;
         if (this.svgBreakpointsGroup) {
-            this.svgBreakpointsGroup.innerHTML = autoPoints.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="${autoR}" />`).join('');
+            this.svgBreakpointsGroup.innerHTML = autoBreaksEnabled
+                ? autoPoints.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="${autoR}" />`).join('')
+                : '';
         }
         if (this.svgManualBreaksGroup) {
             this.svgManualBreaksGroup.innerHTML = manualPoints.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="${manualR}" />`).join('');
         }
         if (this.svgSuppressedBreaksGroup) {
-            const suppressedPoints = this._getSuppressedBreaks();
+            const suppressedPoints = autoBreaksEnabled ? this._getSuppressedBreaks() : [];
             this.svgSuppressedBreaksGroup.innerHTML = suppressedPoints.map((p) => `<circle cx="${p[0]}" cy="${p[1]}" r="${autoR}" />`).join('');
         }
-        this._autoBreakPoints = autoPoints.slice();
+        this._autoBreakPoints = autoBreaksEnabled ? autoPoints.slice() : [];
         this._updateBreakPointSizes();
     }
 
@@ -793,7 +831,8 @@ export class ImageEditorUI {
     _toggleManualBreak(ix, iy) {
         if (this._vectorDirty) this._updateVectorOverlay();
         const breaks = this._getManualBreaks();
-        const suppressed = this._getSuppressedBreaks();
+        const autoBreaksEnabled = this._autoBreaksEnabled === true;
+        const suppressed = autoBreaksEnabled ? this._getSuppressedBreaks() : [];
         const viewScale = Math.max(1e-6, this.scale || 1);
         const removeDist = Math.max(1e-6, this._breakRemovePx / viewScale);
         let removeIdx = -1;
@@ -815,23 +854,25 @@ export class ImageEditorUI {
             return;
         }
 
-        let suppressIdx = -1;
-        best = removeDist * removeDist;
-        for (let i = 0; i < suppressed.length; i++) {
-            const bp = suppressed[i];
-            const dx = bp[0] - ix;
-            const dy = bp[1] - iy;
-            const d2 = dx * dx + dy * dy;
-            if (d2 <= best) {
-                best = d2;
-                suppressIdx = i;
+        if (autoBreaksEnabled) {
+            let suppressIdx = -1;
+            best = removeDist * removeDist;
+            for (let i = 0; i < suppressed.length; i++) {
+                const bp = suppressed[i];
+                const dx = bp[0] - ix;
+                const dy = bp[1] - iy;
+                const d2 = dx * dx + dy * dy;
+                if (d2 <= best) {
+                    best = d2;
+                    suppressIdx = i;
+                }
             }
-        }
-        if (suppressIdx >= 0) {
-            suppressed.splice(suppressIdx, 1);
-            this._setSuppressedBreaks(suppressed);
-            this._render();
-            return;
+            if (suppressIdx >= 0) {
+                suppressed.splice(suppressIdx, 1);
+                this._setSuppressedBreaks(suppressed);
+                this._render();
+                return;
+            }
         }
 
         const loops = this._vectorLoops;
@@ -851,24 +892,26 @@ export class ImageEditorUI {
             if ((dx * dx + dy * dy) <= dedupeDist * dedupeDist) return;
         }
 
-        const autoPoints = Array.isArray(this._autoBreakPoints) ? this._autoBreakPoints : [];
-        let autoIdx = -1;
-        let autoBest = removeDist * removeDist;
-        for (let i = 0; i < autoPoints.length; i++) {
-            const ap = autoPoints[i];
-            const dx = ap[0] - nearest.point[0];
-            const dy = ap[1] - nearest.point[1];
-            const d2 = dx * dx + dy * dy;
-            if (d2 <= autoBest) {
-                autoBest = d2;
-                autoIdx = i;
+        if (autoBreaksEnabled) {
+            const autoPoints = Array.isArray(this._autoBreakPoints) ? this._autoBreakPoints : [];
+            let autoIdx = -1;
+            let autoBest = removeDist * removeDist;
+            for (let i = 0; i < autoPoints.length; i++) {
+                const ap = autoPoints[i];
+                const dx = ap[0] - nearest.point[0];
+                const dy = ap[1] - nearest.point[1];
+                const d2 = dx * dx + dy * dy;
+                if (d2 <= autoBest) {
+                    autoBest = d2;
+                    autoIdx = i;
+                }
             }
-        }
-        if (autoIdx >= 0) {
-            suppressed.push([autoPoints[autoIdx][0], autoPoints[autoIdx][1]]);
-            this._setSuppressedBreaks(suppressed);
-            this._render();
-            return;
+            if (autoIdx >= 0) {
+                suppressed.push([autoPoints[autoIdx][0], autoPoints[autoIdx][1]]);
+                this._setSuppressedBreaks(suppressed);
+                this._render();
+                return;
+            }
         }
 
         breaks.push([nearest.point[0], nearest.point[1]]);
