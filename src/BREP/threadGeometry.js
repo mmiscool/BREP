@@ -1,7 +1,7 @@
 // threadGeometry.js
 // Unified thread geometry helper for multiple standards in a single ES6 class.
 import { Solid } from "./BetterSolid.js";
-import { CrossSection, Manifold, THREE } from "./SolidShared.js";
+import { Manifold, THREE } from "./SolidShared.js";
 
 export const ThreadStandard = {
   ISO_METRIC: "ISO_METRIC",              // 60° V, ISO 68-1 style basic metric
@@ -153,7 +153,7 @@ const buildThreadProfilePolygon = (thread, radialOffset = 0) => {
     if (rootR <= crestR + EPS * 10) rootR = crestR + minGap;
   }
   
-  // CrossSection.extrude with twist creates a helix by:
+  // Extrude-with-twist creates a helix by:
   // 1. Taking a 2D profile in the XY plane
   // 2. Extruding it along Z while rotating it
   // The profile should be positioned at the thread radius and shaped like the tooth cross-section

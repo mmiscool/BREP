@@ -131,7 +131,7 @@ const inputParamsSchema = {
   threadSegmentsPerTurn: {
     type: 'number',
     label: 'Thread segments/turn',
-    default_value: 24,
+    default_value: 32,
     min: 4,
     step: 1,
     hint: 'Resolution for modeled threads (ignored for symbolic)',

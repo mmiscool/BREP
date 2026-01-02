@@ -1,8 +1,6 @@
 /**
  * Mesh cleanup and refinement utilities.
  */
-import { Manifold } from "../SolidShared.js";
-
 /**
  * Remove small disconnected triangle islands relative to the largest shell.
  * @param {object} [options]
