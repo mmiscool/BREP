@@ -14,9 +14,11 @@ export async function test_boolean_subtract(partHistory) {
 
 
     const booleanFeature2 = await partHistory.newFeature("B");
-    booleanFeature2.inputParams.toolSolid = cone.inputParams.featureID;
     booleanFeature2.inputParams.targetSolid = cube.inputParams.featureID;
-    booleanFeature2.inputParams.operation = "UNION";
+    booleanFeature2.inputParams.boolean = {
+        targets: [cone.inputParams.featureID],
+        operation: "SUBTRACT",
+    };
 
 
 

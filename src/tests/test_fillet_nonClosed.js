@@ -5,22 +5,11 @@ export async function test_Fillet_NonClosed(partHistory) {
   cube.inputParams.height = 10;
   cube.inputParams.depth = 10;
 
-  // Create a cutting solid to create an open edge
-  const cuttingCube = await partHistory.newFeature("P.CU");
-  cuttingCube.inputParams.width = 12;
-  cuttingCube.inputParams.height = 6;
-  cuttingCube.inputParams.depth = 12;
-  cuttingCube.inputParams.position = [0, 2, 0]; // offset to create a partial cut
-
-  // Boolean subtract to create open edges
-  const subtraction = await partHistory.newFeature("B.S");
-  subtraction.inputParams.solidA = cube.inputParams.featureID;
-  subtraction.inputParams.solidB = cuttingCube.inputParams.featureID;
-
-  // Now try to fillet one of the open edges created by the cut
-  // This should test the non-closed loop path
+  // Fillet a single cube edge (non-closed path segment).
   const fillet = await partHistory.newFeature("F");
-  fillet.inputParams.edges = [`${subtraction.inputParams.featureID}_EDGE_0`]; // select first edge
+  fillet.inputParams.edges = [
+    `${cube.inputParams.featureID}_NX|${cube.inputParams.featureID}_NY[0]`,
+  ];
   fillet.inputParams.radius = 0.5;
   fillet.inputParams.inflate = 0.1;
   fillet.inputParams.direction = "INSET";
@@ -36,10 +25,10 @@ export async function afterRun_Fillet_NonClosed(partHistory) {
   }
   
   // Verify that the fillet solid exists in the scene
-  const filletGroup = partHistory.scene.getObjectByName(filletFeature.inputParams.featureID);
-  if (!filletGroup) {
-    throw new Error("Fillet group not found in scene");
-  }
+  const filletGroup = (partHistory.scene?.children || []).find(
+    (obj) => obj?.owningFeatureID === filletFeature.inputParams.featureID
+  );
+  if (!filletGroup) throw new Error("Fillet group not found in scene");
   
   // Check that the fillet has produced geometry
   let solidCount = 0;

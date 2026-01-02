@@ -41,16 +41,18 @@ export async function test_tube_closedLoop(partHistory) {
         ],
     };
 
+    const edgePrefix = `${sketch.inputParams.featureID}:`;
+
     // Create a solid tube with the closed loop path
     const solidTube = await partHistory.newFeature("TU");
-    solidTube.inputParams.path = geometries.map(g => `G${g.id}`);
+    solidTube.inputParams.path = geometries.map(g => `${edgePrefix}G${g.id}`);
     solidTube.inputParams.radius = 3;
     solidTube.inputParams.innerRadius = 0;
     solidTube.inputParams.resolution = 24;
 
     // Create a hollow tube with the closed loop path
     const hollowTube = await partHistory.newFeature("TU");
-    hollowTube.inputParams.path = geometries.map(g => `G${g.id}`);
+    hollowTube.inputParams.path = geometries.map(g => `${edgePrefix}G${g.id}`);
     hollowTube.inputParams.radius = 4;
     hollowTube.inputParams.innerRadius = 1;
     hollowTube.inputParams.resolution = 24;

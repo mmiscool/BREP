@@ -27,14 +27,16 @@ export async function test_tube(partHistory) {
         ],
     };
 
+    const edgePrefix = `${sketch.inputParams.featureID}:`;
+
     const solidTube = await partHistory.newFeature("TU");
-    solidTube.inputParams.path = ["G200", "G201"];
+    solidTube.inputParams.path = [`${edgePrefix}G200`, `${edgePrefix}G201`];
     solidTube.inputParams.radius = 4;
     solidTube.inputParams.innerRadius = 0;
     solidTube.inputParams.resolution = 32;
 
     const hollowTube = await partHistory.newFeature("TU");
-    hollowTube.inputParams.path = ["G200", "G201"];
+    hollowTube.inputParams.path = [`${edgePrefix}G200`, `${edgePrefix}G201`];
     hollowTube.inputParams.radius = 5;
     hollowTube.inputParams.innerRadius = 2;
     hollowTube.inputParams.resolution = 48;

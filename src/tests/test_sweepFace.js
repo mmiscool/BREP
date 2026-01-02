@@ -40,14 +40,16 @@ export async function test_SweepFace(partHistory) {
     // Create the path-based Sweep from the cone's top face, following the sketch edge G100.
     const sweep = await partHistory.newFeature("SW");
     sweep.inputParams.profile = `${cone.inputParams.featureID}_T`;
-    sweep.inputParams.path = ["G100"]; // resolve to the sketch edge created above
+    sweep.inputParams.path = [`${sketch.inputParams.featureID}:G100`]; // resolve to the sketch edge created above
     sweep.inputParams.orientationMode = "translate"; // default, but make explicit
 
     // perform a boolean operation between the 2 solids.
     const boolean = await partHistory.newFeature("B");
     boolean.inputParams.targetSolid = cone.inputParams.featureID;
-    boolean.inputParams.toolSolid = sweep.inputParams.featureID;
-    boolean.inputParams.operation = "UNION";
+    boolean.inputParams.boolean = {
+        targets: [sweep.inputParams.featureID],
+        operation: "UNION",
+    };
 
     return partHistory;
 }
