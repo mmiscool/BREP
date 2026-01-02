@@ -46,8 +46,8 @@ export const CADmaterials = {
             worldUnits: false, // keep dash/line size constant in screen space
             // Pull slightly toward the camera so edges aren't buried by coplanar faces.
             polygonOffset: true,
-            polygonOffsetFactor: -5,
-            polygonOffsetUnits: -1,
+            polygonOffsetFactor: 1,
+            polygonOffsetUnits: -.1,
         }),
         SELECTED: new LineMaterial({
             color: "#ff00ff",
