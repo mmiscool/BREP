@@ -429,28 +429,11 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
                 }
             }
         }
-
-
-
-
-
-        // out.points = !isClosed ? reorderPolyLine(centers) : centers;
-        // out.tangentA = !isClosed ? reorderPolyLine(tanA) : tanA;
-        // out.tangentB = !isClosed ? reorderPolyLine(tanB) : tanB;
-        // out.edge = !isClosed ? reorderPolyLine(edgePts) : edgePts;
-
-
         out.points = centers;
         out.tangentA = tanA;
         out.tangentB = tanB;
         out.edge = edgePts;
-
-
-
         fixPolylineWinding(centers, tanA, tanB);
-
-
-
         return out;
     } catch (e) {
         console.warn('[computeFilletCenterline] failed:', e?.message || e);

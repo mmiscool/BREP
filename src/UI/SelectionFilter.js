@@ -46,7 +46,6 @@ export class SelectionFilter {
     static SetSelectionTypes(types) {
 
         this.viewer.endSplineMode();
-        //alert("Selection type changed to:");
         if (types === SelectionFilter.ALL) {
             SelectionFilter.allowedSelectionTypes = SelectionFilter.ALL;
             SelectionFilter.triggerUI();
@@ -497,7 +496,6 @@ export class SelectionFilter {
         if (SelectionFilter.IsAllowed(type) || objectToToggleSelectionOn.selected === true) {
             objectToToggleSelectionOn.selected = !objectToToggleSelectionOn.selected;
             // change the material on the object to indicate it is selected or not.
-            //if (objectToToggleSelectionOn.type === ""
             if (objectToToggleSelectionOn.selected) {
                 if (objectToToggleSelectionOn.type === SelectionFilter.FACE) {
                     objectToToggleSelectionOn.material = CADmaterials.FACE?.SELECTED ?? CADmaterials.FACE;

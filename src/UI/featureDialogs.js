@@ -1412,5 +1412,3 @@ export class SchemaForm {
         return style;
     }
 }
-
-export { SchemaForm as genFeatureUI };

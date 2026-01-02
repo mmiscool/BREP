@@ -21,13 +21,6 @@ export function setPMIStyle(overrides = {}) {
   return currentStyle;
 }
 
-export function resetPMIStyle() {
-  currentStyle = { ...DEFAULT_PMI_STYLE };
-  return currentStyle;
-}
-
-export { DEFAULT_PMI_STYLE };
-
 export function sanitizePMIStyle(raw = {}) {
   const out = { ...DEFAULT_PMI_STYLE };
   const assign = (key, fallback) => {

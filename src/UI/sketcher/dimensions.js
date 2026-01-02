@@ -11,36 +11,7 @@ const DIM_COLOR_DEFAULT = 0x69a8ff;   // blue
 const DIM_COLOR_HOVER = 0xffd54a;   // yellow
 const DIM_COLOR_SELECTED = 0x6fe26f;   // green
 
-export function mountDimRoot(inst) {
-  const host = inst.viewer?.container;
-  if (!host) return;
-  const el = document.createElement('div');
-  el.className = 'sketch-dims';
-  el.style.position = 'absolute';
-  el.style.left = '0';
-  el.style.top = '0';
-  el.style.right = '0';
-  el.style.bottom = '0';
-  el.style.pointerEvents = 'none';
-  // Prevent any text selection within the overlay while dragging labels
-  el.style.userSelect = 'none';
-  el.style.webkitUserSelect = 'none';
-  el.style.MozUserSelect = 'none';
-  el.style.touchAction = 'none';
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', '100%');
-  svg.setAttribute('height', '100%');
-  svg.style.position = 'absolute';
-  svg.style.left = '0';
-  svg.style.top = '0';
-  svg.style.pointerEvents = 'none';
-  el.appendChild(svg);
-  host.appendChild(el);
-  inst._dimSVG = svg;
-  inst._dimRoot = el;
-}
-
-export function clearDims(inst) {
+function clearDims(inst) {
   if (!inst._dimRoot) return;
   const labels = Array.from(inst._dimRoot.querySelectorAll('.dim-label, .glyph-label'));
   labels.forEach((n) => n.parentNode && n.parentNode.removeChild(n));
@@ -544,7 +515,7 @@ function attachDimLabelEvents(inst, el, c, world) {
   });
 }
 
-export function dimDistance3D(inst, p0, p1, cid, color = 0x67e667) {
+function dimDistance3D(inst, p0, p1, cid, color = 0x67e667) {
   const off = inst._dimOffsets.get(cid) || { du: 0, dv: 0 };
   const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin;
   const u0 = p0.x, v0 = p0.y, u1 = p1.x, v1 = p1.y; const dx = u1 - u0, dy = v1 - v0; const L = Math.hypot(dx, dy) || 1; const tx = dx / L, ty = dy / L; const nx = -ty, ny = tx;
@@ -564,7 +535,7 @@ export function dimDistance3D(inst, p0, p1, cid, color = 0x67e667) {
   arrow(u0, v0, +1); arrow(u1, v1, -1);
 }
 
-export function dimRadius3D(inst, pc, pr, cid, color = 0x69a8ff) {
+function dimRadius3D(inst, pc, pr, cid, color = 0x69a8ff) {
   const off = inst._dimOffsets.get(cid) || {};
   const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin;
   const P = (u, v) => new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);
@@ -585,7 +556,7 @@ export function dimRadius3D(inst, pc, pr, cid, color = 0x69a8ff) {
   add([tip, A]); add([tip, B]);
 }
 
-export function dimAngle3D(inst, p0, p1, p2, p3, cid, I, color = 0x69a8ff, valueDeg = null) {
+function dimAngle3D(inst, p0, p1, p2, p3, cid, I, color = 0x69a8ff, valueDeg = null) {
   // Offset for label drag: translates the arc center together with the label
   const off = inst._dimOffsets.get(cid) || { du: 0, dv: 0 };
   const X = inst._lock.basis.x, Y = inst._lock.basis.y, O = inst._lock.basis.origin; const P = (u, v) => new THREE.Vector3().copy(O).addScaledVector(X, u).addScaledVector(Y, v);

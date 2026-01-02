@@ -77,9 +77,6 @@ export function drawConstraintGlyphs(inst, constraints) {
   const handleR = Math.max(0.02, wpp * 8 * 0.5);
   const iconR = Math.max(base * 0.9, handleR * 1.9); // approx glyph half size in world units
   const P = (id) => s.points.find((p) => p.id === id);
-  const mid = (a, b) => ({ u: (a.x + b.x) / 2, v: (a.y + b.y) / 2 });
-  const dir = (a, b) => { const dx = b.x - a.x, dy = b.y - a.y; const L = Math.hypot(dx, dy) || 1; return { tx: dx / L, ty: dy / L, nx: -dy / L, ny: dx / L }; };
-  const proj = (A, B, C) => { const d = dir(A, B); const vx = C.x - A.x, vy = C.y - A.y; const t = vx * d.tx + vy * d.ty; return { u: A.x + t * d.tx, v: A.y + t * d.ty, nx: d.nx, ny: d.ny }; };
 
   // Nudge a (u,v) position away from nearby sketch points to avoid overlap
   const nudgeFromPoints = (u, v) => {

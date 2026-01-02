@@ -100,7 +100,6 @@ export class CombinedTransformControls extends THREE.Object3D {
     // Materials - using overlay pattern (depthTest: false, depthWrite: false)
     const mAxis = new THREE.MeshBasicMaterial({ color: 0xbfbfbf, toneMapped: false, depthTest: false, depthWrite: false, transparent: true });
     const mArrow = new THREE.MeshBasicMaterial({ color: 0xf2c14e, toneMapped: false, depthTest: false, depthWrite: false, transparent: true });
-    const mArc = new THREE.MeshBasicMaterial({ color: 0xd6d6d6, toneMapped: false, depthTest: false, depthWrite: false, transparent: true });
     const mDot = new THREE.MeshBasicMaterial({ color: 0xf29e4c, toneMapped: false, depthTest: false, depthWrite: false, transparent: true });
 
     // Geometries (shared)
@@ -385,4 +384,3 @@ export class CombinedTransformControls extends THREE.Object3D {
     return hit ? p.clone() : null;
   }
 }
-

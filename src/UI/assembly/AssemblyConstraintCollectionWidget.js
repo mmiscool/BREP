@@ -1,7 +1,6 @@
 import { HistoryCollectionWidget } from '../history/HistoryCollectionWidget.js';
 import { resolveEntryId } from '../history/historyDisplayInfo.js';
 import { SelectionFilter } from '../SelectionFilter.js';
-import { constraintStatusInfo } from './constraintStatusUtils.js';
 import { constraintLabelText } from './constraintLabelUtils.js';
 
 const COLLECTION_EXTRA_CSS = `

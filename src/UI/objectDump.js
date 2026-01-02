@@ -112,10 +112,8 @@ function ensureStyles() {
   document.head.appendChild(style);
 }
 
-const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isArray = Array.isArray;
 const isDate = (v) => v instanceof Date || (typeof v === 'string' && !isNaN(Date.parse(v)) && /^\d{4}-\d{2}-\d{2}/.test(v));
-const isFunction = (v) => typeof v === 'function';
 const typeOf = (v) => {
   if (v === null) return 'null';
   if (isArray(v)) return 'array';
@@ -208,61 +206,6 @@ function filterTree(root, q) {
     const hit = key.includes(q) || path.includes(q);
     el.classList.toggle('hidden', !hit);
   });
-}
-
-/**
- * Safely get/set by path (array of keys)
- */
-function getByPath(obj, path) {
-  return path.reduce((acc, k) => (acc != null ? acc[k] : undefined), obj);
-}
-function setByPath(obj, path, val) {
-  if (!path.length) return;
-  const last = path[path.length - 1];
-  const parent = getByPath(obj, path.slice(0, -1));
-  if (parent == null) return;
-  parent[last] = val;
-}
-
-/**
- * Convert from input string/checkbox into the appropriate type
- * using the current value's type as a hint.
- */
-function coerceValue(raw, currentType, currentValue) {
-  switch (currentType) {
-    case 'number': {
-      if (raw === '' || raw === '-' || raw === '+') return Number.NaN;
-      const n = Number(raw);
-      return Number.isNaN(n) ? currentValue : n;
-    }
-    case 'bigint': {
-      try { return BigInt(raw); } catch { return currentValue; }
-    }
-    case 'boolean': return !!raw; // for checkbox we pass true/false already
-    case 'date': {
-      // Accept YYYY-MM-DD (from date input) and coerce to Date instance if original was Date
-      const t = typeof currentValue === 'string' ? new Date(raw) : new Date(raw + 'T00:00:00');
-      return isNaN(t.getTime()) ? currentValue : (currentValue instanceof Date ? t : t.toISOString());
-    }
-    case 'object':
-    case 'array': {
-      // For arrays/objects edited as raw JSON (fallback)
-      try {
-        const parsed = JSON.parse(raw);
-        if (currentType === 'array' && !Array.isArray(parsed)) return currentValue;
-        if (currentType === 'object' && (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object')) return currentValue;
-        return parsed;
-      } catch {
-        return currentValue;
-      }
-    }
-    case 'null': return null;
-    case 'undefined': return undefined;
-    case 'symbol': return currentValue; // read-only
-    case 'function': return currentValue; // read-only
-    default: // string or unknown
-      return String(raw);
-  }
 }
 
 /**

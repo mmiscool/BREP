@@ -1,6 +1,4 @@
 import JSZip from 'jszip';
-import { localStorage as LS } from '../../localStorageShim.js';
-
 
 
 export function createImportButton(viewer) {

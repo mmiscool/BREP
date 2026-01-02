@@ -730,7 +730,6 @@ export class PMIViewsWidget {
     if (!baseImage) throw new Error('Base image missing for SVG composition');
     const camera = this.viewer?.camera;
     const safeCssWidth = Math.max(1, cssWidth || width);
-    const safeCssHeight = Math.max(1, cssHeight || height);
     const dpr = Math.max(1, width / safeCssWidth);
     const paddingX = 8 * dpr;
     const paddingY = 6 * dpr;

@@ -379,11 +379,6 @@ function arrToVec(arr) {
   return new THREE.Vector3(Number(x), Number(y), Number(z));
 }
 
-function vecToArr(vec) {
-  if (!vec) return null;
-  return [Number(vec.x) || 0, Number(vec.y) || 0, Number(vec.z) || 0];
-}
-
 function ensurePersistentData(ann) {
   if (!ann.persistentData || typeof ann.persistentData !== 'object') {
     ann.persistentData = {};

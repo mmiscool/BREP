@@ -631,10 +631,7 @@ export async function applyBooleanOperation(partHistory, baseSolid, booleanParam
       const eps = Math.max(1e-9, 1e-6 * scale);
 
       try {
-        // Lightly weld triangles before attempting the boolean. This nudges
-        // nearly-duplicate verts into place so Manifold sees a clean solid.
-        // preClean(result, eps);
-        // preClean(tool, eps);
+        // Attempt the boolean directly; repair fallback handles welding if needed.
         result = (op === 'UNION') ? result.union(tool) : result.intersect(tool);
       } catch (e1) {
         debugLog('Primary union/intersect failed; attempting welded fallback', {

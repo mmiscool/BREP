@@ -34,7 +34,6 @@ import { PMIMode } from './pmi/PMIMode.js';
 import { annotationRegistry } from './pmi/AnnotationRegistry.js';
 import { SchemaForm } from './featureDialogs.js';
 import './dialogs.js';
-import { cloneSplineData } from '../features/spline/splineUtils.js';
 import { BREP } from '../BREP/BREP.js';
 
 const ASSEMBLY_CONSTRAINTS_TITLE = 'Assembly Constraints';
@@ -1435,8 +1434,6 @@ export class Viewer {
         // Prefer the intersected object if it is clickable
         let obj = intersection.object;
 
-        //debugLog('Picked object:', obj);
-
         // If the object (or its ancestors) doesn't expose onClick, climb to one that does
         let target = obj;
         while (target && typeof target.onClick !== 'function' && target.visible) target = target.parent;
@@ -1476,9 +1473,6 @@ export class Viewer {
             }
         }
 
-        // DEBUG: Log current mode
-        //debugLog(`_pickAtEvent called - splineMode active: ${!!this._splineMode}, sketchMode active: ${!!this._sketchMode}`);
-
         // In spline mode, allow picking only spline vertices, suppress other scene picking
         if (this._splineMode) {
             if (!event) return collectAll ? { hit: null, target: null, candidates: [] } : { hit: null, target: null };
@@ -1495,42 +1489,18 @@ export class Viewer {
             // Only intersect spline vertices
             const intersects = this._withDoubleSidedPicking(() => this.raycaster.intersectObjects(this.scene.children, true));
 
-            // DEBUG: Log all objects under mouse pointer
-            // debugLog(`SPLINE MODE CLICK DEBUG:`);
-            // debugLog(`- Mouse NDC: (${ndc.x.toFixed(3)}, ${ndc.y.toFixed(3)})`);
-            // debugLog(`- Total intersections found: ${intersects.length}`);
-            // intersects.forEach((it, idx) => {
-            //     const obj = it.object;
-            //     debugLog(`  [${idx}] Object:`, {
-            //         name: obj.name,
-            //         type: obj.type,
-            //         constructor: obj.constructor.name,
-            //         distance: it.distance?.toFixed(3),
-            //         hasOnClick: typeof obj.onClick === 'function',
-            //         userData: obj.userData,
-            //         isSplineVertex: obj.userData?.isSplineVertex,
-            //         isSplineWeight: obj.userData?.isSplineWeight,
-            //         visible: obj.visible,
-            //         parent: obj.parent?.name
-            //     });
-            // });
-
             for (const it of intersects) {
                 if (!it || !it.object) continue;
 
                 // Check if this is a spline vertex by looking at userData
                 if (it.object.userData?.isSplineVertex || it.object.userData?.isSplineWeight) {
                     const target = it.object;
-                    //debugLog(`SPLINE MODE: Found spline vertex/weight to select:`, target.name);
                     if (typeof target.onClick === 'function') {
-                        //debugLog(`SPLINE MODE: Vertex has onClick handler, returning as target`);
                         return { hit: it, target };
                     } else {
-                        // debugLog(`SPLINE MODE: Vertex missing onClick handler!`);
                     }
                 }
             }
-            //debugLog(`SPLINE MODE: No spline vertices found under cursor`);
             return collectAll ? { hit: null, target: null, candidates: [] } : { hit: null, target: null };
         }
 
@@ -1571,18 +1541,6 @@ export class Viewer {
             debugLog(`NORMAL MODE CLICK DEBUG:`);
             debugLog(`- Mouse NDC: (${ndc.x.toFixed(3)}, ${ndc.y.toFixed(3)})`);
             debugLog(`- Total intersections found: ${intersects.length}`);
-            intersects.slice(0, 5).forEach((it, idx) => { // Only log first 5 to avoid spam
-                const obj = it.object;
-                // debugLog(`  [${idx}] Object:`, {
-                //     name: obj.name,
-                //     type: obj.type,
-                //     constructor: obj.constructor.name,
-                //     distance: it.distance?.toFixed(3),
-                //     hasOnClick: typeof obj.onClick === 'function',
-                //     visible: obj.visible,
-                //     parent: obj.parent?.name
-                // });
-            });
         }
 
         const candidates = [];
@@ -1591,20 +1549,16 @@ export class Viewer {
             if (!it || !it.object) continue;
             const testVisible = (obj) => {
                 if (obj.parent === null) {
-                    //debugLog('Reached scene root during visibility test.');
                     return true;
                 }
                 if (obj.visible === false) return false;
                 return testVisible(obj.parent);
             }
-            //debugLog('Testing intersect object visibility:', testVisible(it.object), it.object.name);
 
             const visibleResult = testVisible(it.object);
 
             if (visibleResult) {
 
-                //debugLog('Intersect object visibility result:', visibleResult, it.object.name);
-                //debugLog('Pick intersect object:', it.object);
                 const target = this._mapIntersectionToTarget(it, { allowAnyAllowedType, ignoreSelectionFilter });
                 if (target) {
                     if (collectAll) {

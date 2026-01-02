@@ -515,9 +515,6 @@ export class PMIMode {
 
         // Final nuclear option: remove any sections that weren't there originally
         // This is a bit aggressive but ensures complete cleanup
-        const remainingTitles = Array.from(accordion.querySelectorAll('.accordion-title'));
-        const originalSectionCount = this._originalSections ? Math.floor(this._originalSections.length / 2) : 0;
-
       } catch (e) {
         console.warn('Failed to manually clean up PMI section elements:', e);
       }

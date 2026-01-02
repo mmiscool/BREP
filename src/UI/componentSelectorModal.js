@@ -1,17 +1,6 @@
 import { listComponentRecords, getComponentRecord, extractThumbnailFrom3MFBase64 } from '../services/componentLibrary.js';
 import { ModelLibraryView } from './ModelLibraryView.js';
 
-function formatDate(iso) {
-  if (!iso) return '';
-  try {
-    const dt = new Date(iso);
-    if (Number.isNaN(dt.getTime())) return '';
-    return dt.toLocaleString();
-  } catch {
-    return '';
-  }
-}
-
 export function openComponentSelectorModal({ title = 'Select Component' } = {}) {
   return new Promise((resolve) => {
     const records = listComponentRecords();

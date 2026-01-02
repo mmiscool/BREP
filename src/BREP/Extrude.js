@@ -443,8 +443,6 @@ export class ExtrudeSolid extends Solid {
     }
     this.setEpsilon(eps);
     try { this.removeSmallIslands({ maxTriangles: 12, removeInternal: true, removeExternal: true }); } catch {}
-    // this.fixTriangleWindingsByAdjacency();
-    // this.fixTriangleWindingsByAdjacency();
     return this;
   }
 }

@@ -75,7 +75,7 @@ export class expressionsManager {
         let succeeded = false;
         try {
             const functionString = `return (function(){ ${this.textArea.value} ;});`;
-            let result = Function(functionString)();
+            Function(functionString)();
             this.viewer.partHistory.expressions = this.textArea.value;
             succeeded = true;
         } catch (error) {

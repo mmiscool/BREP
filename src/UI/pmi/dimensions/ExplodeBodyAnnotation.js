@@ -465,15 +465,6 @@ function getSolidWorldCenter(solid) {
   catch { return new THREE.Vector3(); }
 }
 
-function applySnapshotToLocalPoint(localPoint, snap) {
-  if (!localPoint || !localPoint.isVector3 || !snap) return null;
-  const position = vectorFromArray(snap.position);
-  const quaternion = quaternionFromArray(snap.quaternion, new THREE.Quaternion());
-  const scale = vectorFromArray(snap.scale, new THREE.Vector3(1, 1, 1));
-  const matrix = new THREE.Matrix4().compose(position, quaternion, scale);
-  return localPoint.clone().applyMatrix4(matrix);
-}
-
 function isFiniteVec3(vec) {
   if (!vec || !vec.isVector3) return false;
   return Number.isFinite(vec.x) && Number.isFinite(vec.y) && Number.isFinite(vec.z);

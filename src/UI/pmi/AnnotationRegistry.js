@@ -13,7 +13,7 @@ const normalizeKey = (name) => {
   return String(name).trim().toLowerCase();
 };
 
-export class AnnotationRegistry {
+class AnnotationRegistry {
   constructor() {
     this._map = new Map();
     this._aliases = new Map();

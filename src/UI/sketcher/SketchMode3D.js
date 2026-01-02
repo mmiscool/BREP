@@ -638,7 +638,6 @@ export class SketchMode3D {
             // Also create construction guide lines so they can be constrained
             try {
               const sObj = this._solver.sketchObject;
-              const maxIdBefore = Math.max(0, ...sObj.geometries.map(g => +g.id || 0));
               // end0 -> ctrl0
               this._solver.createGeometry("line", [p0, p1]);
               const gid1 = Math.max(0, ...sObj.geometries.map(g => +g.id || 0));
