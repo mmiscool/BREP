@@ -159,6 +159,7 @@ export function openComponentSelectorModal({ title = 'Select Component' } = {}) 
 }
 
 (function ensureStyles() {
+  if (typeof document === 'undefined') return;
   if (document.getElementById('component-selector-styles')) return;
   const style = document.createElement('style');
   style.id = 'component-selector-styles';

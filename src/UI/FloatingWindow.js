@@ -30,6 +30,8 @@ export class FloatingWindow {
     this._moveThreshold = 5; // px to distinguish click vs drag
     this._wasTopmostOnPointerDown = false;
     this._closable = closable !== false;
+    this._visibilityObserver = null;
+    this._lastVisible = null;
     this.onClose = (typeof onClose === 'function') ? onClose : null;
 
     this._ensureStyles();
@@ -106,6 +108,8 @@ export class FloatingWindow {
 
     // Initial shaded state
     this.setShaded(this._isShaded);
+    this._setupVisibilityObserver();
+    this._bringToFrontIfVisible();
 
     // Events: drag-to-move on header (but click toggles shade if not dragged)
     header.addEventListener('pointerdown', (ev) => this._onHeaderPointerDown(ev));
@@ -131,6 +135,7 @@ export class FloatingWindow {
   }
 
   destroy() {
+    try { this._visibilityObserver?.disconnect?.(); } catch {}
     try { this.root && this.root.parentNode && this.root.parentNode.removeChild(this.root); } catch {}
     this.root = null; this.header = null; this.actionsEl = null; this.titleEl = null; this.content = null; this.resizers = null; this.closeButton = null;
   }
@@ -151,26 +156,20 @@ export class FloatingWindow {
     }
     if (this.root) this.root.style.display = 'none';
   }
+  bringToFront() { this._bringToFront(); }
+  _bringToFrontIfVisible() {
+    const visible = this._isVisible();
+    this._lastVisible = visible;
+    if (visible) this._bringToFront();
+  }
   _bringToFront() {
     if (!this.root) return;
-    const windows = document.querySelectorAll('.floating-window');
-    let maxZ = 0;
-    let maxCount = 0;
-    for (const win of windows) {
-      const z = parseInt(win.style.zIndex || window.getComputedStyle(win).zIndex || '0', 10);
-      if (!Number.isFinite(z)) continue;
-      if (z > maxZ) {
-        maxZ = z;
-        maxCount = 1;
-      } else if (z === maxZ) {
-        maxCount += 1;
-      }
-    }
-    const current = parseInt(this.root.style.zIndex || window.getComputedStyle(this.root).zIndex || '0', 10);
+    const maxZ = this._getMaxZIndex(this.root);
+    const current = this._readZIndex(this.root);
     if (!Number.isFinite(current)) return;
-    const hasPeerAtMax = current === maxZ && maxCount > 1;
-    if (current > maxZ || (current === maxZ && !hasPeerAtMax)) return;
-    this.root.style.zIndex = String(maxZ + 1);
+    if (current <= maxZ) {
+      this.root.style.zIndex = String(maxZ + 1);
+    }
   }
   _isTopmost() {
     if (!this.root) return false;
@@ -178,7 +177,7 @@ export class FloatingWindow {
     let maxZ = -Infinity;
     let topmost = null;
     for (const win of windows) {
-      const z = parseInt(win.style.zIndex || window.getComputedStyle(win).zIndex || '0', 10);
+      const z = this._readZIndex(win);
       if (!Number.isFinite(z)) continue;
       if (z > maxZ || z === maxZ) {
         maxZ = z;
@@ -186,6 +185,45 @@ export class FloatingWindow {
       }
     }
     return topmost === this.root;
+  }
+  _isVisible() {
+    if (!this.root || !window || !window.getComputedStyle) return false;
+    try {
+      return window.getComputedStyle(this.root).display !== 'none';
+    } catch {
+      return true;
+    }
+  }
+  _readZIndex(el) {
+    if (!el || !window || !window.getComputedStyle) return null;
+    try {
+      const z = parseInt(window.getComputedStyle(el).zIndex || '0', 10);
+      return Number.isFinite(z) ? z : null;
+    } catch {
+      return null;
+    }
+  }
+  _getMaxZIndex(excludeEl = null) {
+    if (!document || !document.body) return 0;
+    const elements = document.body.getElementsByTagName('*');
+    let maxZ = -Infinity;
+    for (let i = 0; i < elements.length; i += 1) {
+      const el = elements[i];
+      if (excludeEl && el === excludeEl) continue;
+      const z = this._readZIndex(el);
+      if (!Number.isFinite(z)) continue;
+      if (z > maxZ) maxZ = z;
+    }
+    return Number.isFinite(maxZ) ? maxZ : 0;
+  }
+  _setupVisibilityObserver() {
+    if (!this.root || typeof MutationObserver === 'undefined') return;
+    this._visibilityObserver = new MutationObserver(() => {
+      const visible = this._isVisible();
+      if (visible && !this._lastVisible) this._bringToFront();
+      this._lastVisible = visible;
+    });
+    this._visibilityObserver.observe(this.root, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
   }
   setShaded(shaded) {
     this._isShaded = Boolean(shaded);
@@ -323,7 +361,7 @@ export class FloatingWindow {
       .floating-window__actions .fw-btn:hover { background:#2b3545; }
       .floating-window__actions .floating-window__close { padding:4px 8px; border-radius:8px; color:#f1f5f9; }
       .floating-window__actions .floating-window__close:hover { background:#3a1f24; border-color:#5b2a33; }
-      .floating-window__content { flex:1; overflow:auto; padding:8px; }
+      .floating-window__content { flex:1; overflow:auto; padding:8px; user-select:text; }
       .floating-window.is-shaded .floating-window__content { display:none; }
       .floating-window__resizer { position:absolute; width:16px; height:16px; z-index:2; touch-action:none; }
       .floating-window__resizer--se { right:2px; bottom:2px; cursor:se-resize; }

@@ -255,7 +255,7 @@ export class TriangleDebuggerWindow {
     }
 
     _bringToFront() {
-        try { if (this.window && typeof this.window._bringToFront === 'function') this.window._bringToFront(); } catch { }
+        try { this.window?.bringToFront?.(); } catch { }
     }
 
     _ensureWindow() {

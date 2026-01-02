@@ -75,6 +75,7 @@ export function renderComponentSelectorField({ ui, key, def, id, controlWrap }) 
 }
 
 (function ensureComponentSelectorStyles() {
+  if (typeof document === 'undefined') return;
   if (document.getElementById('component-selector-field-styles')) return;
   const style = document.createElement('style');
   style.id = 'component-selector-field-styles';
