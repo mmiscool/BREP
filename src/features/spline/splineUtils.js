@@ -81,34 +81,6 @@ export function normalizeSplineData(rawSpline) {
   };
 }
 
-function computeTangents(pointsData, positions) {
-  const tangents = [];
-  const count = positions.length;
-  
-  for (let i = 0; i < count; i++) {
-    const pointData = pointsData[i];
-    
-    // Extract X-axis direction from the stored rotation matrix
-    const rotation = pointData.rotation || [1, 0, 0, 0, 1, 0, 0, 0, 1];
-    let direction = new THREE.Vector3(rotation[0], rotation[1], rotation[2]);
-    
-    // Apply flip if needed
-    if (pointData.flipDirection) {
-      direction.multiplyScalar(-1);
-    }
-    
-    // Use the appropriate distance for scaling
-    const distance = i === 0 ? pointData.forwardDistance : 
-                    i === count - 1 ? pointData.backwardDistance :
-                    (pointData.forwardDistance + pointData.backwardDistance) * 0.5;
-    
-    const tangent = direction.multiplyScalar(distance);
-    tangents.push(tangent);
-  }
-  
-  return tangents;
-}
-
 const hermitePoint = (p0, p1, t0, t1, t) => {
   const t2 = t * t;
   const t3 = t2 * t;
@@ -160,16 +132,6 @@ export function buildHermitePolyline(spline, resolution = DEFAULT_RESOLUTION, be
     for (let i = 0; i <= samples; i++) {
       const t = i / samples;
       const point = start.clone().lerp(end, t);
-      positions.push(point.x, point.y, point.z);
-      polyline.push([point.x, point.y, point.z]);
-    }
-  };
-
-  // Helper function to add curved segment using hermite interpolation
-  const addCurvedSegment = (p0, p1, t0, t1, samples) => {
-    for (let i = 0; i <= samples; i++) {
-      const t = i / samples;
-      const point = hermitePoint(p0, p1, t0, t1, t);
       positions.push(point.x, point.y, point.z);
       polyline.push([point.x, point.y, point.z]);
     }

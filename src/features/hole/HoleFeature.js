@@ -671,7 +671,6 @@ export class HoleFeature {
       }
     }
     const threadUnitScale = threadGeom && threadGeom.units === 'inch' ? 25.4 : 1;
-    const threadUnitScaleInv = threadUnitScale !== 0 ? 1 / threadUnitScale : 1;
     let clearanceDia = null;
     if (!threaded && clearanceFit !== 'NONE') {
       const lookupDesig = clearanceDesignation || threadDesignation;

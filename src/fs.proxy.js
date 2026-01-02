@@ -44,10 +44,6 @@ async function loadNodeFsIfNeeded() {
   }
 }
 
-// Make a CommonJS-style require for sync access when running under Node ESM.
-let __cjsRequire = null;
-
-
 // -------------------- Browser VFS --------------------
 
 class Stats {

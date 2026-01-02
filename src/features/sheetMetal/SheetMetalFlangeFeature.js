@@ -1017,7 +1017,6 @@ function applyCylMetadataToRevolve(revolve, axisEdge, radiusValue, baseNormal, o
 
     // Fit radius/center per side face from geometry to avoid relying on input radius alone.
     const axisOrigin = A.clone();
-    const n = baseNormal && baseNormal.clone ? baseNormal.clone().normalize() : null;
     const tmp = new THREE.Vector3();
     for (const face of revolve.faces) {
       const meta = face.getMetadata?.() || {};
@@ -1058,14 +1057,6 @@ function setSolidNameSafe(solid, name) {
       solid.name = name;
     }
   } catch { /* ignore naming errors */ }
-}
-
-function resolveDirectionVector(vec) {
-  if (!vec || typeof vec.x !== "number" || typeof vec.y !== "number" || typeof vec.z !== "number") return null;
-  const THREE = BREP.THREE;
-  const dir = new THREE.Vector3(vec.x, vec.y, vec.z);
-  if (dir.lengthSq() < 1e-12) return null;
-  return dir.normalize();
 }
 
 function applyFaceSheetMetalData(inputFace, inputSolid) {

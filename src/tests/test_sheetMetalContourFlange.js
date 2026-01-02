@@ -4,7 +4,6 @@
  */
 
 import { SheetMetalContourFlangeFeature } from '../features/sheetMetal/SheetMetalContourFlangeFeature.js';
-import * as THREE from 'three';
 
 export async function test_SheetMetalContourFlange_Basic(partHistory) {
   console.log("[TEST] Starting Sheet Metal Contour Flange basic test");

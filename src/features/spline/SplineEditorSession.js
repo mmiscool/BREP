@@ -872,8 +872,6 @@ export class SplineEditorSession {
     if (!entry || !entry.mesh || !entry.data) return;
 
     const pos = entry.mesh.position;
-    const rot = entry.mesh.rotation;
-
     if (entry.type === "point") {
       // Update point position
       entry.data.position = [pos.x, pos.y, pos.z];

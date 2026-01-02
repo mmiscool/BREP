@@ -291,8 +291,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   };
 
   const handleSessionSelectionChange = (id) => {
-    const changeStart = performance.now();
-
     if (state.destroyed || state.inSelectionChange) {
       return;
     }
@@ -305,7 +303,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       // This was causing infinite loops: session calls this handler -> we call selectObject -> triggers handler again
       state.selection = id || null;
 
-      const renderStart = performance.now();
       renderAll({ fromSession: true });
     } finally {
       state.inSelectionChange = false;
@@ -313,8 +310,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   };
 
   const handleSessionSplineChange = (nextData, reason = "transform") => {
-    const changeStart = performance.now();
-
     if (state.destroyed || state.inSplineChange) {
       return;
     }
@@ -323,7 +318,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     state.inSplineChange = true;
 
     try {
-      const normalizeStart = performance.now();
       state.spline = cloneSplineData(normalizeSplineData(nextData));
 
       // CRITICAL FIX: Always update persistent data when spline changes
@@ -336,7 +330,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
       // CRITICAL CHANGE: Only update UI, don't trigger feature rebuild during editing
       // The session preview handles the visual updates, feature rebuild happens on dialog close
 
-      const renderStart = performance.now();
       renderAll({ fromSession: true });
     } finally {
       state.inSplineChange = false;
@@ -346,7 +339,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   const ensureSession = () => {
     const viewer = getViewer();
     const featureID = getFeatureID();
-    const sessionStart = performance.now();
 
     // Prevent creating multiple sessions or infinite loops
     if (state.session || state.creatingSession || state.destroyed) {
@@ -370,8 +362,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
         return null;
       }
 
-
-      const sessionCreateStart = performance.now();
       const session = new SplineEditorSession(viewer, featureID, {
         featureRef: feature,
         onSplineChange: handleSessionSplineChange,
@@ -383,10 +373,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
 
       const res = Number(feature?.inputParams?.curveResolution);
       const preview = Number.isFinite(res) ? Math.max(4, Math.floor(res)) : undefined;
-
-
-      const activateStart = performance.now();
-
       // Store desired selection before activation (since activation clears it)
       const desiredSelection = state.selection || (state.spline?.points?.[0] ? `point:${state.spline.points[0].id}` : null);
 
@@ -699,7 +685,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
   const renderAll = ({ fromSession = false } = {}) => {
     const viewer = getViewer();
     const featureID = getFeatureID();
-    const renderStart = performance.now();
 
     if (state.destroyed || state.creatingSession) {
       return;
@@ -711,7 +696,6 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     let activeSession = state.session;
     if (!fromSession && viewer && featureID && !state.creatingSession) {
       if (!activeSession) {
-        const sessionStart = performance.now();
         activeSession = ensureSession();
       } else {
       }
@@ -720,11 +704,9 @@ function renderSplinePointsWidget({ ui, key, controlWrap, row }) {
     }
 
     if (activeSession && !fromSession) {
-      const selectionStart = performance.now();
       state.selection = activeSession.getSelectedId?.() || state.selection;
     }
 
-    const pointsStart = performance.now();
     renderPointRows();
 
     addBtn.disabled = !getFeatureRef();

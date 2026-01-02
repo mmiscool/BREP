@@ -617,14 +617,6 @@ export class SketchFeature {
         const signedArea = (loop)=>{
             let a=0; for(let i=0;i<loop.length-1;i++){ const p=loop[i], q=loop[i+1]; a+= (p[0]*q[1]-q[0]*p[1]); } return 0.5*a;
         };
-        const centroid2 = (loop)=>{
-            const n = loop.length;
-            if (n === 0) return [0,0];
-            const first = loop[0];
-            const last = loop[n-1];
-            const ring = (nearlyEqual(first[0], last[0]) && nearlyEqual(first[1], last[1])) ? loop.slice(0, n-1) : loop;
-            let cx=0, cy=0; let m=ring.length; for(const p of ring){ cx+=p[0]; cy+=p[1]; } return [cx/(m||1), cy/(m||1)];
-        };
         const pointInPoly = (pt, poly)=>{
             // Winding number test. Poly may be closed; trim duplicate.
             const n = poly.length; if (n<3) return false;
@@ -644,8 +636,6 @@ export class SketchFeature {
             }
             return wn !== 0;
         };
-        const reverseIfCW = (loop)=>{ if (signedArea(loop) < 0) return loop.slice().reverse(); return loop; };
-        const makeCW = (loop)=>{ if (signedArea(loop) > 0) return loop.slice().reverse(); return loop; };
 
         // Build multiple loops by chaining segments greedily per connected component
         const unused = new Set(segs.map((_,i)=>i));

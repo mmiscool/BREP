@@ -129,29 +129,6 @@ export class LoftFeature {
       const pts = collectEdgePolylineWorld(e);
       if (pts.length >= 2) { seedEdgePoint(name, pts); firstEdgesWorld.push({ name, pts }); }
     }
-    const distSqPointToSeg = (p, a, b) => {
-      const ax=a[0], ay=a[1], az=a[2];
-      const bx=b[0], by=b[1], bz=b[2];
-      const px=p[0], py=p[1], pz=p[2];
-      const abx=bx-ax, aby=by-ay, abz=bz-az;
-      const apx=px-ax, apy=py-ay, apz=pz-az;
-      const ab2=abx*abx+aby*aby+abz*abz; if (ab2<=1e-18) { const dx=apx, dy=apy, dz=apz; return dx*dx+dy*dy+dz*dz; }
-      const t=Math.max(0,Math.min(1,(apx*abx+apy*aby+apz*abz)/ab2));
-      const qx=ax+t*abx, qy=ay+t*aby, qz=az+t*abz;
-      const dx=px-qx, dy=py-qy, dz=pz-qz; return dx*dx+dy*dy+dz*dz;
-    };
-    const nearestFirstEdgeName = (p) => {
-      let best=null, bestD=+Infinity;
-      for (const ed of firstEdgesWorld) {
-        const arr = ed.pts;
-        for (let i=0;i<arr.length-1;i++){
-          const d2 = distSqPointToSeg(p, arr[i], arr[i+1]);
-          if (d2 < bestD) { bestD = d2; best = ed.name; }
-        }
-      }
-      return best || `${firstFace.name || 'FACE'}_LF`;
-    };
-
     // Helper: unify loop form and cleanup
     const closeAndDedup = (pts) => {
       const pA = pts.slice();
@@ -383,7 +360,6 @@ export class LoftFeature {
     addCapFromFace(faces[faces.length - 1], `${faces[faces.length - 1].name || 'Face'}`, false);
 
     // Side walls: connect corresponding edges (1:1) between consecutive faces
-    const loops0 = (loopsAligned[0] && loopsAligned[0].length) ? loopsAligned[0] : ((loopsByFace[0] && loopsByFace[0].length) ? loopsByFace[0] : getLoops(faces[0]).map(l => ({ ...l, pts: closeAndDedup(l.pts) })));
 
     // Order edges around the loop by connectivity; orient to follow boundary
     const pointKey = (p)=> `${p[0].toFixed(5)},${p[1].toFixed(5)},${p[2].toFixed(5)}`;
@@ -483,26 +459,6 @@ export class LoftFeature {
       tryOrient(ringB, false);
       tryOrient(reverseEdgeRing(ringB), true);
       return best;
-    };
-
-    const resampleOpen = (poly, count) => {
-      const n = poly.length; if (n===0) return [];
-      if (n===count) return poly.slice();
-      // cumulative lengths
-      const L = new Array(n); L[0]=0;
-      const seg = (a,b)=> Math.hypot(b[0]-a[0], b[1]-a[1], b[2]-a[2]);
-      for (let i=1;i<n;i++) L[i]=L[i-1]+seg(poly[i-1],poly[i]);
-      const total = L[n-1]; if (total<=1e-12) return new Array(count).fill(0).map(()=> poly[0].slice());
-      const out = new Array(count);
-      let j=1;
-      for (let k=0;k<count;k++){
-        const s = (k/(count-1))*total;
-        while (j<n && L[j] < s) j++;
-        const a = poly[j-1], b = poly[j] || poly[n-1];
-        const t = (s - L[j-1]) / Math.max(1e-12, (L[j]||total) - L[j-1]);
-        out[k] = [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
-      }
-      return out;
     };
 
     // Build reference of start points (optional) to rotate rings

@@ -667,12 +667,6 @@ function normalizeBreakPoints(raw, { scale = 1, offsetX = 0, offsetY = 0 } = {})
   return out;
 }
 
-function positionsToTriples(arr) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += 3) out.push([arr[i], arr[i + 1], arr[i + 2]]);
-  return out;
-}
-
 function getPlacementBasis(ref, partHistory) {
   // Returns { origin:[x,y,z], x:[x,y,z], y:[x,y,z], z:[x,y,z] }
   const x = new THREE.Vector3(1, 0, 0);

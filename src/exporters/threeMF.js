@@ -510,17 +510,6 @@ function rootRelsXML({ thumbnailPath, viewImages } = {}) {
   return lines.join('\n');
 }
 
-function modelPartRelsXML({ thumbnailPath } = {}) {
-  const lines = [];
-  lines.push('<?xml version="1.0" encoding="UTF-8"?>');
-  lines.push('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">');
-  if (thumbnailPath) {
-    lines.push(`  <Relationship Target="${xmlEsc(thumbnailPath)}" Id="relThumb" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"/>`);
-  }
-  lines.push('</Relationships>');
-  return lines.join('\n');
-}
-
 /**
  * Generate a 3MF zip archive as Uint8Array.
  * @param {Array} solids Array of SOLID-like objects that expose getMesh() and name.

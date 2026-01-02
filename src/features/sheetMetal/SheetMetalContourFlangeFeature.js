@@ -136,7 +136,6 @@ export class SheetMetalContourFlangeFeature {
         omitBaseCap: false,
       });
       sweep.visualize();
-      //alert(`Sweep created: ${sweep.name }    ${sweep.name || this.inputParams?.featureID || "Unnamed"}`);
       tagContourFlangeFaceTypes(sweep);
       // Add cylinder metadata and centerlines for bend arcs (if any).
       const axisDir = extrudeVector.clone().normalize();
@@ -670,16 +669,6 @@ function filletPolyline(points, radius, basis, segmentNames = [], sheetSide = "l
     if (!Number.isFinite(offset) || offset <= 0) {
       continue;
     }
-    const start = {
-      u: curr.u - dirPrev.x * offset,
-      v: curr.v - dirPrev.y * offset,
-      w: curr.w,
-    };
-    const end = {
-      u: curr.u + dirNext.x * offset,
-      v: curr.v + dirNext.y * offset,
-      w: curr.w,
-    };
     const insideSign = Math.sign(turn) || 1;
     // Determine which side is "inside" the bend (where the sheet material is)
     // For sheet metal: the bend creates two arcs
@@ -1440,7 +1429,6 @@ function addCylMetadataToSideFaces(
         }
         const meanRadius = sumDist / verts.length;
         const dev = Math.abs(meanRadius - arc.radius);
-        const tol = Math.max(Math.abs(arc.radius) * 1e-3, 1e-4);
         if (!best || dev < best.dev) {
           best = {
             arc,

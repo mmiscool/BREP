@@ -338,7 +338,6 @@ export class PartHistory {
                 const objTime = Number(obj.timestamp);
                 if (Number.isFinite(objTime) && (!Number.isFinite(feature.timestamp) || objTime > feature.timestamp)) {
                   feature.dirty = true;
-                  //alert(`Marking feature ${feature.inputParams.featureID} dirty because referenced object ${obj.name || obj.id || ''} has newer timestamp.`);
                   break;
                 }
               }

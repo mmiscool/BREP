@@ -441,53 +441,6 @@ export function computeFilletCenterline(edgeObj, radius = 1, sideMode = 'INSET')
     }
 }
 
-function pointToPointDistance(a, b) {
-    const ax = Array.isArray(a) ? a[0] : a?.x; const ay = Array.isArray(a) ? a[1] : a?.y; const az = Array.isArray(a) ? a[2] : a?.z;
-    const bx = Array.isArray(b) ? b[0] : b?.x; const by = Array.isArray(b) ? b[1] : b?.y; const bz = Array.isArray(b) ? b[2] : b?.z;
-    const dx = (ax - bx); const dy = (ay - by); const dz = (az - bz);
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
-}
-
-function findClosestPointInSet(pt, pointsArray) {
-    // skip consumed points
-    let minDist = Infinity;
-    let closestPoint = null;
-    for (const p of pointsArray) {
-        if (p.consumed) continue;
-        const dist = pointToPointDistance(pt, p);
-        if (dist < minDist) {
-            minDist = dist;
-            closestPoint = p;
-        }
-    }
-    return closestPoint;
-}
-
-function reorderPolyLine(pointsArray) {
-    const returnPoints = [];
-
-    // add first point to return array
-    returnPoints.push(pointsArray[0]);
-    pointsArray[0].consumed = true;
-
-    // set the last point in the points array to be marked as consumed
-    pointsArray[pointsArray.length - 1].consumed = true;
-
-    // iteratively find closest point to last added point excluding the last point
-    while (returnPoints.length < pointsArray.length) {
-        const lastPoint = returnPoints[returnPoints.length - 1];
-        const nextPoint = findClosestPointInSet(lastPoint, pointsArray);
-        if (!nextPoint) break; // no more points found
-        returnPoints.push(nextPoint);
-        nextPoint.consumed = true;
-    }
-
-    // add the last point to close the loop
-    returnPoints.push(pointsArray[pointsArray.length - 1]);
-
-    return returnPoints;
-}
-
 /**
  * Fix polyline winding order to ensure consistent triangle orientation.
  * Checks all three polylines (centerline, tangentA, tangentB) for consistent winding.

@@ -129,7 +129,6 @@ export class Import3dModelFeature {
         }
 
         // (Optional) normalize indexing; MeshRepairer ensures indexing as needed
-        // if (!geometry.index) geometry = MeshRepairer._ensureIndexed(geometry);
 
         // Run mesh repair pipeline per selected level to produce a BufferGeometry
         const repairer = new BREP.MeshRepairer();

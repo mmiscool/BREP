@@ -1,5 +1,5 @@
 "use strict";
-import { calculateAngle, rotatePoint, coinToss, distance, roundToDecimals } from "./mathHelpersMod.js";
+import { calculateAngle, rotatePoint, distance, roundToDecimals } from "./mathHelpersMod.js";
 let tolerance = 0.00001;
 const constraintFunctions = [];
 
@@ -532,7 +532,6 @@ const shortestAngleDelta = (target, current) => {
     // If we move C full step, error is 0. If we move A/B full step, error is 0.
     // We should split it.
 
-    const totalWeight = wA * ((1 - t) * (1 - t) + t * t) + wB * (t * t + (1 - t) * (1 - t)) + wC;
     // Simplified: Just assume roughly equal contribution capability?
     // Let's use specific "Position Based Dynamics" style constraints.
     // Inverse Masses: wA, wB, wC.
@@ -702,11 +701,4 @@ function participateInConstraint(solverObject, constraintType, points) {
     return solverObject.constraints.some(c => {
         return c.type === constraintType && points.every(point => c.points.includes(point.id));
     });
-}
-
-
-
-
-function lockPoints(points) {
-    points.forEach(point => point.fixed = true);
 }
