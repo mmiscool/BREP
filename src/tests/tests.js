@@ -23,6 +23,7 @@ import { test_offsetShellGrouping } from './test_offsetShellGrouping.js';
 import { test_pushFace, afterRun_pushFace } from './test_pushFace.js';
 import { test_sketch_openLoop, afterRun_sketch_openLoop } from './test_sketch_openLoop.js';
 import { test_Fillet_NonClosed, afterRun_Fillet_NonClosed } from './test_fillet_nonClosed.js';
+import { generate3MF } from '../exporters/threeMF.js';
 import {
     test_hole_through,
     afterRun_hole_through,
@@ -236,6 +237,14 @@ export async function runTests(partHistory = new PartHistory(), callbackToRunBet
                 });
             }
 
+            // Export 3MF with embedded feature history
+            await export3mfArtifact({
+                partHistory,
+                exportName,
+                exportPath,
+                solids,
+            });
+
         }
     }
 
@@ -295,6 +304,21 @@ function writeFile(filePath, content) {
             fs.mkdirSync(dir, { recursive: true });
         }
         fs.writeFileSync(filePath, content, 'utf8');
+    } catch (error) {
+        console.log(`Error writing file ${filePath}:`, error);
+    }
+}
+
+function writeBinaryFile(filePath, content) {
+    if (typeof window !== "undefined") {
+        return;
+    }
+    try {
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(filePath, content);
     } catch (error) {
         console.log(`Error writing file ${filePath}:`, error);
     }
@@ -364,4 +388,70 @@ function trianglesToAsciiSTL(name, tris) {
     }
     out.push(`endsolid ${name}`);
     return out.join('\n');
+}
+
+async function export3mfArtifact({ partHistory, exportName, exportPath, solids }) {
+    let historyJson = null;
+    try {
+        const json = await partHistory?.toJSON?.();
+        if (json) historyJson = (typeof json === 'string') ? json : JSON.stringify(json);
+    } catch (e) {
+        console.warn(`[runTests] Failed to serialize feature history for ${exportName}:`, e?.message || e);
+    }
+
+    const additionalFiles = historyJson ? { 'Metadata/featureHistory.json': historyJson } : undefined;
+    const modelMetadata = historyJson ? { featureHistoryPath: '/Metadata/featureHistory.json' } : undefined;
+    const metadataManager = partHistory?.metadataManager || null;
+
+    const solidsForExport = [];
+    (solids || []).forEach((s, idx) => {
+        try {
+            const mesh = s?.getMesh?.();
+            const canExport = !!(mesh && mesh.vertProperties && mesh.triVerts);
+            if (mesh && typeof mesh.delete === 'function') {
+                try { mesh.delete(); } catch { }
+            }
+            if (canExport) {
+                solidsForExport.push(s);
+            } else {
+                const name = sanitizeFileName(s?.name || `solid_${idx}`);
+                console.warn(`[runTests] Skipping non-manifold solid for 3MF: ${name}`);
+            }
+        } catch {
+            const name = sanitizeFileName(s?.name || `solid_${idx}`);
+            console.warn(`[runTests] Skipping solid that failed to export for 3MF: ${name}`);
+        }
+    });
+
+    const safeName = sanitizeFileName(exportName || 'partHistory');
+    const outPath = path.join(exportPath, `${safeName}.3mf`);
+    try {
+        let data = null;
+        try {
+            data = await generate3MF(solidsForExport, {
+                unit: 'millimeter',
+                precision: 6,
+                scale: 1,
+                additionalFiles,
+                modelMetadata,
+                metadataManager,
+            });
+        } catch (e) {
+            data = await generate3MF([], {
+                unit: 'millimeter',
+                precision: 6,
+                scale: 1,
+                additionalFiles,
+                modelMetadata,
+                metadataManager,
+            });
+        }
+        if (data && data.length) {
+            writeBinaryFile(outPath, data);
+        } else {
+            console.warn(`[runTests] 3MF export returned empty payload for ${exportName}`);
+        }
+    } catch (e) {
+        console.warn(`[runTests] 3MF export failed for ${exportName}:`, e?.message || e);
+    }
 }
