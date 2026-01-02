@@ -1,5 +1,5 @@
 import { generate3MF } from '../../exporters/threeMF.js';
-import { localStorage as LS } from '../../localStorageShim.js';
+import { localStorage as LS } from '../../idbStorage.js';
 import * as THREE from 'three';
 
 function _uint8ToBase64(uint8) {
@@ -65,7 +65,7 @@ export function createSaveButton(viewer) {
         return;
       }
     } catch { }
-    // Fallback: quick autosave to localStorage shim
+    // Fallback: quick autosave to IndexedDB storage
     try {
       // Produce a compact 3MF that embeds feature history (now includes PMI views) only
       const json = await viewer?.partHistory?.toJSON?.();

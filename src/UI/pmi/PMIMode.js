@@ -12,7 +12,7 @@ import { getPMIStyle, setPMIStyle, sanitizePMIStyle } from './pmiStyle.js';
 import { AnnotationHistory } from './AnnotationHistory.js';
 import { LabelOverlay } from './LabelOverlay.js';
 import { AnnotationCollectionWidget } from './AnnotationCollectionWidget.js';
-import { localStorage as LS } from '../../localStorageShim.js';
+import { localStorage as LS } from '../../idbStorage.js';
 
 const cssEscape = (value) => {
   if (window.CSS && typeof window.CSS.escape === 'function') {

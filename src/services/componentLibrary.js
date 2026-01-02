@@ -1,8 +1,7 @@
 import JSZip from 'jszip';
-import { localStorage as LS } from '../localStorageShim.js';
+import { localStorage as LS } from '../idbStorage.js';
 
 export const MODEL_STORAGE_PREFIX = '__BREP_MODEL__:';
-const LEGACY_KEY = '__BREP_MODELS__';
 
 function safeParse(json) {
   try {
@@ -40,25 +39,6 @@ export function listComponentRecords() {
     }
   } catch {
     // ignore storage issues
-  }
-
-  if (items.length === 0) {
-    try {
-      const legacy = safeParse(LS.getItem(LEGACY_KEY));
-      if (Array.isArray(legacy)) {
-        for (const entry of legacy) {
-          if (!entry || !entry.name) continue;
-          items.push({
-            name: entry.name,
-            savedAt: entry.savedAt || null,
-            has3mf: false,
-            record: entry,
-          });
-        }
-      }
-    } catch {
-      // ignore legacy load errors
-    }
   }
 
   items.sort((a, b) => {

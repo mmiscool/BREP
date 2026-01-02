@@ -8,7 +8,7 @@
 //  - https://github.com/USER/REPO/tree/REF
 //  - https://github.com/USER/REPO/tree/REF/sub/dir
 import { BREP } from "../BREP/BREP.js";
-import { localStorage as LS } from "../localStorageShim.js";
+import { localStorage as LS } from "../idbStorage.js";
 
 
 

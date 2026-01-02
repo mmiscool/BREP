@@ -27,7 +27,7 @@ import { FloatingWindow } from './FloatingWindow.js';
 import { TriangleDebuggerWindow } from './triangleDebuggerWindow.js';
 import { generateObjectUI } from './objectDump.js';
 import { PluginsWidget } from './PluginsWidget.js';
-import { localStorage as LS } from '../localStorageShim.js';
+import { localStorage as LS } from '../idbStorage.js';
 import { loadSavedPlugins } from '../plugins/pluginManager.js';
 import { PMIViewsWidget } from './pmi/PMIViewsWidget.js';
 import { PMIMode } from './pmi/PMIMode.js';

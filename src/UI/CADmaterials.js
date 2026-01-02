@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { LineMaterial } from 'three/examples/jsm/Addons.js';
 import { SelectionFilter } from './SelectionFilter.js';
-import { localStorage as LS } from '../localStorageShim.js';
+import { localStorage as LS } from '../idbStorage.js';
 
 // CADmaterials for each entity type
 

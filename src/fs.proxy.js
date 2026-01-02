@@ -1,7 +1,6 @@
 // fs.proxy.js - ESM-safe, works in Node (CJS & ESM) and browser.
 // - Node: proxies native fs (sync, callback, and promises).
-// - Browser: localStorage-backed VFS for a common subset.
-import { localStorage as LS } from './localStorageShim.js';
+// - Browser: IndexedDB-backed VFS for a common subset.
 
 const isNode =
   typeof process !== 'undefined' &&
@@ -45,6 +44,62 @@ async function loadNodeFsIfNeeded() {
 }
 
 // -------------------- Browser VFS --------------------
+
+const hasIndexedDB = typeof indexedDB !== 'undefined' && !!indexedDB.open;
+const VFS_DB_NAME = '__BREP_VFS_DB__';
+const VFS_STORE_NAME = 'vfs';
+const VFS_DB_VERSION = 1;
+const VFS_KEY = '__VFS_INDEX__';
+
+function promisifyRequest(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('IDB request failed'));
+  });
+}
+
+function openVfsDB() {
+  return new Promise((resolve, reject) => {
+    const openReq = indexedDB.open(VFS_DB_NAME, VFS_DB_VERSION);
+    openReq.onupgradeneeded = () => {
+      const db = openReq.result;
+      if (!db.objectStoreNames.contains(VFS_STORE_NAME)) {
+        db.createObjectStore(VFS_STORE_NAME);
+      }
+    };
+    openReq.onsuccess = () => resolve(openReq.result);
+    openReq.onerror = () => reject(openReq.error || new Error('Failed to open VFS DB'));
+  });
+}
+
+async function idbGet(db, key) {
+  const tx = db.transaction([VFS_STORE_NAME], 'readonly');
+  const store = tx.objectStore(VFS_STORE_NAME);
+  return promisifyRequest(store.get(key));
+}
+
+async function idbPut(db, key, value) {
+  const tx = db.transaction([VFS_STORE_NAME], 'readwrite');
+  tx.objectStore(VFS_STORE_NAME).put(value, key);
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('IDB put failed'));
+  });
+}
+
+function coerceIndex(raw) {
+  if (!raw) return null;
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || typeof parsed.entries !== 'object') return null;
+  return parsed;
+}
 
 class Stats {
   constructor(entry) {
@@ -104,8 +159,6 @@ function basename(p) {
   return parts.pop() || '/';
 }
 
-const VFS_KEY = '__VFS_INDEX__';
-
 function strToUint8(str) { return new TextEncoder().encode(str); }
 function uint8ToStr(uint8) { return new TextDecoder().decode(uint8); }
 function uint8ToBase64(uint8) {
@@ -125,13 +178,49 @@ function base64ToUint8(b64) {
 }
 function nowMs() { return Date.now(); }
 
-class LocalStorageFS {
-  constructor() { this._init(); }
-  _init() {
-    const raw = LS.getItem(VFS_KEY);
-    if (raw) {
-      try { this.index = JSON.parse(raw); } catch { this.index = { entries: {} }; }
-    } else {
+class IndexedDbFS {
+  constructor() {
+    this.index = { entries: {} };
+    this._idbEnabled = hasIndexedDB;
+    this._ready = false;
+    this._dbPromise = null;
+    this._persistChain = Promise.resolve();
+    this._initPromise = this._init();
+  }
+
+  async _init() {
+    if (!this._idbEnabled) {
+      this._ensureIndex();
+      this._ready = true;
+      return;
+    }
+
+    this._dbPromise = openVfsDB();
+    try {
+      const db = await this._dbPromise;
+      const stored = coerceIndex(await idbGet(db, VFS_KEY));
+      if (stored) {
+        this.index = stored;
+      }
+    } catch (err) {
+      console.warn('[vfs] IndexedDB unavailable; using in-memory storage only.', err);
+      this._idbEnabled = false;
+    }
+
+    this._ensureIndex();
+    this._ready = true;
+  }
+
+  ready() { return this._initPromise; }
+
+  _assertReady() {
+    if (!this._ready) {
+      throw new Error('Browser VFS not ready. Await fs.ready() before using sync APIs.');
+    }
+  }
+
+  _ensureIndex() {
+    if (!this.index || typeof this.index !== 'object' || typeof this.index.entries !== 'object') {
       this.index = { entries: {} };
     }
     if (!this.index.entries['/']) {
@@ -139,7 +228,18 @@ class LocalStorageFS {
       this._save();
     }
   }
-  _save() { LS.setItem(VFS_KEY, JSON.stringify(this.index)); }
+
+  _save() {
+    if (!this._idbEnabled) return;
+    if (!this._dbPromise) this._dbPromise = openVfsDB();
+    const snapshot = this.index;
+    this._persistChain = this._persistChain
+      .then(() => this._dbPromise)
+      .then((db) => idbPut(db, VFS_KEY, snapshot))
+      .catch((err) => {
+        console.warn('[vfs] Persist failed:', err);
+      });
+  }
   _enoent(code, path) { const err = new Error(`${code}: no such file or directory, ${path}`); err.code = code; return err; }
   _eexist(code, path) { const err = new Error(`${code}: file already exists, ${path}`); err.code = code; return err; }
   _linkIntoParent(p) {
@@ -173,6 +273,7 @@ class LocalStorageFS {
   }
 
   writeFileSync(path, data, options = {}) {
+    this._assertReady();
     path = normalizePath(path);
     const enc = this._resolveEncoding(options);
     const parent = dirname(path);
@@ -207,6 +308,7 @@ class LocalStorageFS {
   }
 
   appendFileSync(path, data, options = {}) {
+    this._assertReady();
     path = normalizePath(path);
     const enc = this._resolveEncoding(options);
 
@@ -239,6 +341,7 @@ class LocalStorageFS {
   }
 
   readFileSync(path, options = {}) {
+    this._assertReady();
     path = normalizePath(path);
     const entry = this.index.entries[path];
     if (!entry || entry.type !== 'file') throw this._enoent('ENOENT', path);
@@ -253,6 +356,7 @@ class LocalStorageFS {
   }
 
   mkdirSync(path, options = {}) {
+    this._assertReady();
     path = normalizePath(path);
     const recursive = !!(options && (options.recursive === true));
     if (this.index.entries[path]) {
@@ -282,6 +386,7 @@ class LocalStorageFS {
   }
 
   readdirSync(path, options = {}) {
+    this._assertReady();
     path = normalizePath(path);
     const entry = this.index.entries[path];
     if (!entry || entry.type !== 'dir') throw this._enoent('ENOTDIR', path);
@@ -300,6 +405,7 @@ class LocalStorageFS {
   }
 
   unlinkSync(path) {
+    this._assertReady();
     path = normalizePath(path);
     const entry = this.index.entries[path];
     if (!entry) throw this._enoent('ENOENT', path);
@@ -310,6 +416,7 @@ class LocalStorageFS {
   }
 
   rmdirSync(path, options = {}) {
+    this._assertReady();
     path = normalizePath(path);
     const entry = this.index.entries[path];
     if (!entry) throw this._enoent('ENOENT', path);
@@ -336,6 +443,7 @@ class LocalStorageFS {
   }
 
   renameSync(oldPath, newPath) {
+    this._assertReady();
     oldPath = normalizePath(oldPath);
     newPath = normalizePath(newPath);
     const entry = this.index.entries[oldPath];
@@ -376,6 +484,7 @@ class LocalStorageFS {
   }
 
   statSync(path) {
+    this._assertReady();
     path = normalizePath(path);
     const entry = this.index.entries[path];
     if (!entry) throw this._enoent('ENOENT', path);
@@ -383,6 +492,7 @@ class LocalStorageFS {
   }
 
   existsSync(path) {
+    this._assertReady();
     path = normalizePath(path);
     return !!this.index.entries[path];
   }
@@ -436,6 +546,7 @@ class LocalStorageFS {
   }
 
   rmSync(path, options = {}) {
+    this._assertReady();
     path = normalizePath(path);
     const { force = false, recursive = false } = (typeof options === 'object' && options) || {};
     if (path === '/') { const err = new Error(`EPERM: operation not permitted, rm '${path}'`); err.code = 'EPERM'; throw err; }
@@ -447,22 +558,23 @@ class LocalStorageFS {
   }
 }
 
-const browserFs = (typeof window !== 'undefined') ? new LocalStorageFS() : null;
+const browserFs = (typeof window !== 'undefined') ? new IndexedDbFS() : null;
 
 // -------------------- Public Export --------------------
 
 const universalFs = {
+  ready: () => (browserFs ? browserFs.ready() : Promise.resolve()),
   // Async callback-style
-  readFile: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.readFile(...args); } return browserFs.readFile(...args); },
-  writeFile: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.writeFile(...args); } return browserFs.writeFile(...args); },
-  appendFile: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.appendFile(...args); } return browserFs.appendFile(...args); },
-  mkdir: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.mkdir(...args); } return browserFs.mkdir(...args); },
-  readdir: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.readdir(...args); } return browserFs.readdir(...args); },
-  unlink: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.unlink(...args); } return browserFs.unlink(...args); },
-  rmdir: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.rmdir(...args); } return browserFs.rmdir(...args); },
-  rename: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.rename(...args); } return browserFs.rename(...args); },
-  stat: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.stat(...args); } return browserFs.stat(...args); },
-  rm: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.rm(...args); } return browserFs.rm(...args); },
+  readFile: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.readFile(...args); } await browserFs.ready(); return browserFs.readFile(...args); },
+  writeFile: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.writeFile(...args); } await browserFs.ready(); return browserFs.writeFile(...args); },
+  appendFile: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.appendFile(...args); } await browserFs.ready(); return browserFs.appendFile(...args); },
+  mkdir: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.mkdir(...args); } await browserFs.ready(); return browserFs.mkdir(...args); },
+  readdir: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.readdir(...args); } await browserFs.ready(); return browserFs.readdir(...args); },
+  unlink: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.unlink(...args); } await browserFs.ready(); return browserFs.unlink(...args); },
+  rmdir: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.rmdir(...args); } await browserFs.ready(); return browserFs.rmdir(...args); },
+  rename: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.rename(...args); } await browserFs.ready(); return browserFs.rename(...args); },
+  stat: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.stat(...args); } await browserFs.ready(); return browserFs.stat(...args); },
+  rm: async (...args) => { if (isNode) { await loadNodeFsIfNeeded(); return nodeFs.rm(...args); } await browserFs.ready(); return browserFs.rm(...args); },
 
   // Sync methods - supported in Node ESM via createRequire, and in CJS via require.
   readFileSync: (...args) => { if (isNode) return requireLikeFsSync().readFileSync(...args); return browserFs.readFileSync(...args); },
@@ -488,10 +600,13 @@ const universalFs = {
           return fn(...args);
         };
       } else {
-        const prom = browserFs.promises;
-        const fn = prom[prop];
-        if (typeof fn !== 'function') throw new Error(`fs.promises.${String(prop)} is not implemented in browser VFS`);
-        return fn.bind(browserFs.promises);
+        return async (...args) => {
+          await browserFs.ready();
+          const prom = browserFs.promises;
+          const fn = prom[prop];
+          if (typeof fn !== 'function') throw new Error(`fs.promises.${String(prop)} is not implemented in browser VFS`);
+          return fn(...args);
+        };
       }
     }
   }),

@@ -1,10 +1,10 @@
 // fileManagerWidget.js
-// A lightweight widget to save/load/delete models using localStorage shim.
+// A lightweight widget to save/load/delete models using IndexedDB storage.
 // Designed to be embedded as an Accordion section (similar to expressionsManager).
 import * as THREE from 'three';
 import JSZip from 'jszip';
 import { generate3MF } from '../exporters/threeMF.js';
-import { localStorage as LS } from '../localStorageShim.js';
+import { localStorage as LS } from '../idbStorage.js';
 import {
   listComponentRecords,
   getComponentRecord,
@@ -20,9 +20,7 @@ export class FileManagerWidget {
   constructor(viewer) {
     this.viewer = viewer;
     this.uiElement = document.createElement('div');
-    // Legacy aggregate index key (pre-refactor)
-    this._storageKey = '__BREP_MODELS__';
-    // New per-model storage prefix
+    // Per-model storage prefix
     this._modelPrefix = MODEL_STORAGE_PREFIX;
     this._lastKey = '__BREP_MODELS_LASTNAME__';
     this.currentName = this._loadLastName() || '';
@@ -31,8 +29,6 @@ export class FileManagerWidget {
     this._thumbCache = new Map();
     this._ensureStyles();
     this._buildUI();
-    // Attempt migration from legacy single-key storage to per-model keys
-    this._migrateFromLegacy();
     this.refreshList();
 
     // Refresh UI thumbnails/list when any model key changes via storage events (cross-tab and other code paths)
@@ -60,13 +56,12 @@ export class FileManagerWidget {
       window.addEventListener('storage', this._onStorage);
     } catch { /* ignore */ }
 
-    // Ensure shim hydration completes, then re-sync prefs/list and auto-load last
+    // Ensure storage hydration completes, then re-sync prefs/list and auto-load last
     try {
       Promise.resolve(LS.ready()).then(() => {
         try {
           this.currentName = this._loadLastName() || this.currentName || '';
           this._iconsOnly = this._loadIconsPref();
-          this._migrateFromLegacy();
           this.refreshList();
           this.autoLoadLast();
         } catch { alert('Failed to initialize File Manager storage.'); }
@@ -94,10 +89,6 @@ export class FileManagerWidget {
 
 
   // ----- Storage helpers -----
-  // Build a namespaced per-model key
-  _modelKey(name) {
-    return this._modelPrefix + encodeURIComponent(String(name || ''));
-  }
   // List all saved model records from per-model keys
   _listModels() {
     const records = listComponentRecords();
@@ -120,26 +111,6 @@ export class FileManagerWidget {
   // Remove one model record
   _removeModel(name) {
     removeComponentRecord(name);
-  }
-  // One-time migration from legacy aggregate index array to per-model keys
-  _migrateFromLegacy() {
-    try {
-      const raw = LS.getItem(this._storageKey);
-      if (!raw) return;
-      const arr = JSON.parse(raw);
-      if (!Array.isArray(arr)) return;
-      for (const it of arr) {
-        if (!it || !it.name) continue;
-        const existing = getComponentRecord(it.name);
-        if (existing) continue; // don't overwrite existing per-model
-        const record = { savedAt: it.savedAt || new Date().toISOString(), data: it.data };
-        this._setModel(it.name, record);
-      }
-      // Remove legacy blob after migrating
-      LS.removeItem(this._storageKey);
-    } catch {
-      // ignore migration failures
-    }
   }
   _saveLastName(name) {
     if (name) LS.setItem(this._lastKey, name);
@@ -370,10 +341,10 @@ export class FileManagerWidget {
           return;
         } catch { }
       } catch (e) {
-        console.warn('[FileManagerWidget] Failed to load 3MF from localStorage; falling back to legacy JSON if present.', e);
+        console.warn('[FileManagerWidget] Failed to load 3MF from storage; falling back to JSON if present.', e);
       }
     }
-    // Legacy JSON path
+    // JSON fallback path
     try {
       const payload = (typeof rec.data === 'string') ? rec.data : JSON.stringify(rec.data);
       await this.viewer.partHistory.fromJSON(payload);
