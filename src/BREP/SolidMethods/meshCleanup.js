@@ -730,11 +730,6 @@ export function splitSelfIntersectingTriangles(diagnostics = false) {
     };
 
     const pointOf = (i) => [vp[i * 3 + 0], vp[i * 3 + 1], vp[i * 3 + 2]];
-    const triOf = (t) => {
-        const b = t * 3;
-        return [tv[b + 0] >>> 0, tv[b + 1] >>> 0, tv[b + 2] >>> 0];
-    };
-
     const triArea = (ia, ib, ic) => {
         const A = pointOf(ia), B = pointOf(ib), C = pointOf(ic);
         const ab = vec.sub(B, A), ac = vec.sub(C, A);
@@ -877,12 +872,6 @@ export function splitSelfIntersectingTriangles(diagnostics = false) {
             return [P[0], P[1]];
         };
         
-        const unproject = (P2D, originalZ) => {
-            if (dropAxis === 0) return [originalZ, P2D[0], P2D[1]];
-            if (dropAxis === 1) return [P2D[0], originalZ, P2D[1]];
-            return [P2D[0], P2D[1], originalZ];
-        };
-        
         const tri1_2d = [project(A), project(B), project(C)];
         const tri2_2d = [project(D), project(E), project(F)];
         
@@ -891,7 +880,6 @@ export function splitSelfIntersectingTriangles(diagnostics = false) {
         
         // Edge-edge intersections
         const edges1 = [[A, B], [B, C], [C, A]];
-        const edges2 = [[D, E], [E, F], [F, D]];
         const edges1_2d = [[tri1_2d[0], tri1_2d[1]], [tri1_2d[1], tri1_2d[2]], [tri1_2d[2], tri1_2d[0]]];
         const edges2_2d = [[tri2_2d[0], tri2_2d[1]], [tri2_2d[1], tri2_2d[2]], [tri2_2d[2], tri2_2d[0]]];
         
@@ -981,131 +969,6 @@ export function splitSelfIntersectingTriangles(diagnostics = false) {
                     if (dist > maxDist) {
                         maxDist = dist;
                         bestPair = [uniquePoints[i], uniquePoints[j]];
-                    }
-                }
-            }
-            
-            return maxDist > 1e-8 ? bestPair : null;
-        }
-        
-        return null;
-    };
-
-    // Find intersection segment of two coplanar triangles
-    const findCoplanarTriangleIntersection = (A, B, C, D, E, F) => {
-        // Find the best 2D projection plane
-        const n1 = vec.cross(vec.sub(B, A), vec.sub(C, A));
-        const n2 = vec.cross(vec.sub(E, D), vec.sub(F, D));
-        const avgN = vec.norm(vec.add(n1, n2));
-        
-        // Choose projection axis (drop the coordinate with largest normal component)
-        const absN = [Math.abs(avgN[0]), Math.abs(avgN[1]), Math.abs(avgN[2])];
-        let dropAxis = 0;
-        if (absN[1] > absN[dropAxis]) dropAxis = 1;
-        if (absN[2] > absN[dropAxis]) dropAxis = 2;
-        
-        // Project triangles to 2D
-        const project = (P) => {
-            if (dropAxis === 0) return [P[1], P[2]];
-            if (dropAxis === 1) return [P[0], P[2]];
-            return [P[0], P[1]];
-        };
-        
-        const unproject = (P2D, originalPt) => {
-            if (dropAxis === 0) return [originalPt[0], P2D[0], P2D[1]];
-            if (dropAxis === 1) return [P2D[0], originalPt[1], P2D[1]];
-            return [P2D[0], P2D[1], originalPt[2]];
-        };
-        
-        const tri1_2d = [project(A), project(B), project(C)];
-        const tri2_2d = [project(D), project(E), project(F)];
-        
-        // Check if point is inside triangle using barycentric coordinates
-        const pointInTriangle2D = (pt, [t0, t1, t2]) => {
-            const v0 = [t2[0] - t0[0], t2[1] - t0[1]];
-            const v1 = [t1[0] - t0[0], t1[1] - t0[1]];
-            const v2 = [pt[0] - t0[0], pt[1] - t0[1]];
-            
-            const dot00 = v0[0] * v0[0] + v0[1] * v0[1];
-            const dot01 = v0[0] * v1[0] + v0[1] * v1[1];
-            const dot02 = v0[0] * v2[0] + v0[1] * v2[1];
-            const dot11 = v1[0] * v1[0] + v1[1] * v1[1];
-            const dot12 = v1[0] * v2[0] + v1[1] * v2[1];
-            
-            const invDenom = 1 / (dot00 * dot11 - dot01 * dot01);
-            const u = (dot11 * dot02 - dot01 * dot12) * invDenom;
-            const v = (dot00 * dot12 - dot01 * dot02) * invDenom;
-            
-            return (u >= 0) && (v >= 0) && (u + v <= 1);
-        };
-        
-        const intersections = [];
-        
-        // Find edge-edge intersections
-        const edges1 = [[tri1_2d[0], tri1_2d[1]], [tri1_2d[1], tri1_2d[2]], [tri1_2d[2], tri1_2d[0]]];
-        const edges2 = [[tri2_2d[0], tri2_2d[1]], [tri2_2d[1], tri2_2d[2]], [tri2_2d[2], tri2_2d[0]]];
-        const edges1_3d = [[A, B], [B, C], [C, A]];
-        const edges2_3d = [[D, E], [E, F], [F, D]];
-        
-        for (let i = 0; i < 3; i++) {
-            for (let j = 0; j < 3; j++) {
-                const int2d = lineIntersection2D(edges1[i], edges2[j]);
-                if (int2d) {
-                    // Convert back to 3D using parametric interpolation
-                    const t1 = getParameterOnSegment2D(edges1[i], int2d);
-                    if (t1 >= 0 && t1 <= 1) {
-                        const int3d = [
-                            edges1_3d[i][0][0] + t1 * (edges1_3d[i][1][0] - edges1_3d[i][0][0]),
-                            edges1_3d[i][0][1] + t1 * (edges1_3d[i][1][1] - edges1_3d[i][0][1]),
-                            edges1_3d[i][0][2] + t1 * (edges1_3d[i][1][2] - edges1_3d[i][0][2])
-                        ];
-                        intersections.push(int3d);
-                    }
-                }
-            }
-        }
-        
-        // Check vertices of triangle 1 inside triangle 2
-        const tri1_3d = [A, B, C];
-        const tri2_3d = [D, E, F];
-        
-        for (let i = 0; i < 3; i++) {
-            if (pointInTriangle2D(tri1_2d[i], tri2_2d)) {
-                intersections.push(tri1_3d[i]);
-            }
-        }
-        
-        // Check vertices of triangle 2 inside triangle 1
-        for (let i = 0; i < 3; i++) {
-            if (pointInTriangle2D(tri2_2d[i], tri1_2d)) {
-                intersections.push(tri2_3d[i]);
-            }
-        }
-        
-        // Remove duplicates and ensure we have at least 2 points
-        const uniqueIntersections = [];
-        for (const pt of intersections) {
-            let isDuplicate = false;
-            for (const existing of uniqueIntersections) {
-                if (vec.len(vec.sub(pt, existing)) < 1e-9) {
-                    isDuplicate = true;
-                    break;
-                }
-            }
-            if (!isDuplicate) uniqueIntersections.push(pt);
-        }
-        
-        if (uniqueIntersections.length >= 2) {
-            // Return the two most distant points
-            let maxDist = 0;
-            let bestPair = [uniqueIntersections[0], uniqueIntersections[1]];
-            
-            for (let i = 0; i < uniqueIntersections.length; i++) {
-                for (let j = i + 1; j < uniqueIntersections.length; j++) {
-                    const dist = vec.len(vec.sub(uniqueIntersections[i], uniqueIntersections[j]));
-                    if (dist > maxDist) {
-                        maxDist = dist;
-                        bestPair = [uniqueIntersections[i], uniqueIntersections[j]];
                     }
                 }
             }
@@ -1228,16 +1091,6 @@ export function splitSelfIntersectingTriangles(diagnostics = false) {
         } else {
             return (point[1] - p1[1]) / dy;
         }
-    };
-
-    // Check if a point is well inside a triangle (not near edges or vertices)
-    const isPointWellInsideTriangle = (P, A, B, C) => {
-        const w = barycentric(A, B, C, P);
-        if (!w || !Number.isFinite(w[0])) return false;
-        
-        // All weights must be well away from edges (not just >= 0)
-        const margin = 0.1; // 10% margin from edges
-        return w[0] > margin && w[1] > margin && w[2] > margin;
     };
 
     // Manifold-safe barycentric coordinates

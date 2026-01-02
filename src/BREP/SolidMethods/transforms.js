@@ -272,7 +272,9 @@ export function pushFace(faceName, distance = 0.001) {
 
     const triCount = Math.min(triIDs.length, (triVerts.length / 3) | 0);
     let nx = 0, ny = 0, nz = 0;
+    let areaSum = 0;
     const affected = new Set();
+    const vertNormals = new Map();
 
     for (let t = 0; t < triCount; t++) {
         if (triIDs[t] !== faceID) continue;
@@ -287,31 +289,63 @@ export function pushFace(faceName, distance = 0.001) {
         const cx = vp[i2 * 3 + 0], cy = vp[i2 * 3 + 1], cz = vp[i2 * 3 + 2];
         const ux = bx - ax, uy = by - ay, uz = bz - az;
         const vx = cx - ax, vy = cy - ay, vz = cz - az;
-        nx += uy * vz - uz * vy;
-        ny += uz * vx - ux * vz;
-        nz += ux * vy - uy * vx;
+        const tx = uy * vz - uz * vy;
+        const ty = uz * vx - ux * vz;
+        const tz = ux * vy - uy * vx;
+        const tLen = Math.hypot(tx, ty, tz);
+        if (!(tLen > 0)) continue;
+        areaSum += tLen;
+        nx += tx; ny += ty; nz += tz;
+        const addNormal = (idx) => {
+            const existing = vertNormals.get(idx);
+            if (existing) {
+                existing[0] += tx;
+                existing[1] += ty;
+                existing[2] += tz;
+            } else {
+                vertNormals.set(idx, [tx, ty, tz]);
+            }
+        };
+        addNormal(i0); addNormal(i1); addNormal(i2);
     }
 
     const affectedIndices = [...affected];
     if (affectedIndices.length === 0) return this;
 
     const len = Math.hypot(nx, ny, nz);
-    if (!(len > 0)) {
-        console.warn(`pushFace: Invalid normal for face "${faceName}"`);
-        return this;
-    }
-
-    // Push strictly along the outward normal derived from triangle winding;
-    // positive distance moves outward, negative moves inward.
-    const scale = dist / len;
-    const dx = nx * scale;
-    const dy = ny * scale;
-    const dz = nz * scale;
-    for (const idx of affectedIndices) {
-        const base = idx * 3;
-        vp[base + 0] += dx;
-        vp[base + 1] += dy;
-        vp[base + 2] += dz;
+    const planarRatio = areaSum > 0 ? (len / areaSum) : 0;
+    if (len > 0 && planarRatio > 0.98) {
+        // Push strictly along the outward normal derived from triangle winding;
+        // positive distance moves outward, negative moves inward.
+        const scale = dist / len;
+        const dx = nx * scale;
+        const dy = ny * scale;
+        const dz = nz * scale;
+        for (const idx of affectedIndices) {
+            const base = idx * 3;
+            vp[base + 0] += dx;
+            vp[base + 1] += dy;
+            vp[base + 2] += dz;
+        }
+    } else {
+        // Fall back to per-vertex normals for curved faces.
+        let moved = 0;
+        for (const idx of affectedIndices) {
+            const normal = vertNormals.get(idx);
+            if (!normal) continue;
+            const nLen = Math.hypot(normal[0], normal[1], normal[2]);
+            if (!(nLen > 0)) continue;
+            const scale = dist / nLen;
+            const base = idx * 3;
+            vp[base + 0] += normal[0] * scale;
+            vp[base + 1] += normal[1] * scale;
+            vp[base + 2] += normal[2] * scale;
+            moved++;
+        }
+        if (moved === 0) {
+            console.warn(`pushFace: Invalid normal for face "${faceName}"`);
+            return this;
+        }
     }
 
     this._vertKeyToIndex = new Map();

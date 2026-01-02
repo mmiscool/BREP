@@ -82,13 +82,6 @@ export class MeshToBrep extends Solid {
             const rz = Math.round(z / q);
             return `${rx},${ry},${rz}`;
         };
-        const gridToPos = (x, y, z) => {
-            if (q <= 0) return [x, y, z];
-            // Snap back to grid center
-            return [Math.round(x / q) * q, Math.round(y / q) * q, Math.round(z / q) * q];
-        };
-
-        const tmpV = new THREE.Vector3();
         const tmpA = new THREE.Vector3();
         const tmpB = new THREE.Vector3();
         const tmpC = new THREE.Vector3();

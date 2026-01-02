@@ -135,7 +135,6 @@ const triTable = [
 
 function marchingCubesSDF({ nx, ny, nz, h, origin, sample, iso = 1.0 }) {
   const solid = new Solid();
-  const vtx = (x,y,z) => [x, y, z];
   // Cache of interpolated edge vertices
   const interpCache = new Map();
   const keyEdge = (i,j,k,e) => `${i}|${j}|${k}|${e}`;
@@ -267,7 +266,6 @@ export function buildTightPointCloudWrap(rawPoints, opts = {}) {
 
   // Spatial hash for fast nearest
   const sh = new SpatialHash(points, Math.max(h, R));
-  const R2 = R * R;
   const sample = (x,y,z) => {
     // Distance to nearest point (Euclidean)
     const nbrs = sh.queryNeighborhood(x,y,z, R * 2.5);

@@ -205,22 +205,6 @@ export class Revolve extends Solid {
   }
 }
 
-function computeFaceCentroidWorld(faceObj) {
-  try {
-    const posAttr = faceObj?.geometry?.getAttribute?.('position');
-    if (!posAttr || posAttr.itemSize !== 3 || posAttr.count === 0) return null;
-    const center = new THREE.Vector3();
-    const v = new THREE.Vector3();
-    for (let i = 0; i < posAttr.count; i++) {
-      v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i)).applyMatrix4(faceObj.matrixWorld);
-      center.add(v);
-    }
-    return center.multiplyScalar(1 / posAttr.count);
-  } catch {
-    return null;
-  }
-}
-
       for (const loop of boundaryLoops) {
         const pts = Array.isArray(loop?.pts) ? loop.pts : loop;
         const isHole = !!(loop && loop.isHole);

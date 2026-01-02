@@ -445,7 +445,6 @@ export class Sweep extends FacesSolid {
         // Build a local chain from this unused edge
         const localUsed = new Array(polys.length).fill(false);
         const localChain = [];
-        const sEnds = endpoints[s];
         const startForward = true; // arbitrary orientation
         localUsed[s] = true;
         const append = (poly, reverse = false) => {
@@ -488,79 +487,6 @@ export class Sweep extends FacesSolid {
       if (edges.length > 0) pathPts = combinePathPolylines(edges);
     }
 
-    // Refine the path to avoid harsh kinks causing self-intersections.
-    // - Only used for pathAlign mode. Translate mode keeps only segment joints.
-    // - Subdivide long segments to a target length based on model scale.
-    // - Add small pre/post points around sharp corners to ease orientation.
-    const refinePath = (pts) => {
-      if (!Array.isArray(pts) || pts.length < 2) return pts || [];
-      // Compute scale
-      let minX = Infinity, minY = Infinity, minZ = Infinity;
-      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-      for (const p of pts) { if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0]; if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1]; if (p[2] < minZ) minZ = p[2]; if (p[2] > maxZ) maxZ = p[2]; }
-      const diag = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) || 1;
-      const target = Math.min(diag * 0.03, Math.max(diag * 0.005, 1e-4)); // 0.5%..3% of diag
-
-      const out = [];
-      const V = (a, b) => [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-      const L = (v) => Math.hypot(v[0], v[1], v[2]);
-      const N = (v) => { const l = L(v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
-      const add = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-      out.push(pts[0]);
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i], b = pts[i + 1];
-        const seg = V(a, b); const len = L(seg);
-        // Subdivide long segments
-        const n = Math.max(0, Math.min(20, Math.ceil(len / target) - 1));
-        for (let k = 1; k <= n; k++) out.push(add(a, b, k / (n + 1)));
-        out.push(b);
-      }
-
-      // Soften sharp joints by inserting small offsets around the corner
-      const softened = [];
-      const MAX_TURN_DEG = 12; // ensure <= ~12° per corner step
-      softened.push(out[0]);
-      for (let i = 1; i < out.length - 1; i++) {
-        const p0 = out[i - 1], p1 = out[i], p2 = out[i + 1];
-        const v0 = N(V(p1, p0));
-        const v1 = N(V(p1, p2));
-        const dot = v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2];
-        const ang = Math.acos(Math.max(-1, Math.min(1, dot)));
-        const d0 = L(V(p0, p1));
-        const d1 = L(V(p1, p2));
-        const s = 0.12 * Math.min(d0, d1);
-        // Number of extra easing points based on turn angle
-        const maxTurn = MAX_TURN_DEG * Math.PI / 180;
-        const m = Math.max(0, Math.min(6, Math.ceil(ang / maxTurn) - 1));
-        const nearEq = (A, B) => Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]) < 1e-8;
-
-        if (ang > (10 * Math.PI / 180)) {
-          // m pre points along incoming direction
-          for (let k = m; k >= 1; k--) {
-            const t = (k / (m + 1)) * s;
-            const pre = [p1[0] - v0[0] * t, p1[1] - v0[1] * t, p1[2] - v0[2] * t];
-            const last = softened[softened.length - 1];
-            if (!nearEq(last, pre)) softened.push(pre);
-          }
-          softened.push(p1);
-          // m post points along outgoing direction
-          for (let k = 1; k <= m; k++) {
-            const t = (k / (m + 1)) * s;
-            const post = [p1[0] - v1[0] * t, p1[1] - v1[1] * t, p1[2] - v1[2] * t];
-            if (!nearEq(p1, post)) softened.push(post);
-          }
-        } else {
-          softened.push(p1);
-        }
-      }
-      softened.push(out[out.length - 1]);
-      // Final pass: remove exact duplicates
-      for (let i = softened.length - 2; i >= 0; i--) {
-        const a = softened[i], b = softened[i + 1];
-        if (a[0] === b[0] && a[1] === b[1] && a[2] === b[2]) softened.splice(i + 1, 1);
-      }
-      return softened;
-    };
     // Translate mode should only place cross sections at segment joints.
     // For pathAlign we keep user's direction and joints; translate may simplify.
     if (pathPts.length >= 2) {
@@ -1650,7 +1576,6 @@ export class Sweep extends FacesSolid {
       // Skip automatic island removal for extrusions based on traced images; tiny
       // sliver panels near sharp corners can be valid and removing them can open
       // the shell. Users can run repair tools explicitly if needed.
-      // try { this.removeSmallIslands({ maxTriangles: 12, removeInternal: true, removeExternal: true }); } catch (_) { }
       // Build the manifold now so callers get a ready solid. If it fails due
       // to borderline vertex mismatches, progressively increase epsilon and
       // retry a few times.

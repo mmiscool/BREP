@@ -632,39 +632,3 @@ export class MeshRepairer {
     return g;
   }
 }
-
-/*
-Usage example (Three.js):
-
-import * as THREE from 'three';
-import { MeshRepairer } from './MeshRepairer.js'; // adjust import path as needed
-
-// Assume you already have a THREE.BufferGeometry (e.g., from STL/OBJ/GLTF)
-const geometry = your BufferGeometry here;
-
-// Create the repairer
-const repairer = new MeshRepairer();
-
-// Run the full repair pipeline:
-// - weld vertices
-// - fix T-junctions
-// - remove overlapping triangles
-// - fill holes
-// - fix triangle normals (consistent + outward)
-const repaired = repairer.repairAll(geometry, {
-  weldEps: 5e-4,  // merge vertices within this distance
-  lineEps: 5e-4,  // tolerance for T-junction detection
-  gridCell: 0.01  // spatial grid size used during T-junction search
-});
-
-// Or call steps individually if needed:
-const welded      = repairer.weldVertices(geometry, 1e-4);
-const tjFixed     = repairer.fixTJunctions(welded, 5e-4, 0.01);
-const noOverlap   = repairer.removeOverlappingTriangles(tjFixed);
-const holesFilled = repairer.fillHoles(noOverlap);
-const normalsOk   = repairer.fixTriangleNormals(holesFilled);
-
-// Use the repaired geometry to create a mesh
-const mesh = new THREE.Mesh(repaired, new THREE.MeshStandardMaterial());
-// scene.add(mesh);
-*/

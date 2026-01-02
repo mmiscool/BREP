@@ -16,7 +16,6 @@ import {
 import {
     solveCenterFromOffsetPlanesAnchored,
 } from './outset.js';
-import { offsetAndMovePoints } from "./offsetHelper.js";
 import { Tube } from "../Tube.js";
 
 export { clearFilletCaches, trimFilletCaches } from './inset.js';
@@ -39,43 +38,6 @@ function computeFaceAreaFromTriangles(tris) {
         area += 0.5 * Math.hypot(nx, ny, nz);
     }
     return area;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/**
- * Detect and smooth spikes in closed loop polylines.
- * Spikes are identified as points that deviate significantly from the smooth curve.
- * 
- * @param {Array} points Array of points {x, y, z}
- * @param {number} radius Expected fillet radius for scale reference
- * @param {number} tolerance Distance tolerance for spike detection
- * @returns {Array} Smoothed array of points
- */
-function smoothClosedLoopSpikes(points, radius, tolerance) {
-    // This function is now simplified - just return points as-is since we handle spikes differently
-    return points;
 }
 
 /**
@@ -694,9 +656,6 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
             // Vector along tangent A
             const tangentAVec = { x: tA2.x - tA1.x, y: tA2.y - tA1.y, z: tA2.z - tA1.z };
 
-            // Vector along tangent B
-            const tangentBVec = { x: tB2.x - tB1.x, y: tB2.y - tB1.y, z: tB2.z - tB1.z };
-
             // Vector from centerline to tangent A
             const centerToTangentA = { x: tA1.x - c1.x, y: tA1.y - c1.y, z: tA1.z - c1.z };
 
@@ -755,8 +714,6 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
 
         const centerRelationshipInconsistent = (avgCenterToA > 0) !== (avgCenterToB > 0);
         const tangentsGoSameDirection = avgAToB > 0.5; // Strong positive correlation means same direction
-        const tangentsGoOppositeDirection = avgAToB < -0.5; // Strong negative correlation means opposite directions
-
         if (centerRelationshipInconsistent && !(centerlineReversed || tangentAReversed || tangentBReversed)) {
             // If centerline relationships are inconsistent AND tangents go in same direction,
             // this suggests the centerline itself might need reversal
@@ -774,10 +731,6 @@ function fixPolylineWinding(centerline, tangentA, tangentB, expectedRadius = nul
             // Even if center relationships are consistent, if tangents go in same direction,
             // we likely need to reverse one tangent
             tangentBReversed = true;
-        }
-
-        // Additional check: if all relationships are weak, there might be a fundamental issue
-        if (Math.abs(avgCenterToA) < 0.2 && Math.abs(avgCenterToB) < 0.2 && Math.abs(avgAToB) < 0.2) {
         }
 
         return {
@@ -906,42 +859,6 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
             logDebug(`Centerline: start=(${c1.x.toFixed(3)}, ${c1.y.toFixed(3)}, ${c1.z.toFixed(3)}) → (${c2.x.toFixed(3)}, ${c2.y.toFixed(3)}, ${c2.z.toFixed(3)}) ... end=(${cLast.x.toFixed(3)}, ${cLast.y.toFixed(3)}, ${cLast.z.toFixed(3)})`);
         }
 
-        // Validate polyline data integrity before processing
-        const validatePolylines = () => {
-            const n = Math.min(centerlineCopy.length, tangentACopy.length, tangentBCopy.length, edgeCopy.length);
-            for (let i = 0; i < n; i++) {
-                const c = centerlineCopy[i];
-                const tA = tangentACopy[i];
-                const tB = tangentBCopy[i];
-                const e = edgeCopy[i];
-                if (!isFiniteVec3(c) || !isFiniteVec3(tA) || !isFiniteVec3(tB) || !isFiniteVec3(e)) {
-                    // Only offset the wedge edge points (edgeWedgeCopy) inward toward the centerline
-                    // Prepare wedge edge points (copy and offset inward)
-                    let edgeWedgeCopy = edgeCopy.map(pt => ({ x: pt.x, y: pt.y, z: pt.z }));
-                    const wedgeInsetDistance = -0.05; // Negative to push inward
-                    for (let i = 0; i < edgeWedgeCopy.length; i++) {
-                        const edgePt = edgeWedgeCopy[i];
-                        const centerPt = centerlineCopy[i] || centerlineCopy[centerlineCopy.length - 1];
-                        if (edgePt && centerPt) {
-                            // Direction from edge to centerline
-                            const dx = centerPt.x - edgePt.x;
-                            const dy = centerPt.y - edgePt.y;
-                            const dz = centerPt.z - edgePt.z;
-                            const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                            if (len > 1e-12) {
-                                edgePt.x += (dx / len) * Math.abs(wedgeInsetDistance);
-                                edgePt.y += (dy / len) * Math.abs(wedgeInsetDistance);
-                                edgePt.z += (dz / len) * Math.abs(wedgeInsetDistance);
-                            }
-                        }
-                    }
-                    logDebug(`Applied wedge inset of ${Math.abs(wedgeInsetDistance)} units to edge points only`);
-
-                    // Make edgeWedgeCopy available for wedge construction
-                }
-            }
-        }
-
         // Apply a small offset to the tangent curves relative to the centerline.
         // Keep OUTSET behavior unchanged: move tangents slightly toward the centerline;
         // INSET moves them outward. Closed loops skip inflation to avoid self‑intersection.
@@ -987,8 +904,6 @@ export function filletSolid({ edgeToFillet, radius = 1, sideMode = 'INSET', debu
         for (let i = 0; i < edgeWedgeCopy.length; i++) {
             const edgeWedgePt = edgeWedgeCopy[i];
             const centerPt = centerlineCopy[i] || centerlineCopy[centerlineCopy.length - 1]; // Fallback to last point
-            const tanAPt = tangentACopy[i] || tangentACopy[tangentACopy.length - 1];
-            const tanBPt = tangentBCopy[i] || tangentBCopy[tangentBCopy.length - 1];
 
             if (edgeWedgePt && centerPt) {
                 try {

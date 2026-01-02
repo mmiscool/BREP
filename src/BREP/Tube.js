@@ -120,7 +120,6 @@ function computeFrames(points, closed = false) {
   const binormals = [];
   if (!Array.isArray(points) || points.length < 2) return { tangents, normals, binormals };
 
-  const vec = new THREE.Vector3();
   const normalSeed = new THREE.Vector3();
 
   for (let i = 0; i < points.length; i++) {

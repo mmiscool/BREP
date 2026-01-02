@@ -1,10 +1,6 @@
 // applyBooleanOperation.js
 // Helper to apply a boolean operation between a newly created base solid and
 // a list of scene solids referenced by name via the boolean param widget.
-//
-// Usage:
-//   const out = await applyBooleanOperation(partHistory, baseSolid, this.inputParams.boolean, this.inputParams.featureID);
-//   return out; // array of solids to add to scene
 
 import * as THREE from 'three';
 import { Manifold, ManifoldMesh } from "./SolidShared.js";

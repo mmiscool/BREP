@@ -33,21 +33,6 @@ const safeDelete = (obj) => {
   }
 };
 
-const polyArea = (pts) => {
-  let a = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const [x1, y1] = pts[i];
-    const [x2, y2] = pts[(i + 1) % pts.length];
-    a += x1 * y2 - x2 * y1;
-  }
-  return a * 0.5;
-};
-
-const ensureCCW = (pts) => {
-  if (!Array.isArray(pts) || pts.length < 3) return pts;
-  return polyArea(pts) >= 0 ? pts : pts.slice().reverse();
-};
-
 const vecFrom = (v, fallback = [0, 0, 0]) => {
   if (v && typeof v.x === "number") return new THREE.Vector3(v.x, v.y, v.z);
   if (Array.isArray(v)) {
@@ -1133,10 +1118,3 @@ export class ThreadGeometry {
     };
   }
 }
-
-// Example quick usage:
-//
-// const m10x1_5 = ThreadGeometry.fromMetricDesignation("M10x1.5", { isExternal: true });
-// const acme_1_5_5 = ThreadGeometry.fromAcme(1.5, 5, { isExternal: true });
-// const whitworth_1_8 = ThreadGeometry.fromWhitworth(0.125, 40, { isExternal: true });
-// const npt_quarter = ThreadGeometry.fromNPT(0.54, 18, { isExternal: true });

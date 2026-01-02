@@ -2,9 +2,6 @@
 // ES6 module. Triangulates non-monotone boundary loops WITHOUT ear-clipping.
 // Algorithm: Project loop to best-fit plane → y-monotone decomposition (sweep) → triangulate each monotone piece.
 // Guarantees: uses ONLY the loop's original vertices (no simplification) to avoid T-junctions; watertight/manifold caps.
-// Usage:
-//   import { capOpenEndsNonMonotone } from './CapOpenEndsNonMonotone.js';
-//   capOpenEndsNonMonotone(mesh); // mutates mesh.geometry
 
 import * as THREE from 'three';
 
@@ -140,14 +137,6 @@ function makeVertices(poly2D) {
 function above(p, q) { // p higher than q in sweep order (y descending, x tie by smaller)
   if (Math.abs(p.y - q.y) > EPS) return p.y > q.y;
   return p.x < q.x;
-}
-
-function isInteriorLeft(vs, i, ccw=true) {
-  // Determine if interior is to the left of edge (vi -> vi+1) for CCW polygon
-  const v = vs[i], n = vs[v.next], p = vs[v.prev];
-  const cross = orient(p, v, n);
-  if (ccw) return cross > 0 || Math.abs(cross) <= EPS;
-  return cross < 0 || Math.abs(cross) <= EPS;
 }
 
 function vertexType(vs, i, ccw=true) {

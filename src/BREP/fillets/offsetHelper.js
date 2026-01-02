@@ -141,10 +141,3 @@ export function offsetAndMovePoints(A, B, C, offsetAB, offsetBC, offsetCA) {
   B.x = Bp.x; B.y = Bp.y; B.z = Bp.z;
   C.x = Cp.x; C.y = Cp.y; C.z = Cp.z;
 }
-
-// --------- Example usage ----------
-// const A = {x:0, y:0, z:0};
-// const B = {x:1, y:0, z:0};
-// const C = {x:0, y:1, z:0};
-// offsetAndMovePoints(A,B,C, 0.1, 0.1, 0.1);
-// console.log(A,B,C);
