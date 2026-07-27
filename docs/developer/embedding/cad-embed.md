@@ -87,6 +87,15 @@ if (first) {
 await cad.setCurrentFileName("my/new/model-name");
 await cad.saveModel(); // alias of saveCurrent()
 
+const abortController = new AbortController();
+const saved = await cad.saveCurrentTo({
+  modelPath: "automation/output",
+  source: "local",
+  overwrite: false,
+  signal: abortController.signal,
+});
+console.log(saved.modelPath, saved.savedAt, saved.artifactByteSize);
+
 await cad.runHistory();
 await cad.reset();
 await cad.destroy();
@@ -143,7 +152,8 @@ await cad.destroy();
 - `deleteFile(pathOrRequest, options?)`: alias of `removeFile`.
 - `setCurrentFile(pathOrRequest, options?)`: sets the active file path/scope used by save operations.
 - `setCurrentFileName(name, options?)`: alias of `setCurrentFile`.
-- `saveCurrent(options?)`: triggers save from the parent page.
+- `saveCurrent(options?)`: triggers the interactive save flow from the parent page. It may open the Save Target or overwrite confirmation UI.
+- `saveCurrentTo(options)`: saves to a required explicit destination without dialogs. `overwrite` defaults to `false`; GitHub requires `repoFull` and `branch`, mounted storage requires `repoFull`, and an optional `AbortSignal` cancels the frame-side operation. Success includes `modelPath`, storage scope, `savedAt`, and `artifactByteSize`; an existing target returns `{ saved: false, reason: "conflict" }`.
 - `saveModel(options?)`: alias of `saveCurrent`.
 - `runHistory()`: reruns current feature history.
 - `reset()`: clears the model and reruns.
@@ -153,3 +163,4 @@ await cad.destroy();
 - `mount()` is idempotent for an active instance: if already mounted, it returns the same iframe after readiness.
 - After `destroy()`, the instance is terminal. Create a new `CadEmbed` instance to mount again.
 - `viewerOnlyMode` cannot be changed after initialization.
+- Request timeout and explicit abort events send a cancellation message to the iframe. Non-interactive saves verify persistence and roll back a started write before the frame operation settles as failed.
