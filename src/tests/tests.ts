@@ -111,6 +111,7 @@ import {
     test_extrude_intersect_coplanar_face_merge,
 } from './test_extrude_intersect_coplanar_face_merge.js';
 import { test_face_source_feature_seed } from './test_face_source_feature_seed.js';
+import { test_file_manager_missing_model_rejects_without_alert } from './test_file_manager_programmatic_load_errors.js';
 import {
     afterRun_extrude_solid_face_uses_boundary_edge_sidewalls,
     test_ExtrudeFace,
@@ -925,6 +926,7 @@ function getRequestedTestFunctions(testFunctionsToSearch, requestedTestName) {
 
 
 export const testFunctions: any[] = [
+    { test: test_file_manager_missing_model_rejects_without_alert, printArtifacts: false, exportFaces: false, exportSolids: false, resetHistory: true },
     { test: test_browser_skip_metadata_for_local_file_tests, printArtifacts: false, exportFaces: false, exportSolids: false, resetHistory: true },
     { test: test_cppNative_prepareManifoldMesh_matches_legacy_js_reference, printArtifacts: false, exportFaces: false, exportSolids: false, resetHistory: true },
     { test: test_cppSolidCore_preserves_face_ids_and_metadata, printArtifacts: false, exportFaces: false, exportSolids: false, resetHistory: true },

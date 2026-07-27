@@ -28,9 +28,18 @@ import {
   readBrowserStorageValue,
   writeBrowserStorageValue,
 } from '../utils/browserStorage.js';
+import {
+  invalidModelRecordError,
+  requireModelRecord,
+} from '../services/modelLoadErrors.js';
 import { replaceCurrentCadModelUrl } from '../utils/cadModelUrl.js';
 import { CADmaterials } from './CADmaterials.js';
 import { FloatingWindow } from './FloatingWindow.js';
+import {
+  normalizeNonInteractiveSaveRequest,
+  persistWithRollback,
+  throwIfSaveAborted,
+} from './cad/nonInteractiveSave.js';
 import { HISTORY_COLLECTION_REFRESH_EVENT } from './history/HistoryCollectionWidget.js';
 import { generateSheetsPdfBytes } from './sheets/Sheet2DEditorWindow.js';
 import { WorkspaceFileBrowserWidget } from './WorkspaceFileBrowserWidget.js';
@@ -1164,6 +1173,79 @@ export class FileManagerWidget {
       }
     }
 
+    return await this._saveCurrentToTarget({
+      modelPath,
+      source: targetSource,
+      repoFull: targetRepo,
+      branch: targetBranch,
+    }, { interactive: true });
+  }
+
+  async saveCurrentTo(input: any = {}) {
+    if (!this.viewer || !this.viewer.partHistory) {
+      throw new Error('saveCurrentTo is unavailable without an active model');
+    }
+
+    const payload = (input && typeof input === 'object') ? input : {};
+    const signal = payload.signal || null;
+    const rawPath = payload.modelPath ?? payload.path ?? payload.name;
+    const modelPath = stripModelFileExtension(normalizeModelPath(rawPath));
+    const request = normalizeNonInteractiveSaveRequest({
+      ...payload,
+      modelPath,
+    });
+    const targetOptions = {
+      ...this._buildScopeOptions(request.source, request.repoFull, request.branch),
+      path: request.modelPath,
+      throwOnError: true,
+    };
+
+    throwIfSaveAborted(signal);
+    const existing = await this._getModel(request.modelPath, targetOptions);
+    throwIfSaveAborted(signal);
+    if (existing && !request.overwrite) {
+      return {
+        saved: false,
+        reason: 'conflict',
+        conflict: true,
+        modelPath: request.modelPath,
+        source: request.source,
+        repoFull: request.repoFull,
+        branch: request.branch,
+      };
+    }
+
+    const previousRecord = existing
+      ? {
+          savedAt: existing.savedAt || null,
+          data3mf: existing.data3mf || null,
+          data: existing.data || null,
+          thumbnail: existing.thumbnail || null,
+        }
+      : null;
+
+    return await this._saveCurrentToTarget(request, {
+      interactive: false,
+      signal,
+      previousRecord,
+    });
+  }
+
+  async _saveCurrentToTarget(target: any, options: any = {}) {
+    const interactive = options?.interactive !== false;
+    const signal = options?.signal || null;
+    const previousRecord = options?.previousRecord || null;
+    const modelPath = String(normalizeModelPath(target?.modelPath || '') || '').trim();
+    const targetSource = this._normalizeSource(target?.source || 'local') || 'local';
+    const targetRepo = targetSource === 'local' ? '' : String(target?.repoFull || '').trim();
+    const targetBranch = targetSource === 'github' ? String(target?.branch || '').trim() : '';
+    const targetOptions = {
+      ...this._buildScopeOptions(targetSource, targetRepo, targetBranch),
+      path: modelPath,
+      ...(!interactive ? { throwOnError: true } : {}),
+    };
+
+    throwIfSaveAborted(signal);
     try { console.log('[FileManagerWidget] saveCurrent: begin', { name: modelPath }); } catch { }
     this._setSaveBusy(true);
     this._startSaveProgress(targetRepo ? `Saving "${modelPath}" to ${targetRepo}...` : `Saving "${modelPath}"...`);
@@ -1171,6 +1253,7 @@ export class FileManagerWidget {
       this._logSaveProgress('Preparing feature history...');
       // Get feature history JSON (now includes PMI views) and embed into a 3MF archive as Metadata/featureHistory.json
       let jsonString = await this.viewer.partHistory.toJSON();
+      throwIfSaveAborted(signal);
       try { console.log('[FileManagerWidget] saveCurrent: feature history', { bytes: jsonString ? jsonString.length : 0 }); } catch { }
       let additionalFiles = {};
       let modelMetadata = undefined;
@@ -1182,15 +1265,18 @@ export class FileManagerWidget {
       try {
         this._logSaveProgress('Capturing PMI view images...');
         const viewFiles = await this.viewer?.pmiViewsWidget?.captureViewImagesForPackage?.();
+        throwIfSaveAborted(signal);
         if (viewFiles && typeof viewFiles === 'object') {
           additionalFiles = { ...(additionalFiles || {}), ...viewFiles };
         }
       } catch (err) {
+        throwIfSaveAborted(signal);
         console.error('Failed to embed PMI view images:', err);
       }
       try {
         this._logSaveProgress('Generating 2D sheets PDF...');
         const sheetsPdf = await generateSheetsPdfBytes(this.viewer);
+        throwIfSaveAborted(signal);
         if (sheetsPdf instanceof Uint8Array && sheetsPdf.length) {
           additionalFiles = { ...(additionalFiles || {}), 'sheets.pdf': sheetsPdf };
           modelMetadata = { ...(modelMetadata || {}), sheetsPdfPath: '/sheets.pdf' };
@@ -1220,18 +1306,26 @@ export class FileManagerWidget {
       }
       try {
         const finalJsonString = await this.viewer.partHistory.toJSON();
+        throwIfSaveAborted(signal);
         if (finalJsonString) {
           jsonString = finalJsonString;
           additionalFiles['Metadata/featureHistory.json'] = finalJsonString;
           modelMetadata = { ...(modelMetadata || {}), featureHistoryPath: '/Metadata/featureHistory.json' };
         }
-      } catch { /* keep the initial history snapshot */ }
+      } catch {
+        throwIfSaveAborted(signal);
+        // Keep the initial history snapshot.
+      }
       // Capture a higher-resolution thumbnail of the current view
       let thumbnail = null;
       try {
         this._logSaveProgress('Capturing thumbnail...');
         thumbnail = await this._captureThumbnail(THUMBNAIL_CAPTURE_SIZE);
-      } catch { /* ignore thumbnail failures */ }
+        throwIfSaveAborted(signal);
+      } catch {
+        throwIfSaveAborted(signal);
+        // Ignore thumbnail failures.
+      }
 
       // Collect solids for full 3MF export (so slicers can open it).
       this._logSaveProgress('Collecting solids...');
@@ -1291,8 +1385,10 @@ export class FileManagerWidget {
           defaultFaceColor,
           includeFaceTags: false,
         });
+        throwIfSaveAborted(signal);
         try { console.log('[FileManagerWidget] saveCurrent: 3MF exported', { bytes: threeMfBytes?.length || 0 }); } catch { }
       } catch (e) {
+        throwIfSaveAborted(signal);
         // Fallback: history only 3MF
         const metadataManager = this.viewer?.partHistory?.metadataManager || null;
         const defaultFaceColor = (() => {
@@ -1316,6 +1412,7 @@ export class FileManagerWidget {
           defaultFaceColor,
           includeFaceTags: false,
         });
+        throwIfSaveAborted(signal);
         console.warn('[FileManagerWidget] 3MF export failed for solids, saved history-only 3MF.', e);
         try { console.log('[FileManagerWidget] saveCurrent: 3MF exported (history only)', { bytes: threeMfBytes?.length || 0 }); } catch { }
       }
@@ -1325,7 +1422,55 @@ export class FileManagerWidget {
       // Persist the model plus optional captured thumbnail sidecar metadata.
       const record: any = { savedAt: now, data3mf: threeMfB64 };
       if (thumbnail) record.thumbnail = thumbnail;
-      if (targetSource === 'github') {
+      let persistedRecord = null;
+      if (!interactive) {
+        if (targetSource === 'github') {
+          this._logSaveProgress(`Saving to GitHub${targetRepo ? ` (${targetRepo})` : ''}...`);
+          try { console.log('[FileManagerWidget] saveCurrentTo: saving to GitHub', { name: modelPath, repo: targetRepo }); } catch { }
+        } else if (targetSource === 'mounted') {
+          this._logSaveProgress(`Saving to mounted folder${targetRepo ? ` (${targetRepo})` : ''}...`);
+          try { console.log('[FileManagerWidget] saveCurrentTo: saving to mounted folder', { name: modelPath, mountId: targetRepo }); } catch { }
+        } else {
+          this._logSaveProgress('Saving to local storage...');
+          try { console.log('[FileManagerWidget] saveCurrentTo: saving locally', { name: modelPath }); } catch { }
+        }
+
+        persistedRecord = await persistWithRollback({
+          signal,
+          write: async () => {
+            throwIfSaveAborted(signal);
+            await this._setModel(modelPath, record, targetOptions);
+          },
+          verify: async () => {
+            const persisted = await this._getModel(modelPath, targetOptions);
+            if (!persisted) {
+              throw new Error(`saveCurrentTo failed to persist "${modelPath}"`);
+            }
+            if (persisted.data3mf !== threeMfB64) {
+              throw new Error(`saveCurrentTo persistence verification failed for "${modelPath}"`);
+            }
+            if (String(persisted.savedAt || '') !== now) {
+              throw new Error(`saveCurrentTo timestamp verification failed for "${modelPath}"`);
+            }
+            return persisted;
+          },
+          rollback: async () => {
+            if (previousRecord) {
+              await this._setModel(modelPath, previousRecord, targetOptions);
+            } else {
+              await this._removeModel(modelPath, targetOptions);
+            }
+            const restored = await this._getModel(modelPath, targetOptions);
+            if (previousRecord) {
+              if (!restored || restored.data3mf !== previousRecord.data3mf) {
+                throw new Error(`saveCurrentTo could not restore "${modelPath}"`);
+              }
+            } else if (restored) {
+              throw new Error(`saveCurrentTo could not remove aborted target "${modelPath}"`);
+            }
+          },
+        });
+      } else if (targetSource === 'github') {
         this._logSaveProgress(`Saving to GitHub${targetRepo ? ` (${targetRepo})` : ''}...`);
         try { console.log('[FileManagerWidget] saveCurrent: saving to GitHub', { name: modelPath, repo: targetRepo }); } catch { }
         const res = await this._retryGithubOperation(
@@ -1358,17 +1503,35 @@ export class FileManagerWidget {
       try {
         if (thumbnail) this._thumbCache.set(this._recordScopeKey(modelPath, targetSource, targetRepo), thumbnail);
       } catch { }
-      this.currentName = modelPath;
-      this.currentRepoFull = targetRepo;
-      this.currentSource = targetSource;
-      this.currentBranch = targetBranch;
-      this._forceSaveTargetDialog = false;
-      this.nameInput.value = modelPath;
-      this._syncSavedModelUrl(modelPath, targetSource, targetRepo, targetBranch);
-      const savedSnapshot = await this._refreshSavedHistorySnapshot();
-      if (savedSnapshot === null) this._markSavedHistorySnapshot(jsonString || null);
-      this._logSaveProgress('Refreshing list...');
-      await this.refreshList();
+      if (interactive) {
+        this.currentName = modelPath;
+        this.currentRepoFull = targetRepo;
+        this.currentSource = targetSource;
+        this.currentBranch = targetBranch;
+        this._forceSaveTargetDialog = false;
+        this.nameInput.value = modelPath;
+        this._syncSavedModelUrl(modelPath, targetSource, targetRepo, targetBranch);
+        const savedSnapshot = await this._refreshSavedHistorySnapshot();
+        if (savedSnapshot === null) this._markSavedHistorySnapshot(jsonString || null);
+        this._logSaveProgress('Refreshing list...');
+        await this.refreshList();
+      } else {
+        try {
+          this.currentName = modelPath;
+          this.currentRepoFull = targetRepo;
+          this.currentSource = targetSource;
+          this.currentBranch = targetBranch;
+          this._forceSaveTargetDialog = false;
+          if (this.nameInput) this.nameInput.value = modelPath;
+          this._syncSavedModelUrl(modelPath, targetSource, targetRepo, targetBranch);
+          this._markSavedHistorySnapshot(jsonString || null);
+        } catch (error) {
+          try { console.warn('[FileManagerWidget] saveCurrentTo: post-save UI update failed', error); } catch { }
+        }
+        void Promise.resolve().then(() => this.refreshList()).catch((error) => {
+          try { console.warn('[FileManagerWidget] saveCurrentTo: list refresh failed', error); } catch { }
+        });
+      }
       this._logSaveProgress('Save complete.');
       try { console.log('[FileManagerWidget] saveCurrent: complete', { name: modelPath }); } catch { }
       if (skipped.length) {
@@ -1380,6 +1543,8 @@ export class FileManagerWidget {
         source: targetSource,
         repoFull: targetRepo,
         branch: targetBranch,
+        savedAt: String(persistedRecord?.savedAt || now),
+        artifactByteSize: Number(threeMfBytes?.byteLength || threeMfBytes?.length || 0),
       };
     } catch (err) {
       const msg = (err && err.message) ? err.message : String(err || 'Unknown error');
@@ -1612,7 +1777,7 @@ export class FileManagerWidget {
   }
 
   async _loadModelRecord(name, rec, options: any = {}, source = 'local', seq = this._loadSeq, refreshReason = 'load-model') {
-    if (!rec) return alert('Model not found.');
+    rec = requireModelRecord(name, rec);
     await this.viewer.partHistory.reset();
     // Prefer new 3MF-based storage
     if (rec.data3mf && typeof rec.data3mf === 'string') {
@@ -1686,9 +1851,8 @@ export class FileManagerWidget {
       // Sync Expressions UI with imported code
       try { this.viewer?.expressionsManager?.refreshFromPartHistory?.(); } catch { }
     } catch (e) {
-      alert('Failed to load model (invalid data).');
       console.error(e);
-      return;
+      throw invalidModelRecordError(name);
     }
     if (seq !== this._loadSeq) return;
     this._applyLoadedModelState(name, options, rec, source);

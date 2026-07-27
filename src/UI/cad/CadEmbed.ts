@@ -1,4 +1,5 @@
 import { deepClone } from "../../utils/deepClone.js";
+import { createAbortError } from "./nonInteractiveSave.js";
 export { bootCadFrame, bootCADFrame } from "./CadFrameApp.js";
 
 const DEFAULT_CHANNEL = "brep:cad";
@@ -335,6 +336,17 @@ export class CadEmbed {
     return this.#request("saveCurrent", payload);
   }
 
+  async saveCurrentTo(options: any = {}) {
+    const request = (options && typeof options === "object") ? options : {};
+    const modelPath = toFilePath(request.modelPath ?? request.path ?? request.name);
+    if (!modelPath) throw new Error("saveCurrentTo requires a model path");
+    const { signal, ...payload } = request;
+    return this.#request("saveCurrentTo", deepClone({
+      ...payload,
+      modelPath,
+    }), { signal });
+  }
+
   async saveModel(options: any = {}) {
     return this.saveCurrent(options);
   }
@@ -369,6 +381,7 @@ export class CadEmbed {
 
     for (const [requestId, pending] of this._pending.entries()) {
       clearTimeout(pending.timer);
+      try { pending.abortCleanup?.(); } catch { /* ignore abort-listener cleanup failure */ }
       pending.reject(new Error(`Request aborted: ${requestId}`));
     }
     this._pending.clear();
@@ -434,23 +447,70 @@ export class CadEmbed {
 </html>`;
   }
 
-  async #request(type: any, payload: any): Promise<any> {
-    await this.waitUntilReady();
-    return this.#requestRaw(type, payload);
+  #cancelFrameRequest(requestId, type, message) {
+    const win = this._iframe?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage(
+        {
+          channel: this._channel,
+          instanceId: this._instanceId,
+          type: "cancel",
+          requestId,
+          payload: {
+            requestType: type,
+            message,
+          },
+        },
+        this._targetOrigin,
+      );
+    } catch { /* ignore best-effort cancellation post failure */ }
   }
 
-  async #requestRaw(type: any, payload: any): Promise<any> {
+  async #request(type: any, payload: any, options: any = {}): Promise<any> {
+    await this.waitUntilReady();
+    return this.#requestRaw(type, payload, options);
+  }
+
+  async #requestRaw(type: any, payload: any, options: any = {}): Promise<any> {
     if (this._destroyed) throw new Error("CadEmbed is destroyed");
     const win = this._iframe?.contentWindow;
     if (!win) throw new Error("CadEmbed iframe is unavailable");
+    const signal = options?.signal || null;
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : createAbortError();
+    }
 
     const requestId = `${this._instanceId}:${++this._requestSeq}`;
     const request = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        const pending = this._pending.get(requestId);
+        if (!pending) return;
         this._pending.delete(requestId);
-        reject(new Error(`Request timed out: ${type}`));
+        try { pending.abortCleanup?.(); } catch { /* ignore abort-listener cleanup failure */ }
+        const message = `Request timed out: ${type}`;
+        this.#cancelFrameRequest(requestId, type, message);
+        reject(new Error(message));
       }, this._requestTimeoutMs);
-      this._pending.set(requestId, { resolve, reject, timer });
+
+      let abortCleanup = null;
+      if (signal && typeof signal.addEventListener === "function") {
+        const onAbort = () => {
+          const pending = this._pending.get(requestId);
+          if (!pending) return;
+          this._pending.delete(requestId);
+          clearTimeout(pending.timer);
+          try { pending.abortCleanup?.(); } catch { /* ignore abort-listener cleanup failure */ }
+          const error = signal.reason instanceof Error
+            ? signal.reason
+            : createAbortError();
+          this.#cancelFrameRequest(requestId, type, error.message);
+          reject(error);
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        abortCleanup = () => signal.removeEventListener("abort", onAbort);
+      }
+      this._pending.set(requestId, { resolve, reject, timer, abortCleanup });
     });
 
     win.postMessage(
@@ -511,6 +571,7 @@ export class CadEmbed {
       const pending = this._pending.get(requestId);
       this._pending.delete(requestId);
       clearTimeout(pending.timer);
+      try { pending.abortCleanup?.(); } catch { /* ignore abort-listener cleanup failure */ }
 
       if (msg.ok === false || msg.error) {
         pending.reject(new Error(msg?.error?.message || "CAD request failed"));

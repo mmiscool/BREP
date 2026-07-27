@@ -165,6 +165,8 @@ async function runIntegrationSuite() {
 
   const counters = { pass: 0, fail: 0, skip: 0 };
   const historyEvents = [];
+  let saveTargetDialogCalls = 0;
+  let confirmCalls = 0;
 
   const runTest = async (name, fn) => {
     addResultRow(name, 'RUN', 'Running...');
@@ -291,6 +293,121 @@ async function runIntegrationSuite() {
     const state = await cad.runHistory();
     assert(Number(state?.featureCount) === 1, `Expected featureCount=1, got ${state?.featureCount}`);
     return 'history rerun';
+  });
+
+  const savePath = `cad-embed-tests/non-interactive-${Date.now()}`;
+  const canceledSavePath = `${savePath}-canceled`;
+
+  await runTest('saveCurrentTo() installs no interactive fallback', async () => {
+    const frameWindow: any = cad.iframe?.contentWindow;
+    const fileManager = frameWindow?.viewer?.fileManagerWidget;
+    assert(fileManager, 'CadEmbed frame FileManagerWidget is unavailable');
+    const openSaveTargetDialog = fileManager._openSaveTargetDialog.bind(fileManager);
+    fileManager._openSaveTargetDialog = (...args) => {
+      saveTargetDialogCalls += 1;
+      return openSaveTargetDialog(...args);
+    };
+    frameWindow.confirm = () => {
+      confirmCalls += 1;
+      return false;
+    };
+    return 'dialog and confirm calls instrumented';
+  });
+
+  await runTest('saveCurrentTo() requires modelPath without UI', async () => {
+    await expectReject(() => cad.saveCurrentTo({ source: 'local' }), 'requires a model path');
+    assert(saveTargetDialogCalls === 0, 'Missing modelPath opened the Save Target dialog');
+    assert(confirmCalls === 0, 'Missing modelPath opened a confirmation dialog');
+    assert(cad._pending.size === 0, 'CadEmbed retained a pending missing-path request');
+    return 'rejected before frame request';
+  });
+
+  await runTest('saveCurrentTo() creates and verifies an explicit target', async () => {
+    await cad.removeFile(savePath, { source: 'local' });
+    const result = await cad.saveCurrentTo({
+      modelPath: savePath,
+      source: 'local',
+      overwrite: false,
+    });
+    assert(result?.saved === true, `Expected saved=true, got ${JSON.stringify(result)}`);
+    assert(result?.modelPath === savePath, `Unexpected saved modelPath: ${result?.modelPath}`);
+    assert(result?.source === 'local', `Unexpected saved source: ${result?.source}`);
+    assert(typeof result?.savedAt === 'string' && result.savedAt.length > 0, 'Missing savedAt evidence');
+    assert(Number(result?.artifactByteSize) > 0, 'Missing nonzero artifactByteSize evidence');
+    const persisted = await cad.readFile(savePath, { source: 'local' });
+    assert(persisted?.exists === true, 'Saved target does not exist');
+    assert(
+      typeof persisted?.record?.data3mf === 'string' && persisted.record.data3mf.length > 0,
+      'Saved target has no 3MF payload',
+    );
+    assert(saveTargetDialogCalls === 0, 'Explicit save opened the Save Target dialog');
+    assert(confirmCalls === 0, 'Explicit save opened a confirmation dialog');
+    assert(cad._pending.size === 0, 'CadEmbed retained a pending successful save');
+    return `${result.artifactByteSize} bytes`;
+  });
+
+  await runTest('saveCurrentTo() reports conflict without confirm', async () => {
+    const result = await cad.saveCurrentTo({
+      modelPath: savePath,
+      source: 'local',
+      overwrite: false,
+    });
+    assert(result?.saved === false, 'Conflict unexpectedly reported saved=true');
+    assert(result?.reason === 'conflict', `Expected conflict reason, got ${result?.reason}`);
+    assert(confirmCalls === 0, 'Conflict opened a confirmation dialog');
+    assert(saveTargetDialogCalls === 0, 'Conflict opened the Save Target dialog');
+    assert(cad._pending.size === 0, 'CadEmbed retained a pending conflict request');
+    return 'structured conflict returned';
+  });
+
+  await runTest('saveCurrentTo() overwrites without UI', async () => {
+    const result = await cad.saveCurrentTo({
+      modelPath: savePath,
+      source: 'local',
+      overwrite: true,
+    });
+    assert(result?.saved === true, 'Explicit overwrite did not save');
+    assert(Number(result?.artifactByteSize) > 0, 'Overwrite returned no byte-size evidence');
+    assert(confirmCalls === 0, 'Explicit overwrite opened a confirmation dialog');
+    assert(saveTargetDialogCalls === 0, 'Explicit overwrite opened the Save Target dialog');
+    assert(cad._pending.size === 0, 'CadEmbed retained a pending overwrite request');
+    return 'target replaced';
+  });
+
+  await runTest('saveCurrentTo() timeout cancels without a ghost artifact', async () => {
+    await cad.removeFile(canceledSavePath, { source: 'local' });
+    const previousTimeoutMs = cad._requestTimeoutMs;
+    cad._requestTimeoutMs = 5;
+    try {
+      await expectReject(
+        () => cad.saveCurrentTo({
+          modelPath: canceledSavePath,
+          source: 'local',
+          overwrite: false,
+        }),
+        'Request timed out: saveCurrentTo',
+      );
+    } finally {
+      cad._requestTimeoutMs = previousTimeoutMs;
+    }
+    const frameWindow: any = cad.iframe?.contentWindow;
+    const canceled = await waitFor(
+      () => Number(frameWindow?.__BREP_CADFrameApp?._requestControllers?.size || 0) === 0,
+      { timeoutMs: 10_000, intervalMs: 25 },
+    );
+    assert(canceled, 'Frame-side save did not settle after cancellation');
+    const persisted = await cad.readFile(canceledSavePath, { source: 'local' });
+    assert(persisted?.exists === false, 'Canceled save left a ghost artifact');
+    assert(cad._pending.size === 0, 'CadEmbed retained a timed-out request');
+    assert(saveTargetDialogCalls === 0, 'Timed-out save opened the Save Target dialog');
+    assert(confirmCalls === 0, 'Timed-out save opened a confirmation dialog');
+    return 'frame canceled and target absent';
+  });
+
+  await runTest('saveCurrentTo() cleanup', async () => {
+    await cad.removeFile(savePath, { source: 'local' });
+    await cad.removeFile(canceledSavePath, { source: 'local' });
+    return 'test artifacts removed';
   });
 
   await runTest('loadModel(invalid args rejects)', async () => {

@@ -11,6 +11,7 @@ import {
   MODEL_STORAGE_PREFIX,
   uint8ArrayToBase64,
 } from "../../services/componentLibrary.js";
+import { createAbortError } from "./nonInteractiveSave.js";
 import "../../styles/cad.css";
 
 declare global {
@@ -132,6 +133,7 @@ class CadFrameApp {
     this._saveHookInstalled = false;
     this._fileHooksInstalled = false;
     this._saveInProgress = false;
+    this._requestControllers = new Map();
     this._boundStorageEvent = null;
     this._boundStorageBackendEvent = null;
     this._customCssEl = null;
@@ -155,6 +157,10 @@ class CadFrameApp {
     if (this._disposed) return;
     this._disposed = true;
     window.removeEventListener("message", this._boundMessage);
+    for (const controller of this._requestControllers.values()) {
+      try { controller.abort(createAbortError("CAD frame disposed")); } catch { /* ignore best-effort abort */ }
+    }
+    this._requestControllers.clear();
     try { this._viewer?.dispose?.(); } catch { /* ignore best-effort CAD frame failure */ }
     this._viewer = null;
     this._viewerBootPromise = null;
@@ -848,6 +854,30 @@ class CadFrameApp {
     return this.#collectState();
   }
 
+  async #saveCurrentTo(input: any = {}, signal: AbortSignal | null = null) {
+    const fm = this._viewer?.fileManagerWidget;
+    if (!fm || typeof fm.saveCurrentTo !== "function") {
+      throw new Error("CAD frame cannot save models non-interactively (FileManagerWidget unavailable)");
+    }
+
+    this._saveInProgress = true;
+    let result;
+    try {
+      result = await fm.saveCurrentTo({
+        ...((input && typeof input === "object") ? input : {}),
+        signal,
+      });
+    } finally {
+      this._saveInProgress = false;
+    }
+
+    if (result?.saved) {
+      try { this.#emitSaved("saveCurrentTo", result); } catch { /* save already verified */ }
+      try { this.#emitFilesChanged("saveCurrentTo", result); } catch { /* save already verified */ }
+    }
+    return result;
+  }
+
   async #handleInit(payload: any = {}) {
     const requestedViewerOnly = normalizeBoolean(payload?.viewerOnlyMode, this._viewerOnlyMode);
     if (!this._viewer) {
@@ -878,7 +908,7 @@ class CadFrameApp {
     return this.#collectState();
   }
 
-  async #handleRequest(type, payload: any) {
+  async #handleRequest(type, payload: any, signal: AbortSignal | null = null) {
     if (type === "init") {
       return this.#handleInit(payload || {});
     }
@@ -973,6 +1003,10 @@ class CadFrameApp {
       return this.#saveCurrent(payload || {});
     }
 
+    if (type === "saveCurrentTo") {
+      return this.#saveCurrentTo(payload || {}, signal);
+    }
+
     throw new Error(`Unknown request type: ${type}`);
   }
 
@@ -995,11 +1029,29 @@ class CadFrameApp {
 
     if (!requestId) return;
 
+    if (type === "cancel") {
+      const controller = this._requestControllers.get(requestId);
+      if (controller && !controller.signal.aborted) {
+        const message = String(msg?.payload?.message || "CAD request canceled");
+        controller.abort(createAbortError(message));
+      }
+      return;
+    }
+
+    const controller = new AbortController();
+    this._requestControllers.set(requestId, controller);
     try {
-      const payload = await this.#handleRequest(type, msg.payload || {});
+      const payload = await this.#handleRequest(type, msg.payload || {}, controller.signal);
+      if (controller.signal.aborted) {
+        throw controller.signal.reason || createAbortError();
+      }
       this.#respond(requestId, true, payload);
     } catch (error) {
       this.#respond(requestId, false, null, error);
+    } finally {
+      if (this._requestControllers.get(requestId) === controller) {
+        this._requestControllers.delete(requestId);
+      }
     }
   }
 }
